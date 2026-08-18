@@ -48,17 +48,23 @@ say "enrich exit=$?"
 # 04:00 on Sunday still gets its link check on the next cycle after it wakes.
 STAMP="$LOG_DIR/.linkcheck-stamp"
 if [ "${1:-}" = "--linkcheck" ] || [ -z "$(find "$STAMP" -mtime -7 2>/dev/null)" ]; then
-  # ~40 minutes over the full corpus: the per-host rate limiter serialises the thousands of
-  # links that share a greenhouse/ashby host. That overruns the 30-minute interval and costs
-  # one ingest cycle a week, which is the right trade against checking only a sample.
   # Stamped BEFORE the run, not after. Sleep, reboot or `launchctl bootout` mid-check would
   # otherwise leave no stamp, so every following cycle restarts the whole thing — each one
   # overrunning the interval and halving ingest's real cadence for as long as it lasts. A
   # missed weekly check is much cheaper than that loop.
   touch "$STAMP"
   say "linkcheck start"
-  node scripts/linkcheck.ts   # exit 1 means dead links were FOUND, not that the run failed
-  say "linkcheck exit=$?"
+
+  # HARD TIME BUDGET, and it is not paranoia. `linkcheck` honours each host's robots.txt
+  # `Crawl-delay`, and news.ycombinator.com publishes 30 SECONDS — 153 postings point there,
+  # so that one host alone serialises into ~76 minutes, and a host publishing an hour would
+  # be worse without limit. launchd will not start a second copy of this job, so an unbounded
+  # link check does not just delay ingest: it stops the dashboard updating for as long as it
+  # runs. Better a link check that gives up and retries next week.
+  #
+  # `perl -e alarm` because macOS ships no timeout(1) and perl is always there.
+  perl -e 'alarm shift; exec @ARGV' 5400 node scripts/linkcheck.ts
+  say "linkcheck exit=$? (budget 90m; 142 = killed at the budget, 1 = dead links found)"
 fi
 
 say "cycle end"
