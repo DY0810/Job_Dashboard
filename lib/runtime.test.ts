@@ -151,18 +151,18 @@ describe('robots.txt', () => {
   });
 
   it('matches the product token by longest PREFIX, not by substring or file order', () => {
-    // `bot` is a substring of `workybot` but not a prefix — it must not capture our group,
+    // `bot` is a substring of `workiebot` but not a prefix — it must not capture our group,
     // and the answer must not depend on which group was declared first.
-    const text = ['User-agent: bot', 'Disallow: /', 'User-agent: workybot', 'Allow: /'].join('\n');
+    const text = ['User-agent: bot', 'Disallow: /', 'User-agent: workiebot', 'Allow: /'].join('\n');
     expect(parseRobots(text).isAllowed('/jobs')).toBe(true);
-    const reordered = ['User-agent: workybot', 'Allow: /', 'User-agent: bot', 'Disallow: /'].join(
+    const reordered = ['User-agent: workiebot', 'Allow: /', 'User-agent: bot', 'Disallow: /'].join(
       '\n',
     );
     expect(parseRobots(reordered).isAllowed('/jobs')).toBe(true);
   });
 
   it('prefers the longest matching group when several are prefixes', () => {
-    const text = ['User-agent: worky', 'Disallow: /', 'User-agent: workybot', 'Allow: /'].join('\n');
+    const text = ['User-agent: workie', 'Disallow: /', 'User-agent: workiebot', 'Allow: /'].join('\n');
     expect(parseRobots(text).isAllowed('/jobs')).toBe(true);
   });
 

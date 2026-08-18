@@ -80,7 +80,7 @@ export const careerjet: Connector = {
     // Careerjet requires both, and rejects the request without them. They identify the end
     // user of a search UI; this is a personal batch job, so they are ours.
     url.searchParams.set('user_ip', '127.0.0.1');
-    url.searchParams.set('user_agent', 'WorkyBot/0.1');
+    url.searchParams.set('user_agent', 'WorkieBot/0.1');
 
     const body = await context.runtime.fetchJson<{ jobs?: CareerjetJob[] }>(url.toString(), {
       redactUrl: 'https://public.api.careerjet.net/search',

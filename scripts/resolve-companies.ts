@@ -1,4 +1,4 @@
-// Phase 3 (worky/p3-registry) — resolves company names to confirmed ATS job-board tokens
+// Phase 3 (workie/p3-registry) — resolves company names to confirmed ATS job-board tokens
 // and writes scripts/companies.json + scripts/registry-report.md.
 //
 // NEVER GUESS A TOKEN INTO THE REGISTRY. Every entry this script writes was confirmed by
@@ -72,7 +72,7 @@ const YC_DIRECTORY_URL = "https://yc-oss.github.io/api/companies/all.json";
 const YC_CAP = 150;
 
 // ---------------------------------------------------------------------------------------
-// Seed set 1 — Voice AI (plans/worky.md Phase 5, section 5a). All 42, in prompt order.
+// Seed set 1 — Voice AI (plans/workie.md Phase 5, section 5a). All 42, in prompt order.
 // `website` is a best-effort hint only, used to derive one extra candidate token — a wrong
 // guess here costs nothing, it just fails to help; only a confirmed HTTP response ever
 // reaches the registry.
@@ -235,7 +235,7 @@ interface YcSelection {
 async function fetchYcSeeds(cap: number): Promise<YcSelection> {
   try {
     const res = await fetch(YC_DIRECTORY_URL, {
-      headers: { "User-Agent": "WorkyRegistryBot/0.1 (+mailto:dongyeop0810@gmail.com)" },
+      headers: { "User-Agent": "WorkieRegistryBot/0.1 (+mailto:dongyeop0810@gmail.com)" },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as Array<{
@@ -441,7 +441,7 @@ function writeReport(outcomes: ResolutionOutcome[], ycMeta: YcSelection | null, 
   if (voiceAi.length > 0) {
     parts.push(
       section(
-        "Voice-AI seed accounting (Phase 5a — plans/worky.md §5a, 42 companies)",
+        "Voice-AI seed accounting (Phase 5a — plans/workie.md §5a, 42 companies)",
         [
           `- Resolved into registry: **${voiceResolved.length}**`,
           `- Unresolved: **${voiceUnresolved.length}**`,
@@ -458,7 +458,7 @@ function writeReport(outcomes: ResolutionOutcome[], ycMeta: YcSelection | null, 
       ),
     );
   } else {
-    const preserved = extractOldSection(oldReport, "Voice-AI seed accounting (Phase 5a — plans/worky.md §5a, 42 companies)");
+    const preserved = extractOldSection(oldReport, "Voice-AI seed accounting (Phase 5a — plans/workie.md §5a, 42 companies)");
     if (preserved) parts.push(preserved);
   }
 
@@ -535,7 +535,7 @@ function writeReport(outcomes: ResolutionOutcome[], ycMeta: YcSelection | null, 
           "- Candidate tokens: lowercase-no-punctuation slug, hyphenated slug, both with common suffixes (inc/llc/co/corp/ltd/ai) stripped, and the domain stem of any known website — deduped, capped at 6 per company.",
           "- Rate limit: max 2 requests/second per host, enforced by a shared per-host throttle in `scripts/ats-probe.js`; different ATS hosts run concurrently.",
           "- Workday discovery (tenant × wd1/wd3/wd5/wd103 × site-name guesses) is opt-in per company and was only attempted where there's an actual reason to expect a large/established employer (Twilio, Riot Games) — running it blindly against every small startup in the seed sets would multiply request volume for near-zero plausible yield, since Workday targets enterprise HR, not 20-person startups. Everyone else's \"no board found\" reason notes Workday was not attempted, not that it was tried and failed.",
-          "- Teamtailor and Pinpoint are confirmed-probeable (verified against real tenants: recruitgo.teamtailor.com, workwithus.pinpointhq.com) but not in the default sweep — plans/worky.md's rule is \"add them when the registry actually has a company on one, not before.\" Rippling and BambooHR remain unconfirmed: Rippling's documented Job Board API is gated behind a paid subscription and its public page renders job data client-side with no stable JSON surface found; BambooHR's only public surface is, per multiple independent sources, an undocumented internal endpoint that changes shape/host between releases, and no real customer example could be found to verify against. Both are skipped rather than guessed, same standard as everything else in this phase.",
+          "- Teamtailor and Pinpoint are confirmed-probeable (verified against real tenants: recruitgo.teamtailor.com, workwithus.pinpointhq.com) but not in the default sweep — plans/workie.md's rule is \"add them when the registry actually has a company on one, not before.\" Rippling and BambooHR remain unconfirmed: Rippling's documented Job Board API is gated behind a paid subscription and its public page renders job data client-side with no stable JSON surface found; BambooHR's only public surface is, per multiple independent sources, an undocumented internal endpoint that changes shape/host between releases, and no real customer example could be found to verify against. Both are skipped rather than guessed, same standard as everything else in this phase.",
         "- Every registry write carries `verified_at` set to the moment of that successful probe, and `postings_at_probe` recording the exact count seen (0 is valid and meaningful — it means a real, confirmed board with no current openings, not \"not found\").",
       ].join("\n"),
     ),

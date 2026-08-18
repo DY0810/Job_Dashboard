@@ -29,7 +29,7 @@ export const CLASSIFY_MODEL = 'claude-haiku-4-5-20251001';
 /** Claude Haiku 4.5 list price, USD per million tokens. */
 export const MODEL_PRICE_USD_PER_MTOK = { input: 1, output: 5 } as const;
 
-/** Default cap when `WORKY_SPEND_CAP_USD` is unset. A run can never quietly cost more. */
+/** Default cap when `WORKIE_SPEND_CAP_USD` is unset. A run can never quietly cost more. */
 export const DEFAULT_SPEND_CAP_USD = 1;
 
 /**
@@ -475,14 +475,14 @@ export function toStored(
 }
 
 /**
- * `WORKY_SPEND_CAP_USD`. A trust boundary: an unparseable cap is an error, never a silent
+ * `WORKIE_SPEND_CAP_USD`. A trust boundary: an unparseable cap is an error, never a silent
  * zero (which would enrich nothing) or a silent Infinity (which would enrich everything).
  */
 export function parseSpendCap(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === '') return DEFAULT_SPEND_CAP_USD;
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) {
-    throw new Error(`WORKY_SPEND_CAP_USD must be a non-negative number, got: ${raw}`);
+    throw new Error(`WORKIE_SPEND_CAP_USD must be a non-negative number, got: ${raw}`);
   }
   return value;
 }

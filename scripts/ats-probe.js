@@ -34,7 +34,7 @@ export const ATS_TYPES = [
 // confirmation — the array may be empty (zero current openings is still a real board).
 const EMPTY_BOARD_OK = new Set(["greenhouse", "lever", "ashby", "recruitee", "teamtailor", "pinpoint"]);
 
-const USER_AGENT = "WorkyRegistryBot/0.1 (+mailto:dongyeop0810@gmail.com; company registry probe)";
+const USER_AGENT = "WorkieRegistryBot/0.1 (+mailto:dongyeop0810@gmail.com; company registry probe)";
 const MIN_GAP_MS = 500; // max 2 req/s per host
 const TIMEOUT_MS = 12000;
 
@@ -236,7 +236,7 @@ export function candidateTokens(name, website) {
 
 // The default sweep. Deliberately does NOT include teamtailor/pinpoint yet even though
 // both are now confirmed-probeable (see EMPTY_BOARD_OK) — the construction plan's rule is
-// "add them when the registry actually has a company on one, not before" (plans/worky.md
+// "add them when the registry actually has a company on one, not before" (plans/workie.md
 // Phase 3). Until a real company resolves through one, adding it here would just be extra
 // request volume on every future run for a still-hypothetical benefit. Pass them via
 // `extraAts` for a targeted attempt instead; promote to this array once one lands.

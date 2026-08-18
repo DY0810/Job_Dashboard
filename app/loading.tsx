@@ -6,7 +6,7 @@ export default function Loading() {
   return (
     <main className="min-h-dvh px-4 pb-16">
       <header className="flex items-baseline gap-6 border-b border-rule py-2">
-        <h1 className="w-wide text-[13px] font-medium">Worky</h1>
+        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <span className="w-wide text-[11px] text-fg-dim">loading</span>
       </header>
       <div className="border-b border-rule py-2">

@@ -12,7 +12,7 @@ export type Db = ReturnType<typeof drizzle<typeof schema>>;
  * One connection per process. Next's dev server re-evaluates modules on every edit, so the
  * handle is cached on `globalThis` — otherwise each hot reload leaks a file descriptor.
  */
-const cache = globalThis as typeof globalThis & { __workyDb?: Db };
+const cache = globalThis as typeof globalThis & { __workieDb?: Db };
 
 export const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'drizzle');
 
@@ -22,7 +22,7 @@ export const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..'
  * with the migrations applied and the singleton would hand back a shared one.
  */
 export function openDb(
-  path: string = process.env.WORKY_DB ?? 'worky.db',
+  path: string = process.env.WORKIE_DB ?? 'workie.db',
   options: { migrate?: boolean } = {},
 ): Db {
   const sqlite = new Database(path);
@@ -35,6 +35,6 @@ export function openDb(
 }
 
 export function getDb(): Db {
-  cache.__workyDb ??= openDb();
-  return cache.__workyDb;
+  cache.__workieDb ??= openDb();
+  return cache.__workieDb;
 }

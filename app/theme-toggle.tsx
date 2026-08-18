@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-const KEY = 'worky-theme';
+const KEY = 'workie-theme';
 
 /**
  * The manual override. Both themes are tuned equally and the tool is used at all hours, so

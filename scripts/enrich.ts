@@ -29,7 +29,7 @@ import { enrichmentCacheKey } from '../lib/hash.ts';
 
 const { enrichmentCache, postings } = schema;
 
-export type WorkyDatabase = BetterSQLite3Database<typeof schema>;
+export type WorkieDatabase = BetterSQLite3Database<typeof schema>;
 
 /**
  * The `enrichment_cache` table as a cache interface.
@@ -38,7 +38,7 @@ export type WorkyDatabase = BetterSQLite3Database<typeof schema>;
  * serving another model's answers; writes upsert, so the new model's row replaces the old
  * one instead of colliding with it forever (`content_hash` is the primary key).
  */
-export function sqliteCache(db: WorkyDatabase): ClassificationCache {
+export function sqliteCache(db: WorkieDatabase): ClassificationCache {
   const model = CLASSIFY_MODEL;
   return {
     get(contentHash) {
@@ -63,7 +63,7 @@ export function sqliteCache(db: WorkyDatabase): ClassificationCache {
 }
 
 export async function runEnrich(
-  db: WorkyDatabase,
+  db: WorkieDatabase,
   client: ClassifyClient,
   options: { spendCapUsd?: number } = {},
 ): Promise<EnrichStats> {
@@ -148,8 +148,8 @@ export function formatStats(stats: EnrichStats, spendCapUsd: number): string {
 }
 
 async function main(): Promise<void> {
-  const spendCapUsd = parseSpendCap(process.env.WORKY_SPEND_CAP_USD);
-  const sqlite = new Database(process.env.WORKY_DB ?? 'worky.db');
+  const spendCapUsd = parseSpendCap(process.env.WORKIE_SPEND_CAP_USD);
+  const sqlite = new Database(process.env.WORKIE_DB ?? 'workie.db');
   try {
     const stats = await runEnrich(drizzle(sqlite, { schema }), anthropicClassifier(), {
       spendCapUsd,

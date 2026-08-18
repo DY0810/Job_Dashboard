@@ -33,7 +33,7 @@ function seed(db: Db, url: string): number {
 /**
  * Bodies trimmed from what the live platforms actually served on 2026-08-18. The gone
  * greenhouse/ashby/workable pages below all answered **200** — which is the whole reason
- * this checker reads bodies (plans/worky.md finding H).
+ * this checker reads bodies (plans/workie.md finding H).
  */
 const BODY = {
   greenhouseLive: '<html><head><title>Job Application for General Application at Speechmatics</title></head></html>',

@@ -1,4 +1,4 @@
-# Worky — Construction Plan
+# Workie — Construction Plan
 
 **Objective:** A local job dashboard that ingests postings from ATS APIs and aggregator
 feeds, dedupes them, classifies them with one cached LLM call each, and serves a two-tab
@@ -118,7 +118,7 @@ alongside. P11 is optional and the acceptance criteria are all reachable without
 ## 3. Phases
 
 ### Phase 0 — Rails
-`worky/p0-rails` · no dependencies · **model: default**
+`workie/p0-rails` · no dependencies · **model: default**
 
 **Context brief.** `/Users/dyl/Job_Dashboard` is empty. Nothing exists yet — not a git repo,
 not a package. This phase produces a repo that builds and a database file that migrates,
@@ -137,7 +137,7 @@ and nothing else. Resist scaffolding anything a later phase owns.
 
 **Gate.**
 - `npm run build` and `npx tsc --noEmit` both clean.
-- `npm run db:migrate` creates `worky.db`; `sqlite3 worky.db .tables` lists `postings`.
+- `npm run db:migrate` creates `workie.db`; `sqlite3 workie.db .tables` lists `postings`.
 - `npm test` exits 0 with zero tests (harness proven, not faked).
 - `gh repo view --json visibility` reports `PRIVATE`.
 - `git status --porcelain` clean, `.env.local` absent from `git ls-files`.
@@ -147,7 +147,7 @@ and nothing else. Resist scaffolding anything a later phase owns.
 ---
 
 ### Phase 1 — Normalizers, dedupe engine, schema
-`worky/p1-dedupe` · after P0 · **model: strongest**
+`workie/p1-dedupe` · after P0 · **model: strongest**
 
 > **The spec is explicit: build this before any connector.** Every downstream phase keys
 > off `dedupe_key`. Getting it wrong after connectors exist means reprocessing everything.
@@ -213,7 +213,7 @@ row. Everything here is deterministic and unit-testable with zero I/O.
 ---
 
 ### Phase 2 — Connector runtime
-`worky/p2-runtime` · after P1 · **model: default**
+`workie/p2-runtime` · after P1 · **model: default**
 
 **Context brief.** The shared harness every connector runs inside. No connector logic here
 — this phase ships the thing that makes "every connector fails independently" true, and
@@ -244,7 +244,7 @@ proves it with fake connectors before any real one exists.
 ---
 
 ### Phase 3 — Tier-1 ATS connectors
-`worky/p3-ats` · after P2 · **model: default**
+`workie/p3-ats` · after P2 · **model: default**
 
 **Context brief.** The clean sources: canonical JSON, no bot detection, and always the
 preferred `canonical_url` when a job appears elsewhere too. Seven connectors, all reading
@@ -282,7 +282,7 @@ into the same normalized shape from Phase 1. Workday is the odd one and gets its
 ---
 
 ### Phase 4 — Classification
-`worky/p4-classify` · after P3 · parallel with P5/P6/P7 · **model: strongest**
+`workie/p4-classify` · after P3 · parallel with P5/P6/P7 · **model: strongest**
 
 **Context brief.** One Haiku call per **new** posting, cached forever on the content hash,
 so a full re-poll costs ~$0. The cache key is `sha256(normalizeDescription(body))` — the
@@ -323,7 +323,7 @@ content and will simply be re-validated).
 ---
 
 ### Phase 5 — Voice-AI detection
-`worky/p5-voice` · after P3 · parallel with P4/P6/P7 · **model: default**
+`workie/p5-voice` · after P3 · parallel with P4/P6/P7 · **model: default**
 
 **Context brief.** Voice AI is a company-list problem, not a board problem — there is no
 voice-AI job board. Resolve seed companies to ATS tokens, poll them directly, and match on
@@ -365,7 +365,7 @@ roles surface in the **Engineering tab with a `voice-ai` badge. There is no thir
 ---
 
 ### Phase 6 — Tier-2 aggregators
-`worky/p6-aggregators` · after P3 · parallel with P4/P5/P7 · **model: default**
+`workie/p6-aggregators` · after P3 · parallel with P4/P5/P7 · **model: default**
 
 **Context brief.** Real APIs and feeds — never scraping at this tier. These syndicate ATS
 postings, so this is the phase where the Phase 1 dedupe engine finally gets exercised against
@@ -400,7 +400,7 @@ reverting the phase.
 ---
 
 ### Phase 7 — Design system and shell
-`worky/p7-shell` · after P1 (needs `GEO_TIER` only) · parallel with P4/P5/P6 · **model: strongest**
+`workie/p7-shell` · after P1 (needs `GEO_TIER` only) · parallel with P4/P5/P6 · **model: strongest**
 
 **Context brief.** Read [`.impeccable.md`](../.impeccable.md) first — it resolves the
 conflicts between the loaded design skills and records what was rejected. This phase ships
@@ -439,7 +439,7 @@ correctness.
 ---
 
 ### Phase 8 — Table, filters, sort
-`worky/p8-table` · after P4 and P7 · **model: strongest**
+`workie/p8-table` · after P4 and P7 · **model: strongest**
 
 **Context brief.** The two tabs differ in columns, filters, and — critically — in sort.
 Design is geo-weighted; Engineering is **not**. Badges *are* the filter values: clicking a
@@ -489,7 +489,7 @@ badge applies it. All filter state lives in the URL.
 ---
 
 ### Phase 9 — Detail drawer and link integrity
-`worky/p9-drawer` · after P8 · **model: default**
+`workie/p9-drawer` · after P8 · **model: default**
 
 **Context brief.** Same drawer on both tabs. Native `<dialog>` — the platform already does
 Esc, top-layer, backdrop, and focus return. Occasional interaction (~5/day), so this is one
@@ -523,7 +523,7 @@ of the three animations in the app's entire motion budget.
 ---
 
 ### Phase 10 — Cron, ghost detection, ops
-`worky/p10-ops` · after P6 and P9 · **model: default**
+`workie/p10-ops` · after P6 and P9 · **model: default**
 
 **Context brief.** Makes it run unattended. Ghost detection is the subtle part: a posting is
 delisted only after being absent from **two consecutive successful polls** of its source. A
@@ -551,7 +551,7 @@ connector returning 500 must never delist anything.
 ---
 
 ### Phase 11 — Tier-3 scrapers *(optional — ship without it)*
-`worky/p11-scrape` · after P10 · **model: default**
+`workie/p11-scrape` · after P10 · **model: default**
 
 **Context brief.** Lowest source priority, scraped only where `robots.txt` permits, always
 rate-limited. Every acceptance criterion is reachable without this phase; it exists to widen

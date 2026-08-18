@@ -1,7 +1,7 @@
 /**
  * Fixture postings, so the table can be exercised before the connectors land.
  *
- * `npm run seed` — migrates `worky.db` (or `$WORKY_DB`) and replaces its `postings` rows.
+ * `npm run seed` — migrates `workie.db` (or `$WORKIE_DB`) and replaces its `postings` rows.
  *
  * This file is also the corpus for `lib/query.test.ts`: the adversarial sort cases the two
  * tabs disagree about live here once, not twice. Normalized columns are written literally
@@ -193,7 +193,7 @@ export function fixtures(now: number) {
 }
 
 if (process.argv[1]?.endsWith('seed.ts')) {
-  const path = process.env.WORKY_DB ?? 'worky.db';
+  const path = process.env.WORKIE_DB ?? 'workie.db';
   const db = drizzle(new Database(path));
   // Idempotent: drizzle's own migrator tracks what it has applied, so seeding twice is fine.
   migrate(db, { migrationsFolder: 'drizzle' });
