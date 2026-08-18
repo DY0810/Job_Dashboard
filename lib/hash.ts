@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { normalizeDescription } from './normalize';
+import { normalizeDescription } from './normalize.ts';
 
 export function sha256(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
