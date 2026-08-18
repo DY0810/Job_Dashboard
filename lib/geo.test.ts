@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { GEO_TIER, geoTier } from './geo';
-import { CITY_ALIASES, normalizeLocation } from './normalize';
+import { GEO_TIER, geoTier } from './geo.ts';
+import { CITY_ALIASES, normalizeLocation } from './normalize.ts';
 
 const tierOf = (location: string) => geoTier(normalizeLocation(location));
 

@@ -12,12 +12,12 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { REFS, fixtures, refKey } from '../scripts/seed';
-import type { Db } from './db';
-import { postings } from './db/schema';
-import { geoTier } from './geo';
-import { geoRank, getPostingDetail, listPostings, tabIsEmpty } from './query';
-import { GROUPS, SHARED_VOCAB, VOCAB, href, parseParams, type Params, type Tab } from './params';
+import { REFS, fixtures, refKey } from '../scripts/seed.ts';
+import type { Db } from './db/index.ts';
+import { postings } from './db/schema.ts';
+import { geoTier } from './geo.ts';
+import { geoRank, getPostingDetail, listPostings, tabIsEmpty } from './query.ts';
+import { GROUPS, SHARED_VOCAB, VOCAB, href, parseParams, type Params, type Tab } from './params.ts';
 
 const NOW = Date.UTC(2026, 2, 17, 12, 0, 0);
 

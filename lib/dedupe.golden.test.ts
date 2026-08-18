@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { dedupePostings, type RawPosting } from './dedupe';
+import { dedupePostings, type RawPosting } from './dedupe.ts';
 
 /**
  * GOLDEN CORPUS — one job, five source shapes.

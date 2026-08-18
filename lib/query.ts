@@ -6,11 +6,11 @@
  */
 
 import { and, asc, desc, eq, gte, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm';
-import { cutoffTimestamp } from './dedupe';
-import type { Db } from './db';
-import { postings } from './db/schema';
-import { GEO_TIER } from './geo';
-import { VISIBLE_SENIORITY, WINDOW_MS, type Params } from './params';
+import { cutoffTimestamp } from './dedupe.ts';
+import type { Db } from './db/index.ts';
+import { postings } from './db/schema.ts';
+import { GEO_TIER } from './geo.ts';
+import { VISIBLE_SENIORITY, WINDOW_MS, type Params } from './params.ts';
 
 const DAY_MS = WINDOW_MS.day;
 

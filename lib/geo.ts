@@ -1,4 +1,4 @@
-import type { NormalizedLocation } from './normalize';
+import type { NormalizedLocation } from './normalize.ts';
 
 /**
  * GEO_TIER — the ONLY place geo priority is defined. Nothing else in the repo may hardcode a

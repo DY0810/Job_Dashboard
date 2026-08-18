@@ -20,11 +20,11 @@ import {
   type ClassifyClient,
   type ClassifyInput,
   type EnrichPosting,
-} from './classify';
-import { ATS_SHAPES, POSTING_FIXTURES, SENIOR_FIXTURES } from './classify.fixtures';
-import { enrichmentCacheKey } from './hash';
-import { normalizeDescription } from './normalize';
-import { VOICE_BADGE } from './voice';
+} from './classify.ts';
+import { ATS_SHAPES, POSTING_FIXTURES, SENIOR_FIXTURES } from './classify.fixtures.ts';
+import { enrichmentCacheKey } from './hash.ts';
+import { normalizeDescription } from './normalize.ts';
+import { VOICE_BADGE } from './voice.ts';
 
 // ---------------------------------------------------------------------------------------
 // Test doubles

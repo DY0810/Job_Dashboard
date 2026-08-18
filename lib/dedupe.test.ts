@@ -12,8 +12,8 @@ import {
   SOURCE_PRIORITY,
   tokenSetRatio,
   type RawPosting,
-} from './dedupe';
-import { normalizeLocation } from './normalize';
+} from './dedupe.ts';
+import { normalizeLocation } from './normalize.ts';
 
 const at = (iso: string) => Date.parse(iso);
 

@@ -1,10 +1,10 @@
-import { sha256 } from './hash';
+import { sha256 } from './hash.ts';
 import {
   normalizeCompany,
   normalizeLocation,
   normalizeTitle,
   type NormalizedLocation,
-} from './normalize';
+} from './normalize.ts';
 
 export type SourceKind = 'ats' | 'aggregator' | 'rss' | 'scrape' | 'repo';
 
