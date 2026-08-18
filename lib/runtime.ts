@@ -117,8 +117,8 @@ export function isPrivateAddress(address: string): boolean {
   const candidate = mapped ? mapped[1] : plain;
 
   if (/^\d+\.\d+\.\d+\.\d+$/.test(candidate)) {
-    const [a, b] = candidate.split('.').map(Number);
-    if ([a, b].some((part) => !Number.isInteger(part) || part > 255)) return true;
+    const [a, b, c] = candidate.split('.').map(Number);
+    if ([a, b, c].some((part) => !Number.isInteger(part) || part > 255)) return true;
     return (
       a === 0 || // "this network"
       a === 10 ||
@@ -126,7 +126,8 @@ export function isPrivateAddress(address: string): boolean {
       (a === 169 && b === 254) || // link-local, incl. the cloud metadata address
       (a === 172 && b >= 16 && b <= 31) ||
       (a === 192 && b === 168) ||
-      (a === 192 && b === 0) || // 192.0.0.0/24 IETF protocol assignments
+      (a === 192 && b === 0 && c === 0) || // 192.0.0.0/24 IETF protocol assignments
+      (a === 192 && b === 0 && c === 2) || // 192.0.2.0/24 TEST-NET-1, also not routable
       (a === 100 && b >= 64 && b <= 127) || // CGNAT
       (a === 198 && (b === 18 || b === 19)) || // benchmarking
       a >= 224 // multicast and reserved
