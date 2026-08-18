@@ -202,8 +202,10 @@ export function formatStatus(status: Status): string {
   const line = (cells: string[]): string =>
     cells.map((cell, column) => pad(cell, width[column], right[column])).join('  ').trimEnd();
 
+  // A connector that is now disabled keeps whatever error it last ran with, which is history
+  // rather than something to act on — it is already explained under "not running" below.
   const errors = status.connectors
-    .filter((connector) => connector.lastStatus === 'error' && connector.error)
+    .filter((connector) => !connector.disabled && connector.lastStatus === 'error' && connector.error)
     .map((connector) => `  ${connector.connector}: ${connector.error}`);
 
   const disabled = status.connectors

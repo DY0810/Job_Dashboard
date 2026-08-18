@@ -92,6 +92,8 @@ describe('npm run status', () => {
     expect(text).toMatch(/^slow\s+ok\s+30m ago\s+1\s+1\s+1\s+in 5h 29m$/m);
     expect(text).toMatch(/^keyed\s+off\s+never\s+0\s+0\s+0\s+-$/m);
     expect(text).toMatch(/^not running\n  keyed: SOME_KEY not set in \.env\.local$/m);
+    // Explained once, under "not running" — not a second time as an error to act on.
+    expect(text).not.toContain('errors on last run');
     expect(text).toContain('postings  2 total · 2 live');
     expect(text).toContain('delisted  0 total · 0 gone from source · 0 dead link');
   });
