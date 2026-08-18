@@ -38,6 +38,11 @@
   --accent: var(--light-accent);
   --scrim: var(--light-scrim);
   color-scheme: light;
+
+  /* The only two easing curves in the app. `--ease-drawer` is pinned by .impeccable.md;
+     `--ease-state` is a plain decelerate for the two sub-150ms token shifts. */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-state: cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -170,6 +175,15 @@
   padding: 4px 10px 3px 0;
   vertical-align: baseline;
   white-space: nowrap;
+  /* MOTION 1/3 — row hover. A token shift, not choreography: no transform, so nothing
+     moves and the row under the cursor cannot shift out from under it. Band rows carry
+     <th>, not <td>, so the selector below skips them without needing to name them. */
+  background-color: transparent;
+  transition: background-color 100ms var(--ease-state);
+}
+
+.rows tbody tr:hover td {
+  background-color: var(--surface);
 }
 
 /* The one column that absorbs the slack, and truncates rather than wrapping a row. */
@@ -219,6 +233,13 @@
   line-height: 16px;
   white-space: nowrap;
   color: var(--fg-dim);
+  /* MOTION 2/3 — the chip's own active/inactive state. This is feedback on the control,
+     never on the table's response to it: the rows below re-sort with no animation at all. */
+  transition:
+    background-color 120ms var(--ease-state),
+    border-color 120ms var(--ease-state),
+    color 120ms var(--ease-state),
+    transform 120ms var(--ease-state);
 }
 
 .chip:hover {
@@ -243,17 +264,18 @@
   transform: scale(0.97);
 }
 
-/* There is no animation in this phase at all; the press feedback above is the only motion
-   of any kind, and it goes too. */
-@media (prefers-reduced-motion: reduce) {
-  .chip:active {
-    transform: none;
-  }
-}
-
 /* ────────────────────────────────────────────────────────────────────── drawer ──
  * Native <dialog>: Esc, the top layer, the backdrop and focus return are all
- * platform behaviour. Motion is a later pass — this ships static on purpose.
+ * platform behaviour.
+ *
+ * MOTION 3/3 — the only animation in the app with a duration over 150ms, and the only
+ * one that moves anything. It is affordable because the drawer is opened ~5×/day; the
+ * table beneath it is touched dozens of times a day and stays completely static.
+ *
+ * The closed state carries the 165ms exit and the open state the 220ms enter, because a
+ * transition always runs with the timing of the state it is moving TO. `@starting-style`
+ * supplies the pre-open frame; `overlay`/`display` are discrete, so `allow-discrete` is
+ * what keeps the panel in the top layer long enough to be seen leaving.
  */
 dialog.drawer {
   margin: 0 0 0 auto;
@@ -267,10 +289,80 @@ dialog.drawer {
   background: var(--canvas);
   color: var(--fg);
   overflow: hidden;
+
+  opacity: 0;
+  transform: translateX(100%);
+  transition:
+    opacity 165ms var(--ease-drawer),
+    transform 165ms var(--ease-drawer),
+    overlay 165ms var(--ease-drawer) allow-discrete,
+    display 165ms var(--ease-drawer) allow-discrete;
+}
+
+dialog.drawer[open] {
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 220ms var(--ease-drawer),
+    transform 220ms var(--ease-drawer),
+    overlay 220ms var(--ease-drawer) allow-discrete,
+    display 220ms var(--ease-drawer) allow-discrete;
+}
+
+@starting-style {
+  dialog.drawer[open] {
+    opacity: 0;
+    transform: translateX(100%);
+  }
 }
 
 dialog.drawer::backdrop {
   background: var(--scrim);
+  opacity: 0;
+  transition:
+    opacity 165ms var(--ease-drawer),
+    overlay 165ms var(--ease-drawer) allow-discrete,
+    display 165ms var(--ease-drawer) allow-discrete;
+}
+
+dialog.drawer[open]::backdrop {
+  opacity: 1;
+  transition:
+    opacity 220ms var(--ease-drawer),
+    overlay 220ms var(--ease-drawer) allow-discrete,
+    display 220ms var(--ease-drawer) allow-discrete;
+}
+
+@starting-style {
+  dialog.drawer[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────── reduced motion ──
+ * The drawer keeps a fade so it is still legible as arriving and leaving; it loses the
+ * slide. Everything else snaps, including the press feedback.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .rows td,
+  .chip {
+    transition: none;
+  }
+
+  .chip:active {
+    transform: none;
+  }
+
+  dialog.drawer,
+  dialog.drawer[open] {
+    transform: none;
+  }
+
+  @starting-style {
+    dialog.drawer[open] {
+      transform: none;
+    }
+  }
 }
 
 .prose {
