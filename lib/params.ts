@@ -41,14 +41,18 @@ export const VOCAB = {
   },
 } as const satisfies Record<Tab, { posted: readonly string[]; type: readonly string[]; season: readonly string[] }>;
 
-/** Shared by both tabs. `entry` folds into the `junior` chip (finding F) — there is no entry chip. */
+/** Shared by both tabs. `entry` folds into the `junior` option (finding F) — no entry option. */
 export const SHARED_VOCAB = {
   pay: ['paid', 'unpaid'],
   mode: ['remote', 'hybrid', 'onsite'],
   level: ['junior', 'mid'],
 } as const;
 
-/** The multi-select groups: OR inside a group, AND across groups. */
+/**
+ * One dropdown each. The URL still carries a group as a list — `where()` ORs inside a group and
+ * ANDs across them — but the controls only ever write one value, so a group is single-select in
+ * practice and a dropdown can show its selection.
+ */
 export const GROUPS = ['type', 'pay', 'mode', 'season', 'level'] as const;
 export type Group = (typeof GROUPS)[number];
 
@@ -142,15 +146,21 @@ export function href(p: Params): string {
   return s ? `/?${s}` : '/';
 }
 
-/** Toggling a chip never opens or keeps a drawer open — filtering is a table action. */
+/**
+ * What a dropdown writes: one value, or `null` for "any". Filtering never opens or keeps a
+ * drawer open — it is a table action.
+ */
+export function withGroup(p: Params, group: Group, value: string | null): string {
+  return href({ ...p, [group]: value ? [value] : [], job: null });
+}
+
+/** What a row badge writes. Same target as the dropdown, so the two cannot disagree. */
 export function toggle(p: Params, group: Group, value: string): string {
-  const on = p[group].includes(value);
-  const next = on ? p[group].filter((v) => v !== value) : [...p[group], value];
-  return href({ ...p, [group]: next, job: null });
+  return withGroup(p, group, p[group].includes(value) ? null : value);
 }
 
 export function withPosted(p: Params, value: Params['posted']): string {
-  return href({ ...p, posted: p.posted === value ? null : value, job: null });
+  return href({ ...p, posted: value, job: null });
 }
 
 export function withBadge(p: Params, value: string): string {

@@ -441,26 +441,27 @@ correctness.
 ### Phase 8 — Table, filters, sort
 `workie/p8-table` · after P4 and P7 · **model: strongest**
 
-**Context brief.** The two tabs differ in columns, filters, and — critically — in sort.
-Design is geo-weighted; Engineering is **not**. Badges *are* the filter values: clicking a
-badge applies it. All filter state lives in the URL.
+**Context brief.** Both tabs sort the same way: `posted_at` desc, then entry/junior above
+mid. The two tabs differ in columns, in filter vocabulary, and in one visibility rule — the
+Design tab shows the target locations only. Badges *are* the filter values: clicking a badge
+applies it, and the dropdown for that category then shows it. All filter state lives in the URL.
 
 **Build.**
 
 *Engineering tab*
 - Columns: time posted · badges · summary · pay rate · experience level · expected grad
   date · company · apply button.
-- Filters: posted within hour/day/week/month · full-time · internship · paid/unpaid ·
-  remote/hybrid/onsite · summer/fall/winter/spring · junior/mid.
-- Sort: posted-within-24h bucket desc → `posted_at` desc → entry/junior above mid.
-  **No geo weighting.**
+- Filters, one labelled dropdown each: posted within hour/day/week/month · full-time ·
+  internship · paid/unpaid · remote/hybrid/onsite · summer/fall/winter/spring · junior/mid.
+- Sort: `posted_at` desc → entry/junior above mid. **No geo involvement of any kind.**
 
 *Design tab*
 - Columns: time posted · badges · pay rate · company · apply button.
-- Filters: posted within last week (only) · full-time/freelance/part-time/internship ·
-  paid/unpaid · remote/hybrid/onsite · junior/mid.
-- Sort, four keys in order: posted-within-24h desc → `GEO_TIER` asc → `posted_at` desc →
-  entry/junior above mid.
+- Filters, one labelled dropdown each: posted within last week (only) ·
+  full-time/freelance/part-time/internship · paid/unpaid · remote/hybrid/onsite · junior/mid.
+- Sort: `posted_at` desc → entry/junior above mid. Same two keys as Engineering.
+- Visibility: `GEO_TIER` 3 ("everywhere else") is excluded. Tiers 0, 1 and 2 all show. A
+  *view* filter — ingest stays geo-agnostic and the database still stores every location.
 
 *Both*
 - `entry` folds into the `junior` chip (there is no `entry` chip, but entry sorts above
@@ -470,16 +471,22 @@ badge applies it. All filter state lives in the URL.
 - Sorting happens in SQL via Drizzle; filters compile from validated search params.
 - Zod validates search params — they are a trust boundary even locally.
 
-**Gate.** Constructed fixtures where a naive sort gets the wrong answer:
-- **Design 4-key order:** two postings identical except `GEO_TIER` (SF vs Berlin) → SF
-  first. Then a Berlin posting from 2 hours ago vs an SF posting from 3 days ago → **Berlin
-  first**, because the 24h bucket outranks geo. This is the case a 3-key implementation fails.
-- **Engineering has no geo weighting:** an SF and a Berlin posting with identical
-  `posted_at` sort identically regardless of location. Asserted directly.
-- **Tie-break depth:** two postings identical through key 3, differing only in seniority →
-  entry above mid, on both tabs.
-- Clicking a badge applies exactly that filter and updates the URL; back button restores
-  the prior filter set; a copied URL reproduces the view in a fresh session.
+**Gate.** Constructed fixtures where a naive implementation gets the wrong answer:
+- **Recency, both tabs:** three postings at known distinct timestamps come back newest
+  first, and the whole result's `posted_at` descends with no exceptions.
+- **Design excludes `GEO_TIER` 3:** a Berlin posting is absent from Design and present on
+  Engineering in the same corpus. An SF (tier 0), a rest-of-California (tier 1) and a remote
+  (tier 2) posting are all present on Design. Moving a posting between locations moves it in
+  or out, so the filter is reading the row rather than a list of ids.
+- **Engineering has no geo involvement:** an SF and a Berlin posting swapped produce an
+  identical result. Asserted directly.
+- **Tie-break depth:** two postings identical through `posted_at`, differing only in
+  seniority → entry above mid, on both tabs.
+- Clicking a badge applies exactly that filter, updates the URL, and leaves that value
+  selected in its dropdown; back restores the prior filter set; a copied URL reproduces the
+  view in a fresh session.
+- Every dropdown is reachable and operable by keyboard, with a visible focus ring in both
+  themes.
 - No senior/staff/principal/lead/director/manager row appears in either tab under any
   filter combination — including with all filters cleared.
 - 60-day-old postings are absent from both tabs.
@@ -717,7 +724,8 @@ silently drop most postings, since most don't state pay.
 - **Do not add a third tab.** Voice AI is a badge inside Engineering. It is stated twice in
   the spec because it is the obvious wrong move.
 - **Do not filter by geography during ingest.** Ingest is geo-agnostic; store every location.
-  Geography affects ranking, on the Design tab, only.
+  Geography is a *view* filter on the Design tab, and nothing else: it hides `GEO_TIER` 3 from
+  that one table. Engineering shows every location, and no tab sorts by geography.
 - **Do not hardcode a city or a tier outside `lib/geo.ts`.** `GEO_TIER` is the single
   editable constant. A second copy is how the Design tab silently stops matching the spec.
 - **Do not classify on the title for voice AI.** Titles are "Member of Technical Staff."

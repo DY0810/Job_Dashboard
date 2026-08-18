@@ -1,28 +1,23 @@
 import Link from 'next/link';
 import {
+  GROUPS,
   SHARED_VOCAB,
   VOCAB,
   cleared,
   hasFilters,
   toggle,
   withBadge,
+  withGroup,
   withPosted,
   type Group,
   type Params,
 } from '@/lib/params';
+import { SelectNav } from './select';
 
 const WINDOW_LABEL: Record<string, string> = { hour: '1h', day: '24h', week: '7d', month: '30d' };
 
 /** A filter value, as a link. No client state: the URL is the state. */
-export function Chip({
-  href,
-  on,
-  children,
-}: {
-  href: string;
-  on: boolean;
-  children: React.ReactNode;
-}) {
+function Chip({ href, on, children }: { href: string; on: boolean; children: React.ReactNode }) {
   return (
     // `aria-current`, not `aria-pressed`: this is a link, and aria-pressed is only
     // supported on role="button" — screen readers ignore it here.
@@ -32,12 +27,18 @@ export function Chip({
   );
 }
 
-/** Row badges are the same control: clicking one applies exactly that filter. */
+function vocabFor(p: Params, group: Group): readonly string[] {
+  return group === 'type' || group === 'season' ? VOCAB[p.tab][group] : SHARED_VOCAB[group];
+}
+
+/**
+ * Row badges are the same control as the dropdown above them: clicking one applies exactly that
+ * filter, which is also what selects it in the dropdown, because both write the same param.
+ */
 export function RowChip({ p, group, value }: { p: Params; group: Group; value: string }) {
-  const vocab: readonly string[] = group === 'type' || group === 'season' ? VOCAB[p.tab][group] : SHARED_VOCAB[group];
-  // A value with no chip on this tab (a `contract` role on Design, say) still gets shown —
+  // A value with no filter on this tab (a `contract` role on Design, say) still gets shown —
   // it just is not pressable, because there is no filter for it to apply.
-  if (!vocab.includes(value)) return <span className="chip">{value}</span>;
+  if (!vocabFor(p, group).includes(value)) return <span className="chip">{value}</span>;
   return (
     <Chip href={toggle(p, group, value)} on={p[group].includes(value)}>
       {value}
@@ -53,49 +54,51 @@ export function BadgeChip({ p, value }: { p: Params; value: string }) {
   );
 }
 
-function Divider() {
-  return <span aria-hidden className="mx-1 h-4 border-l border-rule" />;
-}
-
+/**
+ * One labelled dropdown per filter category. A group holds a list in the URL, but the controls
+ * only ever write one value, so `[0]` is the whole selection — a hand-typed `mode=remote,hybrid`
+ * still filters on both, and the box shows the first of them.
+ */
 export function Filters({ p }: { p: Params }) {
   const vocab = VOCAB[p.tab];
-  const groups: [Group, readonly string[]][] = [
-    ['type', vocab.type],
-    ['pay', SHARED_VOCAB.pay],
-    ['mode', SHARED_VOCAB.mode],
-    ['season', vocab.season],
-    ['level', SHARED_VOCAB.level],
-  ];
 
   return (
-    <div className="flex flex-wrap items-center gap-1 border-b border-rule py-2">
-      <span className="mr-1 text-[10px] uppercase tracking-[0.1em] text-fg-dim">posted</span>
-      {vocab.posted.map((w) => (
-        <Chip key={w} href={withPosted(p, w as Params['posted'])} on={p.posted === w}>
-          {WINDOW_LABEL[w]}
-        </Chip>
-      ))}
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-rule py-2">
+      <SelectNav label="posted" on={p.posted !== null} value={withPosted(p, p.posted)}>
+        <option value={withPosted(p, null)}>any</option>
+        {vocab.posted.map((window) => (
+          <option key={window} value={withPosted(p, window as Params['posted'])}>
+            {WINDOW_LABEL[window]}
+          </option>
+        ))}
+      </SelectNav>
 
-      {groups.map(([group, values]) =>
-        values.length === 0 ? null : (
-          <span key={group} className="flex items-center gap-1">
-            <Divider />
+      {GROUPS.map((group) => {
+        const values = vocabFor(p, group);
+        // Design has no season vocabulary, so it gets no season dropdown.
+        if (values.length === 0) return null;
+        return (
+          <SelectNav
+            key={group}
+            label={group}
+            on={p[group].length > 0}
+            value={withGroup(p, group, p[group][0] ?? null)}
+          >
+            <option value={withGroup(p, group, null)}>any</option>
             {values.map((value) => (
-              <Chip key={value} href={toggle(p, group, value)} on={p[group].includes(value)}>
+              <option key={value} value={withGroup(p, group, value)}>
                 {value}
-              </Chip>
+              </option>
             ))}
-          </span>
-        ),
-      )}
+          </SelectNav>
+        );
+      })}
 
+      {/* Badges are free slugs, not a fixed vocabulary, so the active one stays a chip. */}
       {p.badge ? (
-        <>
-          <Divider />
-          <Chip href={withBadge(p, p.badge)} on>
-            {p.badge}
-          </Chip>
-        </>
+        <Chip href={withBadge(p, p.badge)} on>
+          {p.badge}
+        </Chip>
       ) : null}
 
       <span className="ml-auto">

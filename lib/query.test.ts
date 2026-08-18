@@ -1,10 +1,11 @@
 /**
- * The sort gate. Every case here is one a plausible implementation gets wrong: the Design
- * tab's four keys in the wrong order, geo weighting leaking onto Engineering, a tie-break
- * that stops one key short, or a `senior+` row surviving a filter combination.
+ * The sort and visibility gate. Every case here is one a plausible implementation gets wrong:
+ * an ordering that is not plain recency, Design's location filter leaking onto Engineering (or
+ * failing to hide anything), a tie-break that stops one key short, or a `senior+` row surviving
+ * a filter combination.
  *
- * Runs against a real SQLite database with the committed migrations applied, because the
- * ordering being asserted is produced by SQL, not by JavaScript.
+ * Runs against a real SQLite database with the committed migrations applied, because both the
+ * ordering and the location filter are produced by SQL, not by JavaScript.
  */
 
 import Database from 'better-sqlite3';
@@ -16,8 +17,19 @@ import { REFS, fixtures, refKey } from '../scripts/seed.ts';
 import type { Db } from './db/index.ts';
 import { postings } from './db/schema.ts';
 import { geoTier } from './geo.ts';
-import { geoRank, getPostingDetail, listPostings, tabIsEmpty } from './query.ts';
-import { GROUPS, SHARED_VOCAB, VOCAB, href, parseParams, type Params, type Tab } from './params.ts';
+import { geoTierSql, getPostingDetail, listPostings, tabIsEmpty } from './query.ts';
+import {
+  GROUPS,
+  SHARED_VOCAB,
+  VOCAB,
+  href,
+  parseParams,
+  toggle,
+  withGroup,
+  withPosted,
+  type Params,
+  type Tab,
+} from './params.ts';
 
 const NOW = Date.UTC(2026, 2, 17, 12, 0, 0);
 
@@ -42,6 +54,10 @@ function params(tab: Tab, over: Partial<Params> = {}): Params {
 
 function order(p: Params): string[] {
   return listPostings(db, p, NOW).map((row) => refOf.get(row.id)!);
+}
+
+function times(p: Params): number[] {
+  return listPostings(db, p, NOW).map((row) => row.postedAt.getTime());
 }
 
 function idOf(ref: string): number {
@@ -73,46 +89,64 @@ beforeEach(() => {
   );
 });
 
-describe('design tab - four sort keys, in order', () => {
-  it('key 2: identical postings sort by GEO_TIER, so SF precedes Berlin', () => {
-    before(order(params('design')), 'd-sf-3d', 'd-berlin-3d');
+describe('recency first, on both tabs', () => {
+  it.each(['design', 'engineering'] as const)('%s: posted_at descends, with no exceptions', (tab) => {
+    const list = times(params(tab));
+    expect(list.length).toBeGreaterThan(5);
+    expect(list).toEqual([...list].sort((a, b) => b - a));
   });
 
-  it('key 1 outranks key 2: a 2-hour-old Berlin posting beats a 3-day-old SF one', () => {
-    // The case a three-key implementation, geo first, gets wrong.
-    before(order(params('design')), 'd-berlin-2h', 'd-sf-3d');
+  it('design: three known timestamps come back newest first', () => {
+    const list = order(params('design'));
+    before(list, 'd-unknown-pay', 'd-unpaid-intern'); // 6h before 2d
+    before(list, 'd-unpaid-intern', 'd-sparse'); // 2d before 21d
   });
 
-  it('key 4: identical through posted_at, entry sorts above mid', () => {
-    before(order(params('design')), 'd-tie-entry', 'd-tie-mid');
+  it('engineering: three known timestamps come back newest first', () => {
+    const list = order(params('engineering'));
+    before(list, 'e-voice', 'e-intern-summer'); // 3h before 5h
+    before(list, 'e-intern-summer', 'e-sf-3d'); // 5h before 3d
   });
 
-  it('geo weighting actually moves rows: swapping two locations flips them', () => {
-    before(order(params('design')), 'd-sf-3d', 'd-berlin-3d');
-    db.update(postings).set(BERLIN).where(eq(postings.id, idOf('d-sf-3d'))).run();
-    db.update(postings).set(SF).where(eq(postings.id, idOf('d-berlin-3d'))).run();
-    before(order(params('design')), 'd-berlin-3d', 'd-sf-3d');
+  it.each(['design', 'engineering'] as const)('%s: identical posted_at, entry above mid', (tab) => {
+    before(order(params(tab)), `${tab[0]}-tie-entry`, `${tab[0]}-tie-mid`);
   });
 });
 
-describe('engineering tab - no geo weighting', () => {
-  it('an SF and a Berlin posting with identical posted_at keep their order when swapped', () => {
+describe('design excludes GEO_TIER 3, engineering excludes nothing', () => {
+  it('the same Berlin posting is hidden on Design and shown on Engineering', () => {
+    expect(order(params('design'))).not.toContain('d-berlin-3d');
+    expect(order(params('engineering'))).toContain('e-berlin-3d');
+  });
+
+  it('tiers 0, 1 and 2 all survive on Design', () => {
+    const list = order(params('design'));
+    expect(list).toContain('d-sf-3d'); // tier 0, a target metro
+    expect(list).toContain('d-oakland-entry'); // tier 1, California outside the metros
+    expect(list).toContain('d-remote-mid'); // tier 2, remote
+  });
+
+  it('a non-California US city is tier 3, so Design hides it too', () => {
+    expect(order(params('design'))).not.toContain('d-austin');
+    expect(order(params('engineering'))).toContain('e-austin');
+  });
+
+  it('the filter reads the row, not a list of refs: moving a posting moves it in or out', () => {
+    db.update(postings).set(BERLIN).where(eq(postings.id, idOf('d-sf-3d'))).run();
+    db.update(postings).set(SF).where(eq(postings.id, idOf('d-berlin-3d'))).run();
+
+    const list = order(params('design'));
+    expect(list).not.toContain('d-sf-3d'); // now in Berlin
+    expect(list).toContain('d-berlin-3d'); // now in SF
+  });
+
+  it('engineering ignores location entirely: swapping two of them changes nothing', () => {
     const first = order(params('engineering'));
     db.update(postings).set(BERLIN).where(eq(postings.id, idOf('e-sf-3d'))).run();
     db.update(postings).set(SF).where(eq(postings.id, idOf('e-berlin-3d'))).run();
 
-    // Same query, same rows, locations exchanged - identical ordering, unlike Design.
+    // Same query, same rows, locations exchanged - identical result, unlike Design.
     expect(order(params('engineering'))).toEqual(first);
-  });
-
-  it('key 3: identical through posted_at, entry sorts above mid', () => {
-    before(order(params('engineering')), 'e-tie-entry', 'e-tie-mid');
-  });
-
-  it('key 1: the 24h band leads, and inside it posted_at descends', () => {
-    const list = order(params('engineering'));
-    before(list, 'e-voice', 'e-intern-summer'); // 3h before 5h, both fresh
-    before(list, 'e-intern-summer', 'e-sf-3d'); // fresh band before everything older
   });
 });
 
@@ -120,7 +154,7 @@ describe('SQL geo tier matches lib/geo.ts', () => {
   it('agrees with geoTier() on every fixture', () => {
     const rows = db
       .select({
-        tier: geoRank(),
+        tier: geoTierSql(),
         cityNorm: postings.cityNorm,
         state: postings.state,
         country: postings.country,
@@ -230,7 +264,16 @@ describe('filters', () => {
     expect(narrowed).not.toContain('e-remote-mid'); // remote, but full-time
   });
 
-  it('season chips filter internships', () => {
+  it('design: the window and a group narrow together', () => {
+    const week = order(params('design', { posted: 'week' }));
+    expect(week).toContain('d-sf-3d'); // 3 days old
+    expect(week).not.toContain('d-freelance'); // 11 days old
+    expect(order(params('design', { posted: 'week', type: ['internship'] }))).toEqual([
+      'd-unpaid-intern',
+    ]);
+  });
+
+  it('season filters internships', () => {
     expect(order(params('engineering', { season: ['summer'] }))).toEqual(['e-intern-summer']);
   });
 
@@ -243,6 +286,43 @@ describe('filters', () => {
     const p = params('design', { type: ['part-time'], mode: ['remote'] });
     expect(order(p)).toEqual([]);
     expect(tabIsEmpty(db, p, NOW)).toBe(false);
+  });
+});
+
+describe('the filter controls write the URL', () => {
+  const p = params('engineering');
+
+  function reparse(url: string): Params {
+    return parseParams(Object.fromEntries(new URL(`http://workie.local${url}`).searchParams));
+  }
+
+  it('what a dropdown writes is what it then shows as selected', () => {
+    const chosen = reparse(withGroup(p, 'mode', 'remote'));
+    expect(chosen.mode).toEqual(['remote']);
+    // The select's value is the href of the option matching the current params, so the option
+    // that was chosen is the one that comes back selected.
+    expect(withGroup(chosen, 'mode', chosen.mode[0] ?? null)).toBe(withGroup(p, 'mode', 'remote'));
+  });
+
+  it('a badge click lands on exactly the URL its dropdown option would', () => {
+    expect(toggle(p, 'mode', 'remote')).toBe(withGroup(p, 'mode', 'remote'));
+  });
+
+  it('clicking the badge that is already selected clears the group', () => {
+    const on = reparse(withGroup(p, 'mode', 'remote'));
+    expect(reparse(toggle(on, 'mode', 'remote')).mode).toEqual([]);
+  });
+
+  it('"any" clears the group, and clears the window', () => {
+    const on = reparse(withPosted(reparse(withGroup(p, 'level', 'junior')), 'day'));
+    expect(on.level).toEqual(['junior']);
+    expect(on.posted).toBe('day');
+    expect(reparse(withGroup(on, 'level', null)).level).toEqual([]);
+    expect(reparse(withPosted(on, null)).posted).toBeNull();
+  });
+
+  it('filtering closes the drawer rather than carrying it along', () => {
+    expect(withGroup({ ...p, job: 12 }, 'mode', 'remote')).not.toContain('job=');
   });
 });
 

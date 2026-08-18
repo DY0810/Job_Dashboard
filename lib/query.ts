@@ -2,17 +2,16 @@
  * Every filter and both sort orders, compiled to SQL. Sorting in the database rather than in
  * JS is what keeps the page a single round trip and the row cap honest.
  *
- * The two tabs differ in one key: Design is geo-weighted, Engineering is not.
+ * Both tabs sort the same way — newest first, entry/junior above mid. The tabs differ in one
+ * place only: Design hides everything outside the target locations, Engineering hides nothing.
  */
 
-import { and, asc, desc, eq, gte, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, like, ne, or, sql, type SQL } from 'drizzle-orm';
 import { cutoffTimestamp } from './dedupe.ts';
 import type { Db } from './db/index.ts';
 import { postings } from './db/schema.ts';
 import { GEO_TIER } from './geo.ts';
 import { VISIBLE_SENIORITY, WINDOW_MS, type Params } from './params.ts';
-
-const DAY_MS = WINDOW_MS.day;
 
 /** The table never selects `description` — ~2k full bodies is ~8MB the table cannot use. */
 const ROW = {
@@ -35,18 +34,13 @@ const ROW = {
   canonicalUrl: postings.canonicalUrl,
 } as const;
 
-/** Sort key 1 on both tabs: 1 for the last-24h band, 0 for everything below it. */
-function freshBucket(now: number): SQL<number> {
-  return sql<number>`(case when ${postings.postedAt} >= ${now - DAY_MS} then 1 else 0 end)`;
-}
-
 /**
- * Sort key 2 on the Design tab only. Mirrors `geoTier()` in SQL — the tier *numbers* and the
- * metro list are read from `GEO_TIER` so it stays the single editable constant, and
- * `query.test.ts` cross-checks this expression against `geoTier()` over the whole fixture
- * corpus — which is the only reason it is exported — so the two cannot drift apart silently.
+ * The Design tab's location filter, and nothing else's. Mirrors `geoTier()` in SQL — the tier
+ * *numbers* and the metro list are read from `GEO_TIER` so it stays the single editable
+ * constant, and `query.test.ts` cross-checks this expression against `geoTier()` over the whole
+ * fixture corpus — which is the only reason it is exported — so the two cannot drift silently.
  */
-export function geoRank(): SQL<number> {
+export function geoTierSql(): SQL<number> {
   const metros = sql.join(
     GEO_TIER.metros.map((m) => sql`${m}`),
     sql`, `,
@@ -59,8 +53,8 @@ export function geoRank(): SQL<number> {
 }
 
 /**
- * Last sort key on both tabs: entry and junior above mid (finding F). Entry outranks junior
- * too — the spec only pins both above mid, and a total order beats an arbitrary one.
+ * Sort key 2 on both tabs: entry and junior above mid (finding F). Entry outranks junior too —
+ * the spec only pins both above mid, and a total order beats an arbitrary one.
  */
 const seniorityRank = sql<number>`(case ${postings.seniority}
   when 'entry' then 0 when 'junior' then 1 when 'mid' then 2 else 3 end)`;
@@ -80,6 +74,11 @@ function visible(now: number): SQL[] {
 
 function where(p: Params, now: number): SQL {
   const parts: (SQL | undefined)[] = [eq(postings.track, p.tab), ...visible(now)];
+
+  // Design shows the target locations only: the metros, the rest of California, and remote.
+  // A *view* filter, not an ingest one — every location is still stored, and Engineering still
+  // shows all of them. `GEO_TIER.elsewhere` is the one place "everywhere else" is named.
+  if (p.tab === 'design') parts.push(ne(geoTierSql(), GEO_TIER.elsewhere));
 
   if (p.posted) parts.push(gte(postings.postedAt, new Date(now - WINDOW_MS[p.posted])));
   if (p.type.length) parts.push(inArray(postings.employmentType, p.type as never[]));
@@ -106,15 +105,17 @@ function where(p: Params, now: number): SQL {
   return and(...parts)!;
 }
 
-function orderBy(p: Params, now: number) {
-  const fresh = desc(freshBucket(now));
-  return p.tab === 'design'
-    ? [fresh, asc(geoRank()), desc(postings.postedAt), asc(seniorityRank)]
-    : [fresh, desc(postings.postedAt), asc(seniorityRank)];
-}
-
+/**
+ * Recency first, then seniority — the same two keys on both tabs. There is no last-24h bucket
+ * key: `posted_at desc` already puts the newest on top, so a bucket above it changed nothing.
+ */
 export function listPostings(db: Db, p: Params, now: number = Date.now()) {
-  return db.select(ROW).from(postings).where(where(p, now)).orderBy(...orderBy(p, now)).all();
+  return db
+    .select(ROW)
+    .from(postings)
+    .where(where(p, now))
+    .orderBy(desc(postings.postedAt), asc(seniorityRank))
+    .all();
 }
 
 export type Row = ReturnType<typeof listPostings>[number];

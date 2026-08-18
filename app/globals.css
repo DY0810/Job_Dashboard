@@ -264,6 +264,40 @@
   transform: scale(0.97);
 }
 
+/* ───────────────────────────────────────────────────────────────────── selects ──
+ * The filter row. Native <select>, so the popup, the keyboard and the mobile picker are the
+ * platform's; only the box is ours, and it borrows the chip's language so the two read as one
+ * family of control. The state transition below is MOTION 2/3 again — the same control
+ * changing the same state — not a fourth animation.
+ */
+.select {
+  border: 1px solid var(--rule);
+  background: transparent;
+  padding: 1px 2px 0 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-stretch: 100%;
+  line-height: 16px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--ease-state),
+    border-color 120ms var(--ease-state),
+    color 120ms var(--ease-state);
+}
+
+.select:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+
+/* A group with a filter set, marked the way an active chip is marked. */
+.select[data-on="true"] {
+  background: var(--surface);
+  border-color: var(--fg-dim);
+  color: var(--fg);
+}
+
 /* ────────────────────────────────────────────────────────────────────── drawer ──
  * Native <dialog>: Esc, the top layer, the backdrop and focus return are all
  * platform behaviour.
@@ -345,7 +379,8 @@ dialog.drawer[open]::backdrop {
  */
 @media (prefers-reduced-motion: reduce) {
   .rows td,
-  .chip {
+  .chip,
+  .select {
     transition: none;
   }
 

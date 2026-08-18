@@ -272,7 +272,7 @@ export default async function Page({
         <table className="rows">
             <caption className="sr-only">
               {p.tab} postings, newest first
-              {p.tab === "design" ? ", target metros above the rest" : ""}
+              {p.tab === "design" ? ", target locations only" : ""}
             </caption>
             <thead>
               <tr>
