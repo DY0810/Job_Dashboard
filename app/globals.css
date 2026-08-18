@@ -1,1 +1,285 @@
 @import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────── tokens ──
+ * Both palettes are declared here, unconditionally, and the active set is assigned
+ * here too — so no token's only definition lives inside a media query. The blocks
+ * below re-point the active tokens; they never introduce one, and they never carry
+ * a literal colour, so the two dark blocks cannot drift apart.
+ *
+ * OKLCH throughout, neutrals carrying 0.006–0.012 chroma toward hue 75 so the greys
+ * and the sodium-amber accent read as one system. Never pure black, never pure white.
+ * Measured contrast for every pair below is asserted in lib/contrast.test.ts.
+ */
+:root {
+  --light-canvas: oklch(0.975 0.006 75);
+  --light-surface: oklch(0.928 0.008 75);
+  --light-rule: oklch(0.9 0.008 75);
+  --light-fg: oklch(0.25 0.01 75);
+  --light-fg-dim: oklch(0.48 0.012 75);
+  --light-fg-faint: oklch(0.66 0.012 75);
+  --light-accent: oklch(0.52 0.14 75);
+  --light-scrim: oklch(0.25 0.01 75 / 0.45);
+
+  --dark-canvas: oklch(0.16 0.006 75);
+  --dark-surface: oklch(0.225 0.008 75);
+  --dark-rule: oklch(0.3 0.008 75);
+  --dark-fg: oklch(0.93 0.008 75);
+  --dark-fg-dim: oklch(0.72 0.01 75);
+  --dark-fg-faint: oklch(0.52 0.01 75);
+  --dark-accent: oklch(0.8 0.14 75);
+  --dark-scrim: oklch(0.12 0.006 75 / 0.6);
+
+  --canvas: var(--light-canvas);
+  --surface: var(--light-surface);
+  --rule: var(--light-rule);
+  --fg: var(--light-fg);
+  --fg-dim: var(--light-fg-dim);
+  --fg-faint: var(--light-fg-faint);
+  --accent: var(--light-accent);
+  --scrim: var(--light-scrim);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: var(--dark-canvas);
+    --surface: var(--dark-surface);
+    --rule: var(--dark-rule);
+    --fg: var(--dark-fg);
+    --fg-dim: var(--dark-fg-dim);
+    --fg-faint: var(--dark-fg-faint);
+    --accent: var(--dark-accent);
+    --scrim: var(--dark-scrim);
+    color-scheme: dark;
+  }
+}
+
+/* A manual choice outranks the system in both directions. */
+:root[data-theme="dark"] {
+  --canvas: var(--dark-canvas);
+  --surface: var(--dark-surface);
+  --rule: var(--dark-rule);
+  --fg: var(--dark-fg);
+  --fg-dim: var(--dark-fg-dim);
+  --fg-faint: var(--dark-fg-faint);
+  --accent: var(--dark-accent);
+  --scrim: var(--dark-scrim);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-rule: var(--rule);
+  --color-fg: var(--fg);
+  --color-fg-dim: var(--fg-dim);
+  --color-fg-faint: var(--fg-faint);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ──────────────────────────────────────────────────────────────────────── base ── */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--fg);
+    font-family: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+    font-synthesis-weight: none;
+    font-size: 13px;
+    line-height: 1.15;
+  }
+
+  /* One ring, both themes. `fg` is the maximum-contrast token against every surface. */
+  :focus-visible {
+    outline: 2px solid var(--fg);
+    outline-offset: 1px;
+    border-radius: 1px;
+  }
+
+  ::selection {
+    background: var(--surface);
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  [aria-disabled="true"],
+  :disabled {
+    color: var(--fg-faint);
+    cursor: not-allowed;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────── widths ──
+ * Archivo's `wdth` axis, used for a functional reason rather than a decorative one:
+ * narrow buys column width in the table, wide separates the tab labels from data.
+ */
+.w-narrow {
+  font-stretch: 85%;
+}
+
+.w-wide {
+  font-stretch: 115%;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ──────────────────────────────────────────────────────────────────────── table ──
+ * Density is the feature: ~22px rows put roughly 30 postings on screen without
+ * scrolling. Hairline rules, no cards, no zebra striping.
+ */
+.rows {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  font-stretch: 85%;
+}
+
+.rows thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--canvas);
+}
+
+.rows th {
+  border-bottom: 1px solid var(--rule);
+  padding: 6px 10px 5px 0;
+  text-align: left;
+  font-weight: 500;
+  font-size: 10px;
+  font-stretch: 100%;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.rows td {
+  border-bottom: 1px solid var(--rule);
+  padding: 4px 10px 3px 0;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+/* The one column that absorbs the slack, and truncates rather than wrapping a row. */
+.rows td.grow,
+.rows th.grow {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rows td:last-child,
+.rows th:last-child {
+  padding-right: 0;
+  text-align: right;
+}
+
+/* The band label: the one place the accent is spent. It spans every column, so it also has
+   to opt out of the last-column right alignment. */
+.band th {
+  text-align: left;
+  padding-top: 14px;
+  color: var(--fg-dim);
+  border-bottom-color: var(--rule);
+}
+
+.band-fresh th {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.band:first-child th {
+  padding-top: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────── chips ──
+ * Badges are controls: surface + 1px rule, never the accent. The accent means
+ * "posted in the last 24 hours" and nothing else.
+ */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--rule);
+  padding: 1px 6px 0;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--fg-dim);
+}
+
+.chip:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+
+.chip[aria-current="true"] {
+  background: var(--surface);
+  border-color: var(--fg-dim);
+  color: var(--fg);
+}
+
+.chip[aria-disabled="true"] {
+  color: var(--fg-faint);
+  border-color: var(--rule);
+  background: none;
+  pointer-events: none;
+}
+
+.chip:active {
+  transform: scale(0.97);
+}
+
+/* There is no animation in this phase at all; the press feedback above is the only motion
+   of any kind, and it goes too. */
+@media (prefers-reduced-motion: reduce) {
+  .chip:active {
+    transform: none;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────── drawer ──
+ * Native <dialog>: Esc, the top layer, the backdrop and focus return are all
+ * platform behaviour. Motion is a later pass — this ships static on purpose.
+ */
+dialog.drawer {
+  margin: 0 0 0 auto;
+  height: 100dvh;
+  max-height: 100dvh;
+  width: min(34rem, 100vw);
+  max-width: 100vw;
+  padding: 0;
+  border: none;
+  border-left: 1px solid var(--rule);
+  background: var(--canvas);
+  color: var(--fg);
+  overflow: hidden;
+}
+
+dialog.drawer::backdrop {
+  background: var(--scrim);
+}
+
+.prose {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg-dim);
+}
+
+.prose strong {
+  color: var(--fg);
+  font-weight: 500;
+}

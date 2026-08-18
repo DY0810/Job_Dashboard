@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "ingest": "node scripts/ingest.ts",
+    "seed": "node scripts/seed.ts",
     "enrich": "node scripts/enrich.ts",
     "linkcheck": "node scripts/linkcheck.ts",
     "db:generate": "drizzle-kit generate",
