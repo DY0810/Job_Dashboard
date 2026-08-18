@@ -5,20 +5,21 @@
  * database once per ingest. It owns `posting_sources.absence_count` outright — nothing else
  * writes that column — so the whole delisting rule is readable in one file.
  *
- * THE PROPERTY THAT MATTERS. An absence counts only when that source's `connector_runs` row
- * for THIS run is `ok`. Everything else — a connector that 500d, a connector skipped for its
- * minimum interval, a connector skipped for a missing API key — leaves its rows untouched.
- * Getting this wrong wipes a source's whole inventory after one bad afternoon, and the damage
- * is invisible: a delisted posting looks exactly like a company that stopped hiring. That is
- * why the caller passes the `ok` connectors explicitly rather than this file inferring them.
+ * THE PROPERTY THAT MATTERS. A posting is aged toward delisting only by a source that
+ * ANSWERED COMPLETELY this run. Not a connector that errored, not one skipped for its minimum
+ * interval, not one skipped for a missing API key — and not one that returned a partial
+ * catalogue, which is the case the connector-level `ok` status alone does not catch. Getting
+ * this wrong wipes a source's inventory after one bad afternoon, and the damage is invisible:
+ * a delisted posting looks exactly like a company that stopped hiring. That is why the caller
+ * passes the eligible connectors explicitly rather than this file inferring them from status.
  *
  * Per-connector cadence made the second hazard live. Before it, every connector ran every
- * cycle, so "not in the ok list" only ever meant failure. Now a source polled every six hours
- * sits out eleven cycles in twelve, and counting those would delist its whole catalogue
- * within the hour. The `IN (ok connectors)` clause on the UPDATE is what stops it.
+ * cycle, so "not eligible" only ever meant failure. Now a source polled every six hours sits
+ * out eleven cycles in twelve, and counting those would delist its whole catalogue within the
+ * hour. The `IN (eligible connectors)` clause on the UPDATE is what stops it.
  */
 
-import { and, inArray, isNull, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { GHOST_ABSENCE_THRESHOLD } from '../lib/dedupe.ts';
 import type { Db } from '../lib/db/index.ts';
@@ -28,54 +29,20 @@ export interface GhostOptions {
   /** The run whose sightings count as "seen"; matched against `posting_sources.last_seen_run`. */
   runId: string;
   /**
-   * Connector names whose `connector_runs` row for this run is `ok`. NOT the connectors that
-   * were selected, or attempted, or configured — only the ones that actually answered.
+   * Connector names entitled to age their own postings this run. NOT the connectors that were
+   * selected, or attempted, or that merely returned `ok` — see `ghostEligible` in `ingest.ts`.
    */
   okConnectors: string[];
-  /**
-   * Postings that were already ghosts before this run's postings were written, from
-   * `ghostPostingIds()`. See that function for why the caller has to take the snapshot.
-   */
-  wasGhost: ReadonlySet<number>;
   now?: Date;
 }
 
 export interface GhostStats {
-  /** Source rows belonging to an `ok` connector this run — the only rows we may judge. */
+  /** Source rows belonging to an eligible connector — the only rows we may judge. */
   polled: number;
   /** Of those, the ones their source did not list this run. */
   absent: number;
   delisted: number;
   restored: number;
-}
-
-/**
- * Postings every one of whose sources has gone quiet — `isGhost`, as SQL, so the whole corpus
- * is one statement rather than 5,000 round trips. `MIN(absence_count) >= threshold` is
- * `sources.every(...)`, and `GROUP BY` only yields a row for a posting that HAS sources, which
- * is `sources.length > 0`. `ghost.test.ts` asserts the two agree.
- *
- * **Call this BEFORE the run's postings are persisted.** It is the only thing separating a
- * posting this pass killed from one `linkcheck` killed, and the two must not be confused:
- *
- *   - A posting `linkcheck` delisted has absence counts of zero — its sources still list it,
- *     the apply URL just serves a gone page. It is not in this snapshot, so the restore below
- *     skips it, and `linkcheck`'s verdict survives the 48 ingests a day that follow it.
- *   - A posting THIS pass delisted has every count at or past the threshold, so it is in the
- *     snapshot and a genuine reappearance restores it.
- *
- * Taken after persisting instead, a posting that reappears would already have been reset to
- * zero (or gained a fresh source row at zero) and would drop out of the snapshot — leaving it
- * delisted forever while a live source keeps listing it. Same invisible failure, other sign.
- */
-export function ghostPostingIds(db: Db): Set<number> {
-  const rows = db
-    .select({ id: postingSources.postingId })
-    .from(postingSources)
-    .groupBy(postingSources.postingId)
-    .having(sql`min(${postingSources.absenceCount}) >= ${GHOST_ABSENCE_THRESHOLD}`)
-    .all();
-  return new Set(rows.map((row) => row.id));
 }
 
 export function runGhostPass(db: Db, options: GhostOptions): GhostStats {
@@ -98,7 +65,7 @@ export function runGhostPass(db: Db, options: GhostOptions): GhostStats {
     stats.absent = tally?.absent ?? 0;
 
     // `nextAbsenceCount` as one statement: seen resets to 0, absent increments. Restricted to
-    // sources whose connector returned `ok` this run — the load-bearing clause in this file.
+    // sources eligible this run — the load-bearing clause in this file.
     tx.update(postingSources)
       .set({
         absenceCount: sql`case when ${postingSources.lastSeenRun} = ${options.runId} then 0 else ${postingSources.absenceCount} + 1 end`,
@@ -106,34 +73,37 @@ export function runGhostPass(db: Db, options: GhostOptions): GhostStats {
       .where(mine)
       .run();
 
+    /**
+     * `isGhost` from `lib/dedupe.ts`, as SQL, so the whole corpus is one statement rather than
+     * 5,000 round trips. `MIN(absence_count) >= threshold` is `sources.every(...)`, and
+     * `GROUP BY` only yields a row for a posting that HAS sources, which is `length > 0`.
+     * `ghost.test.ts` asserts the two spellings answer the same thing.
+     *
+     * ponytail: `min()` spans every source row, including sources whose connector no longer
+     * runs at all — an expired key, a host that started refusing robots, a connector dropped
+     * from the list. Such a source freezes below the threshold and its postings become
+     * undelistable here. That errs the safe way (a dead job stays visible rather than a live
+     * one vanishing) and `linkcheck` marks those links weekly regardless. If it ever needs
+     * fixing, exclude sources whose connector has no `ok` run inside some window.
+     */
     const isGhostNow = sql`${postings.id} in (select ${postingSources.postingId} from ${postingSources}
       group by ${postingSources.postingId} having min(${postingSources.absenceCount}) >= ${GHOST_ABSENCE_THRESHOLD})`;
 
-    // Delisting needs no snapshot: `delisted_at is null` already excludes everything we (or
-    // linkcheck) marked earlier, so this only ever fires on the transition into ghosthood.
     stats.delisted = tx
       .update(postings)
-      .set({ delistedAt: now })
+      .set({ delistedAt: now, delistedReason: 'ghost' })
       .where(and(isNull(postings.delistedAt), isGhostNow))
       .run().changes;
 
-    // Restoring does. Only a posting THIS pass had judged dead may be brought back — see
-    // `ghostPostingIds`. ponytail: `inArray` binds one parameter per id against SQLite's
-    // 32,766 limit; the corpus is ~5k postings, so a full-corpus restore fits six times over.
-    // If it ever grows past that, chunk this list.
-    if (options.wasGhost.size > 0) {
-      stats.restored = tx
-        .update(postings)
-        .set({ delistedAt: null })
-        .where(
-          and(
-            isNotNull(postings.delistedAt),
-            inArray(postings.id, [...options.wasGhost]),
-            sql`not (${isGhostNow})`,
-          ),
-        )
-        .run().changes;
-    }
+    // A reappearance clears only what THIS pass delisted. `linkcheck` marks postings whose
+    // sources still list them — absence counts of zero — so "no longer a ghost" is true of
+    // them from the moment they are marked, and without the reason column this statement
+    // would undo every weekly link check within half an hour.
+    stats.restored = tx
+      .update(postings)
+      .set({ delistedAt: null, delistedReason: null })
+      .where(and(eq(postings.delistedReason, 'ghost'), sql`not (${isGhostNow})`))
+      .run().changes;
   });
 
   return stats;

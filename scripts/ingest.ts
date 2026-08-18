@@ -29,7 +29,7 @@ import {
   type Runtime,
 } from '../lib/runtime.ts';
 import { connectors as allConnectors } from './connectors/index.ts';
-import { formatGhostStats, ghostPostingIds, runGhostPass, type GhostStats } from './ghost.ts';
+import { formatGhostStats, runGhostPass, type GhostStats } from './ghost.ts';
 import { recordingRuntime, saveFixture, type Fixture } from './connectors/fixtures.ts';
 
 export interface ConnectorRunRecord {
@@ -40,6 +40,8 @@ export interface ConnectorRunRecord {
   merged: number;
   durationMs: number;
   error: string | null;
+  /** Reasons the connector answered with less than its whole catalogue. See `ghostEligible`. */
+  degraded: string[];
 }
 
 export interface IngestOptions {
@@ -105,10 +107,42 @@ export function lastSuccessByConnector(db: Db): Map<string, number> {
   return new Map(rows.map((row) => [row.connector, row.at]));
 }
 
-/** ms until this connector may next be polled; 0 when it is due now. */
+/**
+ * May this run's answer from this connector age its postings toward delisting?
+ *
+ * `status === 'ok'` is necessary and NOT sufficient. Finding C's rule is really "the source
+ * told us its whole catalogue and this posting was not in it", and there are two ways an `ok`
+ * run fails that test:
+ *
+ *   - **Partial.** An ATS connector fans out over ~45 company boards and swallows one board's
+ *     failure so the other 44 still land. The run is `ok` while an arbitrary slice of the
+ *     catalogue is missing, and the missing slice would be delisted an hour later.
+ *   - **Empty.** `body.jobs ?? []` turns a changed response shape into zero postings rather
+ *     than a throw. Two such runs and the connector's entire inventory goes. A source that
+ *     returned nothing cannot tell us the difference between "the board is empty" and "we
+ *     lost the board", so it does not get to decide.
+ *
+ * The cost of being wrong this way round is a dead posting staying visible until the weekly
+ * `linkcheck` marks it. The cost the other way round is a live posting silently vanishing,
+ * which is the failure the whole phase exists to prevent.
+ */
+export function ghostEligible(record: ConnectorRunRecord): boolean {
+  return record.status === 'ok' && record.degraded.length === 0 && record.fetched > 0;
+}
+
+/**
+ * ms until this connector may next be polled; 0 when it is due now.
+ *
+ * The minute of slack is the same jitter argument that keeps `minIntervalMs` off the ATS
+ * connectors. An hourly connector on a 30-minute cycle is due after exactly two cycles, so a
+ * cycle landing a second early would skip it and push the real interval to 90 minutes. The
+ * interval is a politeness floor, not a deadline; a minute under it costs nobody anything.
+ */
+const CADENCE_SLACK_MS = 60_000;
+
 export function dueIn(connector: Connector, lastOk: number | undefined, now: number): number {
   if (connector.minIntervalMs === undefined || lastOk === undefined) return 0;
-  return Math.max(0, lastOk + connector.minIntervalMs - now);
+  return Math.max(0, lastOk + connector.minIntervalMs - CADENCE_SLACK_MS - now);
 }
 
 export async function runIngest(options: IngestOptions): Promise<IngestResult> {
@@ -167,10 +201,12 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
   const settled = await Promise.allSettled(
     active.map(async (connector): Promise<Outcome> => {
       const began = Date.now();
+      const degraded: string[] = [];
       const context = {
         runtime: options.runtimeFor?.(connector) ?? options.runtime,
         env,
         log: (record: Record<string, unknown>) => log({ run: runId, ...record }),
+        degraded: (reason: string) => degraded.push(reason),
       };
       try {
         const fetched = await connector.fetch(context);
@@ -188,7 +224,11 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
             newPostings: 0,
             merged: 0,
             durationMs: Date.now() - began,
-            error: null,
+            // A partial answer is still a successful run — it is only barred from ageing
+            // postings. Recorded here so `npm run status` shows it rather than reporting a
+            // connector as healthy while a third of its boards are silently missing.
+            error: degraded.length > 0 ? `partial: ${degraded.length} of ${degraded.length + 1}+ targets failed` : null,
+            degraded,
           },
         };
       } catch (error) {
@@ -204,6 +244,7 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
             durationMs: Date.now() - began,
             // Carries the connector name (the `connector` field) and never a credential.
             error: message(error),
+            degraded,
           },
         };
       }
@@ -226,6 +267,7 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
             merged: 0,
             durationMs: 0,
             error: message(result.reason),
+            degraded: [],
           },
         },
   );
@@ -234,9 +276,8 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
 
   // `--since` drops postings the source DID still list, which would read as an absence and
   // delist live jobs after two such runs. It is a debugging flag; the ghost pass sits it out.
-  const ghosting = !options.dryRun && options.since === undefined && harvested.length > 0;
-  // Snapshot before persist — `ghostPostingIds` explains why the order is load-bearing.
-  const wasGhost = ghosting ? ghostPostingIds(db) : new Set<number>();
+  const eligible = outcomes.filter((outcome) => ghostEligible(outcome.record));
+  const ghosting = !options.dryRun && options.since === undefined && eligible.length > 0;
 
   const counts = options.dryRun
     ? new Map<string, { newPostings: number; merged: number }>()
@@ -271,13 +312,12 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
       .run();
   }
 
-  // AFTER the `connector_runs` rows are written, and fed the same `ok` list they record.
-  // Only a connector that actually answered may age its own postings toward delisting.
+  // AFTER the `connector_runs` rows are written. Only a connector that answered COMPLETELY
+  // may age its own postings toward delisting — see `ghostEligible`.
   const ghost = ghosting
     ? runGhostPass(db, {
         runId,
-        okConnectors: harvested.map((outcome) => outcome.connector.name),
-        wasGhost,
+        okConnectors: eligible.map((outcome) => outcome.connector.name),
         now: new Date(now()),
       })
     : null;
@@ -295,6 +335,7 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
     failed: failures,
     skipped: skipped.length,
     skippedCadence: skipped.filter((skip) => skip.kind === 'cadence').length,
+    ghostEligible: eligible.length,
     fetched: runs.reduce((total, run) => total + run.fetched, 0),
     newPostings: runs.reduce((total, run) => total + run.newPostings, 0),
     merged: runs.reduce((total, run) => total + run.merged, 0),

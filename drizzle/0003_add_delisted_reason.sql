@@ -1,0 +1,1 @@
+ALTER TABLE `postings` ADD `delisted_reason` text;

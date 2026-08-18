@@ -24,6 +24,7 @@ npm run refresh      # one full cycle, exactly as launchd runs it
 launchd user agent (from the repo root) to have it run every 30 minutes:
 
 ```bash
+mkdir -p logs   # launchd opens StandardOutPath before the script runs; it will not create it
 sed -e "s|__WORKIE_DIR__|$PWD|g" -e "s|__NODE_BIN__|$(dirname "$(command -v node)")|g" \
   scripts/com.workie.refresh.plist > ~/Library/LaunchAgents/com.workie.refresh.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.workie.refresh.plist

@@ -25,14 +25,21 @@ function stubRuntime(body: string): Runtime {
   };
 }
 
-function replay(name: string): { context: ConnectorContext; logs: Record<string, unknown>[] } {
+function replay(name: string): {
+  context: ConnectorContext;
+  logs: Record<string, unknown>[];
+  degraded: string[];
+} {
   const logs: Record<string, unknown>[] = [];
+  const degraded: string[] = [];
   return {
     logs,
+    degraded,
     context: {
       runtime: fixtureRuntime(loadFixture(name)),
       env: {},
       log: (record) => logs.push(record),
+      degraded: (reason) => degraded.push(reason),
     },
   };
 }
@@ -116,10 +123,12 @@ describe('ATS per-target isolation (Phase 3 gate)', () => {
   });
 
   it('fails the connector only when EVERY target failed', async () => {
+    const degraded: string[] = [];
     const context: ConnectorContext = {
       runtime: fixtureRuntime({}),
       env: {},
       log: () => {},
+      degraded: (reason) => degraded.push(reason),
     };
     await expect(greenhouse.fetch(context)).rejects.toThrow(/all \d+ greenhouse targets failed/);
   });

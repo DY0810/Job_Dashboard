@@ -35,7 +35,7 @@ export interface ConnectorStatus {
   fetched: number;
   newPostings: number;
   merged: number;
-  /** Live (not delisted, inside the 60-day window) postings this connector is a source of. */
+  /** Postings this connector is a source of that are not delisted and inside the 60-day window. */
   live: number;
   /** ms until it may next be polled, or null when it has no minimum interval. */
   dueInMs: number | null;
@@ -45,7 +45,17 @@ export interface ConnectorStatus {
 export interface Status {
   now: number;
   connectors: ConnectorStatus[];
-  totals: { postings: number; live: number; delisted: number; enriched: number; design: number; engineering: number };
+  totals: {
+    postings: number;
+    live: number;
+    delisted: number;
+    /** Of the delisted: gone from their sources vs. apply link dead. */
+    ghosted: number;
+    deadLink: number;
+    enriched: number;
+    design: number;
+    engineering: number;
+  };
   /** Postings added across the last `runs` runs, most recent first. */
   recent: { runId: string; startedAt: number; connectors: number; ok: number; newPostings: number }[];
 }
@@ -102,9 +112,13 @@ export function collectStatus(
 
   const totals = {
     postings: count(),
-    // `live` is what the two tabs actually show: not delisted AND inside the 60-day window.
+    // NOT the number the two tabs show. `lib/query.ts:visible()` also drops `senior+` and
+    // anything with a null track, and each tab then selects its own — this is the corpus
+    // that survived ingest and the ghost pass, which is what an ops readout is about.
     live: count(and(isNull(postings.delistedAt), gte(postings.postedAt, cutoff))),
     delisted: count(isNotNull(postings.delistedAt)),
+    ghosted: count(eq(postings.delistedReason, 'ghost')),
+    deadLink: count(eq(postings.delistedReason, 'linkcheck')),
     enriched: count(isNotNull(postings.enrichedAt)),
     design: count(eq(postings.track, 'design')),
     engineering: count(eq(postings.track, 'engineering')),
@@ -116,7 +130,9 @@ export function collectStatus(
       startedAt: sql<number>`max(${connectorRuns.startedAt})`,
       connectors: sql<number>`count(*)`,
       ok: sql<number>`sum(${connectorRuns.status} = 'ok')`,
-      newPostings: sql<number>`sum(${connectorRuns.newPostings})`,
+      // Counted off `postings`, not `sum(connector_runs.new_postings)`: that column is bumped
+      // once per SOURCE row, so a posting first seen with three sources would count as three.
+      newPostings: sql<number>`(select count(*) from ${postings} where ${postings.firstSeenRun} = ${connectorRuns.runId})`,
     })
     .from(connectorRuns)
     .groupBy(connectorRuns.runId)
@@ -200,7 +216,8 @@ export function formatStatus(status: Status): string {
     line(width.map((n) => '-'.repeat(n))),
     ...rows.map(line),
     '',
-    `postings  ${totals.postings} total · ${totals.live} live · ${totals.delisted} delisted · ${totals.enriched} enriched`,
+    `postings  ${totals.postings} total · ${totals.live} live · ${totals.enriched} enriched`,
+    `delisted  ${totals.delisted} total · ${totals.ghosted} gone from source · ${totals.deadLink} dead link`,
     `tracks    ${totals.design} design · ${totals.engineering} engineering`,
     '',
     'recent runs',

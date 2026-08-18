@@ -542,6 +542,17 @@ export interface ConnectorContext {
   env: Record<string, string | undefined>;
   /** One structured JSON line. Never pass a raw URL with a query string. */
   log(record: Record<string, unknown>): void;
+  /**
+   * "I answered, but this is not my whole catalogue."
+   *
+   * A fan-out connector — the ATS ones poll ~45 company boards each — swallows one target's
+   * failure so the other 44 still land, and reports `ok`. Ghost detection would then read the
+   * missing board's postings as deliberately withdrawn and delist them an hour later: finding
+   * C's mass false-delist, reappearing one level below the `connector_runs.status` guard that
+   * was supposed to prevent it. Calling this keeps the run `ok` and its postings persisted,
+   * and only bars it from ageing anything toward delisting this cycle.
+   */
+  degraded(reason: string): void;
 }
 
 export interface Connector {

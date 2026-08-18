@@ -21,6 +21,16 @@ export const postings = sqliteTable('postings', {
   postedAt: integer('posted_at', { mode: 'timestamp_ms' }).notNull(),
   /** Set by the ghost pass after 2 consecutive absences from *successful* polls (finding C). */
   delistedAt: integer('delisted_at', { mode: 'timestamp_ms' }),
+  /**
+   * WHICH pass delisted this, and the reason the two do not undo each other.
+   *
+   * `ghost` — every source stopped listing it across two successful polls. Reversible: if a
+   * source lists it again the ghost pass clears both columns.
+   * `linkcheck` — its apply URL serves a gone page. The sources may well still list it, so
+   * its absence counts stay at zero and the ghost pass must NOT read "not a ghost" as
+   * "bring it back". Only `linkcheck` clears a `linkcheck` delisting.
+   */
+  delistedReason: text('delisted_reason', { enum: ['ghost', 'linkcheck'] }),
   firstSeenRun: text('first_seen_run').notNull(),
 
   // As listed by the highest-priority source. Display only — dedupe never reads these.

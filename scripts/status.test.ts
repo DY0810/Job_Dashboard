@@ -62,21 +62,22 @@ describe('npm run status', () => {
     const rows = Object.fromEntries(status.connectors.map((row) => [row.connector, row]));
 
     expect(rows.fast).toMatchObject({ lastStatus: 'ok', fetched: 1, newPostings: 1, live: 1, dueInMs: null });
-    // Polled 30 minutes ago on a 6-hour interval: five and a half hours still to wait.
-    expect(rows.slow).toMatchObject({ lastStatus: 'ok', dueInMs: 5.5 * 60 * 60 * 1000 });
+    // Polled 30 minutes ago on a 6-hour interval: five and a half hours still to wait, less
+    // the minute of slack that stops a cycle landing a second early from skipping it.
+    expect(rows.slow).toMatchObject({ lastStatus: 'ok', dueInMs: 5.5 * 60 * 60 * 1000 - 60_000 });
     // A connector that cannot run reports why, and never reports as due.
     expect(rows.keyed).toMatchObject({ lastStatus: null, disabled: 'SOME_KEY not set in .env.local' });
 
-    expect(status.totals).toMatchObject({ postings: 2, live: 2, delisted: 0 });
+    expect(status.totals).toMatchObject({ postings: 2, live: 2, delisted: 0, ghosted: 0, deadLink: 0 });
     expect(status.recent[0]).toMatchObject({ runId: 'run-0', ok: 2, newPostings: 2 });
   });
 
   it('counts a delisted posting out of `live` but keeps it in the total', async () => {
     const db = await seeded();
-    db.update(postings).set({ delistedAt: new Date(T0) }).run();
+    db.update(postings).set({ delistedAt: new Date(T0), delistedReason: 'linkcheck' }).run();
     const status = collectStatus(db, { connectors: [fast, slow], env: {}, now: T0 + CYCLE });
 
-    expect(status.totals).toMatchObject({ postings: 2, live: 0, delisted: 2 });
+    expect(status.totals).toMatchObject({ postings: 2, live: 0, delisted: 2, ghosted: 0, deadLink: 2 });
     expect(status.connectors.map((row) => row.live)).toEqual([0, 0]);
   });
 
@@ -88,10 +89,11 @@ describe('npm run status', () => {
 
     expect(text).toMatch(/^connector\s+last\s+when\s+fetched\s+new\s+live\s+next$/m);
     expect(text).toMatch(/^fast\s+ok\s+30m ago\s+1\s+1\s+1\s+every cycle$/m);
-    expect(text).toMatch(/^slow\s+ok\s+30m ago\s+1\s+1\s+1\s+in 5h 30m$/m);
+    expect(text).toMatch(/^slow\s+ok\s+30m ago\s+1\s+1\s+1\s+in 5h 29m$/m);
     expect(text).toMatch(/^keyed\s+off\s+never\s+0\s+0\s+0\s+-$/m);
     expect(text).toMatch(/^not running\n  keyed: SOME_KEY not set in \.env\.local$/m);
-    expect(text).toContain('2 total · 2 live · 0 delisted');
+    expect(text).toContain('postings  2 total · 2 live');
+    expect(text).toContain('delisted  0 total · 0 gone from source · 0 dead link');
   });
 
   it.each([

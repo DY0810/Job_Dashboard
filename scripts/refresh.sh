@@ -15,6 +15,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
+# launchd starts this with a bare environment, so nothing has read `.env.local` — without
+# this every keyed connector is permanently "skipped: KEY not set" under the scheduler while
+# working fine when you run it from a shell.
+set -a
+# shellcheck disable=SC1091
+[ -f "$ROOT/.env.local" ] && . "$ROOT/.env.local"
+set +a
+
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"
 
@@ -43,10 +51,14 @@ if [ "${1:-}" = "--linkcheck" ] || [ -z "$(find "$STAMP" -mtime -7 2>/dev/null)"
   # ~40 minutes over the full corpus: the per-host rate limiter serialises the thousands of
   # links that share a greenhouse/ashby host. That overruns the 30-minute interval and costs
   # one ingest cycle a week, which is the right trade against checking only a sample.
+  # Stamped BEFORE the run, not after. Sleep, reboot or `launchctl bootout` mid-check would
+  # otherwise leave no stamp, so every following cycle restarts the whole thing — each one
+  # overrunning the interval and halving ingest's real cadence for as long as it lasts. A
+  # missed weekly check is much cheaper than that loop.
+  touch "$STAMP"
   say "linkcheck start"
   node scripts/linkcheck.ts   # exit 1 means dead links were FOUND, not that the run failed
   say "linkcheck exit=$?"
-  touch "$STAMP"
 fi
 
 say "cycle end"

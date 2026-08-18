@@ -173,6 +173,9 @@ function atsConnector(name: string, map: Mapper): Connector {
           postings.push(...(await map(entry, context)));
         } catch (error) {
           failed += 1;
+          // We are about to return the other boards' postings and report `ok`. Say so, or the
+          // ghost pass reads this board's absent postings as withdrawn and delists them.
+          context.degraded(`${entry.name}: fetch failed`);
           context.log({
             connector: name,
             company: entry.name,
