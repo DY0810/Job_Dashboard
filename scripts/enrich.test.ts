@@ -1,6 +1,7 @@
 /**
- * `runEnrich` against a real (in-memory) database and a stub client. This is what proves the
- * row writes, the cache table, and that a capped run returns cleanly instead of throwing.
+ * `runEnrich` against a real (in-memory) database. This is what proves the row writes and
+ * the drop gate — that a dropped posting keeps its row and stores no track, which is what
+ * makes it unreachable from either tab.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -8,16 +9,16 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
-import { eq } from 'drizzle-orm';
+import { eq, isNotNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
-import type { ClassifyClient, ClassifyInput } from '../lib/classify.ts';
-import { POSTING_FIXTURES, SENIOR_FIXTURES } from '../lib/classify.fixtures.ts';
 import * as schema from '../lib/db/schema.ts';
+import { POSTING_FIXTURES, SENIOR_FIXTURES } from '../lib/extract.fixtures.ts';
+import type { SourceFields } from '../lib/extract.ts';
 import { formatStats, runEnrich, type WorkieDatabase } from './enrich.ts';
 
-const { enrichmentCache, postings } = schema;
+const { postings } = schema;
 
 function testDatabase(): WorkieDatabase {
   const sqlite = new Database(':memory:');
@@ -30,7 +31,13 @@ function testDatabase(): WorkieDatabase {
 
 function insertPosting(
   db: WorkieDatabase,
-  posting: { id: number; title: string; company: string; description: string },
+  posting: {
+    id: number;
+    title: string;
+    company: string;
+    description: string | null;
+    sourceFields?: SourceFields;
+  },
 ): void {
   db.insert(postings)
     .values({
@@ -42,6 +49,7 @@ function insertPosting(
       company: posting.company,
       title: posting.title,
       description: posting.description,
+      sourceFields: posting.sourceFields,
       companyNorm: posting.company.toLowerCase(),
       titleNorm: posting.title.toLowerCase(),
       locationKey: 'remote',
@@ -49,140 +57,109 @@ function insertPosting(
     .run();
 }
 
-function stubClient(tokens = { inputTokens: 0, outputTokens: 0 }): {
-  client: ClassifyClient;
-  calls: ClassifyInput[];
-} {
-  const expectedByTitle = new Map(POSTING_FIXTURES.map((f) => [f.title, f.expected]));
-  const calls: ClassifyInput[] = [];
-  const client: ClassifyClient = async (input) => {
-    calls.push(input);
-    const expected = expectedByTitle.get(input.title);
-    if (!expected) throw new Error(`no hand-authored label for: ${input.title}`);
-    return { raw: expected, ...tokens };
-  };
-  return { client, calls };
-}
-
-/** A voice-AI engineering role, an unpaid design internship, an off-track role, a senior one. */
-const VOICE = POSTING_FIXTURES[8];
-const UNPAID_DESIGN = POSTING_FIXTURES[1];
-const OFF_TRACK = POSTING_FIXTURES[15];
-const SENIOR = SENIOR_FIXTURES[0];
-
 describe('runEnrich', () => {
-  it('writes classifications, and stores nothing for a dropped posting', async () => {
+  it('writes an extraction, and stores nothing for a dropped posting', () => {
     const db = testDatabase();
-    for (const fixture of [VOICE, UNPAID_DESIGN, OFF_TRACK]) insertPosting(db, fixture);
-    insertPosting(db, { ...SENIOR, description: SENIOR.description });
+    const intern = POSTING_FIXTURES[0];
+    insertPosting(db, intern);
+    insertPosting(db, SENIOR_FIXTURES[0]);
 
-    const stub = stubClient();
-    const stats = await runEnrich(db, stub.client, { spendCapUsd: 1 });
+    const stats = runEnrich(db);
+    expect(stats.processed).toBe(2);
+    expect(stats.stored).toBe(1);
+    expect(stats.dropped).toBe(1);
+    expect(stats.seniorDrops).toBe(1);
 
-    expect(stats.stored).toBe(2);
-    expect(stats.prefilterDrops).toBe(1);
-    expect(stub.calls.map((call) => call.title)).not.toContain(SENIOR.title);
+    const kept = db.select().from(postings).where(eq(postings.id, intern.id)).get()!;
+    expect(kept.track).toBe('engineering');
+    expect(kept.seniority).toBe('entry');
+    expect(kept.employmentType).toBe('internship');
+    expect(kept.enrichedAt).not.toBeNull();
 
-    const voice = db.select().from(postings).where(eq(postings.id, VOICE.id)).get();
-    expect(voice?.track).toBe('engineering');
-    expect(voice?.seniority).toBe('mid');
-    expect(voice?.badges).toContain('voice-ai');
-    expect(voice?.summary).not.toBeNull();
-    expect(voice?.descriptionHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(voice?.enrichedAt).toBeInstanceOf(Date);
-
-    const design = db.select().from(postings).where(eq(postings.id, UNPAID_DESIGN.id)).get();
-    expect(design?.track).toBe('design');
-    expect(design?.paid).toBe(false);
-    expect(design?.internshipSeason).toBe('fall');
-    // Engineering-only field, never generated for design.
-    expect(design?.summary).toBeNull();
-
-    for (const id of [OFF_TRACK.id, SENIOR.id]) {
-      const dropped = db.select().from(postings).where(eq(postings.id, id)).get();
-      expect(dropped?.enrichedAt, 'a dropped posting is marked so it is not retried').toBeInstanceOf(Date);
-      expect(dropped?.track, 'a NULL track is unreachable from either tab').toBeNull();
-      expect(dropped?.badges).toBeNull();
-    }
+    // The row survives — `posting_sources` and the ghost pass still need it — but a NULL
+    // track is unselectable by either tab, so it is unreachable from the UI.
+    const dropped = db.select().from(postings).where(eq(postings.id, SENIOR_FIXTURES[0].id)).get()!;
+    expect(dropped.track).toBeNull();
+    expect(dropped.seniority).toBeNull();
+    expect(dropped.enrichedAt).not.toBeNull();
   });
 
-  it('re-enriches from the cache without calling the model', async () => {
+  it('re-runs over every posting, so a rule change reaches rows already enriched', () => {
     const db = testDatabase();
-    insertPosting(db, VOICE);
+    insertPosting(db, POSTING_FIXTURES[0]);
+    runEnrich(db);
 
-    const first = stubClient();
-    await runEnrich(db, first.client);
-    expect(first.calls).toHaveLength(1);
-    expect(db.select().from(enrichmentCache).all()).toHaveLength(1);
+    // Simulate a stale row from an older rule set. A pass that skipped enriched rows would
+    // leave this forever; there is no cache and no hash, so the second pass overwrites it.
+    db.update(postings).set({ seniority: 'mid' }).where(eq(postings.id, POSTING_FIXTURES[0].id)).run();
 
-    // Pretend the posting was re-ingested: same body, enrichment forgotten.
-    db.update(postings).set({ enrichedAt: null, track: null }).where(eq(postings.id, VOICE.id)).run();
-
-    const second = stubClient();
-    const stats = await runEnrich(db, second.client);
-
-    expect(second.calls).toHaveLength(0);
-    expect(stats.cacheHits).toBe(1);
-    expect(stats.costUsd).toBe(0);
-    expect(db.select().from(postings).where(eq(postings.id, VOICE.id)).get()?.track).toBe('engineering');
+    const stats = runEnrich(db);
+    expect(stats.processed).toBe(1);
+    expect(db.select().from(postings).get()!.seniority).toBe('entry');
   });
 
-  it('re-enriches a posting whose description changed', async () => {
+  it('classifies a posting with no description from its title alone', () => {
     const db = testDatabase();
-    insertPosting(db, VOICE);
+    insertPosting(db, { id: 1, title: 'Product Design Intern', company: 'Acme', description: null });
 
-    const first = stubClient();
-    await runEnrich(db, first.client);
-    expect(first.calls).toHaveLength(1);
-
-    // Same posting, edited body: the stored description_hash no longer matches, so it is
-    // pending again — and a new body is genuinely a new classification, not a cache hit.
-    db.update(postings)
-      .set({ description: `${VOICE.description} We also run our own TTS.` })
-      .where(eq(postings.id, VOICE.id))
-      .run();
-
-    const second = stubClient();
-    const stats = await runEnrich(db, second.client);
-    expect(second.calls).toHaveLength(1);
-    expect(stats.calls).toBe(1);
-    expect(db.select().from(enrichmentCache).all()).toHaveLength(2);
+    const stats = runEnrich(db);
+    expect(stats.titleOnly).toBe(1);
+    expect(stats.stored).toBe(1);
+    const row = db.select().from(postings).get()!;
+    expect(row.track).toBe('design');
+    expect(row.seniority).toBe('entry');
   });
 
-  it('leaves a malformed answer un-enriched so the next run retries it', async () => {
+  it('reads the structured fields the connector preserved, not the prose', () => {
     const db = testDatabase();
-    insertPosting(db, VOICE);
-
-    const broken: ClassifyClient = async () => ({
-      raw: { track: 'engineering' },
-      inputTokens: 0,
-      outputTokens: 0,
+    insertPosting(db, {
+      id: 1,
+      title: 'Member of Technical Staff',
+      company: 'Acme',
+      // The body says hybrid and contract; the source said otherwise and the source wins.
+      description: 'We work hybrid. This is a contract role.',
+      sourceFields: {
+        employmentType: 'full-time',
+        workMode: 'remote',
+        location: 'Austin, Texas, United States',
+        department: 'Software Engineering',
+      },
     });
-    await runEnrich(db, broken);
 
-    const row = db.select().from(postings).where(eq(postings.id, VOICE.id)).get();
-    expect(row?.enrichedAt).toBeNull();
-    expect(db.select().from(enrichmentCache).all()).toHaveLength(0);
-
-    const retry = stubClient();
-    await runEnrich(db, retry.client);
-    expect(retry.calls).toHaveLength(1);
-    expect(db.select().from(postings).where(eq(postings.id, VOICE.id)).get()?.track).toBe('engineering');
+    runEnrich(db);
+    const row = db.select().from(postings).get()!;
+    expect(row.employmentType).toBe('full-time');
+    expect(row.workMode).toBe('remote');
+    expect(row.location).toBe('Austin, Texas, United States');
+    expect(row.track).toBe('engineering');
   });
 
-  it('stops cleanly at the spend cap and leaves the rest for the next run', async () => {
+  it('drops every senior fixture and keeps every listed one, over the whole set', () => {
     const db = testDatabase();
-    POSTING_FIXTURES.slice(0, 3).forEach((fixture) => insertPosting(db, fixture));
+    for (const fixture of [...POSTING_FIXTURES, ...SENIOR_FIXTURES]) insertPosting(db, fixture);
 
-    const stub = stubClient({ inputTokens: 1_000_000, outputTokens: 0 }); // $1.00 per call
-    const stats = await runEnrich(db, stub.client, { spendCapUsd: 1 });
+    runEnrich(db);
+    const stored = db.select().from(postings).where(isNotNull(postings.track)).all();
+    const storedIds = new Set(stored.map((row) => row.id));
 
-    expect(stats.calls).toBe(1);
-    expect(stats.capReached).toBe(true);
-    expect(stats.remaining).toBe(2);
-    expect(formatStats(stats, 1)).toContain('2 postings left for the next run');
+    // Zero leaks: this is the acceptance criterion, and there is no model behind it now.
+    for (const senior of SENIOR_FIXTURES) expect(storedIds.has(senior.id)).toBe(false);
+    for (const row of stored) expect(row.seniority).not.toBe('senior+');
+  });
 
-    const untouched = db.select().from(postings).where(eq(postings.id, POSTING_FIXTURES[2].id)).get();
-    expect(untouched?.enrichedAt).toBeNull();
+  it('formats a run summary', () => {
+    const line = formatStats({
+      processed: 10,
+      stored: 6,
+      dropped: 4,
+      seniorDrops: 3,
+      trackDrops: 1,
+      titleOnly: 2,
+      durationMs: 1500,
+    });
+    expect(line).toContain('10 processed');
+    expect(line).toContain('6 stored');
+    expect(line).toContain('4 dropped (3 senior, 1 off-track)');
+    expect(line).toContain('1.5s');
   });
 });

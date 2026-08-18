@@ -1,12 +1,15 @@
 /**
- * The complete Workie schema — four tables, landed in one migration on purpose.
+ * The complete Workie schema — three tables.
  *
- * Phases 4 (classification), 5 (voice badges) and 6 (aggregators) run in parallel. If each
- * added its own migration for the columns it needs, `drizzle/` would conflict three ways.
- * So every column those phases will write already exists here, unpopulated.
+ * There is no `enrichment_cache`. It existed to avoid re-billing an LLM; extraction is now
+ * deterministic and free, so a cache would buy nothing and cost correctness — change one
+ * rule in `lib/extract.ts` and every cached row silently keeps serving the old answer.
+ * Re-running the whole corpus is the correct behaviour and takes seconds.
  */
 
 import { integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+
+import type { SourceFields } from '../extract.ts';
 
 /** One row per DEDUPED job. `dedupe_key` = sha256(company_norm ␟ title_norm ␟ location_key). */
 export const postings = sqliteTable('postings', {
@@ -25,8 +28,12 @@ export const postings = sqliteTable('postings', {
   title: text('title').notNull(),
   /** Full normalized body. Drawer-only; never selected into the table query. */
   description: text('description'),
-  /** sha256(normalizeDescription(body)) — the `enrichment_cache` key for this posting. */
-  descriptionHash: text('description_hash'),
+  /**
+   * What the source API already returned as fields — employment type, work mode, location
+   * parts, department/team, and the sections it structured itself. `lib/extract.ts` reads
+   * this BEFORE the prose; see `SourceFields`.
+   */
+  sourceFields: text('source_fields', { mode: 'json' }).$type<SourceFields>(),
 
   // Normalized components, from lib/normalize.ts.
   companyNorm: text('company_norm').notNull(),
@@ -37,7 +44,7 @@ export const postings = sqliteTable('postings', {
   country: text('country'),
   isRemote: integer('is_remote', { mode: 'boolean' }).notNull().default(false),
 
-  // Classification (phase 4). Null until the enrichment pass runs.
+  // Extraction (lib/extract.ts). Null until `npm run enrich` runs.
   enrichedAt: integer('enriched_at', { mode: 'timestamp_ms' }),
   track: text('track', { enum: ['design', 'engineering'] }),
   seniority: text('seniority', { enum: ['entry', 'junior', 'mid', 'senior+'] }),
@@ -84,20 +91,6 @@ export const postingSources = sqliteTable(
   },
   (table) => [uniqueIndex('posting_sources_posting_url_idx').on(table.postingId, table.sourceUrl)],
 );
-
-/**
- * sha256(normalizeDescription(body)) -> the classification JSON.
- *
- * Not keyed to a posting and never cascaded: it outlives posting rows deliberately. This
- * table is the reason a full re-poll of an unchanged corpus costs ~$0.
- */
-export const enrichmentCache = sqliteTable('enrichment_cache', {
-  contentHash: text('content_hash').primaryKey(),
-  classification: text('classification', { mode: 'json' }).notNull(),
-  /** Which model produced it — a model change invalidates by writing a new row set. */
-  model: text('model').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
-});
 
 /**
  * One row per (run, connector). The ghost pass reads this to tell a real absence from a
