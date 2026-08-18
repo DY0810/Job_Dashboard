@@ -20,7 +20,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { dedupePostings, SOURCE_PRIORITY } from '../lib/dedupe.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { connectorRuns, postingSources, postings } from '../lib/db/schema.ts';
-import { enrichmentCacheKey } from '../lib/hash.ts';
+import type { SourceFields } from '../lib/extract.ts';
 import {
   createRuntime,
   redact,
@@ -283,6 +283,15 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
       const description =
         post.sources.map((source) => display.get(source.sourceUrl)?.description ?? '').find(Boolean) ?? '';
       const hasAts = post.sources.some((source) => source.sourceKind === 'ats');
+      // Highest-priority source that actually answered with structured fields — an ATS, in
+      // practice. `location` falls back to whatever the best source called the place, so a
+      // row always has a display string even when no source structured anything.
+      const structured = post.sources
+        .map((source) => display.get(source.sourceUrl)?.sourceFields)
+        .find((fields) => fields !== undefined);
+      const location = structured?.location ?? (typeof best?.location === 'string' ? best.location : undefined);
+      const sourceFields: SourceFields | null =
+        structured || location ? { ...structured, ...(location ? { location } : {}) } : null;
 
       const shared = {
         company: best?.company ?? '',
@@ -306,7 +315,7 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
             postedAt: new Date(post.postedAt),
             firstSeenRun: runId,
             description: description || null,
-            descriptionHash: description ? enrichmentCacheKey(description) : null,
+            sourceFields,
           })
           .returning({ id: postings.id })
           .get().id;
@@ -346,7 +355,7 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
               Math.max(Math.min(current.postedAt.getTime(), post.postedAt), floor),
             ),
             description: description || current.description,
-            descriptionHash: description ? enrichmentCacheKey(description) : current.descriptionHash,
+            sourceFields: sourceFields ?? current.sourceFields,
           })
           .where(eq(postings.id, postingId))
           .run();

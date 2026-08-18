@@ -13,6 +13,7 @@
 import { lookup } from 'node:dns/promises';
 
 import type { RawPosting, SourceKind } from './dedupe.ts';
+import type { SourceFields } from './extract.ts';
 
 /** Descriptive, with a contact address, per the plan. Must not impersonate a named crawler. */
 export const USER_AGENT =
@@ -519,9 +520,21 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
 // The connector contract
 // ---------------------------------------------------------------------------------------
 
-/** What every connector returns. `description` is already through `normalizeDescription`. */
+/**
+ * What every connector returns. `description` is already through `normalizeDescription`.
+ *
+ * `sourceFields` carries what the API already handed us as fields — employment type, work
+ * mode, location parts, department/team, and the sections a source structured itself.
+ * `lib/extract.ts` reads them BEFORE it reads the prose, because parsing a value back out of
+ * a description when the API returned it as a column is absurd. Aggregators and RSS mostly
+ * cannot fill these; they leave `sourceFields` undefined and extraction falls back to the text.
+ *
+ * Note `SourceFields.location` is a display string only. `RawPosting.location` is what feeds
+ * `normalizeLocation` and therefore `dedupe_key`, and must keep saying exactly what it said.
+ */
 export interface ConnectorPosting extends RawPosting {
   description: string;
+  sourceFields?: SourceFields;
 }
 
 export interface ConnectorContext {

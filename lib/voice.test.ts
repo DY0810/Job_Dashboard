@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { POSTING_FIXTURES } from './classify.fixtures.ts';
+import { POSTING_FIXTURES } from './extract.fixtures.ts';
 import { normalizeDescription } from './normalize.ts';
 import { isVoiceRole, voiceScore, VOICE_THRESHOLD } from './voice.ts';
 

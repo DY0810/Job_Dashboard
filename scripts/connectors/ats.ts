@@ -16,6 +16,13 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  parseSections,
+  type EmploymentType,
+  type Section,
+  type SourceFields,
+  type WorkMode,
+} from '../../lib/extract.ts';
 import { normalizeDescription } from '../../lib/normalize.ts';
 import {
   redact,
@@ -52,11 +59,76 @@ function endpoint(ats: string, token: string, params: Record<string, string> = {
   return url.toString();
 }
 
+// ---------------------------------------------------------------------------------------
+// Structured fields the ATS already gave us
+// ---------------------------------------------------------------------------------------
+
+/**
+ * Six vendors, six spellings of the same five values: `FullTime`, `Full-time`,
+ * `fulltime_fixed_term`, `Intern`, `Internship`, `PART_TIME`. One normalizer beats six
+ * lookup tables, and an unrecognized string returns undefined rather than a guess — the
+ * extractor then falls back to the text, which is the whole point of the precedence order.
+ */
+function employmentTypeFrom(raw: unknown): EmploymentType | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const value = raw.toLowerCase().replace(/[\s_-]/g, '');
+  if (/intern|coop|apprentice|placement/.test(value)) return 'internship';
+  if (/parttime/.test(value)) return 'part-time';
+  if (/freelance/.test(value)) return 'freelance';
+  if (/contract|temporary|temp|fixedterm|seasonal/.test(value)) return 'contract';
+  if (/fulltime|permanent|regular/.test(value)) return 'full-time';
+  return undefined;
+}
+
+/**
+ * `isRemote` is only consulted when the vendor gave no workplace type, and only in the
+ * positive direction: `isRemote: false` distinguishes nothing between hybrid and onsite.
+ */
+function workModeFrom(raw: unknown, isRemote?: boolean): WorkMode | undefined {
+  const value = typeof raw === 'string' ? raw.toLowerCase().replace(/[\s_-]/g, '') : '';
+  if (/hybrid/.test(value)) return 'hybrid';
+  if (/remote|anywhere|distributed/.test(value)) return 'remote';
+  if (/onsite|inperson|inoffice|office/.test(value)) return 'onsite';
+  return isRemote === true ? 'remote' : undefined;
+}
+
+/** "Austin, Texas, United States" from whatever parts the source happened to supply. */
+function locationFrom(...parts: unknown[]): string | undefined {
+  const seen: string[] = [];
+  for (const part of parts) {
+    const value = typeof part === 'string' ? part.trim() : '';
+    if (value && !seen.some((existing) => existing.toLowerCase() === value.toLowerCase())) {
+      seen.push(value);
+    }
+  }
+  return seen.length > 0 ? seen.join(', ') : undefined;
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/** Drops the keys the source did not answer, so `source_fields` never stores empty noise. */
+function sourceFields(fields: SourceFields): SourceFields | undefined {
+  const kept = Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined && value !== null),
+  ) as SourceFields;
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
 /** Every ATS row carries the same fixed fields; only the mapper differs. */
 function row(
   source: string,
   entry: RegistryEntry,
-  fields: { title: unknown; location: unknown; url: string; postedAt: number; description: string },
+  fields: {
+    title: unknown;
+    location: unknown;
+    url: string;
+    postedAt: number;
+    description: string;
+    /** The structured fields THIS vendor returned. `location` here is display-only. */
+    structured?: SourceFields;
+  },
 ): ConnectorPosting {
   return {
     source,
@@ -65,8 +137,10 @@ function row(
     postedAt: fields.postedAt,
     company: entry.name,
     title: typeof fields.title === 'string' ? fields.title : '',
+    // NOT the display string below: this one feeds `normalizeLocation` and `dedupe_key`.
     location: typeof fields.location === 'string' ? fields.location : null,
     description: normalizeDescription(fields.description),
+    sourceFields: sourceFields(fields.structured ?? {}),
   };
 }
 
@@ -118,6 +192,15 @@ interface GreenhouseJob {
   first_published?: string;
   updated_at?: string;
   location?: { name?: string };
+  departments?: { name?: string }[];
+  offices?: { name?: string; location?: string }[];
+  metadata?: { name?: string; value?: unknown }[];
+}
+
+/** Greenhouse's only structured work-mode signal is a board-configured custom field. */
+function greenhouseMetadata(job: GreenhouseJob, name: RegExp): string | undefined {
+  const field = (job.metadata ?? []).find((entry) => typeof entry.name === 'string' && name.test(entry.name));
+  return typeof field?.value === 'string' ? field.value : undefined;
 }
 
 export const greenhouse = atsConnector('greenhouse', async (entry, context) => {
@@ -134,6 +217,13 @@ export const greenhouse = atsConnector('greenhouse', async (entry, context) => {
         postedAt: toEpochMs(job.first_published ?? job.updated_at),
         // Greenhouse double-escapes its HTML; normalizeDescription runs to a fixed point.
         description: job.content ?? '',
+        structured: {
+          // No employment type in this API — it stays undefined and the text decides.
+          workMode: workModeFrom(greenhouseMetadata(job, /location\s*type|work\s*(?:mode|place|type)|remote/i)),
+          location: locationFrom(job.offices?.[0]?.location ?? job.offices?.[0]?.name, job.location?.name),
+          department: text(job.departments?.[0]?.name),
+          sections: parseSections(job.content),
+        },
       }),
     );
 });
@@ -145,7 +235,25 @@ interface LeverJob {
   descriptionPlain?: string;
   additionalPlain?: string;
   lists?: { text?: string; content?: string }[];
-  categories?: { location?: string; allLocations?: string[] };
+  categories?: {
+    location?: string;
+    allLocations?: string[];
+    commitment?: string;
+    department?: string;
+    team?: string;
+  };
+  workplaceType?: string;
+  country?: string;
+}
+
+/**
+ * `lists[]` IS the sections array — heading in `text`, `<li>` bullets in `content`. Lever did
+ * the structuring for us; re-deriving it from the flattened body would be pure loss.
+ */
+function leverSections(job: LeverJob): Section[] {
+  return (job.lists ?? [])
+    .map((list) => ({ heading: text(list.text) ?? '', items: parseSections(list.content)[0]?.items ?? [] }))
+    .filter((section) => section.heading !== '' && section.items.length > 0);
 }
 
 export const lever = atsConnector('lever', async (entry, context) => {
@@ -166,6 +274,14 @@ export const lever = atsConnector('lever', async (entry, context) => {
           ...(job.lists ?? []).map((list) => `${list.text ?? ''} ${list.content ?? ''}`),
           job.additionalPlain ?? '',
         ].join('\n'),
+        structured: {
+          employmentType: employmentTypeFrom(job.categories?.commitment),
+          workMode: workModeFrom(job.workplaceType),
+          location: locationFrom(job.categories?.location, job.country),
+          department: text(job.categories?.department),
+          team: text(job.categories?.team),
+          sections: leverSections(job),
+        },
       }),
     );
 });
@@ -178,6 +294,14 @@ interface AshbyJob {
   descriptionPlain?: string;
   descriptionHtml?: string;
   isListed?: boolean;
+  department?: string;
+  team?: string;
+  employmentType?: string;
+  isRemote?: boolean;
+  workplaceType?: string;
+  address?: {
+    postalAddress?: { addressLocality?: string; addressRegion?: string; addressCountry?: string };
+  };
 }
 
 export const ashby = atsConnector('ashby', async (entry, context) => {
@@ -194,6 +318,19 @@ export const ashby = atsConnector('ashby', async (entry, context) => {
         postedAt: toEpochMs(job.publishedAt),
         // Ashby's "plain" text is really markdown; normalizeDescription strips the markers.
         description: job.descriptionPlain ?? job.descriptionHtml ?? '',
+        structured: {
+          employmentType: employmentTypeFrom(job.employmentType),
+          workMode: workModeFrom(job.workplaceType, job.isRemote),
+          location: locationFrom(
+            job.address?.postalAddress?.addressLocality ?? job.location,
+            job.address?.postalAddress?.addressRegion,
+            job.address?.postalAddress?.addressCountry,
+          ),
+          department: text(job.department),
+          team: text(job.team),
+          // The HTML keeps the list structure the markdown body also has; prefer the markup.
+          sections: parseSections(job.descriptionHtml ?? job.descriptionPlain),
+        },
       }),
     );
 });
@@ -209,6 +346,9 @@ interface SmartRecruitersDetail {
   postingUrl?: string;
   applyUrl?: string;
   jobAd?: { sections?: Record<string, { title?: string; text?: string }> };
+  typeOfEmployment?: { label?: string };
+  department?: { label?: string };
+  location?: { remote?: boolean; city?: string; region?: string; country?: string };
 }
 
 /**
@@ -259,6 +399,24 @@ export const smartrecruiters = atsConnector('smartrecruiters', async (entry, con
         description: Object.values(detail.jobAd?.sections ?? {})
           .map((section) => `${section.title ?? ''}\n${section.text ?? ''}`)
           .join('\n'),
+        structured: {
+          employmentType: employmentTypeFrom(detail.typeOfEmployment?.label),
+          workMode: workModeFrom(undefined, detail.location?.remote),
+          location: locationFrom(
+            detail.location?.city,
+            detail.location?.region,
+            detail.location?.country,
+            posting.location?.fullLocation,
+          ),
+          department: text(detail.department?.label),
+          // `jobAd.sections` is already {title, html} per section — no parsing of the whole
+          // body, just of each section's own markup.
+          sections: Object.values(detail.jobAd?.sections ?? {}).flatMap((section) => {
+            const items = parseSections(section.text).flatMap((parsed) => parsed.items);
+            const heading = text(section.title);
+            return heading && items.length > 0 ? [{ heading, items }] : [];
+          }),
+        },
       }),
     );
   }
@@ -267,6 +425,8 @@ export const smartrecruiters = atsConnector('smartrecruiters', async (entry, con
 
 interface WorkableJob {
   title?: string;
+  department?: string;
+  employment_type?: string;
   url?: string;
   published_on?: string;
   created_at?: string;
@@ -292,12 +452,24 @@ export const workable = atsConnector('workable', async (entry, context) => {
         url: job.url!,
         postedAt: toEpochMs(job.published_on ?? job.created_at),
         description: job.description ?? '',
+        structured: {
+          employmentType: employmentTypeFrom(job.employment_type),
+          workMode: workModeFrom(undefined, job.telecommuting),
+          location: locationFrom(job.city, job.state, job.country),
+          department: text(job.department),
+          sections: parseSections(job.description),
+        },
       }),
     );
 });
 
 interface RecruiteeOffer {
   title?: string;
+  department?: string;
+  employment_type_code?: string;
+  remote?: boolean;
+  hybrid?: boolean;
+  on_site?: boolean;
   careers_url?: string;
   careers_apply_url?: string;
   published_at?: string;
@@ -322,6 +494,13 @@ export const recruitee = atsConnector('recruitee', async (entry, context) => {
         url: (offer.careers_url ?? offer.careers_apply_url)!,
         postedAt: toEpochMs(offer.published_at ?? offer.created_at),
         description: `${offer.description ?? ''}\n${offer.requirements ?? ''}`,
+        structured: {
+          employmentType: employmentTypeFrom(offer.employment_type_code),
+          workMode: offer.hybrid ? 'hybrid' : offer.remote ? 'remote' : offer.on_site ? 'onsite' : undefined,
+          location: locationFrom(offer.city, offer.location, offer.country),
+          department: text(offer.department),
+          sections: parseSections(`${offer.description ?? ''}\n${offer.requirements ?? ''}`),
+        },
       }),
     );
 });

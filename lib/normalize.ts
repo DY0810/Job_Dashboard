@@ -362,6 +362,23 @@ function decodeEntities(input: string): string {
 }
 
 /**
+ * Entity decoding on its own, run to a fixed point.
+ *
+ * `normalizeDescription` throws the markup away, which is right for the stored body and
+ * wrong for `parseSections` in `lib/extract.ts` — list structure only exists in the markup.
+ * Greenhouse escapes markup *inside* escaped markup, so one pass leaves `&lt;li&gt;` where a
+ * list item should be; every effective pass strictly shortens the string, so this terminates.
+ */
+export function decodeHtmlEntities(input: string | null | undefined): string {
+  let text = input ?? '';
+  for (let previous = '', pass = 0; text !== previous && pass < 8; pass += 1) {
+    previous = text;
+    text = decodeEntities(text);
+  }
+  return text;
+}
+
+/**
  * Strip HTML, decode entities, drop markdown markers, collapse whitespace.
  *
  * This is what makes the enrichment cache hit (finding B): Greenhouse escapes its HTML,

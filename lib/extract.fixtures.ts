@@ -1,23 +1,20 @@
 /**
  * HAND-LABELED FIXTURE SET.
  *
- * Every `expected` here is what the classifier SHOULD produce, written by hand from the
- * posting text. None of it is a recording of what a model actually said: asserting a model's
- * own output makes the suite flaky by construction and freezes its mistakes into the gate.
+ * Every `expected` here is what extraction SHOULD produce, written by hand from the posting
+ * text — never a recording of what an implementation actually returned, which would freeze
+ * today's mistakes into the gate.
  *
  * The postings are synthetic but written in the shapes real ATS bodies arrive in. Company
  * names are invented; the vendor names inside the voice-AI bodies (Deepgram, Twilio, …) are
  * there because they are the technology the role actually uses, which is the signal
  * `lib/voice.ts` scores.
  *
- * Two consumers:
- *   - `classify.test.ts` — a stub client answers with `expected`, so the tests assert
- *     PIPELINE behavior (drop, badge, cache, cap), never model quality.
- *   - `scripts/enrich-smoke.ts` — a live Haiku run diffed against `expected` on
- *     `GRADED_FIELDS`. Free-text fields are illustrative and are not graded.
+ * Two consumers: `extract.test.ts` grades `extract()` against `expected` on `GRADED_FIELDS`,
+ * and `voice.test.ts` reads the `voice` flag.
  */
 
-import type { Classification } from './classify.ts';
+import type { Extraction } from './extract.ts';
 
 export interface ClassifyFixture {
   id: number;
@@ -25,12 +22,19 @@ export interface ClassifyFixture {
   company: string;
   description: string;
   /** Hand-authored expectation. */
-  expected: Classification;
+  expected: Extraction;
   /** Hand-authored: is this a voice-AI role, judged on the body alone? */
   voice: boolean;
 }
 
-/** The fields a live model can be graded on deterministically. */
+/**
+ * The fields with one objectively right answer, which is what the suite grades.
+ *
+ * NOTE on `employment_type`: these labels used to say `full-time` on every non-internship
+ * posting. Not one of those postings states it — the label was an inference a model was
+ * expected to make. The rule is "only when the posting states it, otherwise null", so the
+ * labels now say null. Guessing `full-time` for everything makes the chip meaningless.
+ */
 export const GRADED_FIELDS = [
   'track',
   'seniority',
@@ -42,7 +46,7 @@ export const GRADED_FIELDS = [
   'expected_grad',
 ] as const;
 
-const BASE: Classification = {
+const BASE: Extraction = {
   track: 'engineering',
   seniority: 'entry',
   employment_type: null,
@@ -59,7 +63,7 @@ const BASE: Classification = {
   badges: [],
 };
 
-function label(overrides: Partial<Classification>): Classification {
+function label(overrides: Partial<Extraction>): Extraction {
   return { ...BASE, ...overrides };
 }
 
@@ -145,7 +149,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'engineering',
       seniority: 'entry',
-      employment_type: 'full-time',
       paid: true,
       work_mode: 'hybrid',
       pay_rate: { min: 120000, max: 150000, period: 'year' },
@@ -162,7 +165,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'design',
       seniority: 'junior',
-      employment_type: 'full-time',
       paid: true,
       work_mode: 'onsite',
       pay_rate: { min: 85000, max: 105000, period: 'year' },
@@ -179,7 +181,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'engineering',
       seniority: 'mid',
-      employment_type: 'full-time',
       paid: true,
       work_mode: 'remote',
       pay_rate: { min: 140000, max: 165000, period: 'year' },
@@ -195,7 +196,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'design',
       seniority: 'junior',
-      employment_type: 'full-time',
       work_mode: 'hybrid',
       badges: ['portfolio-required'],
     }),
@@ -209,7 +209,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'engineering',
       seniority: 'mid',
-      employment_type: 'full-time',
       paid: true,
       work_mode: 'remote',
       pay_rate: { min: 150000, max: 180000, period: 'year' },
@@ -225,7 +224,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'engineering',
       seniority: 'mid',
-      employment_type: 'full-time',
       work_mode: 'hybrid',
       summary: 'Deploys customer voice integrations across telephony, ASR and TTS while holding a latency budget.',
     }),
@@ -239,7 +237,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'engineering',
       seniority: 'junior',
-      employment_type: 'full-time',
       paid: true,
       work_mode: 'remote',
       pay_rate: { min: 115000, max: 135000, period: 'year' },
@@ -256,7 +253,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'design',
       seniority: 'junior',
-      employment_type: 'full-time',
       work_mode: 'hybrid',
     }),
     voice: false,
@@ -269,7 +265,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'design',
       seniority: 'junior',
-      employment_type: 'full-time',
       paid: true,
       work_mode: 'onsite',
       pay_rate: { min: 70000, max: 88000, period: 'year' },
@@ -285,7 +280,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'design',
       seniority: 'junior',
-      employment_type: 'full-time',
       work_mode: 'remote',
     }),
     voice: false,
@@ -298,7 +292,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'engineering',
       seniority: 'junior',
-      employment_type: 'full-time',
       summary: 'Maintains a Next.js marketing site and builds internal admin screens.',
       responsibilities: ['Maintain the marketing site in Next.js', 'Build internal admin screens'],
       skills: ['JavaScript', 'Next.js'],
@@ -309,11 +302,18 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     id: 16,
     // Titled the way the prefilter cannot see it, so the MODEL's track drop is what runs.
     // "Associate Product Manager" is the other common spelling and the prefilter catches
-    // that one on `manager` — same outcome, cheaper. Both are asserted in classify.test.ts.
+    // that one on `manager` — same outcome, cheaper. Both are asserted in extract.test.ts.
     title: 'Product Management Associate, New Grad Program',
     company: 'Kestrel Data',
     description: `Our APM program takes new grads and puts them on a product team with a mentor. You will write specs, run standups, and own a metric. Rotations across three teams in the first year. $130,000 base.`,
-    expected: label({ track: 'other', seniority: 'entry', employment_type: 'full-time', paid: true }),
+    // "$130,000 base" is stated; the old label omitted the figure because this row is
+    // dropped as `other` anyway. A label is still a label.
+    expected: label({
+      track: 'other',
+      seniority: 'entry',
+      paid: true,
+      pay_rate: { min: 130000, max: null, period: 'year' },
+    }),
     voice: false,
   },
   {
@@ -321,7 +321,7 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     title: 'Marketing Associate',
     company: 'Halyard',
     description: `Support our campaigns team on email, paid social, and event logistics. You will pull performance numbers, brief the design team on assets, and keep the content calendar. One to two years in marketing or a communications degree.`,
-    expected: label({ track: 'other', seniority: 'junior', employment_type: 'full-time' }),
+    expected: label({ track: 'other', seniority: 'junior' }),
     voice: false,
   },
   {
@@ -332,7 +332,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'engineering',
       seniority: 'junior',
-      employment_type: 'full-time',
       paid: true,
       work_mode: 'remote',
       pay_rate: { min: 125000, max: 145000, period: 'year' },
@@ -348,7 +347,6 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     expected: label({
       track: 'engineering',
       seniority: 'entry',
-      employment_type: 'full-time',
       paid: null,
       work_mode: 'remote',
       summary: 'Trains then joins a team building a logistics platform as a graduate engineer.',

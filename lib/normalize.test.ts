@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { enrichmentCacheKey } from './hash.ts';
 import {
   CALIFORNIA_CITIES,
   CITY_ALIASES,
@@ -238,8 +237,11 @@ describe('normalizeDescription', () => {
   });
 });
 
-// FINDING B — the enrichment cache key hashes NORMALIZED text, never the raw body.
-describe('enrichmentCacheKey', () => {
+// FINDING B — the three ATS description shapes must normalize to ONE string. The enrichment
+// cache that first motivated this is gone (extraction is free), but the property still
+// matters: `lib/extract.ts` reads this text, and three spellings of one job must extract the
+// same way whichever source won the merge.
+describe('normalizeDescription across the ATS shapes', () => {
   const greenhouseEscapedHtml =
     '&lt;p&gt;We are looking for a Product Designer.&lt;/p&gt;&lt;h3&gt;Responsibilities&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Ship design systems&lt;/li&gt;&lt;li&gt;Partner with engineering&lt;/li&gt;&lt;/ul&gt;';
 
@@ -275,22 +277,22 @@ describe('enrichmentCacheKey', () => {
     '- Partner with engineering',
   ].join('\n');
 
-  it('is a sha256 hex digest', () => {
-    expect(enrichmentCacheKey(reformattedHtml)).toMatch(/^[0-9a-f]{64}$/);
+  it('strips the markup and keeps the prose', () => {
+    expect(normalizeDescription(reformattedHtml)).toContain('Product Designer');
   });
 
-  it('hits the same cache row when HTML and whitespace are reformatted', () => {
-    expect(enrichmentCacheKey(greenhouseEscapedHtml)).toBe(enrichmentCacheKey(reformattedHtml));
+  it('lands on one string when HTML and whitespace are reformatted', () => {
+    expect(normalizeDescription(greenhouseEscapedHtml)).toBe(normalizeDescription(reformattedHtml));
   });
 
-  it('hits the same cache row across the Greenhouse, Lever and Ashby shapes', () => {
-    expect(enrichmentCacheKey(leverJoined)).toBe(enrichmentCacheKey(reformattedHtml));
-    expect(enrichmentCacheKey(ashbyMarkdown)).toBe(enrichmentCacheKey(reformattedHtml));
+  it('lands on one string across the Greenhouse, Lever and Ashby shapes', () => {
+    expect(normalizeDescription(leverJoined)).toBe(normalizeDescription(reformattedHtml));
+    expect(normalizeDescription(ashbyMarkdown)).toBe(normalizeDescription(reformattedHtml));
   });
 
   it('changes when the actual content changes', () => {
-    expect(enrichmentCacheKey(`${reformattedHtml}<p>Also: 5+ years required.</p>`)).not.toBe(
-      enrichmentCacheKey(reformattedHtml),
+    expect(normalizeDescription(`${reformattedHtml}<p>Also: 5+ years required.</p>`)).not.toBe(
+      normalizeDescription(reformattedHtml),
     );
   });
 });
