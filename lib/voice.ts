@@ -47,6 +47,13 @@ const STANDARD_TERMS = [
 ] as const;
 
 /**
+ * Terms that are ordinary English words when lowercased. Matched case-sensitively, or "sip
+ * your coffee" and "retell the customer's story" score as voice-AI signal. The remaining
+ * vendor names (Twilio, Deepgram, …) are not English words, so case does not matter for them.
+ */
+const CASE_SENSITIVE_TERMS = new Set(['SIP', 'ASR', 'STT', 'TTS', 'IVR', 'Retell']);
+
+/**
  * Whole-word matching. `IVR` must not fire inside "driver" and `TTS` must not fire inside
  * another token, so every term is anchored with `\b`. Internal spaces and hyphens are
  * interchangeable — "barge-in" and "barge in" are the same term — because ATS bodies
@@ -57,7 +64,7 @@ function termPattern(term: string): RegExp {
     .split(/[\s-]+/)
     .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('[\\s-]+');
-  return new RegExp(`\\b${body}\\b`, 'i');
+  return new RegExp(`\\b${body}\\b`, CASE_SENSITIVE_TERMS.has(term) ? '' : 'i');
 }
 
 const HIGH_WEIGHT_PATTERNS = HIGH_WEIGHT_TERMS.map(termPattern);

@@ -17,7 +17,7 @@
  *     `GRADED_FIELDS`. Free-text fields are illustrative and are not graded.
  */
 
-import type { Classification } from './classify';
+import type { Classification } from './classify.ts';
 
 export interface ClassifyFixture {
   id: number;
@@ -173,7 +173,9 @@ export const POSTING_FIXTURES: readonly ClassifyFixture[] = [
     id: 7,
     title: 'Backend Engineer, Payments',
     company: 'Quillon',
-    description: `You will work on the services that move money: idempotent transfer APIs, reconciliation jobs, and the ledger. We expect around three years of backend experience and comfort with Postgres under load. Remote within the US. $140,000 to $165,000 plus equity.`,
+    // "2-5 years" is the standard way a mid role states its ask, and the exact string a
+    // naive years regex reads as senior. It is in the fixture set on purpose.
+    description: `You will work on the services that move money: idempotent transfer APIs, reconciliation jobs, and the ledger. We are looking for 2-5 years of backend experience and comfort with Postgres under load. Remote within the US. $140,000 to $165,000 plus equity.`,
     expected: label({
       track: 'engineering',
       seniority: 'mid',

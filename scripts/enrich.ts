@@ -10,9 +10,11 @@
 import { pathToFileURL } from 'node:url';
 
 import Database from 'better-sqlite3';
-import { and, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, isNotNull } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 
+// Extensions are explicit: `npm run enrich` is plain `node`, whose type stripping does no
+// extension resolution. Extensionless specifiers only work under vitest and Next.
 import {
   anthropicClassifier,
   CLASSIFY_MODEL,
@@ -21,8 +23,9 @@ import {
   type ClassificationCache,
   type ClassifyClient,
   type EnrichStats,
-} from '../lib/classify';
-import * as schema from '../lib/db/schema';
+} from '../lib/classify.ts';
+import * as schema from '../lib/db/schema.ts';
+import { enrichmentCacheKey } from '../lib/hash.ts';
 
 const { enrichmentCache, postings } = schema;
 
@@ -35,7 +38,8 @@ export type WorkyDatabase = BetterSQLite3Database<typeof schema>;
  * serving another model's answers; writes upsert, so the new model's row replaces the old
  * one instead of colliding with it forever (`content_hash` is the primary key).
  */
-export function sqliteCache(db: WorkyDatabase, model: string = CLASSIFY_MODEL): ClassificationCache {
+export function sqliteCache(db: WorkyDatabase): ClassificationCache {
+  const model = CLASSIFY_MODEL;
   return {
     get(contentHash) {
       const row = db
@@ -69,12 +73,21 @@ export async function runEnrich(
       title: postings.title,
       company: postings.company,
       description: postings.description,
+      enrichedAt: postings.enrichedAt,
+      descriptionHash: postings.descriptionHash,
     })
     .from(postings)
-    .where(and(isNull(postings.enrichedAt), isNotNull(postings.description)))
+    .where(isNotNull(postings.description))
     .all();
 
-  const { results, stats } = await enrichPostings(rows, {
+  // Pending = never enriched, or the body changed since it was. `description_hash` is what
+  // makes the second case detectable: without it an edited posting keeps a stale
+  // classification forever. An unchanged body is skipped here, before the cache is consulted.
+  const pending = rows.filter(
+    (row) => row.enrichedAt === null || row.descriptionHash !== enrichmentCacheKey(row.description),
+  );
+
+  const { results, stats } = await enrichPostings(pending, {
     client,
     cache: sqliteCache(db),
     spendCapUsd: options.spendCapUsd,
@@ -82,6 +95,10 @@ export async function runEnrich(
 
   const enrichedAt = new Date();
   for (const result of results) {
+    // A malformed answer leaves the row untouched, so the next run retries it. Everything
+    // else — kept or dropped — is stamped and never looked at again until its body changes.
+    if (result.dropReason === 'invalid') continue;
+
     const found = result.classification;
     // A dropped posting keeps its row — `posting_sources` hangs off it and the ghost pass
     // still needs it — but stores no classification. `track` stays NULL, and neither tab can
@@ -123,6 +140,9 @@ export function formatStats(stats: EnrichStats, spendCapUsd: number): string {
     `${stats.cacheHits} cache hits`,
     `est. cost $${stats.costUsd.toFixed(4)} of $${spendCapUsd.toFixed(2)} cap`,
   ].join(', ');
+  if (stats.error !== undefined) {
+    return `${line}\nenrich: stopped on a client error (${stats.error}), ${stats.remaining} postings left for the next run`;
+  }
   if (!stats.capReached) return line;
   return `${line}\nenrich: spend cap reached, ${stats.remaining} postings left for the next run`;
 }
@@ -135,6 +155,8 @@ async function main(): Promise<void> {
       spendCapUsd,
     });
     console.log(formatStats(stats, spendCapUsd));
+    // The spend cap is a normal outcome and exits 0. A client error is not.
+    if (stats.error !== undefined) process.exitCode = 1;
   } finally {
     sqlite.close();
   }

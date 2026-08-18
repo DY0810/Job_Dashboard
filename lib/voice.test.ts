@@ -33,6 +33,12 @@ describe('voiceScore', () => {
     expect(voiceScore('We run an IVR and a TTS pipeline.')).toBe(2);
   });
 
+  it('matches acronyms and vendor names case-sensitively', () => {
+    // "sip" and "retell" are ordinary English words; SIP and Retell are not.
+    expect(voiceScore('Sip your coffee and retell the customer story. We use Vapi.')).toBe(1);
+    expect(voiceScore('We run SIP trunks and integrate Retell.')).toBe(2);
+  });
+
   it('scores nothing for the adversarial negatives', () => {
     expect(voiceScore('Run our voice of the customer program with the insights team.')).toBe(0);
     expect(voiceScore('Keep our brand voice consistent across campaigns.')).toBe(0);

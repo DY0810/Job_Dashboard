@@ -20,9 +20,9 @@
 import { Anthropic } from '@anthropic-ai/sdk';
 import { z } from 'zod';
 
-import { enrichmentCacheKey } from './hash';
-import { normalizeDescription } from './normalize';
-import { isVoiceRole, VOICE_BADGE } from './voice';
+import { enrichmentCacheKey } from './hash.ts';
+import { normalizeDescription } from './normalize.ts';
+import { isVoiceRole, VOICE_BADGE } from './voice.ts';
 
 export const CLASSIFY_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -161,15 +161,28 @@ const SENIOR_TITLE =
 const TITLE_FALSE_FRIENDS = /\bmembers?\s+of\s+(?:the\s+)?technical\s+staff\b/gi;
 
 /**
- * Years-of-experience patterns run against title AND body, where they actually appear.
- * `[5-9]` with an optional plus covers "5 years" and "7+ years"; `\d{2,}` covers "10+ years"
- * and "15 years".
+ * Years of experience, matched against title AND body, where the phrase actually appears.
  *
- * ponytail: this drops a posting whose body happens to say "in the last 10 years we grew" —
- * a false positive costs one listing, a leak costs the acceptance criterion. If that shows
- * up in practice, require an experience word within a few tokens rather than loosening it.
+ * The capture is the LOW end of the requirement, because a range has to be read from its
+ * start: "2-5 years" is the standard way to write a mid-level ask and must be kept, while
+ * "5+ years" and "10 years" are senior. Matching the tail of the range instead — which a
+ * bare `\b[5-9]` does, since a hyphen is a word boundary — silently drops most mid roles.
+ *
+ * ponytail: this still drops a body that happens to say "in the last 10 years we grew". A
+ * false positive costs one listing; a leak costs the acceptance criterion. If it shows up in
+ * practice, require an experience word within a few tokens rather than loosening the number.
  */
-const YEARS_OF_EXPERIENCE = /\b(?:[5-9]|\d{2,})\s*\+?\s*(?:years|yrs)\b/i;
+const YEARS_OF_EXPERIENCE = /\b(\d{1,2})(?:\s*(?:-|–|—|to)\s*\d{1,2})?\s*\+?\s*(?:years|yrs)\b/gi;
+
+/** 5 or more years asked for, per the plan's `[5-9]+ years` / `\d{2}+ years` rule. */
+const SENIOR_YEARS = 5;
+
+function requiresSeniorExperience(text: string): boolean {
+  for (const match of text.matchAll(YEARS_OF_EXPERIENCE)) {
+    if (Number(match[1]) >= SENIOR_YEARS) return true;
+  }
+  return false;
+}
 
 /**
  * True when a posting is obviously senior and must never reach the model. Callers pass the
@@ -181,7 +194,7 @@ export function isSeniorByRegex(
 ): boolean {
   const titleText = (title ?? '').replace(TITLE_FALSE_FRIENDS, ' ');
   if (SENIOR_TITLE.test(titleText)) return true;
-  return YEARS_OF_EXPERIENCE.test(`${titleText} ${normalizedDescription ?? ''}`);
+  return requiresSeniorExperience(`${titleText} ${normalizedDescription ?? ''}`);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -218,15 +231,14 @@ export function callCostUsd(inputTokens: number, outputTokens: number): number {
  * No prompt caching: Haiku 4.5's minimum cacheable prefix is 4096 tokens and this system
  * prompt is nowhere near it, so a `cache_control` breakpoint would silently do nothing.
  */
-export function anthropicClassifier(options: { model?: string } = {}): ClassifyClient {
-  const model = options.model ?? CLASSIFY_MODEL;
+export function anthropicClassifier(): ClassifyClient {
   const schema = classificationJsonSchema();
   let client: Anthropic | undefined;
 
   return async ({ title, company, description }) => {
     client ??= new Anthropic();
     const message = await client.messages.create({
-      model,
+      model: CLASSIFY_MODEL,
       max_tokens: MAX_OUTPUT_TOKENS,
       system: CLASSIFY_SYSTEM_PROMPT,
       output_config: { format: { type: 'json_schema', schema } },
@@ -283,7 +295,7 @@ export interface EnrichResult {
   contentHash: string;
   /** null when the posting is dropped: nothing is stored on the row but `enriched_at`. */
   classification: StoredClassification | null;
-  source: 'prefilter' | 'cache' | 'model';
+  source: 'skipped' | 'prefilter' | 'cache' | 'model';
   dropReason?: DropReason;
 }
 
@@ -296,9 +308,11 @@ export interface EnrichStats {
   dropped: number;
   stored: number;
   costUsd: number;
-  /** Backlog left when the spend cap stopped the loop. */
+  /** Backlog left when the spend cap or a client error stopped the loop. */
   remaining: number;
   capReached: boolean;
+  /** Set when a client error ended the run early. The postings before it are still written. */
+  error?: string;
 }
 
 export interface EnrichOptions {
@@ -338,7 +352,7 @@ export async function enrichPostings(
     const contentHash = enrichmentCacheKey(posting.description);
 
     if (!normalized) {
-      results.push({ id: posting.id, contentHash, classification: null, source: 'prefilter', dropReason: 'empty' });
+      results.push({ id: posting.id, contentHash, classification: null, source: 'skipped', dropReason: 'empty' });
       stats.processed += 1;
       stats.dropped += 1;
       continue;
@@ -346,25 +360,16 @@ export async function enrichPostings(
 
     // Cache lookup precedes everything, including the prefilter's bookkeeping.
     let classification = parseCached(cache.get(contentHash));
-    let source: EnrichResult['source'] = 'cache';
+    let source: EnrichResult['source'] = classification ? 'cache' : 'prefilter';
+    if (classification) stats.cacheHits += 1;
 
-    if (classification) {
-      stats.cacheHits += 1;
-    } else {
-      if (isSeniorByRegex(posting.title, normalized)) {
-        results.push({
-          id: posting.id,
-          contentHash,
-          classification: null,
-          source: 'prefilter',
-          dropReason: 'prefilter-senior',
-        });
-        stats.processed += 1;
-        stats.prefilterDrops += 1;
-        stats.dropped += 1;
-        continue;
-      }
+    // The cache key is the body alone (finding B), so two postings that share a boilerplate
+    // body share a cache row — including a senior one and a junior one. The title-driven
+    // prefilter therefore runs over cache hits too, where it costs nothing and is the only
+    // thing standing between a shared body and a senior row in the UI.
+    const senior = isSeniorByRegex(posting.title, normalized);
 
+    if (!classification && !senior) {
       // ponytail: the cap is checked before the call, not after, so a run can overshoot by
       // at most one call (fractions of a cent on Haiku). Pre-call token estimation would
       // trade that for the opposite error.
@@ -374,18 +379,30 @@ export async function enrichPostings(
         break;
       }
 
-      const call = await client({
-        title: posting.title,
-        company: posting.company,
-        description: normalized.slice(0, MAX_DESCRIPTION_CHARS),
-      });
+      let call: ClassifyCall;
+      try {
+        call = await client({
+          title: posting.title,
+          company: posting.company,
+          description: normalized.slice(0, MAX_DESCRIPTION_CHARS),
+        });
+      } catch (error) {
+        // The SDK already retried the transient failures, so what reaches here is either
+        // permanent (auth, bad request) or a sustained outage. Stop cleanly: everything
+        // classified so far is still written, and the rest is retried next run.
+        stats.error = error instanceof Error ? error.message : String(error);
+        stats.remaining = postings.length - index;
+        break;
+      }
+
       stats.calls += 1;
       stats.costUsd += callCostUsd(call.inputTokens, call.outputTokens);
       source = 'model';
 
       const parsed = ClassificationSchema.safeParse(call.raw);
       if (!parsed.success) {
-        // Not cached: a malformed answer must not be preserved as if it were one.
+        // Not cached, and `runEnrich` leaves `enriched_at` NULL for this reason, so a
+        // truncated or malformed answer is retried rather than frozen into a drop.
         results.push({ id: posting.id, contentHash, classification: null, source, dropReason: 'invalid' });
         stats.processed += 1;
         stats.dropped += 1;
@@ -395,21 +412,30 @@ export async function enrichPostings(
       cache.set(contentHash, classification);
     }
 
-    const stored = toStored(classification, normalized);
+    const stored = classification && !senior ? toStored(classification, normalized) : null;
     results.push({
       id: posting.id,
       contentHash,
       classification: stored,
       source,
-      dropReason: stored ? undefined : classification.track === 'other' ? 'track' : 'senior',
+      dropReason: stored ? undefined : dropReasonFor(senior, classification),
     });
     stats.processed += 1;
-    if (stored) stats.stored += 1;
-    else stats.dropped += 1;
+    if (stored) {
+      stats.stored += 1;
+    } else {
+      stats.dropped += 1;
+      if (senior) stats.prefilterDrops += 1;
+    }
   }
 
-  if (!stats.capReached) stats.remaining = 0;
+  if (!stats.capReached && stats.error === undefined) stats.remaining = 0;
   return { results, stats };
+}
+
+function dropReasonFor(senior: boolean, classification: Classification | null): DropReason {
+  if (senior) return 'prefilter-senior';
+  return classification?.track === 'other' ? 'track' : 'senior';
 }
 
 function parseCached(value: unknown): Classification | null {

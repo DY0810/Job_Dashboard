@@ -127,6 +127,49 @@ describe('runEnrich', () => {
     expect(db.select().from(postings).where(eq(postings.id, VOICE.id)).get()?.track).toBe('engineering');
   });
 
+  it('re-enriches a posting whose description changed', async () => {
+    const db = testDatabase();
+    insertPosting(db, VOICE);
+
+    const first = stubClient();
+    await runEnrich(db, first.client);
+    expect(first.calls).toHaveLength(1);
+
+    // Same posting, edited body: the stored description_hash no longer matches, so it is
+    // pending again — and a new body is genuinely a new classification, not a cache hit.
+    db.update(postings)
+      .set({ description: `${VOICE.description} We also run our own TTS.` })
+      .where(eq(postings.id, VOICE.id))
+      .run();
+
+    const second = stubClient();
+    const stats = await runEnrich(db, second.client);
+    expect(second.calls).toHaveLength(1);
+    expect(stats.calls).toBe(1);
+    expect(db.select().from(enrichmentCache).all()).toHaveLength(2);
+  });
+
+  it('leaves a malformed answer un-enriched so the next run retries it', async () => {
+    const db = testDatabase();
+    insertPosting(db, VOICE);
+
+    const broken: ClassifyClient = async () => ({
+      raw: { track: 'engineering' },
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    await runEnrich(db, broken);
+
+    const row = db.select().from(postings).where(eq(postings.id, VOICE.id)).get();
+    expect(row?.enrichedAt).toBeNull();
+    expect(db.select().from(enrichmentCache).all()).toHaveLength(0);
+
+    const retry = stubClient();
+    await runEnrich(db, retry.client);
+    expect(retry.calls).toHaveLength(1);
+    expect(db.select().from(postings).where(eq(postings.id, VOICE.id)).get()?.track).toBe('engineering');
+  });
+
   it('stops cleanly at the spend cap and leaves the rest for the next run', async () => {
     const db = testDatabase();
     POSTING_FIXTURES.slice(0, 3).forEach((fixture) => insertPosting(db, fixture));

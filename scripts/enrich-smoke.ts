@@ -23,9 +23,9 @@ import {
   CLASSIFY_MODEL,
   MAX_DESCRIPTION_CHARS,
   type Classification,
-} from '../lib/classify';
-import { GRADED_FIELDS, POSTING_FIXTURES, type ClassifyFixture } from '../lib/classify.fixtures';
-import { normalizeDescription } from '../lib/normalize';
+} from '../lib/classify.ts';
+import { GRADED_FIELDS, POSTING_FIXTURES, type ClassifyFixture } from '../lib/classify.fixtures.ts';
+import { normalizeDescription } from '../lib/normalize.ts';
 
 /**
  * One of each shape that has bitten a classifier before: a paid internship with a season and

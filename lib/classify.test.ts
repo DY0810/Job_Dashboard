@@ -121,6 +121,21 @@ describe('regex prefilter (layer 1)', () => {
     expect(isSeniorByRegex('Software Engineer', 'Salary is $120,000 per year')).toBe(false);
   });
 
+  it('reads a range from its start, so the mid band survives', () => {
+    // A hyphen is a word boundary, so a regex anchored on the tail of the range reads
+    // "2-5 years" as senior and silently drops most mid-level postings.
+    expect(isSeniorByRegex('Backend Engineer', 'We want 2-5 years of experience.')).toBe(false);
+    expect(isSeniorByRegex('Backend Engineer', 'We want 3 to 5 years of experience.')).toBe(false);
+    expect(isSeniorByRegex('Backend Engineer', 'We want 5-7 years of experience.')).toBe(true);
+    expect(isSeniorByRegex('Backend Engineer', 'We want 8 to 10 years of experience.')).toBe(true);
+  });
+
+  it('sees a senior requirement anywhere in the body, not only the first mention', () => {
+    expect(
+      isSeniorByRegex('Backend Engineer', '1-2 years with us. Then 9 years of Java for the lead track.'),
+    ).toBe(true);
+  });
+
   it('does not fire on a seniority word inside another word', () => {
     expect(isSeniorByRegex('Design Leadership Program Intern', 'A rotational program.')).toBe(false);
   });
@@ -289,6 +304,29 @@ describe('cache', () => {
     expect(cache.size()).toBe(1);
   });
 
+  it('drops a senior posting that shares a cached body with a junior one', async () => {
+    // The key is the body alone, so a company that reuses one boilerplate body across levels
+    // gets one cache row. The prefilter has to run over cache hits or the senior posting
+    // inherits the junior classification and shows up in the tab.
+    const body = 'About us: we build logistics software. You will write Go services.';
+    const cache = memoryCache();
+    const stub = fixtureStub();
+
+    const junior = await enrichPostings(
+      [{ id: 1, title: POSTING_FIXTURES[17].title, company: 'Verdant Grid', description: body }],
+      { client: stub.client, cache },
+    );
+    expect(junior.results[0].classification).not.toBeNull();
+
+    const senior = await enrichPostings(
+      [{ id: 2, title: 'Senior Software Engineer', company: 'Verdant Grid', description: body }],
+      { client: refusingClient(), cache },
+    );
+    expect(senior.results[0].classification).toBeNull();
+    expect(senior.results[0].dropReason).toBe('prefilter-senior');
+    expect(senior.results[0].source).toBe('cache');
+  });
+
   it('skips a posting with no description without calling', async () => {
     const stub = stubClient(() => POSTING_FIXTURES[0].expected);
     const { results, stats } = await enrichPostings(
@@ -331,6 +369,28 @@ describe('spend cap', () => {
     expect(results).toHaveLength(5);
     expect(stats.capReached).toBe(true);
     expect(stats.remaining).toBe(45);
+  });
+
+  it('stops on a client error without losing the work already done', async () => {
+    const postings: EnrichPosting[] = [1, 2, 3].map((id) => ({
+      id,
+      title: 'Junior Frontend Engineer',
+      company: `Company ${id}`,
+      description: `Build web interfaces for team ${id}.`,
+    }));
+    let seen = 0;
+    const client: ClassifyClient = async () => {
+      seen += 1;
+      if (seen === 2) throw new Error('529 overloaded');
+      return { raw: POSTING_FIXTURES[14].expected, inputTokens: 0, outputTokens: 0 };
+    };
+
+    const { results, stats } = await enrichPostings(postings, { client, cache: memoryCache() });
+
+    expect(stats.error).toMatch(/overloaded/);
+    expect(stats.remaining).toBe(2);
+    expect(results).toHaveLength(1); // the first posting is still classified and written
+    expect(stats.stored).toBe(1);
   });
 
   it('parses the env cap as a trust boundary', () => {
