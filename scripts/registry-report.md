@@ -23,7 +23,7 @@ Generated 2026-08-18T04:24:19.715Z by `scripts/resolve-companies.ts`.
 - Unresolved: **10**
 - Dead / acquired: **0**
 
-## Voice-AI seed accounting (Phase 5a — plans/worky.md §5a, 42 companies)
+## Voice-AI seed accounting (Phase 5a — plans/workie.md §5a, 42 companies)
 
 - Resolved into registry: **32**
 - Unresolved: **10**
@@ -307,5 +307,5 @@ Of 10 candidates: **5** resolved, **5** unresolved. Teamtailor is out of scope f
 - Candidate tokens: lowercase-no-punctuation slug, hyphenated slug, both with common suffixes (inc/llc/co/corp/ltd/ai) stripped, and the domain stem of any known website — deduped, capped at 6 per company.
 - Rate limit: max 2 requests/second per host, enforced by a shared per-host throttle in `scripts/ats-probe.js`; different ATS hosts run concurrently.
 - Workday discovery (tenant × wd1/wd3/wd5/wd103 × site-name guesses) is opt-in per company and was only attempted where there's an actual reason to expect a large/established employer (Twilio, Riot Games) — running it blindly against every small startup in the seed sets would multiply request volume for near-zero plausible yield, since Workday targets enterprise HR, not 20-person startups. Everyone else's "no board found" reason notes Workday was not attempted, not that it was tried and failed.
-- Teamtailor and Pinpoint are confirmed-probeable (verified against real tenants: recruitgo.teamtailor.com, workwithus.pinpointhq.com) but not in the default sweep — plans/worky.md's rule is "add them when the registry actually has a company on one, not before." Rippling and BambooHR remain unconfirmed: Rippling's documented Job Board API is gated behind a paid subscription and its public page renders job data client-side with no stable JSON surface found; BambooHR's only public surface is, per multiple independent sources, an undocumented internal endpoint that changes shape/host between releases, and no real customer example could be found to verify against. Both are skipped rather than guessed, same standard as everything else in this phase.
+- Teamtailor and Pinpoint are confirmed-probeable (verified against real tenants: recruitgo.teamtailor.com, workwithus.pinpointhq.com) but not in the default sweep — plans/workie.md's rule is "add them when the registry actually has a company on one, not before." Rippling and BambooHR remain unconfirmed: Rippling's documented Job Board API is gated behind a paid subscription and its public page renders job data client-side with no stable JSON surface found; BambooHR's only public surface is, per multiple independent sources, an undocumented internal endpoint that changes shape/host between releases, and no real customer example could be found to verify against. Both are skipped rather than guessed, same standard as everything else in this phase.
 - Every registry write carries `verified_at` set to the moment of that successful probe, and `postings_at_probe` recording the exact count seen (0 is valid and meaningful — it means a real, confirmed board with no current openings, not "not found").

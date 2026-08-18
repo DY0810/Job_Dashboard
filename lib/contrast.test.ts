@@ -3,7 +3,7 @@
  *
  * It reads `app/globals.css` itself, so editing a token re-runs the measurement: there is no
  * second copy of the palette here to drift out of date. Run `npx vitest run lib/contrast`
- * with `WORKY_CONTRAST_TABLE=1` to print the table.
+ * with `WORKIE_CONTRAST_TABLE=1` to print the table.
  */
 
 import { readFileSync } from 'node:fs';
@@ -136,7 +136,7 @@ describe('contrast', () => {
           `| ${ratio(themes.dark[a], themes.dark[b]).toFixed(2)}:1 | n/a |`,
       );
     }
-    if (process.env.WORKY_CONTRAST_TABLE) console.log(lines.join('\n'));
+    if (process.env.WORKIE_CONTRAST_TABLE) console.log(lines.join('\n'));
     expect(lines.length).toBe(PAIRS.length + 4);
   });
 });

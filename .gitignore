@@ -41,7 +41,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# worky: sqlite db + live fixtures (never commit real data)
+# workie: sqlite db + live fixtures (never commit real data)
 *.db
 *.db-wal
 *.db-shm

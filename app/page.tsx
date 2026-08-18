@@ -232,7 +232,7 @@ export default async function Page({
   return (
     <main className="min-h-dvh px-4 pb-16">
       <header className="flex items-baseline gap-6 border-b border-rule py-2">
-        <h1 className="w-wide text-[13px] font-medium">Worky</h1>
+        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <nav className="flex gap-4" aria-label="Track">
           {TABS.map((tab) => (
             <Link

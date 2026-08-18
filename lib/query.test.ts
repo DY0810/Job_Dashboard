@@ -271,7 +271,7 @@ describe('search params are validated, not trusted', () => {
 
   it('round-trips through the URL', () => {
     const p = parseParams({ tab: 'engineering', mode: 'remote,hybrid', level: 'junior', job: '12' });
-    const url = new URL(`http://worky.local${href(p)}`);
+    const url = new URL(`http://workie.local${href(p)}`);
     expect(parseParams(Object.fromEntries(url.searchParams))).toEqual(p);
   });
 });

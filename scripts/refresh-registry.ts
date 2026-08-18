@@ -1,4 +1,4 @@
-// Monthly refresh (plans/worky.md Phase 3 registry maintenance): re-probes every entry in
+// Monthly refresh (plans/workie.md Phase 3 registry maintenance): re-probes every entry in
 // scripts/companies.json using its exact recorded (ats, token, wdN?, site?) — no candidate
 // guessing, the value is already on record — and either bumps `verified_at` on a fresh 200
 // + non-empty payload, or flags the entry when it isn't confirmed anymore.

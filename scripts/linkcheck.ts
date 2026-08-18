@@ -2,7 +2,7 @@
  * `npm run linkcheck` — does every stored apply link still lead to a live posting?
  *
  * The acceptance criterion is "every apply link resolves to a LIVE posting", and finding H
- * in plans/worky.md is the reason this is not a status-code script: several ATS platforms
+ * in plans/workie.md is the reason this is not a status-code script: several ATS platforms
  * answer 200 for a job that is gone. Verified against the live platforms on 2026-08-18:
  *
  *   greenhouse  a withdrawn job 302s to the board index and answers **200**

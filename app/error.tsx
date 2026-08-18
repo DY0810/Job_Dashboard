@@ -8,7 +8,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
   return (
     <main className="min-h-dvh px-4 pb-16">
       <header className="flex items-baseline gap-6 border-b border-rule py-2">
-        <h1 className="w-wide text-[13px] font-medium">Worky</h1>
+        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <span className="w-wide text-[11px] text-fg-dim">error</span>
       </header>
       <div className="prose max-w-lg py-12">

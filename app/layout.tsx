@@ -14,12 +14,12 @@ const archivo = Archivo({
 });
 
 export const metadata: Metadata = {
-  title: 'Worky',
+  title: 'Workie',
   description: 'Entry-to-mid design and engineering postings, newest first.',
 };
 
 /** Applies a stored theme choice before first paint, so a forced theme never flashes. */
-const THEME_BOOT = `try{var t=localStorage.getItem('worky-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}`;
+const THEME_BOOT = `try{var t=localStorage.getItem('workie-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}`;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

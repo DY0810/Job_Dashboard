@@ -398,7 +398,7 @@ describe('spend cap', () => {
     expect(parseSpendCap('')).toBe(DEFAULT_SPEND_CAP_USD);
     expect(parseSpendCap('2.50')).toBe(2.5);
     expect(parseSpendCap('0')).toBe(0);
-    expect(() => parseSpendCap('lots')).toThrow(/WORKY_SPEND_CAP_USD/);
-    expect(() => parseSpendCap('-1')).toThrow(/WORKY_SPEND_CAP_USD/);
+    expect(() => parseSpendCap('lots')).toThrow(/WORKIE_SPEND_CAP_USD/);
+    expect(() => parseSpendCap('-1')).toThrow(/WORKIE_SPEND_CAP_USD/);
   });
 });

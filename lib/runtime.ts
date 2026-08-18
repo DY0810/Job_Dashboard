@@ -16,10 +16,10 @@ import type { RawPosting, SourceKind } from './dedupe.ts';
 
 /** Descriptive, with a contact address, per the plan. Must not impersonate a named crawler. */
 export const USER_AGENT =
-  'WorkyBot/0.1 (+mailto:dongyeop0810@gmail.com; personal job-search dashboard; contact before blocking)';
+  'WorkieBot/0.1 (+mailto:dongyeop0810@gmail.com; personal job-search dashboard; contact before blocking)';
 
 /** The product token robots.txt groups are matched against. */
-const UA_TOKEN = 'workybot';
+const UA_TOKEN = 'workiebot';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -298,7 +298,7 @@ export function parseRobots(text: string, uaToken: string = UA_TOKEN): RobotsRul
   }
 
   // RFC 9309 §2.2.1: match the product token by prefix, and when several groups match, the
-  // longest one wins. `includes` would let a group named `bot` capture `workybot`, and
+  // longest one wins. `includes` would let a group named `bot` capture `workiebot`, and
   // picking the first match would make the answer depend on the order lines appear in.
   const exact = [...groups.keys()]
     .filter((agent) => agent !== '*' && uaToken.startsWith(agent))

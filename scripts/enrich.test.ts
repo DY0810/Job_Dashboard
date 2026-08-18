@@ -15,11 +15,11 @@ import { describe, expect, it } from 'vitest';
 import type { ClassifyClient, ClassifyInput } from '../lib/classify.ts';
 import { POSTING_FIXTURES, SENIOR_FIXTURES } from '../lib/classify.fixtures.ts';
 import * as schema from '../lib/db/schema.ts';
-import { formatStats, runEnrich, type WorkyDatabase } from './enrich.ts';
+import { formatStats, runEnrich, type WorkieDatabase } from './enrich.ts';
 
 const { enrichmentCache, postings } = schema;
 
-function testDatabase(): WorkyDatabase {
+function testDatabase(): WorkieDatabase {
   const sqlite = new Database(':memory:');
   const migrations = fileURLToPath(new URL('../drizzle/', import.meta.url));
   for (const file of readdirSync(migrations).filter((name) => name.endsWith('.sql')).sort()) {
@@ -29,7 +29,7 @@ function testDatabase(): WorkyDatabase {
 }
 
 function insertPosting(
-  db: WorkyDatabase,
+  db: WorkieDatabase,
   posting: { id: number; title: string; company: string; description: string },
 ): void {
   db.insert(postings)

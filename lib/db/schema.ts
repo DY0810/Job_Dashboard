@@ -1,5 +1,5 @@
 /**
- * The complete Worky schema — four tables, landed in one migration on purpose.
+ * The complete Workie schema — four tables, landed in one migration on purpose.
  *
  * Phases 4 (classification), 5 (voice badges) and 6 (aggregators) run in parallel. If each
  * added its own migration for the columns it needs, `drizzle/` would conflict three ways.
