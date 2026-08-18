@@ -13,7 +13,7 @@ export const TABS = ['design', 'engineering'] as const;
 export type Tab = (typeof TABS)[number];
 export const DEFAULT_TAB: Tab = 'design';
 
-/** Only these three are ever visible. `senior+` has no chip and no row, on either tab. */
+/** Only these three are ever visible. `senior+` has no option and no row, on either tab. */
 export const VISIBLE_SENIORITY = ['entry', 'junior', 'mid'] as const;
 
 export const WINDOW_MS = {
@@ -25,7 +25,7 @@ export const WINDOW_MS = {
 
 /**
  * Per-tab filter vocabulary, straight from the spec. The Design tab deliberately offers one
- * posted-window (`week`) and no season chips; Engineering offers four windows and no
+ * posted-window (`week`) and no seasons; Engineering offers four windows and no
  * freelance/part-time. A value outside its tab's vocabulary is dropped by `parseParams`.
  */
 export const VOCAB = {
@@ -41,42 +41,61 @@ export const VOCAB = {
   },
 } as const satisfies Record<Tab, { posted: readonly string[]; type: readonly string[]; season: readonly string[] }>;
 
-/** Shared by both tabs. `entry` folds into the `junior` chip (finding F) — there is no entry chip. */
+/** Shared by both tabs. `entry` folds into the `junior` option (finding F) — no entry option. */
 export const SHARED_VOCAB = {
   pay: ['paid', 'unpaid'],
   mode: ['remote', 'hybrid', 'onsite'],
   level: ['junior', 'mid'],
 } as const;
 
-/** The multi-select groups: OR inside a group, AND across groups. */
+/** The groups a row badge can belong to. */
 export const GROUPS = ['type', 'pay', 'mode', 'season', 'level'] as const;
 export type Group = (typeof GROUPS)[number];
 
+/** Every filter with a fixed vocabulary — one dropdown each, in this order. `badge` is not
+ *  here: it is a free slug off a posting, so it has no list to choose from. */
+export const FILTERS = ['posted', ...GROUPS] as const;
+export type Filter = (typeof FILTERS)[number];
+
+/**
+ * Which vocabulary a filter offers on a tab. The one place that routing is written — the
+ * dropdowns, the row badges and the tests all read it here, so a filter cannot offer the
+ * dropdown one list and the badge another.
+ */
+export function vocab(tab: Tab, filter: Filter): readonly string[] {
+  return filter === 'posted' || filter === 'type' || filter === 'season'
+    ? VOCAB[tab][filter]
+    : SHARED_VOCAB[filter];
+}
+
+/**
+ * One value per filter, or null for "any" — which is exactly what one dropdown can show, so
+ * the control and the URL can never disagree about what is on.
+ */
 export interface Params {
   tab: Tab;
-  /** Single-select: the posted-within window, or null for "any time". */
   posted: keyof typeof WINDOW_MS | null;
-  type: string[];
-  pay: string[];
-  mode: string[];
-  season: string[];
-  level: string[];
+  type: string | null;
+  pay: string | null;
+  mode: string | null;
+  season: string | null;
+  level: string | null;
   /** One free badge slug from `postings.badges`, e.g. `voice-ai`. */
   badge: string | null;
   /** The posting whose drawer is open, from `?job=<id>`. */
   job: number | null;
 }
 
-const csv = z.string().max(200).optional();
+const value = z.string().max(200).optional();
 
 const Raw = z.object({
   tab: z.enum(TABS).catch(DEFAULT_TAB),
-  posted: csv.catch(undefined),
-  type: csv.catch(undefined),
-  pay: csv.catch(undefined),
-  mode: csv.catch(undefined),
-  season: csv.catch(undefined),
-  level: csv.catch(undefined),
+  posted: value.catch(undefined),
+  type: value.catch(undefined),
+  pay: value.catch(undefined),
+  mode: value.catch(undefined),
+  season: value.catch(undefined),
+  level: value.catch(undefined),
   badge: z.string().regex(/^[a-z0-9-]{1,32}$/).optional().catch(undefined),
   job: z
     .preprocess((v) => (v === undefined || v === '' ? undefined : v), z.coerce.number().int().positive().optional())
@@ -88,10 +107,13 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function pick(raw: string | undefined, allowed: readonly string[]): string[] {
-  if (!raw) return [];
-  const chosen = raw.split(',').filter((v) => allowed.includes(v));
-  return allowed.filter((v) => chosen.includes(v)); // canonical order, deduped
+/**
+ * A URL bookmarked before the filters became dropdowns can still carry a comma list. Take the
+ * first value it offers that this tab knows, because one is all a dropdown can show — dropping
+ * the rest silently beats a control that misreports the filter it is applying.
+ */
+function pick(raw: string | undefined, allowed: readonly string[]): string | null {
+  return raw ? (raw.split(',').find((v) => allowed.includes(v)) ?? null) : null;
 }
 
 export type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -108,53 +130,43 @@ export function parseParams(input: RawSearchParams): Params {
     badge: first(input.badge),
     job: first(input.job),
   });
-  const vocab = VOCAB[raw.tab];
+  const chosen = Object.fromEntries(
+    FILTERS.map((filter) => [filter, pick(raw[filter], vocab(raw.tab, filter))]),
+  ) as Record<Filter, string | null>;
   return {
+    ...chosen,
     tab: raw.tab,
-    posted: (pick(raw.posted, vocab.posted)[0] as Params['posted']) ?? null,
-    type: pick(raw.type, vocab.type),
-    pay: pick(raw.pay, SHARED_VOCAB.pay),
-    mode: pick(raw.mode, SHARED_VOCAB.mode),
-    season: pick(raw.season, vocab.season),
-    level: pick(raw.level, SHARED_VOCAB.level),
+    posted: chosen.posted as Params['posted'],
     badge: raw.badge ?? null,
     job: raw.job ?? null,
   };
 }
 
 export function hasFilters(p: Params): boolean {
-  return (
-    p.posted !== null ||
-    p.badge !== null ||
-    GROUPS.some((g) => p[g].length > 0)
-  );
+  return p.badge !== null || FILTERS.some((filter) => p[filter] !== null);
 }
 
-/** Serializes state back to a URL. Empty groups are omitted, so a bare tab stays a bare URL. */
+/** Serializes state back to a URL. Unset filters are omitted, so a bare tab stays a bare URL. */
 export function href(p: Params): string {
   const q = new URLSearchParams();
   if (p.tab !== DEFAULT_TAB) q.set('tab', p.tab);
-  if (p.posted) q.set('posted', p.posted);
-  for (const g of GROUPS) if (p[g].length) q.set(g, p[g].join(','));
+  for (const filter of FILTERS) if (p[filter]) q.set(filter, p[filter]!);
   if (p.badge) q.set('badge', p.badge);
   if (p.job !== null) q.set('job', String(p.job));
   const s = q.toString();
   return s ? `/?${s}` : '/';
 }
 
-/** Toggling a chip never opens or keeps a drawer open — filtering is a table action. */
-export function toggle(p: Params, group: Group, value: string): string {
-  const on = p[group].includes(value);
-  const next = on ? p[group].filter((v) => v !== value) : [...p[group], value];
-  return href({ ...p, [group]: next, job: null });
-}
-
-export function withPosted(p: Params, value: Params['posted']): string {
-  return href({ ...p, posted: p.posted === value ? null : value, job: null });
-}
-
-export function withBadge(p: Params, value: string): string {
-  return href({ ...p, badge: p.badge === value ? null : value, job: null });
+/**
+ * The one writer. `null` clears; anything else is validated against the tab's vocabulary on
+ * the way out, so a filter link cannot carry a value the tab does not offer.
+ *
+ * It does not toggle. Toggling is written at the call site — `withFilter(p, g, p[g] === v ?
+ * null : v)` — because a badge toggles and a dropdown does not, and burying that difference
+ * inside a name is how you get two same-shaped writers with opposite contracts.
+ */
+export function withFilter(p: Params, filter: Filter | 'badge', value: string | null): string {
+  return href(parseParams({ ...toRaw(p), [filter]: value ?? '' }));
 }
 
 /** Switching tabs drops filters whose vocabulary does not exist on the destination tab. */
@@ -162,23 +174,26 @@ export function withTab(p: Params, tab: Tab): string {
   return href(parseParams({ ...toRaw(p), tab }));
 }
 
+/** The same params with every filter off — what `clear` navigates to, and what the "is this
+ *  tab empty at all?" probe asks about. Derived from `FILTERS` so a new filter cannot be
+ *  missed by one of the two. */
+export function bare(p: Params): Params {
+  return { ...p, ...Object.fromEntries(FILTERS.map((f) => [f, null])), badge: null } as Params;
+}
+
 export function cleared(p: Params): string {
-  return href({ ...p, posted: null, type: [], pay: [], mode: [], season: [], level: [], badge: null, job: null });
+  return href({ ...bare(p), job: null });
 }
 
 export function withJob(p: Params, job: number | null): string {
   return href({ ...p, job });
 }
 
+/** Note the missing `job`: changing a filter closes the drawer — filtering is a table action. */
 function toRaw(p: Params): RawSearchParams {
   return {
     tab: p.tab,
-    posted: p.posted ?? undefined,
-    type: p.type.join(','),
-    pay: p.pay.join(','),
-    mode: p.mode.join(','),
-    season: p.season.join(','),
-    level: p.level.join(','),
+    ...Object.fromEntries(FILTERS.map((filter) => [filter, p[filter] ?? undefined])),
     badge: p.badge ?? undefined,
   };
 }

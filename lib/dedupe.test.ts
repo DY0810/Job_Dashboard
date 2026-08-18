@@ -53,6 +53,30 @@ describe('dedupeKey', () => {
     expect(dedupeKey('  FIGMA  ', 'Product Designer [REQ-1042]', 'SF')).toBe(key);
   });
 
+  /**
+   * The decisive one. An ATS says "New York, NY" and an aggregator says "New York City, New
+   * York, United States"; `city_norm` is a key component, so if the alias table misses the
+   * longer spelling the same job stays two postings and "zero cross-source duplicates" is
+   * quietly untrue. 137 rows in the live corpus carry one of these spellings.
+   */
+  it('collapses the spellings of one metro that different sources send', () => {
+    const nyc = dedupeKey('Figma', 'Product Designer', 'New York, NY');
+    for (const spelling of [
+      'New York City, New York, United States',
+      'New York HQ',
+      'New York Office',
+      'NYC',
+    ]) {
+      expect(dedupeKey('Figma', 'Product Designer', spelling), spelling).toBe(nyc);
+    }
+
+    const sf = dedupeKey('Figma', 'Product Designer', 'San Francisco, CA');
+    expect(dedupeKey('Figma', 'Product Designer', 'San Francisco Office')).toBe(sf);
+
+    // And does not over-collapse: a town whose name starts with a metro's is its own place.
+    expect(dedupeKey('Figma', 'Product Designer', 'New York Mills, MN')).not.toBe(nyc);
+  });
+
   it('separates the same role in different places', () => {
     const sf = dedupeKey('Figma', 'Product Designer', 'San Francisco, CA');
     expect(dedupeKey('Figma', 'Product Designer', 'New York, NY')).not.toBe(sf);

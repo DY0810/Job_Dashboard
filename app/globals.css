@@ -195,6 +195,15 @@
   text-overflow: ellipsis;
 }
 
+/* Capped rather than greedy: the column that must stay legible without eating the one next
+   to it. `ch` so the cap tracks the font, not a guessed pixel width. */
+.rows td.clip,
+.rows th.clip {
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .rows td:last-child,
 .rows th:last-child {
   padding-right: 0;
@@ -219,11 +228,17 @@
   padding-top: 0;
 }
 
-/* ─────────────────────────────────────────────────────────────────────── chips ──
- * Badges are controls: surface + 1px rule, never the accent. The accent means
- * "posted in the last 24 hours" and nothing else.
+/* ────────────────────────────────────────────────────────────── chips + selects ──
+ * Badges are controls, and so are the filter dropdowns: surface + 1px rule, never the accent.
+ * The accent means "posted in the last 24 hours" and nothing else. One rule for both, because
+ * two controls that mean the same thing should not be able to drift apart visually.
+ *
+ * The <select> wears `appearance: none` and the box is the wrapper, not the control: a native
+ * menulist can ignore an author background, which would leave a filtered dropdown looking
+ * identical to an unset one while the badge beside it shows the state correctly.
  */
-.chip {
+.chip,
+.select-box {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -233,7 +248,7 @@
   line-height: 16px;
   white-space: nowrap;
   color: var(--fg-dim);
-  /* MOTION 2/3 — the chip's own active/inactive state. This is feedback on the control,
+  /* MOTION 2/3 — the control's own active/inactive state. This is feedback on the control,
      never on the table's response to it: the rows below re-sort with no animation at all. */
   transition:
     background-color 120ms var(--ease-state),
@@ -242,12 +257,14 @@
     transform 120ms var(--ease-state);
 }
 
-.chip:hover {
+.chip:hover,
+.select-box:hover {
   color: var(--fg);
   border-color: var(--fg-faint);
 }
 
-.chip[aria-current="true"] {
+.chip[aria-current="true"],
+.select-box[data-on="true"] {
   background: var(--surface);
   border-color: var(--fg-dim);
   color: var(--fg);
@@ -260,8 +277,57 @@
   pointer-events: none;
 }
 
-.chip:active {
+/* Feedback, not animation — every pressable in the app gets it, and a dropdown is one. */
+.chip:active,
+.select-box:active {
   transform: scale(0.97);
+}
+
+.select-box {
+  position: relative;
+  padding-right: 18px;
+  cursor: pointer;
+}
+
+/* The caret is `Chevron` turned a quarter: one glyph, two directions, no second component. */
+.select-box svg {
+  position: absolute;
+  right: 4px;
+  pointer-events: none;
+  transform: rotate(90deg);
+}
+
+.select {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* The ring belongs to the box the user sees, not to the stripped control inside it. */
+.select:focus-visible {
+  outline: none;
+}
+
+.select-box:has(.select:focus-visible) {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+  border-radius: 1px;
+}
+
+/* iOS Safari zooms the viewport on any form control under 16px and never zooms back out.
+   Touch pointers only, so the desktop row density is untouched. The line box has to grow with
+   the glyphs or the descenders on "hybrid" and "spring" are clipped by the 16px line-height
+   the chip rule pins above. */
+@media (pointer: coarse) {
+  .select-box,
+  .select {
+    font-size: 16px;
+    line-height: 20px;
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────────── drawer ──
@@ -345,11 +411,13 @@ dialog.drawer[open]::backdrop {
  */
 @media (prefers-reduced-motion: reduce) {
   .rows td,
-  .chip {
+  .chip,
+  .select-box {
     transition: none;
   }
 
-  .chip:active {
+  .chip:active,
+  .select-box:active {
     transform: none;
   }
 

@@ -26,7 +26,10 @@ type Season = 'summer' | 'fall' | 'winter' | 'spring';
 type Mode = 'remote' | 'hybrid' | 'onsite';
 type Period = 'hour' | 'week' | 'month' | 'year';
 
-/** The four places that matter to `GEO_TIER`: metro, other-California, remote, elsewhere. */
+/**
+ * Every branch of `GEO_TIER`: metro (by alias and by the messier spellings a real corpus
+ * actually carries), other-California, remote, elsewhere, and nothing-usable-at-all.
+ */
 const PLACES = {
   sf: { location: 'San Francisco, CA', cityNorm: 'sf', state: 'CA', country: 'US', isRemote: false },
   nyc: { location: 'New York, NY', cityNorm: 'nyc', state: 'NY', country: 'US', isRemote: false },
@@ -34,6 +37,17 @@ const PLACES = {
   berlin: { location: 'Berlin, Germany', cityNorm: 'berlin', state: null, country: 'DE', isRemote: false },
   austin: { location: 'Austin, TX', cityNorm: 'austin', state: 'TX', country: 'US', isRemote: false },
   remote: { location: 'Remote', cityNorm: null, state: null, country: null, isRemote: true },
+  // The messy spellings a real board sends, with the `city_norm` `normalizeLocation` now
+  // resolves them to. They were the 137-row miss that made the location rule delete target
+  // metros; the fixture states the key literally so a normalizer change cannot silently
+  // re-aim the assertions that depend on it.
+  nycLoose: { location: 'New York City, New York, United States', cityNorm: 'nyc', state: 'NY', country: 'US', isRemote: false },
+  sfOffice: { location: 'San Francisco Office', cityNorm: 'sf', state: 'CA', country: 'US', isRemote: false },
+  // Onsite in London by its location string; the body is what says the role is remote, so
+  // `work_mode` is the only signal that puts it in the remote tier.
+  london: { location: 'London, United Kingdom', cityNorm: 'london', state: null, country: 'GB', isRemote: false },
+  // Nothing usable at all — the location never normalized.
+  nowhere: { location: null, cityNorm: null, state: null, country: null, isRemote: false },
 } as const;
 
 /** Marks a row as fixture data. The seed deletes by this and nothing else. */
@@ -66,9 +80,10 @@ interface Fixture {
 }
 
 const FIXTURES: Fixture[] = [
-  // ── Design: the four-key sort, and the two cases a three-key sort gets wrong ──────────
+  // ── Design: recency, the seniority tie-break, and every branch of the location rule ────
   { ref: 'd-sf-3d', track: 'design', company: 'Northline', title: 'Product Designer', place: 'sf', age: 3 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true, pay: [85_000, 110_000, 'year'], detail: true },
   { ref: 'd-berlin-3d', track: 'design', company: 'Kestrel Systems', title: 'Product Designer', place: 'berlin', age: 3 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true, pay: [62_000, 78_000, 'year'] },
+  // Two hours old, so it would lead the recency sort — the location rule outranks recency.
   { ref: 'd-berlin-2h', track: 'design', company: 'Kestrel Systems', title: 'Brand Designer', place: 'berlin', age: 2 * HOUR, seniority: 'junior', type: 'full-time', mode: 'hybrid', paid: true, pay: [58_000, 72_000, 'year'] },
   // Identical through key 3, so only seniority separates them. Seeded mid-first on purpose:
   // insertion order is the wrong answer, so the tie-break has to be doing the work.
@@ -77,6 +92,9 @@ const FIXTURES: Fixture[] = [
   // Must never render, under any filter combination.
   { ref: 'd-senior', track: 'design', company: 'Northline', title: 'Design Lead', place: 'sf', age: 1 * DAY, seniority: 'senior+', type: 'full-time', mode: 'onsite', paid: true, pay: [180_000, 210_000, 'year'] },
   { ref: 'd-old', track: 'design', company: 'Meridian Post', title: 'Product Designer', place: 'sf', age: 61 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true },
+  // Elsewhere *and* past the cutoff: without it, a count that forgot the cutoff would still
+  // agree with one that remembered it, because no other row is excluded by both rules.
+  { ref: 'd-old-berlin', track: 'design', company: 'Meridian Post', title: 'Brand Designer', place: 'berlin', age: 62 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true },
   { ref: 'd-delisted', track: 'design', company: 'Northline', title: 'UX Designer', place: 'sf', age: 1 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true, delisted: true },
   // Pay unknown: neither chip matches it, but it is visible with no chip on.
   { ref: 'd-unknown-pay', track: 'design', company: 'Fathom Interactive', title: 'Motion Designer', place: 'remote', age: 6 * HOUR, seniority: 'junior', type: 'freelance', mode: 'remote', paid: null },
@@ -87,9 +105,15 @@ const FIXTURES: Fixture[] = [
   { ref: 'd-austin', track: 'design', company: 'Pilot Grove', title: 'Product Designer', place: 'austin', age: 16 * HOUR, seniority: 'junior', type: 'full-time', mode: 'hybrid', paid: true, pay: [92_000, 112_000, 'year'] },
   { ref: 'd-sparse', track: 'design', company: 'Quarry Works', title: 'Communication Designer', place: 'remote', age: 21 * DAY, seniority: 'junior', type: 'full-time', mode: 'remote', paid: null },
   { ref: 'd-nyc-mid', track: 'design', company: 'Cadence Union', title: 'Interaction Designer', place: 'nyc', age: 6 * DAY, seniority: 'mid', type: 'full-time', mode: 'onsite', paid: true, pay: [118_000, 140_000, 'year'] },
+  // The location rule's hard cases: two target metros spelled the way a real board spells
+  // them, a remote role its location string calls London, and a posting with no location.
+  { ref: 'd-nyc-loose', track: 'design', company: 'Cadence Union', title: 'Product Designer', place: 'nycLoose', age: 8 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true, pay: [95_000, 115_000, 'year'] },
+  { ref: 'd-sf-office', track: 'design', company: 'Northline', title: 'Brand Designer', place: 'sfOffice', age: 9 * DAY, seniority: 'junior', type: 'full-time', mode: 'hybrid', paid: true, pay: [88_000, 105_000, 'year'] },
+  { ref: 'd-london-remote', track: 'design', company: 'Kestrel Systems', title: 'Product Designer, Remote', place: 'london', age: 10 * DAY, seniority: 'junior', type: 'full-time', mode: 'remote', paid: true, pay: [60_000, 75_000, 'year'] },
+  { ref: 'd-nowhere', track: 'design', company: 'Quarry Works', title: 'Exhibition Designer', place: 'nowhere', age: 12 * DAY, seniority: 'junior', type: 'full-time', mode: 'hybrid', paid: true },
   { ref: 'd-oakland-entry', track: 'design', company: 'Ridgeline Print', title: 'Junior Product Designer', place: 'oakland', age: 13 * DAY, seniority: 'entry', type: 'full-time', mode: 'onsite', paid: true, pay: [78_000, 92_000, 'year'] },
 
-  // ── Engineering: same shapes, no geo weighting ────────────────────────────────────────
+  // ── Engineering: same shapes, and no location rule — every location shows here ────────
   { ref: 'e-sf-3d', track: 'engineering', company: 'Northline', title: 'Frontend Engineer', place: 'sf', age: 3 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true, pay: [140_000, 165_000, 'year'], summary: 'React and TypeScript on the customer dashboard, alongside two senior engineers.', detail: true },
   { ref: 'e-berlin-3d', track: 'engineering', company: 'Kestrel Systems', title: 'Frontend Engineer', place: 'berlin', age: 3 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true, pay: [68_000, 82_000, 'year'], summary: 'Component library work for a logistics console used by dispatchers.' },
   { ref: 'e-tie-mid', track: 'engineering', company: 'Barrow & Field', title: 'Backend Engineer', place: 'sf', age: 5 * DAY, seniority: 'mid', type: 'full-time', mode: 'hybrid', paid: true, pay: [165_000, 190_000, 'year'], summary: 'Postgres-heavy billing work; you will be the third engineer on the team.' },

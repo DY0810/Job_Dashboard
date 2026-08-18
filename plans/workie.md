@@ -441,26 +441,33 @@ correctness.
 ### Phase 8 — Table, filters, sort
 `workie/p8-table` · after P4 and P7 · **model: strongest**
 
-**Context brief.** The two tabs differ in columns, filters, and — critically — in sort.
-Design is geo-weighted; Engineering is **not**. Badges *are* the filter values: clicking a
-badge applies it. All filter state lives in the URL.
+**Context brief.** Both tabs sort the same way: `posted_at` desc, then entry/junior above
+mid. The two tabs differ in columns, in filter vocabulary, and in one visibility rule — the
+Design tab shows the target locations only. Badges *are* the filter values: clicking a badge
+applies it, and the dropdown for that category then shows it. All filter state lives in the URL.
 
 **Build.**
 
 *Engineering tab*
-- Columns: time posted · badges · summary · pay rate · experience level · expected grad
-  date · company · apply button.
-- Filters: posted within hour/day/week/month · full-time · internship · paid/unpaid ·
-  remote/hybrid/onsite · summer/fall/winter/spring · junior/mid.
-- Sort: posted-within-24h bucket desc → `posted_at` desc → entry/junior above mid.
-  **No geo weighting.**
+- Columns: time posted · badges · **title** · summary · pay rate · experience level ·
+  expected grad date · company · apply button.
+- Filters, ~~one chip per value~~ one labelled dropdown each: posted within hour/day/week/month · full-time ·
+  internship · paid/unpaid · remote/hybrid/onsite · summer/fall/winter/spring · junior/mid.
+- Sort: `posted_at` desc → entry/junior above mid. **No geo involvement of any kind.**
 
 *Design tab*
-- Columns: time posted · badges · pay rate · company · apply button.
-- Filters: posted within last week (only) · full-time/freelance/part-time/internship ·
-  paid/unpaid · remote/hybrid/onsite · junior/mid.
-- Sort, four keys in order: posted-within-24h desc → `GEO_TIER` asc → `posted_at` desc →
-  entry/junior above mid.
+- Columns: time posted · badges · **title** · pay rate · company · apply button.
+- Filters, ~~one chip per value~~ one labelled dropdown each: posted within last week (only) ·
+  full-time/freelance/part-time/internship · paid/unpaid · remote/hybrid/onsite · junior/mid.
+- Sort: `posted_at` desc → entry/junior above mid. Same two keys as Engineering.
+- Visibility: `GEO_TIER.elsewhere` is excluded. The target metros, the rest of California,
+  remote, and "no readable location" all show — the last of those deliberately, because a
+  posting whose location failed to normalize is missing data, not a posting somewhere else.
+  A *view* rule: ingest stays geo-agnostic and the database still stores every location.
+  Because the tier now decides existence rather than position, the metro spellings a board
+  actually sends ("New York City", "San Francisco Office") must resolve to their alias key in
+  `normalizeLocation` — which is upstream of `dedupe_key` too, so the same miss was costing
+  cross-source merges.
 
 *Both*
 - `entry` folds into the `junior` chip (there is no `entry` chip, but entry sorts above
@@ -470,16 +477,22 @@ badge applies it. All filter state lives in the URL.
 - Sorting happens in SQL via Drizzle; filters compile from validated search params.
 - Zod validates search params — they are a trust boundary even locally.
 
-**Gate.** Constructed fixtures where a naive sort gets the wrong answer:
-- **Design 4-key order:** two postings identical except `GEO_TIER` (SF vs Berlin) → SF
-  first. Then a Berlin posting from 2 hours ago vs an SF posting from 3 days ago → **Berlin
-  first**, because the 24h bucket outranks geo. This is the case a 3-key implementation fails.
-- **Engineering has no geo weighting:** an SF and a Berlin posting with identical
-  `posted_at` sort identically regardless of location. Asserted directly.
-- **Tie-break depth:** two postings identical through key 3, differing only in seniority →
-  entry above mid, on both tabs.
-- Clicking a badge applies exactly that filter and updates the URL; back button restores
-  the prior filter set; a copied URL reproduces the view in a fresh session.
+**Gate.** Constructed fixtures where a naive implementation gets the wrong answer:
+- **Recency, both tabs:** three postings at known distinct timestamps come back newest
+  first, and the whole result's `posted_at` descends with no exceptions.
+- **Design excludes `GEO_TIER` 3:** a Berlin posting is absent from Design and present on
+  Engineering in the same corpus. An SF (tier 0), a rest-of-California (tier 1) and a remote
+  (tier 2) posting are all present on Design. Moving a posting between locations moves it in
+  or out, so the filter is reading the row rather than a list of ids.
+- **Engineering has no geo involvement:** an SF and a Berlin posting swapped produce an
+  identical result. Asserted directly.
+- **Tie-break depth:** two postings identical through `posted_at`, differing only in
+  seniority → entry above mid, on both tabs.
+- Clicking a badge applies exactly that filter, updates the URL, and leaves that value
+  selected in its dropdown; back restores the prior filter set; a copied URL reproduces the
+  view in a fresh session.
+- Every dropdown is reachable and operable by keyboard, with a visible focus ring in both
+  themes.
 - No senior/staff/principal/lead/director/manager row appears in either tab under any
   filter combination — including with all filters cleared.
 - 60-day-old postings are absent from both tabs.
@@ -618,7 +631,8 @@ Every acceptance criterion maps to a specific gate. None is left to "we'll see."
 | Zero cross-source duplicates in a real multi-source run | Two `GROUP BY … HAVING COUNT(*) > 1` queries returning zero rows, plus ≥5 postings carrying ≥3 sources (proving merges happened, not just non-overlap) | **P6** gate, re-run at **P11** |
 | Every apply link resolves to a live posting | `npm run linkcheck` over the full DB, with ATS "no longer available" body markers checked, not just HTTP status | **P9** gate |
 | No senior/staff/principal/lead roles present | 100% hard-drop recall on a 15-posting labeled subset (P4), then re-asserted across every filter combination including all-cleared (P8) | **P4** + **P8** gates |
-| Both tabs sort exactly as specced | Fixtures constructed so a naive sort fails: Design's 24h-bucket-outranks-geo case, and Engineering's no-geo-weighting assertion | **P8** gate |
+| Both tabs sort exactly as specced | Fixtures where a naive implementation fails: `posted_at` descends with no exceptions on both tabs, the fresh rows come back as a prefix, and entry sorts above mid on an exact `posted_at` tie | **P8** gate (amended, see §7) |
+| Design shows only the target locations | A Berlin posting absent from Design and present on Engineering in one corpus; tiers 0, 1, 2 and unknown all present; the rule re-read after moving a posting; the same rule asserted on the `?job=<id>` detail query | **P8** gate (amended, see §7) |
 | Enrichment cost per full re-poll ~$0 | Re-run over 50 cached postings makes zero API calls; unchanged-corpus re-poll logs $0.00 | **P4** + **P10** gates |
 
 ---
@@ -717,7 +731,20 @@ silently drop most postings, since most don't state pay.
 - **Do not add a third tab.** Voice AI is a badge inside Engineering. It is stated twice in
   the spec because it is the obvious wrong move.
 - **Do not filter by geography during ingest.** Ingest is geo-agnostic; store every location.
-  Geography affects ranking, on the Design tab, only.
+- ~~**Geography affects ranking, on the Design tab, only.**~~ **Superseded 2026-08-18** by an
+  explicit user instruction (*"for design only, exclude all jobs where the locations specified
+  don't match. But for ranking recency first."*). Geography is now a *view* filter on the
+  Design tab and nothing else: it hides `GEO_TIER.elsewhere` from that one table, Engineering
+  shows every location, and no tab sorts by geography. **What it costs:** a Design posting
+  outside the target tiers is unreachable under every filter combination — there is no control
+  that turns the rule off, and `clear` does not lift it. The empty and zero-result states name
+  the rule and count what it hid so the table never blames the ingest for it. The tier now
+  decides existence rather than position, which is why `geoTier()` matches metro names
+  tolerantly and treats "no location at all" as its own tier rather than as elsewhere.
+- **Do not filter by geography anywhere else.** The rule lives in `visible()` in `lib/query.ts`,
+  next to the 60-day cutoff and the seniority ceiling, so it holds on every route into a
+  posting including the deep link. A geo condition added to the user-filter builder instead
+  will pass its own tests and leave `?job=<id>` open.
 - **Do not hardcode a city or a tier outside `lib/geo.ts`.** `GEO_TIER` is the single
   editable constant. A second copy is how the Design tab silently stops matching the spec.
 - **Do not classify on the title for voice AI.** Titles are "Member of Technical Staff."
@@ -755,6 +782,39 @@ dependency and reordering it will look like it works right up until the dedupe k
 **Abandon** a phase by moving it to an "Abandoned" section at the bottom with the reason and
 the date. P11 is the only phase already marked optional; the acceptance criteria are all
 reachable without it.
+
+**Amend** a phase's spec only when the user changes what they want — never to make the plan
+agree with what shipped. Quote the instruction and date it, strike the superseded rule through
+rather than deleting it, and state what the change costs. A rule that quietly becomes its own
+opposite leaves the next reviewer diffing code against a spec that was moved to meet it, which
+is the failure this whole section exists to prevent. Update §4 in the same edit: a traceability
+row that cites a deleted assertion is worse than no row.
+
+*Amendments so far, all P8, all 2026-08-18, all from one session with the user:*
+
+1. **Recency first.** *"rank the newest job postings on the top ranked by recency."* Sort is
+   `posted_at` desc then entry/junior above mid, on both tabs. **Cost:** none measurable — the
+   24h-bucket key it replaced was a monotonic function of `posted_at`, so above a recency sort
+   it could not change an ordering. The "last 24 hours" band it used to guarantee is now a
+   property of the sort rather than an explicit key, so `query.test.ts` asserts the fresh rows
+   come back as a prefix and nothing can quietly put a key in front of recency.
+2. **Design excludes non-matching locations.** *"for design only, exclude all jobs where the
+   locations specified don't match."* `GEO_TIER` moved from a sort key to a visibility rule.
+   **Cost:** recorded with the superseded anti-pattern in §6.
+3. **Filters become dropdowns.** *"Also make the filters a dropdown."* One labelled native
+   `<select>` per filter inside a GET form; row badges stay links and write the same param.
+   **Cost:** ~~multi-select~~ **multi-select is gone.** A filter held a list and `where()` ORed
+   inside a group, so `mode=remote,hybrid` was expressible; a `<select>` shows one value, so
+   `Params` now holds one value per filter and `where()` uses `eq`. Filtering two work modes at
+   once is no longer possible from any control or any URL, and a pre-dropdown URL carrying a
+   comma list parses to its first known value rather than to both. Applying a filter also costs
+   two actions now (pick, then submit) rather than one chip click — that is what buys the
+   keyboard behaviour a `change`-triggered navigation cannot have (WCAG 3.2.2 / F37) and what
+   makes the filter row work without JavaScript.
+4. **Title column on both tabs.** *"for the columns for both engineering and design, add job
+   title/position."* **Cost:** one more column of horizontal budget on a table whose premise is
+   density. The title truncates to keep every row one line tall; the untruncated value is in
+   the drawer.
 
 **When a gate fails:** fix forward inside the same PR. Do not merge a phase with a failing
 gate and a follow-up ticket — the next phase's context brief assumes the previous gate held,

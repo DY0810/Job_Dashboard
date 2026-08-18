@@ -1,10 +1,12 @@
 /**
- * The sort gate. Every case here is one a plausible implementation gets wrong: the Design
- * tab's four keys in the wrong order, geo weighting leaking onto Engineering, a tie-break
- * that stops one key short, or a `senior+` row surviving a filter combination.
+ * The sort and visibility gate. Every case here is one a plausible implementation gets wrong:
+ * an ordering that is not plain recency, Design's location rule leaking onto Engineering or
+ * failing to hide anything, a location spelling the rule does not recognize being deleted
+ * rather than merely mis-sorted, a tie-break that stops one key short, or a `senior+` row
+ * surviving a filter combination.
  *
- * Runs against a real SQLite database with the committed migrations applied, because the
- * ordering being asserted is produced by SQL, not by JavaScript.
+ * Runs against a real SQLite database with the committed migrations applied, because both the
+ * ordering and the location rule are produced by SQL, not by JavaScript.
  */
 
 import Database from 'better-sqlite3';
@@ -15,9 +17,25 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { REFS, fixtures, refKey } from '../scripts/seed.ts';
 import type { Db } from './db/index.ts';
 import { postings } from './db/schema.ts';
-import { geoTier } from './geo.ts';
-import { geoRank, getPostingDetail, listPostings, tabIsEmpty } from './query.ts';
-import { GROUPS, SHARED_VOCAB, VOCAB, href, parseParams, type Params, type Tab } from './params.ts';
+import { GEO_TIER, geoTier } from './geo.ts';
+import {
+  geoTierSql,
+  getPostingDetail,
+  listPostings,
+  outsideTargetLocations,
+  tabIsEmpty,
+} from './query.ts';
+import {
+  FILTERS,
+  TABS,
+  WINDOW_MS,
+  href,
+  parseParams,
+  vocab,
+  withFilter,
+  type Params,
+  type Tab,
+} from './params.ts';
 
 const NOW = Date.UTC(2026, 2, 17, 12, 0, 0);
 
@@ -29,11 +47,11 @@ function params(tab: Tab, over: Partial<Params> = {}): Params {
   return {
     tab,
     posted: null,
-    type: [],
-    pay: [],
-    mode: [],
-    season: [],
-    level: [],
+    type: null,
+    pay: null,
+    mode: null,
+    season: null,
+    level: null,
     badge: null,
     job: null,
     ...over,
@@ -44,8 +62,16 @@ function order(p: Params): string[] {
   return listPostings(db, p, NOW).map((row) => refOf.get(row.id)!);
 }
 
+function times(p: Params): number[] {
+  return listPostings(db, p, NOW).map((row) => row.postedAt.getTime());
+}
+
 function idOf(ref: string): number {
   return [...refOf].find(([, r]) => r === ref)![0];
+}
+
+function fromUrl(url: string): Params {
+  return parseParams(Object.fromEntries(new URL(`http://workie.local${url}`).searchParams));
 }
 
 /** Fails loudly on a typo'd ref rather than silently comparing -1 to -1. */
@@ -73,46 +99,127 @@ beforeEach(() => {
   );
 });
 
-describe('design tab - four sort keys, in order', () => {
-  it('key 2: identical postings sort by GEO_TIER, so SF precedes Berlin', () => {
-    before(order(params('design')), 'd-sf-3d', 'd-berlin-3d');
+describe('recency first, on both tabs', () => {
+  it.each(TABS)('%s: posted_at descends, with no exceptions', (tab) => {
+    const list = times(params(tab));
+    expect(list.length).toBeGreaterThan(5);
+    expect(list).toEqual([...list].sort((a, b) => b - a));
   });
 
-  it('key 1 outranks key 2: a 2-hour-old Berlin posting beats a 3-day-old SF one', () => {
-    // The case a three-key implementation, geo first, gets wrong.
-    before(order(params('design')), 'd-berlin-2h', 'd-sf-3d');
+  it('design: three known timestamps come back newest first', () => {
+    const list = order(params('design'));
+    before(list, 'd-unknown-pay', 'd-unpaid-intern'); // 6h before 2d
+    before(list, 'd-unpaid-intern', 'd-sparse'); // 2d before 21d
   });
 
-  it('key 4: identical through posted_at, entry sorts above mid', () => {
-    before(order(params('design')), 'd-tie-entry', 'd-tie-mid');
+  it('engineering: three known timestamps come back newest first', () => {
+    const list = order(params('engineering'));
+    before(list, 'e-voice', 'e-intern-summer'); // 3h before 5h
+    before(list, 'e-intern-summer', 'e-sf-3d'); // 5h before 3d
   });
 
-  it('geo weighting actually moves rows: swapping two locations flips them', () => {
-    before(order(params('design')), 'd-sf-3d', 'd-berlin-3d');
-    db.update(postings).set(BERLIN).where(eq(postings.id, idOf('d-sf-3d'))).run();
-    db.update(postings).set(SF).where(eq(postings.id, idOf('d-berlin-3d'))).run();
-    before(order(params('design')), 'd-berlin-3d', 'd-sf-3d');
+  it.each(TABS)('%s: identical posted_at, entry above mid', (tab) => {
+    before(order(params(tab)), `${tab[0]}-tie-entry`, `${tab[0]}-tie-mid`);
+  });
+
+  /**
+   * The page renders the "last 24 hours" band as `rows.slice(0, freshCount)` — a prefix, not a
+   * partition. That is only correct while `posted_at desc` is the FIRST sort key, and the
+   * explicit fresh-bucket key that used to guarantee it is exactly what this change removed.
+   * Put any key ahead of recency and stale rows render under the accent band.
+   */
+  it.each(TABS)('%s: the fresh rows are a prefix, which is what the band renders', (tab) => {
+    const fresh = times(params(tab)).map((t) => NOW - t < WINDOW_MS.day);
+    const firstStale = fresh.indexOf(false);
+    expect(firstStale, 'the corpus needs both fresh and stale rows to test this').toBeGreaterThan(0);
+    expect(fresh.slice(firstStale), 'a fresh row sorted below a stale one').not.toContain(true);
   });
 });
 
-describe('engineering tab - no geo weighting', () => {
-  it('an SF and a Berlin posting with identical posted_at keep their order when swapped', () => {
+describe('design shows the target locations, engineering shows every location', () => {
+  it('hides a Berlin posting that Engineering shows, in the same corpus', () => {
+    expect(order(params('design'))).not.toContain('d-berlin-3d');
+    expect(order(params('engineering'))).toContain('e-berlin-3d');
+  });
+
+  it('hides it even when it would otherwise lead the table', () => {
+    // Two hours old against a six-hour-old survivor: recency does not buy an exemption.
+    expect(order(params('design'))).not.toContain('d-berlin-2h');
+    expect(order(params('design'))[0]).toBe('d-unknown-pay');
+  });
+
+  it('keeps tier 0, tier 1 and tier 2', () => {
+    const list = order(params('design'));
+    expect(list).toContain('d-sf-3d'); // tier 0, a target metro
+    expect(list).toContain('d-oakland-entry'); // tier 1, California outside the metros
+    expect(list).toContain('d-remote-mid'); // tier 2, remote
+  });
+
+  /**
+   * The regression this rule invited: 137 live postings arrive spelled "New York City" or
+   * "San Francisco Office". As a sort key the missed alias cost them a few positions; as a
+   * visibility rule it would delete them. `normalizeLocation` resolves the spelling now, so
+   * these two carry the canonical key — `normalize.test.ts` guards the resolution itself.
+   */
+  it('keeps target metros that arrived with a board-flavoured spelling', () => {
+    const list = order(params('design'));
+    expect(list).toContain('d-nyc-loose'); // "New York City, New York, United States"
+    expect(list).toContain('d-sf-office'); // "San Francisco Office"
+  });
+
+  it('keeps a role whose only remote signal is work_mode', () => {
+    // Location says London, is_remote is 0, the body says remote. Remote is a target tier.
+    expect(order(params('design'))).toContain('d-london-remote');
+  });
+
+  it('keeps a posting whose location never normalized, rather than dropping it silently', () => {
+    expect(order(params('design'))).toContain('d-nowhere');
+  });
+
+  it('a non-California US city is elsewhere, so Design hides it too', () => {
+    expect(order(params('design'))).not.toContain('d-austin');
+    expect(order(params('engineering'))).toContain('e-austin');
+  });
+
+  it('the rule reads the row, not a list of refs: moving a posting moves it in or out', () => {
+    db.update(postings).set(BERLIN).where(eq(postings.id, idOf('d-sf-3d'))).run();
+    db.update(postings).set(SF).where(eq(postings.id, idOf('d-berlin-3d'))).run();
+
+    const list = order(params('design'));
+    expect(list).not.toContain('d-sf-3d'); // now in Berlin
+    expect(list).toContain('d-berlin-3d'); // now in SF
+  });
+
+  it('engineering ignores location entirely: swapping two of them changes nothing', () => {
     const first = order(params('engineering'));
     db.update(postings).set(BERLIN).where(eq(postings.id, idOf('e-sf-3d'))).run();
     db.update(postings).set(SF).where(eq(postings.id, idOf('e-berlin-3d'))).run();
 
-    // Same query, same rows, locations exchanged - identical ordering, unlike Design.
     expect(order(params('engineering'))).toEqual(first);
   });
 
-  it('key 3: identical through posted_at, entry sorts above mid', () => {
-    before(order(params('engineering')), 'e-tie-entry', 'e-tie-mid');
+  /**
+   * The hole this class of rule keeps reopening: the table is not the only way in. A Design
+   * posting the table refuses to list must not be reachable through `?job=<id>` either, and
+   * the same rule has to hold for a track the detail query never sees.
+   */
+  it('the deep link obeys the location rule, not just the table', () => {
+    expect(getPostingDetail(db, idOf('d-berlin-3d'), NOW), 'design, elsewhere').toBeNull();
+    expect(getPostingDetail(db, idOf('d-nowhere'), NOW), 'design, unknown').not.toBeNull();
+    expect(getPostingDetail(db, idOf('e-berlin-3d'), NOW), 'engineering, elsewhere').not.toBeNull();
   });
 
-  it('key 1: the 24h band leads, and inside it posted_at descends', () => {
-    const list = order(params('engineering'));
-    before(list, 'e-voice', 'e-intern-summer'); // 3h before 5h, both fresh
-    before(list, 'e-intern-summer', 'e-sf-3d'); // fresh band before everything older
+  it('counts what geography hides, so an empty table can say so', () => {
+    // d-berlin-3d, d-berlin-2h, d-austin. Not d-old-berlin, which is elsewhere too but 62
+    // days old — a row the tab would not show anyway must not inflate the count.
+    expect(outsideTargetLocations(db, params('design'), NOW)).toBe(3);
+  });
+
+  /** The count sits under "no postings match these filters", so it has to be an answer to
+   *  that question rather than a fact about the whole tab. */
+  it('counts under the same filters it is explaining', () => {
+    expect(outsideTargetLocations(db, params('design', { mode: 'onsite' }), NOW)).toBe(1);
+    expect(outsideTargetLocations(db, params('design', { mode: 'remote' }), NOW)).toBe(0);
   });
 });
 
@@ -120,49 +227,49 @@ describe('SQL geo tier matches lib/geo.ts', () => {
   it('agrees with geoTier() on every fixture', () => {
     const rows = db
       .select({
-        tier: geoRank(),
+        tier: geoTierSql,
         cityNorm: postings.cityNorm,
         state: postings.state,
         country: postings.country,
         isRemote: postings.isRemote,
+        workMode: postings.workMode,
       })
       .from(postings)
       .all();
 
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      expect(Number(row.tier)).toBe(
-        geoTier({
-          city_norm: row.cityNorm,
-          state: row.state,
-          country: row.country,
-          is_remote: row.isRemote,
-        }),
+      expect(Number(row.tier), JSON.stringify(row)).toBe(
+        geoTier(
+          {
+            city_norm: row.cityNorm,
+            state: row.state,
+            country: row.country,
+            is_remote: row.isRemote,
+          },
+          row.workMode,
+        ),
       );
     }
-    // Guards against a corpus that only exercises one branch of the CASE.
-    expect(new Set(rows.map((r) => Number(r.tier))).size).toBeGreaterThan(2);
+    // Guards against a corpus that only exercises some branches of the CASE.
+    expect(new Set(rows.map((r) => Number(r.tier)))).toEqual(
+      new Set([GEO_TIER.metro, GEO_TIER.california, GEO_TIER.remote, GEO_TIER.elsewhere, GEO_TIER.unknown]),
+    );
   });
 });
 
 describe('rows that must never render', () => {
-  /** Every single-value setting of every group, every window, every group fully on, cleared. */
+  /** Every single-value setting of every filter, and every filter cleared. */
   function everyFilter(tab: Tab): Params[] {
     const out = [params(tab)];
-    for (const window of VOCAB[tab].posted) {
-      out.push(params(tab, { posted: window as Params['posted'] }));
-    }
-    for (const group of GROUPS) {
-      const vocab: readonly string[] =
-        group === 'type' || group === 'season' ? VOCAB[tab][group] : SHARED_VOCAB[group];
-      for (const value of vocab) out.push(params(tab, { [group]: [value] }));
-      if (vocab.length > 1) out.push(params(tab, { [group]: [...vocab] }));
+    for (const filter of FILTERS) {
+      for (const value of vocab(tab, filter)) out.push(params(tab, { [filter]: value }));
     }
     out.push(params(tab, { badge: 'voice-ai' }));
     return out;
   }
 
-  it.each(['design', 'engineering'] as const)('%s: no senior+ row under any filter', (tab) => {
+  it.each(TABS)('%s: no senior+ row under any filter', (tab) => {
     const combos = everyFilter(tab);
     expect(combos.length).toBeGreaterThan(8);
     for (const p of combos) {
@@ -170,11 +277,11 @@ describe('rows that must never render', () => {
     }
   });
 
-  it.each(['design', 'engineering'] as const)('%s: nothing older than 60 days', (tab) => {
+  it.each(TABS)('%s: nothing older than 60 days', (tab) => {
     expect(order(params(tab))).not.toContain(`${tab[0]}-old`);
   });
 
-  it.each(['design', 'engineering'] as const)('%s: nothing delisted', (tab) => {
+  it.each(TABS)('%s: nothing delisted', (tab) => {
     expect(order(params(tab))).not.toContain(`${tab[0]}-delisted`);
   });
 
@@ -197,16 +304,15 @@ describe('rows that must never render', () => {
 });
 
 describe('filters', () => {
-  it('pay unknown matches neither chip but stays visible with no chip on (finding G)', () => {
+  it('pay unknown matches neither value but stays visible with the filter off (finding G)', () => {
     expect(order(params('design'))).toContain('d-unknown-pay');
-    expect(order(params('design', { pay: ['paid'] }))).not.toContain('d-unknown-pay');
-    expect(order(params('design', { pay: ['unpaid'] }))).not.toContain('d-unknown-pay');
-    expect(order(params('design', { pay: ['paid', 'unpaid'] }))).not.toContain('d-unknown-pay');
-    expect(order(params('design', { pay: ['unpaid'] }))).toContain('d-unpaid-intern');
+    expect(order(params('design', { pay: 'paid' }))).not.toContain('d-unknown-pay');
+    expect(order(params('design', { pay: 'unpaid' }))).not.toContain('d-unknown-pay');
+    expect(order(params('design', { pay: 'unpaid' }))).toContain('d-unpaid-intern');
   });
 
-  it('the junior chip covers entry as well (finding F)', () => {
-    const list = order(params('engineering', { level: ['junior'] }));
+  it('the junior option covers entry as well (finding F)', () => {
+    const list = order(params('engineering', { level: 'junior' }));
     expect(list).toContain('e-nyc-entry'); // entry
     expect(list).toContain('e-sf-3d'); // junior
     expect(list).not.toContain('e-tie-mid'); // mid
@@ -220,18 +326,42 @@ describe('filters', () => {
     expect(count('hour')).toBe(0);
   });
 
-  it('groups are OR inside and AND across', () => {
-    const remote = order(params('engineering', { mode: ['remote'] }));
-    const both = order(params('engineering', { mode: ['remote', 'hybrid'] }));
-    expect(both.length).toBeGreaterThan(remote.length);
+  it('every dropdown narrows on its own', () => {
+    for (const tab of TABS) {
+      const all = order(params(tab)).length;
+      for (const filter of FILTERS) {
+        for (const value of vocab(tab, filter)) {
+          const narrowed = order(params(tab, { [filter]: value }));
+          expect(narrowed.length, `${tab} ${filter}=${value}`).toBeLessThan(all);
+          expect(order(params(tab)), `${tab} ${filter}=${value}`).toEqual(
+            expect.arrayContaining(narrowed),
+          );
+        }
+      }
+    }
+  });
 
-    const narrowed = order(params('engineering', { mode: ['remote'], type: ['internship'] }));
+  it('filters AND across groups', () => {
+    const remote = order(params('engineering', { mode: 'remote' }));
+    expect(remote).toContain('e-remote-mid');
+    expect(remote).toContain('e-intern-winter');
+
+    const narrowed = order(params('engineering', { mode: 'remote', type: 'internship' }));
     expect(narrowed).toContain('e-intern-winter');
     expect(narrowed).not.toContain('e-remote-mid'); // remote, but full-time
   });
 
-  it('season chips filter internships', () => {
-    expect(order(params('engineering', { season: ['summer'] }))).toEqual(['e-intern-summer']);
+  it('design: the window and a group narrow together', () => {
+    const week = order(params('design', { posted: 'week' }));
+    expect(week).toContain('d-sf-3d'); // 3 days old
+    expect(week).not.toContain('d-freelance'); // 11 days old
+    expect(order(params('design', { posted: 'week', type: 'internship' }))).toEqual([
+      'd-unpaid-intern',
+    ]);
+  });
+
+  it('season filters internships', () => {
+    expect(order(params('engineering', { season: 'summer' }))).toEqual(['e-intern-summer']);
   });
 
   it('a badge is a filter value', () => {
@@ -240,9 +370,50 @@ describe('filters', () => {
   });
 
   it('reports zero results without claiming the tab is empty', () => {
-    const p = params('design', { type: ['part-time'], mode: ['remote'] });
+    const p = params('design', { type: 'part-time', mode: 'remote' });
     expect(order(p)).toEqual([]);
     expect(tabIsEmpty(db, p, NOW)).toBe(false);
+  });
+});
+
+describe('badges and dropdowns write the same filter', () => {
+  /**
+   * The two controls reach the same param by different routes — a badge renders a link built
+   * by `withFilter`, a dropdown submits `<select name={filter}>` with the raw value — so the
+   * property that matters is that both land on the same state for every value on offer. Both
+   * read their vocabulary from `vocab()`, which is what stops one of them drifting.
+   */
+  it('every value of every filter arrives the same way from either control', () => {
+    for (const tab of TABS) {
+      for (const filter of FILTERS) {
+        for (const value of vocab(tab, filter)) {
+          const badge = fromUrl(withFilter(params(tab), filter, value));
+          const dropdown = parseParams({ tab, [filter]: value });
+          expect(badge[filter], `${tab} ${filter}=${value} via badge`).toBe(value);
+          expect(dropdown[filter], `${tab} ${filter}=${value} via dropdown`).toBe(value);
+          expect(href(badge)).toBe(href(dropdown));
+        }
+      }
+    }
+  });
+
+  it('clicking the badge that is already selected clears just that filter', () => {
+    const on = fromUrl(withFilter(params('engineering', { level: 'junior' }), 'mode', 'remote'));
+    expect([on.mode, on.level]).toEqual(['remote', 'junior']);
+
+    const off = fromUrl(withFilter(on, 'mode', null));
+    expect(off.mode).toBeNull();
+    expect(off.level, 'clearing one filter must not clear the others').toBe('junior');
+  });
+
+  it('a filter link cannot carry a value the tab does not offer', () => {
+    expect(withFilter(params('design'), 'season', 'summer')).toBe('/');
+    expect(withFilter(params('design'), 'posted', 'hour')).toBe('/');
+    expect(withFilter(params('engineering'), 'posted', 'hour')).toBe('/?tab=engineering&posted=hour');
+  });
+
+  it('changing a filter closes the drawer rather than carrying it along', () => {
+    expect(withFilter(params('engineering', { job: 12 }), 'mode', 'remote')).not.toContain('job=');
   });
 });
 
@@ -250,8 +421,8 @@ describe('search params are validated, not trusted', () => {
   it('drops values outside the tab vocabulary', () => {
     const p = parseParams({ tab: 'design', posted: 'hour', season: 'summer', type: 'freelance' });
     expect(p.posted).toBeNull(); // Design offers `week` only
-    expect(p.season).toEqual([]); // Design has no season chips
-    expect(p.type).toEqual(['freelance']);
+    expect(p.season).toBeNull(); // Design has no seasons
+    expect(p.type).toBe('freelance');
   });
 
   it('falls back rather than throwing on junk', () => {
@@ -263,15 +434,21 @@ describe('search params are validated, not trusted', () => {
       badge: 'DROP TABLE',
     });
     expect(p.tab).toBe('design');
-    expect(p.level).toEqual(['mid']);
-    expect(p.pay).toEqual([]);
+    expect(p.level).toBe('mid');
+    expect(p.pay).toBeNull();
     expect(p.job).toBeNull();
     expect(p.badge).toBeNull();
   });
 
+  /** A URL bookmarked before the filters became dropdowns still parses — to the one value a
+   *  dropdown can show, rather than to a filter set the control would misreport. */
+  it('takes the first known value from a legacy comma list', () => {
+    expect(parseParams({ tab: 'engineering', mode: 'onsite,remote' }).mode).toBe('onsite');
+    expect(parseParams({ tab: 'engineering', mode: 'nonsense,hybrid' }).mode).toBe('hybrid');
+  });
+
   it('round-trips through the URL', () => {
-    const p = parseParams({ tab: 'engineering', mode: 'remote,hybrid', level: 'junior', job: '12' });
-    const url = new URL(`http://workie.local${href(p)}`);
-    expect(parseParams(Object.fromEntries(url.searchParams))).toEqual(p);
+    const p = parseParams({ tab: 'engineering', mode: 'remote', level: 'junior', job: '12' });
+    expect(fromUrl(href(p))).toEqual(p);
   });
 });
