@@ -129,17 +129,19 @@ const MAX_BULLET_CHARS = 240;
  * Handles both shapes because the Tier-1 families disagree: Greenhouse returns escaped HTML,
  * Workable and Ashby return HTML, Ashby's "plain" text is really markdown.
  */
-export function parseSections(raw: string | null | undefined): Section[] {
+export function parseSections(raw: string | null | undefined, defaultHeading = ''): Section[] {
   const text = decodeHtmlEntities(raw ?? '').slice(0, MAX_DESCRIPTION_CHARS);
   if (!text.trim()) return [];
-  return /<(?:li|h[1-6]|p|ul|div)\b/i.test(text) ? parseHtmlSections(text) : parseMarkdownSections(text);
+  return /<(?:li|h[1-6]|p|ul|div)\b/i.test(text)
+    ? parseHtmlSections(text, defaultHeading)
+    : parseMarkdownSections(text, defaultHeading);
 }
 
 /** `<h3>Heading</h3> … <li>item</li>`, plus the `<p><strong>Heading</strong></p>` variant. */
 const HTML_TOKEN =
   /<(h[1-6])[^>]*>([\s\S]*?)<\/\1>|<li[^>]*>([\s\S]*?)<\/li>|<p[^>]*>\s*<(strong|b)[^>]*>([\s\S]*?)<\/\4>\s*<\/p>/gi;
 
-function parseHtmlSections(html: string): Section[] {
+function parseHtmlSections(html: string, defaultHeading: string): Section[] {
   const sections: Section[] = [];
   let current: Section | null = null;
 
@@ -147,7 +149,16 @@ function parseHtmlSections(html: string): Section[] {
     const item = match[3];
     if (item !== undefined) {
       const value = plain(item);
-      if (value && current) current.items.push(value);
+      if (!value) continue;
+      // Bullets before any heading are the section, not noise. Lever puts the heading in
+      // `list.text` and the bullets alone in `list.content`, and SmartRecruiters hands over a
+      // bare `<ul>`; requiring a heading token first returned [] for both, so every Lever and
+      // SmartRecruiters posting stored `sections: []` and had empty responsibilities/skills.
+      if (!current) {
+        current = { heading: defaultHeading, items: [] };
+        sections.push(current);
+      }
+      current.items.push(value);
       continue;
     }
     const heading = plain(match[2] ?? match[5] ?? '');
@@ -159,7 +170,7 @@ function parseHtmlSections(html: string): Section[] {
 }
 
 /** `## Heading` / `**Heading**` followed by `- item` lines. */
-function parseMarkdownSections(markdown: string): Section[] {
+function parseMarkdownSections(markdown: string, defaultHeading: string): Section[] {
   const sections: Section[] = [];
   let current: Section | null = null;
 
@@ -167,7 +178,13 @@ function parseMarkdownSections(markdown: string): Section[] {
     const bullet = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
     if (bullet) {
       const value = plain(bullet[1]);
-      if (value && current) current.items.push(value);
+      if (!value) continue;
+      // Same rule as the HTML parser: a list that opens without a heading is still a list.
+      if (!current) {
+        current = { heading: defaultHeading, items: [] };
+        sections.push(current);
+      }
+      current.items.push(value);
       continue;
     }
     const heading = /^\s*(?:#{1,6}\s*(.+?)|\*\*(.+?)\*\*|(.{3,80}?):)\s*$/.exec(line);
@@ -227,7 +244,18 @@ const YEARS_OF_EXPERIENCE = /\b(\d{1,2})(?:\s*(?:-|–|—|to|or)\s*(\d{1,2}))?\
 
 /** What turns "8 years" into "8 years of experience" rather than "8 years ago". */
 const EXPERIENCE_CUE =
-  /\b(?:experience|expertise|background|qualification|requirement|minimum|at\s+least|professional|industry|hands[\s-]on|track\s+record|working|building|shipping|developing|designing|engineering|leading|managing|writing|coding|programming)\b/i;
+  /\b(?:experience|expertise|background|qualification|requirement|minimum|at\s+least|professional|industry|hands[\s-]on|track\s+record)\b/i;
+
+/**
+ * A gerund only means experience when it sits DIRECTLY after the figure — "5 years building
+ * distributed systems". Allowed anywhere in the window, gerunds match ordinary company
+ * boilerplate: "Founded 8 years ago, we are building the future" and "spent 18 years at
+ * Google leading search" both read as senior asks. Because `toStored` drops `senior+`
+ * entirely, that does not mislabel a posting — it DELETES every junior and mid role those
+ * companies publish, from both tabs, silently.
+ */
+const EXPERIENCE_GERUND =
+  /^\s*(?:of\s+)?(?:experience\s+)?(?:working|building|shipping|developing|designing|engineering|leading|managing|writing|coding|programming)\b/i;
 const CUE_WINDOW = 60;
 
 /**
@@ -252,7 +280,9 @@ function yearsAsked(text: string): [number, number][] {
   for (const match of normalized.matchAll(YEARS_OF_EXPERIENCE)) {
     const before = normalized.slice(Math.max(0, match.index - CUE_WINDOW), match.index);
     const after = normalized.slice(match.index + match[0].length, match.index + match[0].length + CUE_WINDOW);
-    if (!EXPERIENCE_CUE.test(before) && !EXPERIENCE_CUE.test(after)) continue;
+    if (!EXPERIENCE_CUE.test(before) && !EXPERIENCE_CUE.test(after) && !EXPERIENCE_GERUND.test(after)) {
+      continue;
+    }
     const low = Number(match[1]);
     asks.push([low, match[2] === undefined ? low : Math.max(low, Number(match[2]))]);
   }
@@ -481,6 +511,19 @@ function extractEmploymentType(
 }
 
 const HYBRID = /\bhybrid\b/i;
+
+/**
+ * An UNAMBIGUOUS remote statement, tested before `HYBRID`.
+ *
+ * Real postings write hybrid loosely — "Hybrid, three days a week in our New York office",
+ * "Hybrid in Chicago", "This hybrid contract role" — so tightening `HYBRID` to demand a role
+ * noun loses most true hybrids. The actual defect was precedence: `HYBRID` ran first, so
+ * "Some of our teams are hybrid" in a body opening "This is a fully remote role" won. Only a
+ * phrase that states the ROLE is remote gets to pre-empt it; a bare `remote` mention still
+ * loses to hybrid, which is the ordering the old code got right.
+ */
+const REMOTE_EXPLICIT =
+  /\b(?:fully\s+remote|100%\s+remote|remote[\s-](?:first|based|role|position|work)|work\s+from\s+home|work\s+from\s+anywhere|fully\s+distributed)\b/i;
 const REMOTE = /\b(?:fully\s+remote|100%\s+remote|remote[\s-](?:first|friendly|based|role|position|work)|work\s+from\s+home|work\s+from\s+anywhere|distributed\s+team|remote\b)/i;
 const ONSITE = /\b(?:on-?site|in-?office|in[\s-]person|onsite\s+in|based\s+in\s+our\s+\w+\s+office)\b/i;
 
@@ -491,6 +534,7 @@ function extractWorkMode(
 ): WorkMode | null {
   if (source?.workMode) return source.workMode;
   const text = `${title} ${body}`;
+  if (REMOTE_EXPLICIT.test(text)) return 'remote';
   if (HYBRID.test(text)) return 'hybrid';
   if (REMOTE.test(text)) return 'remote';
   if (ONSITE.test(text)) return 'onsite';
@@ -529,7 +573,7 @@ const PERIOD_WORDS: readonly [PayPeriod, RegExp][] = [
  * reads as a salary. Every figure this returns was written as money by the posting.
  */
 const PAY_RANGE =
-  /([$€£])\s?(\d{1,3}(?:[,.]\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?\s*(?:(?:-|–|—|to|and)\s*[$€£]?\s?(\d{1,3}(?:[,.]\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?)?/g;
+  /([$€£])\s?(\d{1,3}(?:[,.]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?\s*(?:(?:-|–|—|to|and)\s*[$€£]?\s?(\d{1,3}(?:[,.]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?)?/g;
 
 function toAmount(digits: string, thousands: string | undefined): number {
   const value = Number(digits.replace(/[,](?=\d{3}\b)/g, '').replace(/[.](?=\d{3}\b)/g, ''));

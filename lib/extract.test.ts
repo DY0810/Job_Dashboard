@@ -411,3 +411,113 @@ describe('the hand-labeled fixture set', () => {
     },
   );
 });
+
+// ---------------------------------------------------------------------------------------
+// Regressions from the Phase 10 review. Each one shipped in 1917e6e and each one is silent:
+// no crash, no type error, no failing test — just wrong or missing data in the tab.
+// ---------------------------------------------------------------------------------------
+
+describe('a list that opens without a heading is still a list', () => {
+  // Lever puts the heading in `list.text` and the bullets alone in `list.content`;
+  // SmartRecruiters hands over a bare `<ul>`. Requiring a heading token first returned []
+  // for both, so EVERY Lever and SmartRecruiters posting stored `sections: []` and had
+  // permanently empty responsibilities / skills / education.
+  it('keeps a bare <li> run', () => {
+    expect(parseSections('<li>Build and ship product features</li>')).toEqual([
+      { heading: '', items: ['Build and ship product features'] },
+    ]);
+  });
+
+  it('keeps a bare <ul> — the SmartRecruiters shape', () => {
+    expect(parseSections('<ul><li>alpha</li><li>beta</li></ul>')).toEqual([
+      { heading: '', items: ['alpha', 'beta'] },
+    ]);
+  });
+
+  it('takes a heading from the caller — the Lever shape', () => {
+    expect(parseSections('<li>alpha</li>', 'Responsibilities')).toEqual([
+      { heading: 'Responsibilities', items: ['alpha'] },
+    ]);
+  });
+
+  it('keeps a bare markdown list', () => {
+    expect(parseSections('- alpha\n- beta')).toEqual([{ heading: '', items: ['alpha', 'beta'] }]);
+  });
+
+  it('still prefers a heading in the markup over the fallback', () => {
+    expect(parseSections('<h3>Requirements</h3><ul><li>alpha</li></ul>', 'Ignored')).toEqual([
+      { heading: 'Requirements', items: ['alpha'] },
+    ]);
+  });
+});
+
+describe('pay amounts written without a thousands separator', () => {
+  const pay = (description: string) => extract({ title: 'Design Intern', description }).pay_rate;
+
+  // The grouped branch `\d{1,3}(?:[,.]\d{3})*` matched `150` of `1500` and everything after it
+  // was optional, so the regex never backtracked to the bare `\d+` branch.
+  it('reads $1500 per month as 1500 a month, not 150 an hour', () => {
+    expect(pay('The stipend is $1500 per month.')).toEqual({
+      min: 1500,
+      max: null,
+      period: 'month',
+    });
+  });
+
+  it('does not silently drop $85000', () => {
+    expect(pay('Salary $85000 annually.')).toEqual({ min: 85000, max: null, period: 'year' });
+  });
+
+  it.each([
+    ['Salary $85,000 annually.', 85000, 'year'],
+    ['We pay $55/hr.', 55, 'hour'],
+    ['Up to $120k.', 120000, 'year'],
+  ])('still parses %s', (description, min, period) => {
+    expect(pay(description)).toMatchObject({ min, period });
+  });
+
+  it('still reads a separated range', () => {
+    expect(pay('Range $120,000 - $160,000 per year.')).toMatchObject({ min: 120000, max: 160000 });
+  });
+});
+
+describe('company boilerplate is not an experience requirement', () => {
+  const seniority = (description: string) =>
+    extract({ title: 'Software Engineer', description }).seniority;
+
+  // These do not mislabel a posting — `toStored` drops `senior+`, so a junior or mid role at
+  // any company with this boilerplate was invisible in BOTH tabs.
+  it.each([
+    'Founded 8 years ago, we are building the future of AI.',
+    'Our CEO spent 18 years at Google leading search.',
+    '10 years ago, Jeremy was frustrated with how slow deploys were.',
+  ])('does not read %s as senior', (description) => {
+    expect(seniority(description)).not.toBe('senior+');
+  });
+
+  it.each([
+    ['We want 2-5 years of experience.', 'mid'],
+    ['We want 5+ years of experience.', 'senior+'],
+    ['Minimum 6 years in the field.', 'senior+'],
+    // A gerund DIRECTLY after the figure is a real ask, and must keep working.
+    ['You have 5 years building distributed systems.', 'senior+'],
+  ])('still grades %s as %s', (description, expected) => {
+    expect(seniority(description)).toBe(expected);
+  });
+});
+
+describe('an explicit remote statement outranks a passing mention of hybrid', () => {
+  const mode = (description: string) => extract({ title: 'Software Engineer', description }).work_mode;
+
+  it('reads a fully remote role as remote even when hybrid appears later', () => {
+    expect(mode('This is a fully remote role. Some of our teams are hybrid.')).toBe('remote');
+  });
+
+  it.each([
+    'This is a hybrid role based in Austin.',
+    'We follow a hybrid work model.',
+    'Hybrid schedule, three days in the office.',
+  ])('still reads %s as hybrid', (description) => {
+    expect(mode(description)).toBe('hybrid');
+  });
+});
