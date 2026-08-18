@@ -227,7 +227,9 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
             // A partial answer is still a successful run — it is only barred from ageing
             // postings. Recorded here so `npm run status` shows it rather than reporting a
             // connector as healthy while a third of its boards are silently missing.
-            error: degraded.length > 0 ? `partial: ${degraded.length} of ${degraded.length + 1}+ targets failed` : null,
+            // The connector does not report how many targets it HAS, so this counts only the
+            // ones that failed; the per-target detail is already a JSON log line each.
+            error: degraded.length > 0 ? `partial: ${degraded.length} target(s) incomplete` : null,
             degraded,
           },
         };
