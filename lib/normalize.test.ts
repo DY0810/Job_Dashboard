@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { enrichmentCacheKey } from './hash';
+import { enrichmentCacheKey } from './hash.ts';
 import {
   CALIFORNIA_CITIES,
   CITY_ALIASES,
@@ -8,7 +8,7 @@ import {
   normalizeDescription,
   normalizeLocation,
   normalizeTitle,
-} from './normalize';
+} from './normalize.ts';
 
 describe('normalizeCompany', () => {
   // GATE: suffix-strip safety. A suffix is only stripped as a whole trailing token.

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { POSTING_FIXTURES } from './classify.fixtures';
-import { normalizeDescription } from './normalize';
-import { isVoiceRole, voiceScore, VOICE_THRESHOLD } from './voice';
+import { POSTING_FIXTURES } from './classify.fixtures.ts';
+import { normalizeDescription } from './normalize.ts';
+import { isVoiceRole, voiceScore, VOICE_THRESHOLD } from './voice.ts';
 
 describe('voiceScore', () => {
   it('clears the threshold on a single high-weight term', () => {

@@ -95,7 +95,16 @@ async function fetchThrottled(url, init) {
   return result;
 }
 
-function buildRequest(ats, token, extra) {
+// Exported so the Phase 3 connectors read their endpoint shapes from the same place the
+// registry prober does — one file to fix when a vendor moves a path. The JSDoc is what gives
+// TypeScript callers real parameter checking across the .js boundary.
+/**
+ * @param {string} ats
+ * @param {string} token
+ * @param {{ wdN?: string, site?: string }} [extra]
+ * @returns {{ url: string, init?: RequestInit }}
+ */
+export function buildRequest(ats, token, extra) {
   switch (ats) {
     case "greenhouse":
       return { url: `https://boards-api.greenhouse.io/v1/boards/${token}/jobs?content=true` };

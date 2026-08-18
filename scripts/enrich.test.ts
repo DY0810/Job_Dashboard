@@ -12,10 +12,10 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
-import type { ClassifyClient, ClassifyInput } from '../lib/classify';
-import { POSTING_FIXTURES, SENIOR_FIXTURES } from '../lib/classify.fixtures';
-import * as schema from '../lib/db/schema';
-import { formatStats, runEnrich, type WorkyDatabase } from './enrich';
+import type { ClassifyClient, ClassifyInput } from '../lib/classify.ts';
+import { POSTING_FIXTURES, SENIOR_FIXTURES } from '../lib/classify.fixtures.ts';
+import * as schema from '../lib/db/schema.ts';
+import { formatStats, runEnrich, type WorkyDatabase } from './enrich.ts';
 
 const { enrichmentCache, postings } = schema;
 
