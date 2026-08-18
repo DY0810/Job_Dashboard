@@ -10,6 +10,8 @@
  * and can inject `fetchImpl` to assert on timing and on refusals without a network call.
  */
 
+import { lookup } from 'node:dns/promises';
+
 import type { RawPosting, SourceKind } from './dedupe.ts';
 
 /** Descriptive, with a contact address, per the plan. Must not impersonate a named crawler. */
@@ -36,6 +38,15 @@ export interface FetchOptions {
    * PATH, where `safeUrl` cannot strip it — such a source must pass a scrubbed string here.
    */
   redactUrl?: string;
+  /**
+   * Refuse to contact anything but a public http(s) address, re-checking every redirect hop.
+   *
+   * Every connector calls a hardcoded API host, so this is off by default. `linkcheck` is the
+   * one caller that fetches a URL which arrived as remote data (`postings.canonical_url`, put
+   * there by whatever a job board said), and that is a genuine SSRF boundary: without this, a
+   * hostile listing whose apply URL 302s to `http://127.0.0.1:9200/` gets that request made.
+   */
+  publicOnly?: boolean;
 }
 
 export interface RuntimeOptions {
@@ -49,6 +60,8 @@ export interface RuntimeOptions {
   robotsTtlMs?: number;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** Name resolution for the `publicOnly` check. Injected by tests; DNS otherwise. */
+  resolveHost?: (host: string) => Promise<string[]>;
 }
 
 export interface Runtime {
@@ -72,6 +85,81 @@ export class RobotsDisallowedError extends Error {
   constructor(url: string) {
     super(`robots.txt disallows ${url}`);
     this.name = 'RobotsDisallowedError';
+  }
+}
+
+/** A `publicOnly` request that resolved to a scheme or an address we refuse to contact. */
+export class BlockedAddressError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'BlockedAddressError';
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// Destination policy (SSRF)
+// ---------------------------------------------------------------------------------------
+
+/** Redirect statuses that carry a `Location` we would otherwise follow blindly. */
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
+
+/**
+ * Everything that is not routable public internet: loopback, RFC1918, link-local (which
+ * includes the 169.254.169.254 cloud metadata endpoint), CGNAT, benchmarking, multicast and
+ * reserved space, in both address families.
+ */
+export function isPrivateAddress(address: string): boolean {
+  const plain = address.replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+
+  // ::ffff:10.0.0.1 is an IPv4 address wearing an IPv6 hat; judge the address it carries.
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(plain);
+  const candidate = mapped ? mapped[1] : plain;
+
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(candidate)) {
+    const [a, b] = candidate.split('.').map(Number);
+    if ([a, b].some((part) => !Number.isInteger(part) || part > 255)) return true;
+    return (
+      a === 0 || // "this network"
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) || // link-local, incl. the cloud metadata address
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 192 && b === 0) || // 192.0.0.0/24 IETF protocol assignments
+      (a === 100 && b >= 64 && b <= 127) || // CGNAT
+      (a === 198 && (b === 18 || b === 19)) || // benchmarking
+      a >= 224 // multicast and reserved
+    );
+  }
+
+  const v6 = candidate.toLowerCase();
+  if (v6 === '::' || v6 === '::1') return true;
+  return /^f[cd]/.test(v6) /* unique-local fc00::/7 */ || /^fe[89ab]/.test(v6) /* link-local */;
+}
+
+/**
+ * ponytail: resolves the name and checks the answer, which leaves a DNS-rebinding window
+ * between this lookup and the socket the fetch opens. Closing that needs a dispatcher with a
+ * connect-time hook (undici), which is not a dependency here. For a locally-run checker this
+ * stops the real attack — a hostile listing redirecting at internal services — and the
+ * residual race needs an attacker who already controls a DNS server.
+ */
+async function assertPublicDestination(
+  target: string,
+  label: string,
+  resolve: (host: string) => Promise<string[]>,
+): Promise<void> {
+  const parsed = new URL(target);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new BlockedAddressError(`refusing scheme ${parsed.protocol} for ${label}`);
+  }
+  // `hostname` keeps the brackets on an IPv6 literal (`http://[::1]/`), which no resolver
+  // accepts. Stripping them means such a URL is judged rather than failing as a DNS error.
+  const addresses = await resolve(parsed.hostname.replace(/^\[|\]$/g, ''));
+  if (addresses.length === 0) throw new BlockedAddressError(`${label} does not resolve`);
+  if (addresses.some(isPrivateAddress)) {
+    throw new BlockedAddressError(`${label} resolves to a non-public address`);
   }
 }
 
@@ -258,6 +346,9 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const robotsTtlMs = options.robotsTtlMs ?? DEFAULTS.robotsTtlMs;
   const defaultTimeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
   const defaultRetries = options.retries ?? DEFAULTS.retries;
+  const resolveHost =
+    options.resolveHost ??
+    (async (host: string) => (await lookup(host, { all: true })).map((entry) => entry.address));
 
   const buckets = new Map<string, TokenBucket>();
   const robotsCache = new Map<string, { rules: Promise<RobotsRules>; expiresAt: number }>();
@@ -279,11 +370,20 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     if (wait > 0) await sleep(wait);
   }
 
-  async function loadRobots(origin: string): Promise<RobotsRules> {
+  /**
+   * `guarded` is the `publicOnly` caller's robots fetch, and it is its own SSRF surface: the
+   * target host controls its own /robots.txt, so redirecting THAT at an internal address
+   * reaches it without the request URL ever looking suspicious. Verified reachable before
+   * this branch existed. Under `guarded` the redirect is not followed at all — a robots.txt
+   * we decline to chase is treated exactly like an unreachable one.
+   */
+  async function loadRobots(origin: string, guarded: boolean): Promise<RobotsRules> {
     // Not rate-limited and not retried: one request per host per day, and a slow robots.txt
     // must not be able to stall a whole connector.
     try {
-      const response = await withTimeout(`${origin}/robots.txt`, {}, defaultTimeoutMs);
+      const init: RequestInit = guarded ? { redirect: 'manual' } : {};
+      const response = await withTimeout(`${origin}/robots.txt`, init, defaultTimeoutMs);
+      if (guarded && REDIRECT_STATUS.has(response.status)) return ALLOW_ALL;
       if (!response.ok) return ALLOW_ALL;
       return parseRobots(await response.text());
     } catch {
@@ -294,11 +394,15 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     }
   }
 
-  function robotsFor(origin: string): Promise<RobotsRules> {
-    const cached = robotsCache.get(origin);
+  function robotsFor(origin: string, guarded: boolean): Promise<RobotsRules> {
+    // Keyed on `guarded` too: a guarded load can end in ALLOW_ALL for a reason that says
+    // nothing about the host's actual rules, and that answer must not be served to a
+    // connector asking the same question without the guard.
+    const key = guarded ? `guarded ${origin}` : origin;
+    const cached = robotsCache.get(key);
     if (cached && cached.expiresAt > now()) return cached.rules;
-    const rules = loadRobots(origin);
-    robotsCache.set(origin, { rules, expiresAt: now() + robotsTtlMs });
+    const rules = loadRobots(origin, guarded);
+    robotsCache.set(key, { rules, expiresAt: now() + robotsTtlMs });
     return rules;
   }
 
@@ -330,7 +434,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
 
   async function isAllowed(url: string): Promise<boolean> {
     const parsed = new URL(url);
-    const rules = await robotsFor(parsed.origin);
+    const rules = await robotsFor(parsed.origin, false);
     return rules.isAllowed(parsed.pathname + parsed.search);
   }
 
@@ -340,9 +444,13 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     const retries = options.retries ?? defaultRetries;
     const label = options.redactUrl ?? safeUrl(url);
 
+    // Before ANYTHING is contacted — the robots.txt fetch below is itself a request to this
+    // host, so checking the destination after it would leave the SSRF hole wide open.
+    if (options.publicOnly) await assertPublicDestination(url, label, resolveHost);
+
     let crawlDelayMs = 0;
     if (options.respectRobots !== false) {
-      const rules = await robotsFor(parsed.origin);
+      const rules = await robotsFor(parsed.origin, options.publicOnly === true);
       // Refused BEFORE the target is ever contacted.
       if (!rules.isAllowed(parsed.pathname + parsed.search)) throw new RobotsDisallowedError(label);
       crawlDelayMs = rules.crawlDelayMs;
@@ -352,13 +460,33 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       method: options.method ?? 'GET',
       headers: options.headers,
       body: options.body,
-      redirect: 'follow',
+      // `publicOnly` has to see each hop: following redirects inside fetch would hand a
+      // hostile board a one-line bypass of the destination check.
+      redirect: options.publicOnly ? 'manual' : 'follow',
     };
 
-    for (let attempt = 0; ; attempt += 1) {
-      await throttle(parsed.host, Math.max(minGapMs, crawlDelayMs));
-      const response = await withTimeout(url, init, timeoutMs, label);
+    let target = url;
+    let redirects = 0;
+
+    for (let attempt = 0; ; ) {
+      await throttle(new URL(target).host, Math.max(minGapMs, crawlDelayMs));
+      const response = await withTimeout(target, init, timeoutMs, label);
       if (response.ok) return response.text();
+
+      if (options.publicOnly && REDIRECT_STATUS.has(response.status)) {
+        const location = response.headers.get('location');
+        // A redirect we cannot or will not follow is reported as itself, not as a success.
+        if (location === null || redirects >= MAX_REDIRECTS) throw new HttpError(response.status, label);
+        redirects += 1;
+        target = new URL(location, target).toString();
+        // Each hop is a destination the remote side chose, so each hop is re-checked.
+        await assertPublicDestination(target, label, resolveHost);
+        // ponytail: a hop keeps the original method and the origin host's Crawl-delay, and
+        // does not re-read robots.txt for a new origin. `linkcheck` only ever sends HEAD/GET
+        // to a URL a board published as its own apply link, so none of the three bites; a
+        // future publicOnly caller that POSTs or crawls across origins would need them.
+        continue; // a hop is not a retry attempt
+      }
 
       // Retry 429 and 5xx ONLY. A 4xx is an answer, not a blip — retrying it is how a bad
       // token turns into four bad tokens.
@@ -369,6 +497,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       const backoff = Number.isFinite(retryAfter)
         ? retryAfter * 1000
         : 2 ** attempt * 500 + Math.random() * 500; // jittered exponential
+      attempt += 1;
       await sleep(backoff);
     }
   }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BlockedAddressError,
   createRuntime,
   HttpError,
+  isPrivateAddress,
   parseRobots,
   redact,
   RobotsDisallowedError,
@@ -283,5 +285,169 @@ describe('toEpochMs', () => {
     expect(toEpochMs('2026-07-30')).toBe(Date.parse('2026-07-30')); // Workable
     expect(Number.isNaN(toEpochMs(undefined))).toBe(true);
     expect(Number.isNaN(toEpochMs('not a date'))).toBe(true);
+  });
+});
+
+describe('publicOnly — the SSRF boundary for remotely-supplied URLs', () => {
+  const publicDns = async () => ['93.184.216.34'];
+
+  it('classifies the address space correctly', () => {
+    for (const blocked of [
+      '127.0.0.1', '10.1.2.3', '192.168.1.1', '172.16.0.1', '172.31.255.255',
+      '169.254.169.254', '0.0.0.0', '100.64.0.1', '198.18.0.1', '224.0.0.1',
+      '::1', '::', 'fe80::1', 'fc00::1', '::ffff:127.0.0.1', '[::1]',
+    ]) {
+      expect(isPrivateAddress(blocked), blocked).toBe(true);
+    }
+    for (const allowed of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '192.169.0.1', '2606:2800::1']) {
+      expect(isPrivateAddress(allowed), allowed).toBe(false);
+    }
+  });
+
+  it('refuses a URL that resolves to a private address before any request goes out', async () => {
+    let calls = 0;
+    const runtime = createRuntime({
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response('ok', { status: 200 });
+      },
+      resolveHost: async () => ['127.0.0.1'],
+      minGapMs: 0,
+    });
+    await expect(
+      runtime.fetchText('http://internal.test/x', { publicOnly: true, respectRobots: false }),
+    ).rejects.toBeInstanceOf(BlockedAddressError);
+    expect(calls).toBe(0);
+  });
+
+  it('judges an IPv6 literal rather than failing it as a DNS error', async () => {
+    const runtime = createRuntime({
+      fetchImpl: async () => new Response('x'),
+      // dns.lookup is a no-op for a literal, so echo it back the way a resolver would.
+      resolveHost: async (host) => [host],
+      minGapMs: 0,
+    });
+    await expect(
+      runtime.fetchText('http://[::1]:9200/x', { publicOnly: true, respectRobots: false }),
+    ).rejects.toThrow(/non-public address/);
+  });
+
+  it('refuses a non-http scheme', async () => {
+    const runtime = createRuntime({ fetchImpl: async () => new Response('x'), resolveHost: publicDns, minGapMs: 0 });
+    await expect(
+      runtime.fetchText('file:///etc/passwd', { publicOnly: true, respectRobots: false }),
+    ).rejects.toBeInstanceOf(BlockedAddressError);
+  });
+
+  it('re-checks the destination on every redirect hop', async () => {
+    // The actual attack: a public host the checker is willing to contact, which then bounces
+    // it at loopback. `redirect: follow` would have made this request without a word.
+    const seen: string[] = [];
+    const runtime = createRuntime({
+      fetchImpl: async (url) => {
+        seen.push(url);
+        return url.includes('evil.test')
+          ? new Response(null, { status: 302, headers: { location: 'http://127.0.0.1:9200/_all' } })
+          : new Response('internal service', { status: 200 });
+      },
+      resolveHost: async (host) => (host === 'evil.test' ? ['93.184.216.34'] : ['127.0.0.1']),
+      minGapMs: 0,
+    });
+
+    await expect(
+      runtime.fetchText('http://evil.test/job/1', { publicOnly: true, respectRobots: false }),
+    ).rejects.toBeInstanceOf(BlockedAddressError);
+    expect(seen).toEqual(['http://evil.test/job/1']); // the loopback hop was never requested
+  });
+
+  it('follows a redirect that stays public, and caps the chain', async () => {
+    let hops = 0;
+    const runtime = createRuntime({
+      fetchImpl: async () => {
+        hops += 1;
+        return hops <= 2
+          ? new Response(null, { status: 302, headers: { location: `https://ok.test/${hops}` } })
+          : new Response('landed', { status: 200 });
+      },
+      resolveHost: publicDns,
+      minGapMs: 0,
+    });
+    expect(await runtime.fetchText('https://ok.test/start', { publicOnly: true, respectRobots: false })).toBe('landed');
+
+    let endless = 0;
+    const loop = createRuntime({
+      fetchImpl: async () => {
+        endless += 1;
+        return new Response(null, { status: 302, headers: { location: `https://ok.test/${endless}` } });
+      },
+      resolveHost: publicDns,
+      minGapMs: 0,
+    });
+    await expect(
+      loop.fetchText('https://ok.test/start', { publicOnly: true, respectRobots: false }),
+    ).rejects.toBeInstanceOf(HttpError);
+    expect(endless).toBeLessThanOrEqual(6);
+  });
+
+  it('leaves the connectors alone: without publicOnly nothing resolves or is blocked', async () => {
+    let resolved = 0;
+    const runtime = createRuntime({
+      fetchImpl: async () => new Response('body', { status: 200 }),
+      resolveHost: async () => {
+        resolved += 1;
+        return ['127.0.0.1'];
+      },
+      minGapMs: 0,
+    });
+    expect(await runtime.fetchText('http://anything.test/x', { respectRobots: false })).toBe('body');
+    expect(resolved).toBe(0);
+  });
+});
+
+describe('publicOnly covers the robots.txt side-fetch', () => {
+  /**
+   * The subtle one: the request URL looks innocent, but the target host controls its own
+   * /robots.txt, and the harness fetches that before anything else. Redirecting THAT at an
+   * internal address reached it. Reproduced against real sockets before this was closed.
+   */
+  it('does not chase a redirected robots.txt, and does not disallow the request either', async () => {
+    const seen: string[] = [];
+    const runtime = createRuntime({
+      fetchImpl: async (url, init) => {
+        seen.push(`${(init?.redirect ?? 'follow') as string} ${url}`);
+        return url.endsWith('/robots.txt')
+          ? new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/' } })
+          : new Response('the job page', { status: 200 });
+      },
+      resolveHost: async () => ['93.184.216.34'],
+      minGapMs: 0,
+    });
+
+    expect(await runtime.fetchText('https://board.test/job/1', { publicOnly: true })).toBe('the job page');
+    // The robots fetch must be the one that opts out of redirect following.
+    expect(seen).toContain('manual https://board.test/robots.txt');
+  });
+
+  it('does not poison the shared robots cache for unguarded callers', async () => {
+    let robotsRequests = 0;
+    const runtime = createRuntime({
+      fetchImpl: async (url) => {
+        if (url.endsWith('/robots.txt')) {
+          robotsRequests += 1;
+          return robotsRequests === 1
+            ? new Response(null, { status: 302, headers: { location: 'http://10.0.0.1/' } })
+            : new Response('User-agent: *\nDisallow: /job/', { status: 200 });
+        }
+        return new Response('body', { status: 200 });
+      },
+      resolveHost: async () => ['93.184.216.34'],
+      minGapMs: 0,
+    });
+
+    // Guarded: the redirect is declined, so this caller gets ALLOW_ALL and proceeds.
+    await runtime.fetchText('https://board.test/job/1', { publicOnly: true });
+    // Unguarded: must re-read robots rather than inherit the guarded ALLOW_ALL.
+    await expect(runtime.fetchText('https://board.test/job/1')).rejects.toBeInstanceOf(RobotsDisallowedError);
+    expect(robotsRequests).toBe(2);
   });
 });
