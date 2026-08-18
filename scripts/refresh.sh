@@ -1,0 +1,71 @@
+#!/bin/bash
+#
+# One unattended refresh cycle: ingest, then enrich, plus linkcheck once a week.
+# `scripts/com.workie.refresh.plist` runs this every 30 minutes; see the README for install.
+#
+# Everything here is deliberately serial. Two SQLite writers on one file means SQLITE_BUSY the
+# moment a transaction runs longer than the driver's timeout, and ingest's persist over ~5,000
+# postings does. launchd will not start a second copy of a job that is still running, so this
+# one script running end to end is the whole concurrency policy.
+#
+#   scripts/refresh.sh              a cycle, as launchd runs it
+#   scripts/refresh.sh --linkcheck  force the weekly link check to run now
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 1
+
+# launchd starts this with a bare environment, so nothing has read `.env.local` — without
+# this every keyed connector is permanently "skipped: KEY not set" under the scheduler while
+# working fine when you run it from a shell.
+set -a
+# shellcheck disable=SC1091
+[ -f "$ROOT/.env.local" ] && . "$ROOT/.env.local"
+set +a
+
+LOG_DIR="$ROOT/logs"
+mkdir -p "$LOG_DIR"
+
+# Rotation, the boring way: one file per day, keep a fortnight. No logrotate, no newsyslog
+# config in /etc, and nothing to go stale — a file that stops being written just ages out.
+find "$LOG_DIR" -name 'refresh-*.log' -type f -mtime +14 -delete 2>/dev/null
+exec >>"$LOG_DIR/refresh-$(date +%Y-%m-%d).log" 2>&1
+
+say() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
+
+say "cycle start"
+node scripts/ingest.ts
+INGEST=$?
+say "ingest exit=$INGEST"
+
+# Enrichment is deterministic, free, and takes ~2s for the whole corpus, so it runs every
+# cycle regardless of what ingest managed — a rule change in lib/extract.ts reaches the rows
+# it was written for on the next cycle rather than whenever someone remembers.
+node scripts/enrich.ts
+say "enrich exit=$?"
+
+# Weekly, by stamp file rather than by a second calendar job: a laptop that was asleep at
+# 04:00 on Sunday still gets its link check on the next cycle after it wakes.
+STAMP="$LOG_DIR/.linkcheck-stamp"
+if [ "${1:-}" = "--linkcheck" ] || [ -z "$(find "$STAMP" -mtime -7 2>/dev/null)" ]; then
+  # Stamped BEFORE the run, not after. Sleep, reboot or `launchctl bootout` mid-check would
+  # otherwise leave no stamp, so every following cycle restarts the whole thing — each one
+  # overrunning the interval and halving ingest's real cadence for as long as it lasts. A
+  # missed weekly check is much cheaper than that loop.
+  touch "$STAMP"
+  say "linkcheck start"
+
+  # HARD TIME BUDGET, and it is not paranoia. `linkcheck` honours each host's robots.txt
+  # `Crawl-delay`, and news.ycombinator.com publishes 30 SECONDS — 153 postings point there,
+  # so that one host alone serialises into ~76 minutes, and a host publishing an hour would
+  # be worse without limit. launchd will not start a second copy of this job, so an unbounded
+  # link check does not just delay ingest: it stops the dashboard updating for as long as it
+  # runs. Better a link check that gives up and retries next week.
+  #
+  # `perl -e alarm` because macOS ships no timeout(1) and perl is always there.
+  perl -e 'alarm shift; exec @ARGV' 5400 node scripts/linkcheck.ts
+  say "linkcheck exit=$? (budget 90m; 142 = killed at the budget, 1 = dead links found)"
+fi
+
+say "cycle end"
+exit $INGEST

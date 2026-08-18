@@ -542,6 +542,17 @@ export interface ConnectorContext {
   env: Record<string, string | undefined>;
   /** One structured JSON line. Never pass a raw URL with a query string. */
   log(record: Record<string, unknown>): void;
+  /**
+   * "I answered, but this is not my whole catalogue."
+   *
+   * A fan-out connector — the ATS ones poll ~45 company boards each — swallows one target's
+   * failure so the other 44 still land, and reports `ok`. Ghost detection would then read the
+   * missing board's postings as deliberately withdrawn and delist them an hour later: finding
+   * C's mass false-delist, reappearing one level below the `connector_runs.status` guard that
+   * was supposed to prevent it. Calling this keeps the run `ok` and its postings persisted,
+   * and only bars it from ageing anything toward delisting this cycle.
+   */
+  degraded(reason: string): void;
 }
 
 export interface Connector {
@@ -553,6 +564,19 @@ export interface Connector {
    * the absence as "this source dropped its postings" (finding C).
    */
   skip?(env: Record<string, string | undefined>): string | null;
+  /**
+   * Do not poll this source again until this long after its last **successful** run. Omit it
+   * — as every ATS connector does — to run on every cycle; the scheduler's own interval is
+   * the floor, and declaring a value equal to it would only risk losing a cycle to jitter.
+   *
+   * Measured from the last `ok` run, not the last attempt: the reason to wait is "the data
+   * cannot have changed since we last got it", and after a failure we never got it.
+   *
+   * A cadence skip writes no `connector_runs` row, exactly as a missing-key skip does not.
+   * Ghost detection counts an absence only against an `ok` run (finding C), and a source
+   * that sat out a cycle must not accrue a phantom absence from it.
+   */
+  minIntervalMs?: number;
   fetch(context: ConnectorContext): Promise<ConnectorPosting[]>;
 }
 

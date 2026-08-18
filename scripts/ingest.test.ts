@@ -393,3 +393,91 @@ describe('flags', () => {
     expect(db.select().from(postings).all()).toHaveLength(0); // both are older than --since
   });
 });
+
+describe('per-connector cadence', () => {
+  const CYCLE = 30 * 60 * 1000;
+  const T0 = Date.parse('2026-08-18T09:00:00Z');
+
+  /** Same shape as `healthy`, but only pollable every six hours. */
+  const slow: Connector = {
+    name: 'slow',
+    kind: 'aggregator',
+    minIntervalMs: 6 * 60 * 60 * 1000,
+    fetch: async () => [posting({ source: 'slow', sourceUrl: 'https://slow.test/p/1' })],
+  };
+
+  it('a 6-hour connector runs ONCE across twelve cycles; the others run all twelve', async () => {
+    const db = memoryDb();
+    const skips: string[] = [];
+    for (let cycle = 0; cycle < 12; cycle += 1) {
+      const result = await runIngest({
+        connectors: [healthy, slow],
+        db,
+        runtime: flakyRuntime(),
+        runId: `run-${cycle}`,
+        env: {},
+        log: silent,
+        now: () => T0 + cycle * CYCLE,
+      });
+      skips.push(...result.skipped.filter((skip) => skip.kind === 'cadence').map((skip) => skip.connector));
+    }
+
+    const runs = db.select().from(connectorRuns).all();
+    // Eleven skipped cycles, one run. Six hours is twelve cycles, so cycle 12 would be next.
+    expect(runs.filter((run) => run.connector === 'slow')).toHaveLength(1);
+    expect(skips.filter((name) => name === 'slow')).toHaveLength(11);
+    // The other connector is untouched by its neighbour's cadence.
+    expect(runs.filter((run) => run.connector === 'healthy')).toHaveLength(12);
+    expect(skips.filter((name) => name === 'healthy')).toHaveLength(0);
+  });
+
+  it('measures the interval from the last OK run, so a failing source is retried next cycle', async () => {
+    const db = memoryDb();
+    const broken: Connector = { ...slow, fetch: async () => { throw new Error('boom'); } };
+    for (const cycle of [0, 1, 2]) {
+      await runIngest({
+        connectors: [broken],
+        db,
+        runtime: flakyRuntime(),
+        runId: `run-${cycle}`,
+        env: {},
+        log: silent,
+        now: () => T0 + cycle * CYCLE,
+      });
+    }
+    // Three attempts, not one: an error never got us the data, so the reason to wait is gone.
+    expect(db.select().from(connectorRuns).all()).toHaveLength(3);
+  });
+
+  it('records a cadence skip apart from a missing-key skip, and NEITHER writes a run row', async () => {
+    const db = memoryDb();
+    const keyed: Connector = {
+      name: 'keyed',
+      kind: 'aggregator',
+      skip: () => 'SOME_KEY not set in .env.local',
+      fetch: async () => [],
+    };
+    const options = { connectors: [slow, keyed], db, runtime: flakyRuntime(), env: {}, log: silent };
+
+    await runIngest({ ...options, runId: 'run-0', now: () => T0 });
+    const second = await runIngest({ ...options, runId: 'run-1', now: () => T0 + CYCLE });
+
+    expect(second.skipped).toEqual([
+      { connector: 'slow', kind: 'cadence', reason: expect.stringContaining('next in') },
+      { connector: 'keyed', kind: 'config', reason: 'SOME_KEY not set in .env.local' },
+    ]);
+    // The whole point: a skip of either kind leaves no `ok` row for ghost detection to read.
+    expect(db.select().from(connectorRuns).all().map((run) => run.runId)).toEqual(['run-0']);
+  });
+
+  it('--only overrides cadence: asking for a connector by name always runs it', async () => {
+    const db = memoryDb();
+    const options = { connectors: [slow], db, runtime: flakyRuntime(), env: {}, log: silent };
+
+    await runIngest({ ...options, runId: 'run-0', now: () => T0 });
+    const forced = await runIngest({ ...options, runId: 'run-1', only: 'slow', now: () => T0 + CYCLE });
+
+    expect(forced.skipped).toHaveLength(0);
+    expect(db.select().from(connectorRuns).all()).toHaveLength(2);
+  });
+});

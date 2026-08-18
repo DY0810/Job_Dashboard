@@ -15,7 +15,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { dedupePostings, SOURCE_PRIORITY } from '../lib/dedupe.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
@@ -29,6 +29,7 @@ import {
   type Runtime,
 } from '../lib/runtime.ts';
 import { connectors as allConnectors } from './connectors/index.ts';
+import { formatGhostStats, runGhostPass, type GhostStats } from './ghost.ts';
 import { recordingRuntime, saveFixture, type Fixture } from './connectors/fixtures.ts';
 
 export interface ConnectorRunRecord {
@@ -39,6 +40,8 @@ export interface ConnectorRunRecord {
   merged: number;
   durationMs: number;
   error: string | null;
+  /** Reasons the connector answered with less than its whole catalogue. See `ghostEligible`. */
+  degraded: string[];
 }
 
 export interface IngestOptions {
@@ -54,12 +57,27 @@ export interface IngestOptions {
   log?: (record: Record<string, unknown>) => void;
   /** Per-connector runtime override — used by `--record` to wrap each in a recorder. */
   runtimeFor?: (connector: Connector) => Runtime;
+  /** Injected by the cadence and ghost tests so twelve cycles need not take six hours. */
+  now?: () => number;
+}
+
+/**
+ * Why a connector did not run. `config` is a missing API key or a robots.txt refusal — the
+ * connector cannot run at all. `cadence` is "asked too recently", which is a healthy source
+ * on a slow clock. Neither writes a `connector_runs` row, and the distinction is what
+ * `npm run status` reports and what ghost detection must never read as an absence.
+ */
+export interface Skip {
+  connector: string;
+  kind: 'config' | 'cadence';
+  reason: string;
 }
 
 export interface IngestResult {
   exitCode: number;
   runs: ConnectorRunRecord[];
-  skipped: { connector: string; reason: string }[];
+  skipped: Skip[];
+  ghost: GhostStats | null;
 }
 
 const jsonLog = (record: Record<string, unknown>): void => {
@@ -70,11 +88,69 @@ function message(error: unknown): string {
   return redact(error instanceof Error ? error.message : String(error));
 }
 
+/**
+ * When each connector last returned `ok`, epoch ms. The cadence gate and `npm run status`
+ * both read it, and both must read the same thing: a run that ERRORED does not push the
+ * window out. The reason to wait is "the data cannot have changed since we last got it", and
+ * after a failure we never got it — so a broken source is retried next cycle, not next week.
+ */
+export function lastSuccessByConnector(db: Db): Map<string, number> {
+  const rows = db
+    .select({
+      connector: connectorRuns.connector,
+      at: sql<number>`max(${connectorRuns.startedAt})`,
+    })
+    .from(connectorRuns)
+    .where(eq(connectorRuns.status, 'ok'))
+    .groupBy(connectorRuns.connector)
+    .all();
+  return new Map(rows.map((row) => [row.connector, row.at]));
+}
+
+/**
+ * May this run's answer from this connector age its postings toward delisting?
+ *
+ * `status === 'ok'` is necessary and NOT sufficient. Finding C's rule is really "the source
+ * told us its whole catalogue and this posting was not in it", and there are two ways an `ok`
+ * run fails that test:
+ *
+ *   - **Partial.** An ATS connector fans out over ~45 company boards and swallows one board's
+ *     failure so the other 44 still land. The run is `ok` while an arbitrary slice of the
+ *     catalogue is missing, and the missing slice would be delisted an hour later.
+ *   - **Empty.** `body.jobs ?? []` turns a changed response shape into zero postings rather
+ *     than a throw. Two such runs and the connector's entire inventory goes. A source that
+ *     returned nothing cannot tell us the difference between "the board is empty" and "we
+ *     lost the board", so it does not get to decide.
+ *
+ * The cost of being wrong this way round is a dead posting staying visible until the weekly
+ * `linkcheck` marks it. The cost the other way round is a live posting silently vanishing,
+ * which is the failure the whole phase exists to prevent.
+ */
+export function ghostEligible(record: ConnectorRunRecord): boolean {
+  return record.status === 'ok' && record.degraded.length === 0 && record.fetched > 0;
+}
+
+/**
+ * ms until this connector may next be polled; 0 when it is due now.
+ *
+ * The minute of slack is the same jitter argument that keeps `minIntervalMs` off the ATS
+ * connectors. An hourly connector on a 30-minute cycle is due after exactly two cycles, so a
+ * cycle landing a second early would skip it and push the real interval to 90 minutes. The
+ * interval is a politeness floor, not a deadline; a minute under it costs nobody anything.
+ */
+const CADENCE_SLACK_MS = 60_000;
+
+export function dueIn(connector: Connector, lastOk: number | undefined, now: number): number {
+  if (connector.minIntervalMs === undefined || lastOk === undefined) return 0;
+  return Math.max(0, lastOk + connector.minIntervalMs - CADENCE_SLACK_MS - now);
+}
+
 export async function runIngest(options: IngestOptions): Promise<IngestResult> {
   const { db, runId } = options;
   const env = options.env ?? process.env;
   const log = options.log ?? jsonLog;
-  const startedAt = new Date();
+  const now = options.now ?? Date.now;
+  const startedAt = new Date(now());
 
   const selected =
     options.only === undefined
@@ -85,15 +161,32 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
     throw new Error(`no connector named ${options.only}`);
   }
 
-  // A missing key is a skip, not an error — and a skip writes NO `connector_runs` row, so
-  // ghost detection cannot read the silence as "this source dropped its postings" (finding C).
-  const skipped: { connector: string; reason: string }[] = [];
+  // Neither kind of skip writes a `connector_runs` row, so ghost detection cannot read the
+  // silence as "this source dropped its postings" (finding C). They are still recorded
+  // apart, in the log and in the result, because they mean opposite things operationally:
+  // `config` needs a human, `cadence` is the system working as designed.
+  //
+  // `--only` bypasses the cadence gate. Asking for one connector by name is an explicit
+  // instruction, and `npm run ingest -- --only=hn` silently doing nothing looks like a bug.
+  const lastOk = options.only === undefined ? lastSuccessByConnector(db) : new Map<string, number>();
+  const skipped: Skip[] = [];
   const active: Connector[] = [];
   for (const connector of selected) {
-    const reason = connector.skip?.(env) ?? null;
-    if (reason) {
-      skipped.push({ connector: connector.name, reason });
-      log({ run: runId, connector: connector.name, status: 'skipped', reason });
+    const configReason = connector.skip?.(env) ?? null;
+    const wait = dueIn(connector, lastOk.get(connector.name), now());
+    const skip: Skip | null = configReason
+      ? { connector: connector.name, kind: 'config', reason: configReason }
+      : wait > 0
+        ? {
+            connector: connector.name,
+            kind: 'cadence',
+            reason: `polled ${Math.round((now() - lastOk.get(connector.name)!) / 60_000)}m ago; next in ${Math.round(wait / 60_000)}m`,
+          }
+        : null;
+
+    if (skip) {
+      skipped.push(skip);
+      log({ run: runId, connector: skip.connector, status: 'skipped', kind: skip.kind, reason: skip.reason });
     } else {
       active.push(connector);
     }
@@ -108,10 +201,12 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
   const settled = await Promise.allSettled(
     active.map(async (connector): Promise<Outcome> => {
       const began = Date.now();
+      const degraded: string[] = [];
       const context = {
         runtime: options.runtimeFor?.(connector) ?? options.runtime,
         env,
         log: (record: Record<string, unknown>) => log({ run: runId, ...record }),
+        degraded: (reason: string) => degraded.push(reason),
       };
       try {
         const fetched = await connector.fetch(context);
@@ -129,7 +224,13 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
             newPostings: 0,
             merged: 0,
             durationMs: Date.now() - began,
-            error: null,
+            // A partial answer is still a successful run — it is only barred from ageing
+            // postings. Recorded here so `npm run status` shows it rather than reporting a
+            // connector as healthy while a third of its boards are silently missing.
+            // The connector does not report how many targets it HAS, so this counts only the
+            // ones that failed; the per-target detail is already a JSON log line each.
+            error: degraded.length > 0 ? `partial: ${degraded.length} target(s) incomplete` : null,
+            degraded,
           },
         };
       } catch (error) {
@@ -145,6 +246,7 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
             durationMs: Date.now() - began,
             // Carries the connector name (the `connector` field) and never a credential.
             error: message(error),
+            degraded,
           },
         };
       }
@@ -167,11 +269,18 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
             merged: 0,
             durationMs: 0,
             error: message(result.reason),
+            degraded: [],
           },
         },
   );
 
   const harvested = outcomes.filter((outcome) => outcome.record.status === 'ok');
+
+  // `--since` drops postings the source DID still list, which would read as an absence and
+  // delist live jobs after two such runs. It is a debugging flag; the ghost pass sits it out.
+  const eligible = outcomes.filter((outcome) => ghostEligible(outcome.record));
+  const ghosting = !options.dryRun && options.since === undefined && eligible.length > 0;
+
   const counts = options.dryRun
     ? new Map<string, { newPostings: number; merged: number }>()
     : persist(
@@ -205,6 +314,17 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
       .run();
   }
 
+  // AFTER the `connector_runs` rows are written. Only a connector that answered COMPLETELY
+  // may age its own postings toward delisting — see `ghostEligible`.
+  const ghost = ghosting
+    ? runGhostPass(db, {
+        runId,
+        okConnectors: eligible.map((outcome) => outcome.connector.name),
+        now: new Date(now()),
+      })
+    : null;
+  if (ghost) log({ run: runId, event: 'ghost', ...ghost });
+
   const failures = outcomes.filter((outcome) => outcome.record.status === 'error').length;
   const succeeded = outcomes.length - failures;
   const runs = outcomes.map((outcome) => outcome.record);
@@ -216,14 +336,18 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
     ok: succeeded,
     failed: failures,
     skipped: skipped.length,
+    skippedCadence: skipped.filter((skip) => skip.kind === 'cadence').length,
+    ghostEligible: eligible.length,
     fetched: runs.reduce((total, run) => total + run.fetched, 0),
     newPostings: runs.reduce((total, run) => total + run.newPostings, 0),
     merged: runs.reduce((total, run) => total + run.merged, 0),
+    delisted: ghost?.delisted ?? 0,
+    restored: ghost?.restored ?? 0,
     dryRun: Boolean(options.dryRun),
   });
 
   // Exit 1 only when everything that ran failed. Nothing running at all is not a failure.
-  return { exitCode: failures > 0 && succeeded === 0 ? 1 : 0, runs, skipped };
+  return { exitCode: failures > 0 && succeeded === 0 ? 1 : 0, runs, skipped, ghost };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -383,7 +507,11 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
           })
           .onConflictDoUpdate({
             target: [postingSources.postingId, postingSources.sourceUrl],
-            set: { lastSeenRun: runId, absenceCount: 0, sourcePriority: source.sourcePriority },
+            // `absence_count` is deliberately NOT reset here. `scripts/ghost.ts` owns that
+            // column and does the reset itself, from `last_seen_run`, so that one file holds
+            // the whole delisting rule — and so the pre-run state is still readable when it
+            // takes its snapshot. Resetting here too would erase the evidence it needs.
+            set: { lastSeenRun: runId, sourcePriority: source.sourcePriority },
           })
           .run();
         bump(counts, source.source, inserted ? 'newPostings' : 'merged');
@@ -437,6 +565,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   for (const [name, fixture] of sinks) {
     if (Object.keys(fixture).length > 0) saveFixture(name, fixture);
   }
+  if (result.ghost) console.log(formatGhostStats(result.ghost));
 
   return result.exitCode;
 }

@@ -95,6 +95,7 @@ describe('extractor injection', () => {
       runtime: fixtureRuntime(loadFixture('hn')),
       env: {},
       log: () => {},
+      degraded: () => {},
     });
     expect(results.length).toBeGreaterThan(0);
     expect(results.every((posting) => posting.company === 'Injected Co')).toBe(true);
@@ -106,6 +107,7 @@ describe('extractor injection', () => {
       runtime: fixtureRuntime(loadFixture('hn')),
       env: {},
       log: () => {},
+      degraded: () => {},
     });
     expect(results).toEqual([]);
   });

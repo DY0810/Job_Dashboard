@@ -548,6 +548,31 @@ connector returning 500 must never delist anything.
 
 **Rollback.** `launchctl unload` the plist; revert the code. Data is unaffected.
 
+**Amended during execution** (§7, recorded here in the same PR):
+
+- *Two gate items were made moot by Phase 4's replacement with deterministic extraction*
+  (`1917e6e`). There is no enrichment cache and no spend log to report a hit rate or a
+  `$0.00` against — extraction is pure functions over the row, so a full re-poll of the whole
+  corpus is 1.8 seconds and costs nothing by construction. `npm run status` reports last run,
+  postings added, live postings and **next due** per connector instead. It is that last column
+  the amendment below made necessary.
+- *Added: per-connector `minIntervalMs`.* Not in the original phase, which assumed one cadence
+  for everything. Polling a monthly HN thread 48 times a day is waste at our end and rudeness
+  at theirs; the ATS boards genuinely want every cycle. This also promoted finding C's guard
+  from "handles a failing connector" to load-bearing for a *healthy* one: a source polled every
+  six hours sits out eleven cycles in twelve, and counting those absences would delist its
+  whole catalogue within the hour.
+- *Strengthened: finding C's `ok` test is necessary but not sufficient.* `connector_runs` has
+  one row per connector, and an ATS connector fans out over ~45 company boards, swallowing one
+  board's failure so the other 44 still land. The run is `ok` with a slice of the catalogue
+  missing, which reproduces finding C's mass false-delist one level below the guard. A
+  connector now reports partial answers through `ConnectorContext.degraded()`, and a run that
+  fetched zero postings is barred too.
+- *Added: `postings.delisted_reason` (migration 0003).* The ghost pass and `linkcheck` both
+  write `delisted_at`, and without a discriminator ghost's "reappearance clears the flag"
+  undoes every weekly link check within half an hour — a posting with a dead apply URL is
+  usually still listed by its source, so its absence counts sit at zero.
+
 ---
 
 ### Phase 11 — Tier-3 scrapers *(optional — ship without it)*

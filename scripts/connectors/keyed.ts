@@ -9,10 +9,17 @@
  *
  * Every one of these carries its credential in a URL, so every fetch here passes an explicit
  * `redactUrl`: a thrown `HttpError` otherwise reprints the URL it failed on.
+ *
+ * All four are metered: Adzuna's free tier is a few hundred calls a MONTH, and Careerjet and
+ * Jooble both publish per-day caps. Six hours (4 calls a day, ~120 a month) keeps every one
+ * of them inside its free tier with room to spare. They are also the wrong tier to poll hard
+ * — a job that reaches us through one of these usually reached us through its ATS first.
  */
 
 import { toEpochMs, type Connector } from '../../lib/runtime.ts';
 import { aggRow } from './agg.ts';
+
+const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 const missing = (env: Record<string, string | undefined>, ...names: string[]): string | null => {
   const absent = names.filter((name) => !env[name]?.trim());
@@ -32,6 +39,8 @@ export const adzuna: Connector = {
   name: 'adzuna',
   kind: 'aggregator',
   skip: (env) => missing(env, 'ADZUNA_APP_ID', 'ADZUNA_APP_KEY'),
+  /** Metered free tier — see the file header. */
+  minIntervalMs: SIX_HOURS,
   async fetch(context) {
     const url = new URL('https://api.adzuna.com/v1/api/jobs/us/search/1');
     url.searchParams.set('app_id', context.env.ADZUNA_APP_ID!);
@@ -71,6 +80,8 @@ export const careerjet: Connector = {
   name: 'careerjet',
   kind: 'aggregator',
   skip: (env) => missing(env, 'CAREERJET_AFFID'),
+  /** Metered free tier — see the file header. */
+  minIntervalMs: SIX_HOURS,
   async fetch(context) {
     const url = new URL('https://public.api.careerjet.net/search');
     url.searchParams.set('affid', context.env.CAREERJET_AFFID!);
@@ -113,6 +124,8 @@ export const jooble: Connector = {
   name: 'jooble',
   kind: 'aggregator',
   skip: (env) => missing(env, 'JOOBLE_KEY'),
+  /** Metered free tier — see the file header. */
+  minIntervalMs: SIX_HOURS,
   async fetch(context) {
     // Jooble puts the key in the PATH, so `safeUrl` cannot strip it — this is the case
     // `redactUrl` exists for.
@@ -155,6 +168,8 @@ export const usajobs: Connector = {
   name: 'usajobs',
   kind: 'aggregator',
   skip: (env) => missing(env, 'USAJOBS_KEY', 'USAJOBS_EMAIL'),
+  /** Metered free tier — see the file header. */
+  minIntervalMs: SIX_HOURS,
   async fetch(context) {
     const url = new URL('https://data.usajobs.gov/api/search');
     url.searchParams.set('ResultsPerPage', '50');

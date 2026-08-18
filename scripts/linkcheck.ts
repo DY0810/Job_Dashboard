@@ -277,7 +277,14 @@ export async function runLinkcheck(
     const now = new Date();
     db.transaction((tx) => {
       for (const result of dead) {
-        tx.update(postings).set({ delistedAt: now }).where(eq(postings.id, result.id)).run();
+        // `delisted_reason` is what stops the ghost pass undoing this. A posting whose apply
+        // URL is dead is usually still IN its source's listing, so its absence counts sit at
+        // zero and the ghost pass would otherwise read "not a ghost" as "bring it back" —
+        // within half an hour, every week.
+        tx.update(postings)
+          .set({ delistedAt: now, delistedReason: 'linkcheck' })
+          .where(eq(postings.id, result.id))
+          .run();
         marked += 1;
       }
     });
