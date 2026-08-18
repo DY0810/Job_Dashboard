@@ -91,9 +91,13 @@ export const jobspresso = rssConnector(
   },
   {
     // jobspresso.co robots.txt carries `Disallow: /*?`, which matches its own published feed
-    // URL (`/?feed=job_feed`). That rule is aimed at crawler query-string explosion, not at
-    // the syndication feed the site publishes for exactly this purpose. One request per run.
-    respectRobots: false,
+    // URL (`/?feed=job_feed`). That rule is plainly aimed at crawler query-string explosion
+    // rather than at the syndication feed the site publishes for exactly this purpose - but
+    // the project constraint is to respect robots.txt, and reading intent into a Disallow is
+    // negotiating with it rather than respecting it. So this feed is refused too.
+    //
+    // Worth trying before reversing this: a path-based feed URL (e.g. /feed/) that robots.txt
+    // permits outright would make the question moot. To reverse, add `respectRobots: false`.
   },
 );
 

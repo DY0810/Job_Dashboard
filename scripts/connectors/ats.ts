@@ -223,10 +223,14 @@ interface SmartRecruitersDetail {
  * ourselves with a contact address, and the registry has exactly one SmartRecruiters company
  * — one request per run. The case against is that `Disallow: /` is `Disallow: /`.
  *
- * If the call goes the other way, delete the two `respectRobots: false` lines below: the
- * connector then reports a clean refusal per target and the rest of the run is unaffected.
+ * The call went against opting out. `Disallow: /` is `Disallow: /`, and the `Allow:` line
+ * for LinkedInBot shows SmartRecruiters decided deliberately who reaches this path rather
+ * than leaving a careless blanket rule. This connector therefore reports a clean refusal
+ * per target and the rest of the run is unaffected. Cost: one company out of 74.
+ *
+ * To reverse, restore `{ respectRobots: false }` here.
  */
-const SMARTRECRUITERS_FETCH = { respectRobots: false } as const;
+const SMARTRECRUITERS_FETCH = {} as const;
 
 export const smartrecruiters = atsConnector('smartrecruiters', async (entry, context) => {
   const body = await context.runtime.fetchJson<{ content?: SmartRecruitersPosting[] }>(
