@@ -108,10 +108,23 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-/** Drops the keys the source did not answer, so `source_fields` never stores empty noise. */
+/**
+ * Drops the keys the source did not answer, so `source_fields` never stores empty noise.
+ *
+ * An empty array counts as unanswered. `parseSections` returns `[]` rather than undefined, so
+ * every ATS row used to persist at least `{"sections":[]}` — which also made this function
+ * effectively never return undefined for an ATS row, contradicting its own contract.
+ *
+ * `scripts/ingest.ts` uses a truthy `structured` as "an ATS carried fields this run" before
+ * overwriting `source_fields`. That guard still holds, and reads more truthfully now: a run
+ * that answered nothing no longer counts as having answered.
+ */
 function sourceFields(fields: SourceFields): SourceFields | undefined {
   const kept = Object.fromEntries(
-    Object.entries(fields).filter(([, value]) => value !== undefined && value !== null),
+    Object.entries(fields).filter(
+      ([, value]) =>
+        value !== undefined && value !== null && !(Array.isArray(value) && value.length === 0),
+    ),
   ) as SourceFields;
   return Object.keys(kept).length > 0 ? kept : undefined;
 }
@@ -220,7 +233,13 @@ export const greenhouse = atsConnector('greenhouse', async (entry, context) => {
         structured: {
           // No employment type in this API — it stays undefined and the text decides.
           workMode: workModeFrom(greenhouseMetadata(job, /location\s*type|work\s*(?:mode|place|type)|remote/i)),
-          location: locationFrom(job.offices?.[0]?.location ?? job.offices?.[0]?.name, job.location?.name),
+          // Both of these are whole location strings, not parts: offices[0].location is
+          // "San Francisco, CA" and location.name is "San Francisco". Joining them produced
+          // "San Francisco, CA, San Francisco" whenever the two spellings differed.
+          location:
+            text(job.offices?.[0]?.location) ??
+            text(job.offices?.[0]?.name) ??
+            text(job.location?.name),
           department: text(job.departments?.[0]?.name),
           sections: parseSections(job.content),
         },
@@ -402,12 +421,12 @@ export const smartrecruiters = atsConnector('smartrecruiters', async (entry, con
         structured: {
           employmentType: employmentTypeFrom(detail.typeOfEmployment?.label),
           workMode: workModeFrom(undefined, detail.location?.remote),
-          location: locationFrom(
-            detail.location?.city,
-            detail.location?.region,
-            detail.location?.country,
-            posting.location?.fullLocation,
-          ),
+          // `fullLocation` is the already-joined whole, not a fourth part. Passing both gave
+          // "San Francisco, California, United States, San Francisco, California, United
+          // States", because locationFrom only dedupes on exact per-argument equality.
+          location:
+            locationFrom(detail.location?.city, detail.location?.region, detail.location?.country) ??
+            text(posting.location?.fullLocation),
           department: text(detail.department?.label),
           // `jobAd.sections` is already {title, html} per section — no parsing of the whole
           // body, just of each section's own markup.
