@@ -81,6 +81,33 @@ describe('normalizeTitle', () => {
 });
 
 describe('normalizeLocation', () => {
+  /**
+   * Job boards hang a facility noun off the city: "New York City", "New York HQ", "San
+   * Francisco Office". These resolve to the metro's alias key rather than to a raw slug,
+   * because `city_norm` feeds both `dedupe_key` and the Design tab's location rule — a miss
+   * costs a merge in one and the whole posting in the other.
+   */
+  it.each([
+    ['New York City, New York, United States', 'nyc'],
+    ['New York HQ', 'nyc'],
+    ['New York Office', 'nyc'],
+    ['San Francisco Office', 'sf'],
+    ['Los Angeles Metro Area', 'la'],
+    ['Seattle Campus', 'sea'],
+  ])('resolves the board spelling %s to %s', (input, expected) => {
+    expect(normalizeLocation(input).city_norm).toBe(expected);
+  });
+
+  /** Whole trailing tokens only, never a prefix — otherwise a Minnesota town of 1,200 people
+   *  becomes a target metro, which set membership could never have got wrong. */
+  it.each([
+    ['New York Mills, MN', 'new york mills'],
+    ['Kansas City, MO', 'kansas city'],
+    ['Salt Lake City, UT', 'salt lake city'],
+  ])('does not let %s reach a metro alias', (input, expected) => {
+    expect(normalizeLocation(input).city_norm).toBe(expected);
+  });
+
   it.each([
     ['SF', 'sf'],
     ['San Francisco', 'sf'],

@@ -156,14 +156,15 @@ describe('design shows the target locations, engineering shows every location', 
   });
 
   /**
-   * The regression this rule invites: 137 live postings carry a metro spelling `normalize.ts`
-   * has no alias for ("New York City", "san francisco office"). As a sort key that cost them a
-   * few positions; as a visibility rule it would delete them.
+   * The regression this rule invited: 137 live postings arrive spelled "New York City" or
+   * "San Francisco Office". As a sort key the missed alias cost them a few positions; as a
+   * visibility rule it would delete them. `normalizeLocation` resolves the spelling now, so
+   * these two carry the canonical key — `normalize.test.ts` guards the resolution itself.
    */
-  it('keeps a target metro that arrived with an unaliased spelling', () => {
+  it('keeps target metros that arrived with a board-flavoured spelling', () => {
     const list = order(params('design'));
-    expect(list).toContain('d-nyc-loose'); // city_norm 'new york city'
-    expect(list).toContain('d-sf-office'); // city_norm 'san francisco office'
+    expect(list).toContain('d-nyc-loose'); // "New York City, New York, United States"
+    expect(list).toContain('d-sf-office'); // "San Francisco Office"
   });
 
   it('keeps a role whose only remote signal is work_mode', () => {
@@ -209,9 +210,16 @@ describe('design shows the target locations, engineering shows every location', 
   });
 
   it('counts what geography hides, so an empty table can say so', () => {
-    // d-berlin-3d, d-berlin-2h, d-austin. Not d-old, which is also in Berlin but 61 days
-    // old — a row the tab would not show anyway must not inflate the count.
+    // d-berlin-3d, d-berlin-2h, d-austin. Not d-old-berlin, which is elsewhere too but 62
+    // days old — a row the tab would not show anyway must not inflate the count.
     expect(outsideTargetLocations(db, params('design'), NOW)).toBe(3);
+  });
+
+  /** The count sits under "no postings match these filters", so it has to be an answer to
+   *  that question rather than a fact about the whole tab. */
+  it('counts under the same filters it is explaining', () => {
+    expect(outsideTargetLocations(db, params('design', { mode: 'onsite' }), NOW)).toBe(1);
+    expect(outsideTargetLocations(db, params('design', { mode: 'remote' }), NOW)).toBe(0);
   });
 });
 

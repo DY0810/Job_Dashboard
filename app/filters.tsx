@@ -4,13 +4,14 @@ import {
   FILTERS,
   cleared,
   hasFilters,
+  href,
   vocab,
   withFilter,
   type Filter,
   type Group,
   type Params,
 } from '@/lib/params';
-import { Caret } from './icons';
+import { Chevron } from './icons';
 
 const WINDOW_LABEL: Record<string, string> = { hour: '1h', day: '24h', week: '7d', month: '30d' };
 
@@ -53,10 +54,12 @@ export function BadgeChip({ p, value }: { p: Params; value: string }) {
 }
 
 /**
- * One native <select> per filter. Uncontrolled, and keyed on the value the URL holds, so a
- * back navigation or a badge click remounts it with the right option selected — the DOM is
- * never asked to disagree with the URL, and nothing re-asserts a stale value over the user's
- * pick mid-navigation.
+ * One native <select> per filter, uncontrolled and keyed on the whole URL: the URL wins on
+ * every navigation. Picking several values and then submitting works — nothing re-renders in
+ * between — but a navigation *during* that (a badge, a row, a tab) resets the boxes to what
+ * the table is actually showing. That is the model this app already claims: the control
+ * reports the state, and the state is the URL. The alternative, a pending selection that
+ * outlives the page it was made on, leaves a dropdown displaying a filter that is not applied.
  */
 function Select({ p, filter, values }: { p: Params; filter: Filter; values: readonly string[] }) {
   const selected = p[filter];
@@ -75,7 +78,7 @@ function Select({ p, filter, values }: { p: Params; filter: Filter; values: read
             </option>
           ))}
         </select>
-        <Caret />
+        <Chevron />
       </span>
     </span>
   );
@@ -107,7 +110,7 @@ export function Filters({ p }: { p: Params }) {
         const values = vocab(p.tab, filter);
         // Design has no season vocabulary, so it gets no season dropdown.
         if (values.length === 0) return null;
-        return <Select key={`${filter}:${p[filter] ?? ''}`} p={p} filter={filter} values={values} />;
+        return <Select key={`${filter}:${href(p)}`} p={p} filter={filter} values={values} />;
       })}
 
       {/* Badges are free slugs, not a fixed vocabulary, so the active one stays a chip. */}

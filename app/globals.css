@@ -277,7 +277,9 @@
   pointer-events: none;
 }
 
-.chip:active {
+/* Feedback, not animation — every pressable in the app gets it, and a dropdown is one. */
+.chip:active,
+.select-box:active {
   transform: scale(0.97);
 }
 
@@ -287,10 +289,12 @@
   cursor: pointer;
 }
 
+/* The caret is `Chevron` turned a quarter: one glyph, two directions, no second component. */
 .select-box svg {
   position: absolute;
   right: 4px;
   pointer-events: none;
+  transform: rotate(90deg);
 }
 
 .select {
@@ -315,10 +319,14 @@
 }
 
 /* iOS Safari zooms the viewport on any form control under 16px and never zooms back out.
-   Touch pointers only, so the desktop row density is untouched. */
+   Touch pointers only, so the desktop row density is untouched. The line box has to grow with
+   the glyphs or the descenders on "hybrid" and "spring" are clipped by the 16px line-height
+   the chip rule pins above. */
 @media (pointer: coarse) {
+  .select-box,
   .select {
     font-size: 16px;
+    line-height: 20px;
   }
 }
 
@@ -408,7 +416,8 @@ dialog.drawer[open]::backdrop {
     transition: none;
   }
 
-  .chip:active {
+  .chip:active,
+  .select-box:active {
     transform: none;
   }
 

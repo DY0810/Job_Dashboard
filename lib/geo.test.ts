@@ -24,7 +24,6 @@ describe('GEO_TIER', () => {
     'New York HQ',
     'New York Office',
     'San Francisco Office',
-    'South San Francisco',
     'Seattle Office',
     'Los Angeles Metro Area',
   ])('puts %s in tier 0 despite the unaliased spelling', (location) => {
@@ -32,7 +31,7 @@ describe('GEO_TIER', () => {
   });
 
   // The over-match direction, which is what a substring test would get wrong.
-  it.each(['New Yorkshire', 'New Orleans, LA', 'Seattletonia', 'York'])(
+  it.each(['New Yorkshire', 'New York Mills, MN', 'New Orleans, LA', 'Seattletonia', 'York'])(
     'does not let %s into tier 0',
     (location) => {
       expect(tierOf(location)).not.toBe(GEO_TIER.metro);

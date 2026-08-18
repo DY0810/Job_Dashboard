@@ -37,11 +37,12 @@ const PLACES = {
   berlin: { location: 'Berlin, Germany', cityNorm: 'berlin', state: null, country: 'DE', isRemote: false },
   austin: { location: 'Austin, TX', cityNorm: 'austin', state: 'TX', country: 'US', isRemote: false },
   remote: { location: 'Remote', cityNorm: null, state: null, country: null, isRemote: true },
-  // `normalize.ts` has no alias for these three spellings, so they reach the database as
-  // slugs and only the whole-word phrase match in `geo.ts` recognizes them. They are the
-  // common case in the live corpus, not an edge case.
-  nycLoose: { location: 'New York City, New York, United States', cityNorm: 'new york city', state: null, country: 'US', isRemote: false },
-  sfOffice: { location: 'San Francisco Office', cityNorm: 'san francisco office', state: null, country: null, isRemote: false },
+  // The messy spellings a real board sends, with the `city_norm` `normalizeLocation` now
+  // resolves them to. They were the 137-row miss that made the location rule delete target
+  // metros; the fixture states the key literally so a normalizer change cannot silently
+  // re-aim the assertions that depend on it.
+  nycLoose: { location: 'New York City, New York, United States', cityNorm: 'nyc', state: 'NY', country: 'US', isRemote: false },
+  sfOffice: { location: 'San Francisco Office', cityNorm: 'sf', state: 'CA', country: 'US', isRemote: false },
   // Onsite in London by its location string; the body is what says the role is remote, so
   // `work_mode` is the only signal that puts it in the remote tier.
   london: { location: 'London, United Kingdom', cityNorm: 'london', state: null, country: 'GB', isRemote: false },
@@ -90,8 +91,10 @@ const FIXTURES: Fixture[] = [
   { ref: 'd-tie-entry', track: 'design', company: 'Halcyon Type', title: 'Visual Designer', place: 'sf', age: 5 * DAY, seniority: 'entry', type: 'full-time', mode: 'hybrid', paid: true, pay: [72_000, 88_000, 'year'] },
   // Must never render, under any filter combination.
   { ref: 'd-senior', track: 'design', company: 'Northline', title: 'Design Lead', place: 'sf', age: 1 * DAY, seniority: 'senior+', type: 'full-time', mode: 'onsite', paid: true, pay: [180_000, 210_000, 'year'] },
-  // Elsewhere *and* past the cutoff, so the two rules cannot cover for each other in a count.
-  { ref: 'd-old', track: 'design', company: 'Meridian Post', title: 'Product Designer', place: 'berlin', age: 61 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true },
+  { ref: 'd-old', track: 'design', company: 'Meridian Post', title: 'Product Designer', place: 'sf', age: 61 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true },
+  // Elsewhere *and* past the cutoff: without it, a count that forgot the cutoff would still
+  // agree with one that remembered it, because no other row is excluded by both rules.
+  { ref: 'd-old-berlin', track: 'design', company: 'Meridian Post', title: 'Brand Designer', place: 'berlin', age: 62 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true },
   { ref: 'd-delisted', track: 'design', company: 'Northline', title: 'UX Designer', place: 'sf', age: 1 * DAY, seniority: 'junior', type: 'full-time', mode: 'onsite', paid: true, delisted: true },
   // Pay unknown: neither chip matches it, but it is visible with no chip on.
   { ref: 'd-unknown-pay', track: 'design', company: 'Fathom Interactive', title: 'Motion Designer', place: 'remote', age: 6 * HOUR, seniority: 'junior', type: 'freelance', mode: 'remote', paid: null },

@@ -174,8 +174,15 @@ export function withTab(p: Params, tab: Tab): string {
   return href(parseParams({ ...toRaw(p), tab }));
 }
 
+/** The same params with every filter off — what `clear` navigates to, and what the "is this
+ *  tab empty at all?" probe asks about. Derived from `FILTERS` so a new filter cannot be
+ *  missed by one of the two. */
+export function bare(p: Params): Params {
+  return { ...p, ...Object.fromEntries(FILTERS.map((f) => [f, null])), badge: null } as Params;
+}
+
 export function cleared(p: Params): string {
-  return href({ ...p, ...Object.fromEntries(FILTERS.map((f) => [f, null])), badge: null, job: null } as Params);
+  return href({ ...bare(p), job: null });
 }
 
 export function withJob(p: Params, job: number | null): string {

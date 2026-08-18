@@ -147,6 +147,28 @@ for (const [key, entry] of Object.entries(CITY_ALIASES)) {
   }
 }
 
+/**
+ * Facility nouns a job board hangs off a city name: "New York City", "New York HQ",
+ * "San Francisco Office", "Los Angeles Metro Area". 137 postings in the live corpus carry one
+ * of these and resolved to a raw slug instead of their metro, which cost them their alias in
+ * `city_norm` — and `city_norm` is a `dedupe_key` component, so the same job posted as
+ * "New York, NY" on an ATS and "New York City, …" on an aggregator would not merge.
+ *
+ * Stripped as whole trailing tokens, never by prefix: "New York Mills, MN" keeps its own
+ * identity, because `mills` is not one of these.
+ */
+const FACILITY_TAIL = /\s+(?:office|offices|hq|headquarters|campus|city|metro|area|region)$/;
+
+function metroAlias(segment: string): MetroKey | undefined {
+  for (let text = segment; ; ) {
+    const hit = ALIAS_LOOKUP.get(text);
+    if (hit) return hit;
+    const stripped = text.replace(FACILITY_TAIL, '');
+    if (stripped === text) return undefined;
+    text = stripped;
+  }
+}
+
 const STATE_LOOKUP = new Map(Object.entries(US_STATES));
 for (const code of new Set(Object.values(US_STATES))) STATE_LOOKUP.set(code.toLowerCase(), code);
 
@@ -304,7 +326,7 @@ export function normalizeLocation(input: string | null | undefined): NormalizedL
       }
     }
 
-    const alias = ALIAS_LOOKUP.get(segment);
+    const alias = metroAlias(segment);
     if (alias) {
       result.city_norm ??= alias;
       result.state ??= CITY_ALIASES[alias].state;

@@ -1,10 +1,14 @@
 import { desc } from "drizzle-orm";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getDb } from "@/lib/db";
 import { connectorRuns } from "@/lib/db/schema";
 import {
   TABS,
+  WINDOW_MS,
+  bare,
   cleared,
+  href,
   parseParams,
   withJob,
   withTab,
@@ -18,33 +22,44 @@ import { BadgeChip, Filters, RowChip } from "./filters";
 import { Chevron, ExternalLink } from "./icons";
 import { ThemeToggle } from "./theme-toggle";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * The table, described once: header label and width class together, in render order. `grow`
+ * absorbs the slack and `clip` is capped; both truncate rather than wrap, and everything else
+ * is sized by its content — so every row stays one line tall whatever the title length. The
+ * full title is in the drawer, one click away, which is the right place for it. Engineering
+ * caps the title because summary is the column that needs the slack there.
+ */
+interface Column {
+  label: string;
+  className?: string;
+}
 
-const COLUMNS: Record<Tab, string[]> = {
-  design: ["posted", "badges", "title", "pay rate", "company", "apply"],
+const COLUMNS: Record<Tab, Column[]> = {
+  design: [
+    { label: "posted" },
+    { label: "badges" },
+    { label: "title", className: "grow" },
+    { label: "pay rate" },
+    { label: "company" },
+    { label: "apply" },
+  ],
   engineering: [
-    "posted",
-    "badges",
-    "title",
-    "summary",
-    "pay rate",
-    "level",
-    "grad",
-    "company",
-    "apply",
+    { label: "posted" },
+    { label: "badges" },
+    { label: "title", className: "clip" },
+    { label: "summary", className: "grow" },
+    { label: "pay rate" },
+    { label: "level" },
+    { label: "grad" },
+    { label: "company" },
+    { label: "apply" },
   ],
 };
 
-/**
- * Column widths. `grow` absorbs the slack, `clip` is capped; both truncate rather than wrap,
- * and everything else is sized by its content — so every row stays one line tall whatever the
- * title length. The full title is in the drawer, one click away, which is the right place for
- * it. Engineering caps the title because summary is the column that needs the slack there.
- */
-const WIDTHS: Record<Tab, Record<string, string | undefined>> = {
-  design: { title: "grow" },
-  engineering: { title: "clip", summary: "grow" },
-};
+/** The width class for one column of the current tab, by the label it renders under. */
+function width(tab: Tab, label: string): string | undefined {
+  return COLUMNS[tab].find((column) => column.label === label)?.className;
+}
 
 /** Relative, because the only question ever asked of this column is "how stale is it". */
 function ago(date: Date, now: number): string {
@@ -114,7 +129,7 @@ function Badges({ row, p }: { row: Row; p: Params }) {
 
 function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
   const pay = payRate(row);
-  const fresh = now - row.postedAt.getTime() < DAY_MS;
+  const fresh = now - row.postedAt.getTime() < WINDOW_MS.day;
   return (
     <tr>
       <td className={`nums ${fresh ? "text-accent" : "text-fg-dim"}`}>
@@ -130,11 +145,11 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
       </td>
       {/* Identifying text, not a facet: no badge, no filter. `title` gives the long tail back
           on hover without costing a row of height. */}
-      <td className={WIDTHS[p.tab].title} title={row.title}>
+      <td className={width(p.tab, "title")} title={row.title}>
         {row.title}
       </td>
       {p.tab === "engineering" ? (
-        <td className={`${WIDTHS[p.tab].summary} text-fg-dim`}>
+        <td className={`${width(p.tab, "summary")} text-fg-dim`}>
           {row.summary ?? <Nothing />}
         </td>
       ) : null}
@@ -206,8 +221,10 @@ function Elsewhere({ count }: { count: number }) {
   return (
     <p className="mt-3">
       Design shows the target locations only. {count}{" "}
-      {count === 1 ? "posting is" : "postings are"} listed outside them and are not on this
-      tab; Engineering shows every location.
+      {count === 1
+        ? "posting is listed outside them and is not"
+        : "postings are listed outside them and are not"}{" "}
+      on this tab; Engineering shows every location.
     </p>
   );
 }
@@ -255,7 +272,13 @@ export default async function Page({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const p = parseParams(await searchParams);
+  const raw = await searchParams;
+  const p = parseParams(raw);
+  // The filter form is a GET form, so it submits every control including the ones set to
+  // "any". Land on the URL `href()` would have written, so the address bar, the badge links
+  // and a copied URL all agree, and `?type=` never becomes a second spelling of "no filter".
+  if (Object.values(raw).some((value) => value === "")) redirect(href(p));
+
   const now = Date.now();
   const db = getDb();
 
@@ -267,14 +290,12 @@ export default async function Page({
     .limit(1)
     .get();
 
-  // The sort guarantees the fresh band leads, so the split is a prefix, not a partition.
+  // Recency is the first sort key, so the fresh rows are a prefix, not a partition. Asserted
+  // in query.test.ts against this same constant, because nothing in SQL guarantees it now.
   const freshCount = rows.filter(
-    (row) => now - row.postedAt.getTime() < DAY_MS,
+    (row) => now - row.postedAt.getTime() < WINDOW_MS.day,
   ).length;
   const columns = COLUMNS[p.tab];
-  // Only asked when there is nothing to show, and only on the tab that has a location rule.
-  const outside =
-    rows.length === 0 && p.tab === "design" ? outsideTargetLocations(db, p, now) : 0;
 
   return (
     <main className="min-h-dvh px-4 pb-16">
@@ -310,10 +331,12 @@ export default async function Page({
       <Filters p={p} />
 
       {rows.length === 0 ? (
+        // The counts below are the only extra queries, and only on a page with no rows: the
+        // empty state asks about the tab, the zero-result state asks about these filters.
         tabIsEmpty(db, p, now) ? (
-          <Empty outside={outside} />
+          <Empty outside={outsideTargetLocations(db, bare(p), now)} />
         ) : (
-          <NoMatches p={p} outside={outside} />
+          <NoMatches p={p} outside={outsideTargetLocations(db, p, now)} />
         )
       ) : (
         <table className="rows">
@@ -324,12 +347,8 @@ export default async function Page({
             <thead>
               <tr>
                 {columns.map((column) => (
-                  <th
-                    key={column}
-                    scope="col"
-                    className={WIDTHS[p.tab][column]}
-                  >
-                    {column}
+                  <th key={column.label} scope="col" className={column.className}>
+                    {column.label}
                   </th>
                 ))}
               </tr>

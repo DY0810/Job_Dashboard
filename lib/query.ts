@@ -12,7 +12,7 @@ import { cutoffTimestamp } from './dedupe.ts';
 import type { Db } from './db/index.ts';
 import { postings } from './db/schema.ts';
 import { GEO_TIER } from './geo.ts';
-import { VISIBLE_SENIORITY, WINDOW_MS, type Params } from './params.ts';
+import { VISIBLE_SENIORITY, WINDOW_MS, bare, type Params } from './params.ts';
 
 /** The table never selects `description` — ~2k full bodies is ~8MB the table cannot use. */
 const ROW = {
@@ -36,32 +36,30 @@ const ROW = {
 } as const;
 
 /**
- * `geoTier()` in SQL. Every tier number, the metro list and the matching rule are read from
+ * `geoTier()` in SQL. Every tier number, the metro list and the state code are read from
  * `GEO_TIER`, so it stays the single editable constant, and `query.test.ts` cross-checks this
  * expression against `geoTier()` over the whole fixture corpus — which is the only reason it
- * is exported — so the two cannot drift apart silently.
+ * is exported — so the two cannot drift apart silently. Both sides compare `city_norm` exactly,
+ * against the same keys, so neither has a matching rule of its own to get wrong.
  *
- * `coalesce` on `work_mode` rather than a bare `<>`: SQL three-valued logic would turn a NULL
+ * `coalesce` on `work_mode` rather than a bare `=`: SQL three-valued logic would turn a NULL
  * work_mode into a NULL branch condition, which is not the same as "no".
  */
 export const geoTierSql: SQL<number> = sql<number>`(case
   when ${postings.cityNorm} in (${sql.join(
-    Object.keys(GEO_TIER.metros).map((alias) => sql`${alias}`),
+    GEO_TIER.metros.map((alias) => sql`${alias}`),
     sql`, `,
-  )})
-    or ${sql.join(
-      Object.values(GEO_TIER.metros).map(
-        (phrase) => sql`(' ' || ${postings.cityNorm} || ' ') like ${`% ${phrase} %`}`,
-      ),
-      sql` or `,
-    )}
-    then ${GEO_TIER.metro}
-  when ${postings.state} = 'CA' then ${GEO_TIER.california}
+  )}) then ${GEO_TIER.metro}
+  when ${postings.state} = ${GEO_TIER.californiaCode} then ${GEO_TIER.california}
   when ${postings.isRemote} = 1 or coalesce(${postings.workMode}, '') = 'remote'
     then ${GEO_TIER.remote}
   when ${postings.cityNorm} is null and ${postings.state} is null and ${postings.country} is null
     then ${GEO_TIER.unknown}
   else ${GEO_TIER.elsewhere} end)`;
+
+/** The Design tab's one exclusion, written once. `visible()` negates it; the counter that
+ *  explains an empty table asserts it, so the two cannot describe different sets. */
+const outsideTargets: SQL = sql`${geoTierSql} = ${GEO_TIER.elsewhere}`;
 
 /**
  * Sort key 2 on both tabs: entry and junior above mid (finding F). Entry outranks junior too —
@@ -90,14 +88,12 @@ function structural(now: number): SQL[] {
  * track yet is not a Design posting, and `<>` would answer NULL and hide it.
  */
 function visible(now: number): SQL[] {
-  return [
-    ...structural(now),
-    sql`(${postings.track} is not 'design' or ${geoTierSql} <> ${GEO_TIER.elsewhere})`,
-  ];
+  return [...structural(now), sql`(${postings.track} is not 'design' or not ${outsideTargets})`];
 }
 
-function where(p: Params, now: number): SQL {
-  const parts: (SQL | undefined)[] = [eq(postings.track, p.tab), ...visible(now)];
+/** What the reader asked for, as opposed to what they are allowed to see. */
+function userFilters(p: Params, now: number): SQL[] {
+  const parts: (SQL | undefined)[] = [];
 
   if (p.posted) parts.push(gte(postings.postedAt, new Date(now - WINDOW_MS[p.posted])));
   if (p.type) parts.push(eq(postings.employmentType, p.type as never));
@@ -122,7 +118,11 @@ function where(p: Params, now: number): SQL {
   // Swap for `json_each` if badges ever hold arbitrary text.
   if (p.badge) parts.push(like(sql`${postings.badges}`, `%"${p.badge}"%`));
 
-  return and(...parts)!;
+  return parts.filter((part) => part !== undefined);
+}
+
+function where(p: Params, now: number): SQL {
+  return and(eq(postings.track, p.tab), ...visible(now), ...userFilters(p, now))!;
 }
 
 /**
@@ -144,27 +144,22 @@ export type Row = ReturnType<typeof listPostings>[number];
 
 /** True when the tab holds no rows at all — the difference between "empty" and "no matches". */
 export function tabIsEmpty(db: Db, p: Params, now: number = Date.now()): boolean {
-  const bare: Params = { ...p, posted: null, type: null, pay: null, mode: null, season: null, level: null, badge: null };
-  return db.select({ id: postings.id }).from(postings).where(where(bare, now)).limit(1).all().length === 0;
+  return db.select({ id: postings.id }).from(postings).where(where(bare(p), now)).limit(1).all().length === 0;
 }
 
 /**
- * How many postings this tab hides for being outside the target locations. Design's location
- * rule is not a filter — it is not in `Params`, so `clear` cannot lift it — which means an
- * empty table has to be able to say that geography is why, rather than blaming the ingest.
+ * How many postings these params would have matched but for the location rule. Design's rule
+ * is not a filter — it is not in `Params`, so `clear` cannot lift it — which means an empty
+ * table has to be able to say that geography is why, rather than blaming the ingest. It counts
+ * under the same filters it is explaining, so the number is an answer to the question the
+ * reader just asked rather than a fact about the whole tab.
  */
 export function outsideTargetLocations(db: Db, p: Params, now: number = Date.now()): number {
   return (
     db
       .select({ n: count() })
       .from(postings)
-      .where(
-        and(
-          eq(postings.track, p.tab),
-          ...structural(now),
-          eq(geoTierSql, GEO_TIER.elsewhere),
-        ),
-      )
+      .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), outsideTargets))
       .get()?.n ?? 0
   );
 }

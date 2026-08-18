@@ -37,7 +37,12 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
     setState({ status: 'loading' });
     fetch(`/api/postings/${jobId}`, { signal: controller.signal })
       .then(async (response) => {
-        if (response.status === 404) throw new Error('That posting is no longer listed.');
+        // 404 covers delisting, the 60-day cutoff, the seniority ceiling and — on Design —
+        // the location rule, and the route deliberately does not say which. Naming only
+        // delisting here told people a live posting had been taken down.
+        if (response.status === 404) {
+          throw new Error('This posting is not shown on this tab any more.');
+        }
         if (!response.ok) throw new Error('Could not load this posting.');
         return (await response.json()) as PostingDetail;
       })

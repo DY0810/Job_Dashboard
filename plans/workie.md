@@ -449,19 +449,25 @@ applies it, and the dropdown for that category then shows it. All filter state l
 **Build.**
 
 *Engineering tab*
-- Columns: time posted · badges · summary · pay rate · experience level · expected grad
-  date · company · apply button.
-- Filters, one labelled dropdown each: posted within hour/day/week/month · full-time ·
+- Columns: time posted · badges · **title** · summary · pay rate · experience level ·
+  expected grad date · company · apply button.
+- Filters, ~~one chip per value~~ one labelled dropdown each: posted within hour/day/week/month · full-time ·
   internship · paid/unpaid · remote/hybrid/onsite · summer/fall/winter/spring · junior/mid.
 - Sort: `posted_at` desc → entry/junior above mid. **No geo involvement of any kind.**
 
 *Design tab*
-- Columns: time posted · badges · pay rate · company · apply button.
-- Filters, one labelled dropdown each: posted within last week (only) ·
+- Columns: time posted · badges · **title** · pay rate · company · apply button.
+- Filters, ~~one chip per value~~ one labelled dropdown each: posted within last week (only) ·
   full-time/freelance/part-time/internship · paid/unpaid · remote/hybrid/onsite · junior/mid.
 - Sort: `posted_at` desc → entry/junior above mid. Same two keys as Engineering.
-- Visibility: `GEO_TIER` 3 ("everywhere else") is excluded. Tiers 0, 1 and 2 all show. A
-  *view* filter — ingest stays geo-agnostic and the database still stores every location.
+- Visibility: `GEO_TIER.elsewhere` is excluded. The target metros, the rest of California,
+  remote, and "no readable location" all show — the last of those deliberately, because a
+  posting whose location failed to normalize is missing data, not a posting somewhere else.
+  A *view* rule: ingest stays geo-agnostic and the database still stores every location.
+  Because the tier now decides existence rather than position, the metro spellings a board
+  actually sends ("New York City", "San Francisco Office") must resolve to their alias key in
+  `normalizeLocation` — which is upstream of `dedupe_key` too, so the same miss was costing
+  cross-source merges.
 
 *Both*
 - `entry` folds into the `junior` chip (there is no `entry` chip, but entry sorts above
@@ -784,10 +790,31 @@ opposite leaves the next reviewer diffing code against a spec that was moved to 
 is the failure this whole section exists to prevent. Update §4 in the same edit: a traceability
 row that cites a deleted assertion is worse than no row.
 
-*Amendments so far:* **P8, 2026-08-18** — sort reduced to `posted_at` desc then seniority (the
-24h-bucket key was a monotonic function of `posted_at`, so it could never change an ordering),
-and Design's `GEO_TIER` sort key became a visibility rule. §6 carries the superseded
-anti-pattern and the cost.
+*Amendments so far, all P8, all 2026-08-18, all from one session with the user:*
+
+1. **Recency first.** *"rank the newest job postings on the top ranked by recency."* Sort is
+   `posted_at` desc then entry/junior above mid, on both tabs. **Cost:** none measurable — the
+   24h-bucket key it replaced was a monotonic function of `posted_at`, so above a recency sort
+   it could not change an ordering. The "last 24 hours" band it used to guarantee is now a
+   property of the sort rather than an explicit key, so `query.test.ts` asserts the fresh rows
+   come back as a prefix and nothing can quietly put a key in front of recency.
+2. **Design excludes non-matching locations.** *"for design only, exclude all jobs where the
+   locations specified don't match."* `GEO_TIER` moved from a sort key to a visibility rule.
+   **Cost:** recorded with the superseded anti-pattern in §6.
+3. **Filters become dropdowns.** *"Also make the filters a dropdown."* One labelled native
+   `<select>` per filter inside a GET form; row badges stay links and write the same param.
+   **Cost:** ~~multi-select~~ **multi-select is gone.** A filter held a list and `where()` ORed
+   inside a group, so `mode=remote,hybrid` was expressible; a `<select>` shows one value, so
+   `Params` now holds one value per filter and `where()` uses `eq`. Filtering two work modes at
+   once is no longer possible from any control or any URL, and a pre-dropdown URL carrying a
+   comma list parses to its first known value rather than to both. Applying a filter also costs
+   two actions now (pick, then submit) rather than one chip click — that is what buys the
+   keyboard behaviour a `change`-triggered navigation cannot have (WCAG 3.2.2 / F37) and what
+   makes the filter row work without JavaScript.
+4. **Title column on both tabs.** *"for the columns for both engineering and design, add job
+   title/position."* **Cost:** one more column of horizontal budget on a table whose premise is
+   density. The title truncates to keep every row one line tall; the untruncated value is in
+   the drawer.
 
 **When a gate fails:** fix forward inside the same PR. Do not merge a phase with a failing
 gate and a follow-up ticket — the next phase's context brief assumes the previous gate held,
