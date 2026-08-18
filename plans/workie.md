@@ -625,7 +625,8 @@ Every acceptance criterion maps to a specific gate. None is left to "we'll see."
 | Zero cross-source duplicates in a real multi-source run | Two `GROUP BY … HAVING COUNT(*) > 1` queries returning zero rows, plus ≥5 postings carrying ≥3 sources (proving merges happened, not just non-overlap) | **P6** gate, re-run at **P11** |
 | Every apply link resolves to a live posting | `npm run linkcheck` over the full DB, with ATS "no longer available" body markers checked, not just HTTP status | **P9** gate |
 | No senior/staff/principal/lead roles present | 100% hard-drop recall on a 15-posting labeled subset (P4), then re-asserted across every filter combination including all-cleared (P8) | **P4** + **P8** gates |
-| Both tabs sort exactly as specced | Fixtures constructed so a naive sort fails: Design's 24h-bucket-outranks-geo case, and Engineering's no-geo-weighting assertion | **P8** gate |
+| Both tabs sort exactly as specced | Fixtures where a naive implementation fails: `posted_at` descends with no exceptions on both tabs, the fresh rows come back as a prefix, and entry sorts above mid on an exact `posted_at` tie | **P8** gate (amended, see §7) |
+| Design shows only the target locations | A Berlin posting absent from Design and present on Engineering in one corpus; tiers 0, 1, 2 and unknown all present; the rule re-read after moving a posting; the same rule asserted on the `?job=<id>` detail query | **P8** gate (amended, see §7) |
 | Enrichment cost per full re-poll ~$0 | Re-run over 50 cached postings makes zero API calls; unchanged-corpus re-poll logs $0.00 | **P4** + **P10** gates |
 
 ---
@@ -724,8 +725,20 @@ silently drop most postings, since most don't state pay.
 - **Do not add a third tab.** Voice AI is a badge inside Engineering. It is stated twice in
   the spec because it is the obvious wrong move.
 - **Do not filter by geography during ingest.** Ingest is geo-agnostic; store every location.
-  Geography is a *view* filter on the Design tab, and nothing else: it hides `GEO_TIER` 3 from
-  that one table. Engineering shows every location, and no tab sorts by geography.
+- ~~**Geography affects ranking, on the Design tab, only.**~~ **Superseded 2026-08-18** by an
+  explicit user instruction (*"for design only, exclude all jobs where the locations specified
+  don't match. But for ranking recency first."*). Geography is now a *view* filter on the
+  Design tab and nothing else: it hides `GEO_TIER.elsewhere` from that one table, Engineering
+  shows every location, and no tab sorts by geography. **What it costs:** a Design posting
+  outside the target tiers is unreachable under every filter combination — there is no control
+  that turns the rule off, and `clear` does not lift it. The empty and zero-result states name
+  the rule and count what it hid so the table never blames the ingest for it. The tier now
+  decides existence rather than position, which is why `geoTier()` matches metro names
+  tolerantly and treats "no location at all" as its own tier rather than as elsewhere.
+- **Do not filter by geography anywhere else.** The rule lives in `visible()` in `lib/query.ts`,
+  next to the 60-day cutoff and the seniority ceiling, so it holds on every route into a
+  posting including the deep link. A geo condition added to the user-filter builder instead
+  will pass its own tests and leave `?job=<id>` open.
 - **Do not hardcode a city or a tier outside `lib/geo.ts`.** `GEO_TIER` is the single
   editable constant. A second copy is how the Design tab silently stops matching the spec.
 - **Do not classify on the title for voice AI.** Titles are "Member of Technical Staff."
@@ -763,6 +776,18 @@ dependency and reordering it will look like it works right up until the dedupe k
 **Abandon** a phase by moving it to an "Abandoned" section at the bottom with the reason and
 the date. P11 is the only phase already marked optional; the acceptance criteria are all
 reachable without it.
+
+**Amend** a phase's spec only when the user changes what they want — never to make the plan
+agree with what shipped. Quote the instruction and date it, strike the superseded rule through
+rather than deleting it, and state what the change costs. A rule that quietly becomes its own
+opposite leaves the next reviewer diffing code against a spec that was moved to meet it, which
+is the failure this whole section exists to prevent. Update §4 in the same edit: a traceability
+row that cites a deleted assertion is worse than no row.
+
+*Amendments so far:* **P8, 2026-08-18** — sort reduced to `posted_at` desc then seniority (the
+24h-bucket key was a monotonic function of `posted_at`, so it could never change an ordering),
+and Design's `GEO_TIER` sort key became a visibility rule. §6 carries the superseded
+anti-pattern and the cost.
 
 **When a gate fails:** fix forward inside the same PR. Do not merge a phase with a failing
 gate and a follow-up ticket — the next phase's context brief assumes the previous gate held,

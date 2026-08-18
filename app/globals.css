@@ -195,6 +195,15 @@
   text-overflow: ellipsis;
 }
 
+/* Capped rather than greedy: the column that must stay legible without eating the one next
+   to it. `ch` so the cap tracks the font, not a guessed pixel width. */
+.rows td.clip,
+.rows th.clip {
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .rows td:last-child,
 .rows th:last-child {
   padding-right: 0;
@@ -219,11 +228,17 @@
   padding-top: 0;
 }
 
-/* ─────────────────────────────────────────────────────────────────────── chips ──
- * Badges are controls: surface + 1px rule, never the accent. The accent means
- * "posted in the last 24 hours" and nothing else.
+/* ────────────────────────────────────────────────────────────── chips + selects ──
+ * Badges are controls, and so are the filter dropdowns: surface + 1px rule, never the accent.
+ * The accent means "posted in the last 24 hours" and nothing else. One rule for both, because
+ * two controls that mean the same thing should not be able to drift apart visually.
+ *
+ * The <select> wears `appearance: none` and the box is the wrapper, not the control: a native
+ * menulist can ignore an author background, which would leave a filtered dropdown looking
+ * identical to an unset one while the badge beside it shows the state correctly.
  */
-.chip {
+.chip,
+.select-box {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -233,7 +248,7 @@
   line-height: 16px;
   white-space: nowrap;
   color: var(--fg-dim);
-  /* MOTION 2/3 — the chip's own active/inactive state. This is feedback on the control,
+  /* MOTION 2/3 — the control's own active/inactive state. This is feedback on the control,
      never on the table's response to it: the rows below re-sort with no animation at all. */
   transition:
     background-color 120ms var(--ease-state),
@@ -242,12 +257,14 @@
     transform 120ms var(--ease-state);
 }
 
-.chip:hover {
+.chip:hover,
+.select-box:hover {
   color: var(--fg);
   border-color: var(--fg-faint);
 }
 
-.chip[aria-current="true"] {
+.chip[aria-current="true"],
+.select-box[data-on="true"] {
   background: var(--surface);
   border-color: var(--fg-dim);
   color: var(--fg);
@@ -264,38 +281,45 @@
   transform: scale(0.97);
 }
 
-/* ───────────────────────────────────────────────────────────────────── selects ──
- * The filter row. Native <select>, so the popup, the keyboard and the mobile picker are the
- * platform's; only the box is ours, and it borrows the chip's language so the two read as one
- * family of control. The state transition below is MOTION 2/3 again — the same control
- * changing the same state — not a fourth animation.
- */
-.select {
-  border: 1px solid var(--rule);
-  background: transparent;
-  padding: 1px 2px 0 6px;
-  font-family: inherit;
-  font-size: 11px;
-  font-stretch: 100%;
-  line-height: 16px;
-  color: var(--fg-dim);
+.select-box {
+  position: relative;
+  padding-right: 18px;
   cursor: pointer;
-  transition:
-    background-color 120ms var(--ease-state),
-    border-color 120ms var(--ease-state),
-    color 120ms var(--ease-state);
 }
 
-.select:hover {
-  color: var(--fg);
-  border-color: var(--fg-faint);
+.select-box svg {
+  position: absolute;
+  right: 4px;
+  pointer-events: none;
 }
 
-/* A group with a filter set, marked the way an active chip is marked. */
-.select[data-on="true"] {
-  background: var(--surface);
-  border-color: var(--fg-dim);
-  color: var(--fg);
+.select {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* The ring belongs to the box the user sees, not to the stripped control inside it. */
+.select:focus-visible {
+  outline: none;
+}
+
+.select-box:has(.select:focus-visible) {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+  border-radius: 1px;
+}
+
+/* iOS Safari zooms the viewport on any form control under 16px and never zooms back out.
+   Touch pointers only, so the desktop row density is untouched. */
+@media (pointer: coarse) {
+  .select {
+    font-size: 16px;
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────────── drawer ──
@@ -380,7 +404,7 @@ dialog.drawer[open]::backdrop {
 @media (prefers-reduced-motion: reduce) {
   .rows td,
   .chip,
-  .select {
+  .select-box {
     transition: none;
   }
 

@@ -1,18 +1,16 @@
+import Form from 'next/form';
 import Link from 'next/link';
 import {
-  GROUPS,
-  SHARED_VOCAB,
-  VOCAB,
+  FILTERS,
   cleared,
   hasFilters,
-  toggle,
-  withBadge,
-  withGroup,
-  withPosted,
+  vocab,
+  withFilter,
+  type Filter,
   type Group,
   type Params,
 } from '@/lib/params';
-import { SelectNav } from './select';
+import { Caret } from './icons';
 
 const WINDOW_LABEL: Record<string, string> = { hour: '1h', day: '24h', week: '7d', month: '30d' };
 
@@ -27,81 +25,98 @@ function Chip({ href, on, children }: { href: string; on: boolean; children: Rea
   );
 }
 
-function vocabFor(p: Params, group: Group): readonly string[] {
-  return group === 'type' || group === 'season' ? VOCAB[p.tab][group] : SHARED_VOCAB[group];
-}
-
 /**
- * Row badges are the same control as the dropdown above them: clicking one applies exactly that
- * filter, which is also what selects it in the dropdown, because both write the same param.
+ * Row badges are the same control as the dropdown above them: both write one value into the
+ * same param through the same vocabulary, so clicking a badge is what selects it in its
+ * dropdown. The toggle is written here rather than inside the setter — a badge toggles,
+ * a dropdown does not.
  */
 export function RowChip({ p, group, value }: { p: Params; group: Group; value: string }) {
   // A value with no filter on this tab (a `contract` role on Design, say) still gets shown —
   // it just is not pressable, because there is no filter for it to apply.
-  if (!vocabFor(p, group).includes(value)) return <span className="chip">{value}</span>;
+  if (!vocab(p.tab, group).includes(value)) return <span className="chip">{value}</span>;
+  const on = p[group] === value;
   return (
-    <Chip href={toggle(p, group, value)} on={p[group].includes(value)}>
+    <Chip href={withFilter(p, group, on ? null : value)} on={on}>
       {value}
     </Chip>
   );
 }
 
 export function BadgeChip({ p, value }: { p: Params; value: string }) {
+  const on = p.badge === value;
   return (
-    <Chip href={withBadge(p, value)} on={p.badge === value}>
+    <Chip href={withFilter(p, 'badge', on ? null : value)} on={on}>
       {value}
     </Chip>
   );
 }
 
 /**
- * One labelled dropdown per filter category. A group holds a list in the URL, but the controls
- * only ever write one value, so `[0]` is the whole selection — a hand-typed `mode=remote,hybrid`
- * still filters on both, and the box shows the first of them.
+ * One native <select> per filter. Uncontrolled, and keyed on the value the URL holds, so a
+ * back navigation or a badge click remounts it with the right option selected — the DOM is
+ * never asked to disagree with the URL, and nothing re-asserts a stale value over the user's
+ * pick mid-navigation.
+ */
+function Select({ p, filter, values }: { p: Params; filter: Filter; values: readonly string[] }) {
+  const selected = p[filter];
+  const id = `filter-${filter}`;
+  return (
+    <span className="flex items-baseline gap-1.5">
+      <label htmlFor={id} className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">
+        {filter}
+      </label>
+      <span className="select-box" data-on={selected ? 'true' : undefined}>
+        <select id={id} name={filter} className="select" defaultValue={selected ?? ''}>
+          <option value="">any</option>
+          {values.map((value) => (
+            <option key={value} value={value}>
+              {filter === 'posted' ? WINDOW_LABEL[value] : value}
+            </option>
+          ))}
+        </select>
+        <Caret />
+      </span>
+    </span>
+  );
+}
+
+/**
+ * A GET form, not a set of links: the filter row is six dropdowns and one submit, so it works
+ * before hydration and without JavaScript, and — the reason it is a form rather than an
+ * onChange handler — arrowing through a closed <select> does not navigate on every keypress.
+ * That behaviour is WCAG 3.2.2 (On Input) failure F37, and it can make options unreachable by
+ * keyboard on the platforms where a closed select fires `change` per arrow key.
+ *
+ * `next/form` submits client-side when JS is available and degrades to a plain GET form when
+ * it is not. Row badges stay single-click links: a filter you can see is still one action.
  */
 export function Filters({ p }: { p: Params }) {
-  const vocab = VOCAB[p.tab];
-
   return (
-    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-rule py-2">
-      <SelectNav label="posted" on={p.posted !== null} value={withPosted(p, p.posted)}>
-        <option value={withPosted(p, null)}>any</option>
-        {vocab.posted.map((window) => (
-          <option key={window} value={withPosted(p, window as Params['posted'])}>
-            {WINDOW_LABEL[window]}
-          </option>
-        ))}
-      </SelectNav>
+    <Form
+      action="/"
+      scroll={false}
+      className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-rule py-2"
+    >
+      {/* Submitting replaces the whole query string, so state that is not a control here has
+          to ride along. `job` deliberately does not: filtering closes the drawer. */}
+      <input type="hidden" name="tab" value={p.tab} />
+      {p.badge ? <input type="hidden" name="badge" value={p.badge} /> : null}
 
-      {GROUPS.map((group) => {
-        const values = vocabFor(p, group);
+      {FILTERS.map((filter) => {
+        const values = vocab(p.tab, filter);
         // Design has no season vocabulary, so it gets no season dropdown.
         if (values.length === 0) return null;
-        return (
-          <SelectNav
-            key={group}
-            label={group}
-            on={p[group].length > 0}
-            value={withGroup(p, group, p[group][0] ?? null)}
-          >
-            <option value={withGroup(p, group, null)}>any</option>
-            {values.map((value) => (
-              <option key={value} value={withGroup(p, group, value)}>
-                {value}
-              </option>
-            ))}
-          </SelectNav>
-        );
+        return <Select key={`${filter}:${p[filter] ?? ''}`} p={p} filter={filter} values={values} />;
       })}
 
       {/* Badges are free slugs, not a fixed vocabulary, so the active one stays a chip. */}
-      {p.badge ? (
-        <Chip href={withBadge(p, p.badge)} on>
-          {p.badge}
-        </Chip>
-      ) : null}
+      {p.badge ? <BadgeChip p={p} value={p.badge} /> : null}
 
-      <span className="ml-auto">
+      <span className="ml-auto flex items-baseline gap-1">
+        <button type="submit" className="chip">
+          filter
+        </button>
         {hasFilters(p) ? (
           <Link href={cleared(p)} className="chip" scroll={false}>
             clear
@@ -113,6 +128,6 @@ export function Filters({ p }: { p: Params }) {
           </span>
         )}
       </span>
-    </div>
+    </Form>
   );
 }

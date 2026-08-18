@@ -12,7 +12,7 @@ import {
   type RawSearchParams,
   type Tab,
 } from "@/lib/params";
-import { listPostings, tabIsEmpty, type Row } from "@/lib/query";
+import { listPostings, outsideTargetLocations, tabIsEmpty, type Row } from "@/lib/query";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
 import { Chevron, ExternalLink } from "./icons";
@@ -21,10 +21,11 @@ import { ThemeToggle } from "./theme-toggle";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const COLUMNS: Record<Tab, string[]> = {
-  design: ["posted", "badges", "pay rate", "company", "apply"],
+  design: ["posted", "badges", "title", "pay rate", "company", "apply"],
   engineering: [
     "posted",
     "badges",
+    "title",
     "summary",
     "pay rate",
     "level",
@@ -32,6 +33,17 @@ const COLUMNS: Record<Tab, string[]> = {
     "company",
     "apply",
   ],
+};
+
+/**
+ * Column widths. `grow` absorbs the slack, `clip` is capped; both truncate rather than wrap,
+ * and everything else is sized by its content — so every row stays one line tall whatever the
+ * title length. The full title is in the drawer, one click away, which is the right place for
+ * it. Engineering caps the title because summary is the column that needs the slack there.
+ */
+const WIDTHS: Record<Tab, Record<string, string | undefined>> = {
+  design: { title: "grow" },
+  engineering: { title: "clip", summary: "grow" },
 };
 
 /** Relative, because the only question ever asked of this column is "how stale is it". */
@@ -116,8 +128,15 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
       <td>
         <Badges row={row} p={p} />
       </td>
+      {/* Identifying text, not a facet: no badge, no filter. `title` gives the long tail back
+          on hover without costing a row of height. */}
+      <td className={WIDTHS[p.tab].title} title={row.title}>
+        {row.title}
+      </td>
       {p.tab === "engineering" ? (
-        <td className="grow text-fg-dim">{row.summary ?? <Nothing />}</td>
+        <td className={`${WIDTHS[p.tab].summary} text-fg-dim`}>
+          {row.summary ?? <Nothing />}
+        </td>
       ) : null}
       <td className="nums">{pay ?? <Nothing />}</td>
       {p.tab === "engineering" ? (
@@ -129,7 +148,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
         </>
       ) : null}
       {/* The drawer trigger. One per row, so the tab order through the table stays short. */}
-      <td className={p.tab === "design" ? "grow" : undefined}>
+      <td>
         <Link
           href={withJob(p, row.id)}
           scroll={false}
@@ -180,28 +199,53 @@ function Command({ children }: { children: string }) {
   );
 }
 
-function Empty() {
+/** Design's location rule is not a filter, so `clear` cannot lift it. An empty table that
+ *  blames the ingest when geography is the real cause sends the reader to run a command that
+ *  already worked, so the count decides which of the two true explanations to give. */
+function Elsewhere({ count }: { count: number }) {
+  return (
+    <p className="mt-3">
+      Design shows the target locations only. {count}{" "}
+      {count === 1 ? "posting is" : "postings are"} listed outside them and are not on this
+      tab; Engineering shows every location.
+    </p>
+  );
+}
+
+function Empty({ outside }: { outside: number }) {
   return (
     <div className="prose max-w-lg py-12">
-      <p>
-        Nothing in the database for this tab. Run{" "}
-        <Command>npm run ingest</Command> to poll the connectors, then{" "}
-        <Command>npm run enrich</Command> to classify what came back.
-      </p>
-      <p className="mt-3">
-        For fixtures instead of live postings: <Command>npm run seed</Command>.
-      </p>
+      {outside > 0 ? (
+        <>
+          <p>Nothing on this tab is in the target locations.</p>
+          <Elsewhere count={outside} />
+        </>
+      ) : (
+        <>
+          <p>
+            Nothing in the database for this tab. Run{" "}
+            <Command>npm run ingest</Command> to poll the connectors, then{" "}
+            <Command>npm run enrich</Command> to classify what came back.
+          </p>
+          <p className="mt-3">
+            For fixtures instead of live postings: <Command>npm run seed</Command>.
+          </p>
+        </>
+      )}
     </div>
   );
 }
 
-function NoMatches({ p }: { p: Params }) {
+function NoMatches({ p, outside }: { p: Params; outside: number }) {
   return (
-    <div className="prose flex max-w-lg items-baseline gap-3 py-12">
-      <p>No postings match these filters.</p>
-      <Link href={cleared(p)} className="chip" scroll={false}>
-        clear
-      </Link>
+    <div className="prose max-w-lg py-12">
+      <span className="flex items-baseline gap-3">
+        <p>No postings match these filters.</p>
+        <Link href={cleared(p)} className="chip" scroll={false}>
+          clear
+        </Link>
+      </span>
+      {outside > 0 ? <Elsewhere count={outside} /> : null}
     </div>
   );
 }
@@ -228,6 +272,9 @@ export default async function Page({
     (row) => now - row.postedAt.getTime() < DAY_MS,
   ).length;
   const columns = COLUMNS[p.tab];
+  // Only asked when there is nothing to show, and only on the tab that has a location rule.
+  const outside =
+    rows.length === 0 && p.tab === "design" ? outsideTargetLocations(db, p, now) : 0;
 
   return (
     <main className="min-h-dvh px-4 pb-16">
@@ -264,9 +311,9 @@ export default async function Page({
 
       {rows.length === 0 ? (
         tabIsEmpty(db, p, now) ? (
-          <Empty />
+          <Empty outside={outside} />
         ) : (
-          <NoMatches p={p} />
+          <NoMatches p={p} outside={outside} />
         )
       ) : (
         <table className="rows">
@@ -280,12 +327,7 @@ export default async function Page({
                   <th
                     key={column}
                     scope="col"
-                    className={
-                      (p.tab === "design" && column === "company") ||
-                      (p.tab === "engineering" && column === "summary")
-                        ? "grow"
-                        : undefined
-                    }
+                    className={WIDTHS[p.tab][column]}
                   >
                     {column}
                   </th>

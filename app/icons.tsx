@@ -1,4 +1,4 @@
-/** The whole icon set. Three glyphs do not justify a package, and nothing here is an emoji. */
+/** The whole icon set. Four glyphs do not justify a package, and nothing here is an emoji. */
 
 const base = {
   width: 12,
@@ -26,6 +26,16 @@ export function Chevron() {
   return (
     <svg {...base}>
       <path d="m4.5 2.5 4 3.5-4 3.5" />
+    </svg>
+  );
+}
+
+/** The dropdown caret. `appearance: none` on the <select> costs us the platform's, and this
+ *  is what buys back a control that paints its own state in every browser. */
+export function Caret() {
+  return (
+    <svg {...base}>
+      <path d="m2.5 4.5 3.5 4 3.5-4" />
     </svg>
   );
 }

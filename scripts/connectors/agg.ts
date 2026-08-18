@@ -4,8 +4,8 @@
  * its ATS, the ATS keeps `canonical_url` and this row survives as an extra `posting_sources`
  * entry.
  *
- * No geography filter anywhere in here: every location is stored as reported. Geo affects
- * ranking on the Design tab only, and only through `lib/geo.ts`.
+ * No geography filter anywhere in here: every location is stored as reported. Geo is a view
+ * filter on the Design tab only, and only through `lib/geo.ts`.
  */
 
 import { normalizeDescription } from '../../lib/normalize.ts';
