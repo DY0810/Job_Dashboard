@@ -1,10 +1,16 @@
 /**
  * Deterministic extraction — no model, no network, no cost.
  *
- * Precedence is the whole design and it never varies:
+ * Precedence is the whole design:
  *
- *   structured field from the source  >  parsed from the description  >  inferred from the
- *   title  >  null
+ *   structured field from the source  >  the posting's own text  >  null
+ *
+ * and within the text the TITLE outranks the body, because a title states what the role is
+ * while a body merely mentions things ("internships count" sits in the requirements of a
+ * full-time posting). `track` is the one field that reads title -> department/team -> body
+ * rather than putting the structured field first: a title is a stronger signal of the role
+ * than the org chart it hangs off, and "Platform Engineer" in a Sales department is still an
+ * engineer. Each extractor names its own order where it differs.
  *
  * Never guess past that. NULL means "the posting did not say", which is a real answer the UI
  * knows how to render (finding G); a guessed value is indistinguishable from a stated one
@@ -269,7 +275,7 @@ const SENIOR_PROSE = [
   /\b(?:own|drive|define|shape)\s+(?:the\s+)?(?:technical|architectural|product|design)\s+(?:direction|strategy|vision|roadmap)\b/i,
   /\b(?:mentor|coach)(?:ing|s)?\s+(?:and\s+\w+\s+)?(?:junior|other|fellow|more\s+junior)\s+\w+/i,
   /\b(?:manage|lead|build)(?:s|ing)?\s+(?:and\s+grow(?:ing)?\s+)?(?:a\s+)?team\s+of\s+\w+/i,
-  /\b(?:hire|hiring|grow(?:ing)?)\s+and\s+(?:mentor|develop|manage|lead)/i,
+  /\b(?:hire|hiring|grow(?:ing)?)\s+and\s+(?:mentor|develop|manage|lead)\b/i,
   /\breport(?:s|ing)?\s+(?:directly\s+)?to\s+the\s+(?:ceo|cto|founder|vp)\b/i,
   /\b(?:seasoned|highly\s+experienced|battle-tested)\s+(?:engineer|designer|developer|leader)\b/i,
   /\b(?:staff|principal|senior)[- ]level\b/i,
@@ -373,7 +379,7 @@ const TRACK_VETO =
   /\b(?:sales|account\s+(?:executive|manager|director)|business\s+development|revenue|quota|marketing|brand\s+marketing|communications|public\s+relations|recruit\w*|talent|people\s+(?:ops|operations|partner)|human\s+resources|hr\b|finance|accounting|controller|legal|counsel|paralegal|compliance|policy|lobby\w*|customer\s+(?:success|support|experience)|technical\s+support|support\s+engineer|help\s+desk|solutions?\s+(?:consultant|architect|engineer)|sales\s+engineer|pre-?sales|partnerships?|alliance\w*|procurement|facilities|executive\s+assistant|office\s+manager|chief\s+of\s+staff|program\s+manager|project\s+manager|product\s+manager|operations\s+manager|engagement\s+(?:manager|lead)|general\s+manager|store\s+manager|employer\s+brand|(?:sales|partner|revenue|gtm|customer|field|technology)\s+enablement|enablement\s+(?:manager|lead|analyst|specialist)|strategist|buyer|purchaser|patent\w*|community\s+(?:manager|engagement)|product\s+management|product\s+marketing|produktmanage\w*|vertrieb\w*|scrum\s+master|trust\s+(?:and|&)\s+safety|content\s+(?:writer|strategist|marketer)|copywriter|social\s+media|community\s+manager|event\w*|teacher|instructor|nurse|physician|clinician|driver|warehouse|logistics|supply\s+chain)\b/i;
 
 const DESIGN_TITLE =
-  /\b(?:designer|design(?:er)?s?\b(?!\s*engineer)|ux|ui\b|user\s+experience|user\s+interface|interaction|visual|graphic|motion|brand(?:ing)?|industrial\s+design|illustrat\w*|typograph\w*|art\s+direct\w*|creative\s+direct\w*|design\s+research|ux\s+research|user\s+research|design\s+system|product\s+design|(?:3d|vfx|concept|character|environment)\s+artist|animator|vfx)\b/i;
+  /\b(?:design(?:er)?s?\b(?![\s/-]*engineer)|ux|ui\b|user\s+experience|user\s+interface|interaction|visual|graphic|motion|brand(?:ing)?|industrial\s+design|illustrat\w*|typograph\w*|art\s+direct\w*|creative\s+direct\w*|design\s+research|ux\s+research|user\s+research|design\s+system|product\s+design|(?:3d|vfx|concept|character|environment)\s+artist|animator|vfx)\b/i;
 
 /**
  * NOTE on the `\w*` suffixes: these alternations close with `\b`, so a PREFIX alternative
@@ -523,7 +529,7 @@ const PERIOD_WORDS: readonly [PayPeriod, RegExp][] = [
  * reads as a salary. Every figure this returns was written as money by the posting.
  */
 const PAY_RANGE =
-  /([$€£])\s?(\d{1,3}(?:[,.]\d{3})*(?:\.\d{2})?|\d+(?:\.\d+)?)\s*([kK])?\s*(?:(?:-|–|—|to|and)\s*[$€£]?\s?(\d{1,3}(?:[,.]\d{3})*(?:\.\d{2})?|\d+(?:\.\d+)?)\s*([kK])?)?/g;
+  /([$€£])\s?(\d{1,3}(?:[,.]\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?\s*(?:(?:-|–|—|to|and)\s*[$€£]?\s?(\d{1,3}(?:[,.]\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?)?/g;
 
 function toAmount(digits: string, thousands: string | undefined): number {
   const value = Number(digits.replace(/[,](?=\d{3}\b)/g, '').replace(/[.](?=\d{3}\b)/g, ''));
@@ -532,8 +538,13 @@ function toAmount(digits: string, thousands: string | undefined): number {
 
 function extractPayRate(body: string): PayRate | null {
   for (const match of body.matchAll(PAY_RANGE)) {
-    const min = toAmount(match[2], match[3]);
-    const max = match[4] === undefined ? null : toAmount(match[4], match[5]);
+    // "$120-160k" writes the multiplier once, on the high end, and means it for both. Read
+    // each side's own suffix first and fall back to the other's, or the low end parses as
+    // $120 — which then reads as an hourly rate, or fails the annual sanity floor and
+    // discards a stated salary band entirely.
+    const thousands = match[3] ?? match[5];
+    const min = toAmount(match[2], thousands);
+    const max = match[4] === undefined ? null : toAmount(match[4], match[5] ?? match[3]);
     if (!Number.isFinite(min) || min <= 0) continue;
 
     const trailing = body.slice(match.index + match[0].length, match.index + match[0].length + 24);

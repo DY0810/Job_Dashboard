@@ -355,7 +355,12 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
               Math.max(Math.min(current.postedAt.getTime(), post.postedAt), floor),
             ),
             description: description || current.description,
-            sourceFields: sourceFields ?? current.sourceFields,
+            // Only a run that ACTUALLY carried structured fields may replace them. Without
+            // this, a run where the ATS connector was down but an aggregator reported the
+            // same job writes `{location}` alone — non-null, so `??` would not fall back —
+            // and silently drops the department, work mode and sections the ATS gave us.
+            // Same hazard, and same shape of guard, as `posted_at` and `canonical_url` above.
+            sourceFields: structured ? sourceFields : (current.sourceFields ?? sourceFields),
           })
           .where(eq(postings.id, postingId))
           .run();

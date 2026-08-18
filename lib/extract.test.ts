@@ -80,6 +80,14 @@ describe('seniority', () => {
     expect(isSeniorByRegex('Engineer', 'You will manage a team of five engineers.')).toBe(true);
   });
 
+  it('does not fire on a verb that merely starts another word', () => {
+    // `lead` inside "leadership development" once dropped the whole posting.
+    expect(
+      isSeniorByRegex('Software Engineer', 'We are hiring and leadership development is offered to everyone.'),
+    ).toBe(false);
+    expect(isSeniorByRegex('Software Engineer', 'You will hire and mentor the team.')).toBe(true);
+  });
+
   it('does not fire on ordinary junior prose', () => {
     expect(isSeniorByRegex('Software Engineer', 'You will own your projects and ship weekly.')).toBe(false);
     expect(isSeniorByRegex('Product Designer', 'You will make an impact on a growing team.')).toBe(false);
@@ -109,6 +117,12 @@ describe('track', () => {
     expect(extract({ title: 'Product Designer', description: '' }).track).toBe('design');
     expect(extract({ title: 'Backend Engineer, Payments', description: '' }).track).toBe('engineering');
     expect(extract({ title: 'Member of Technical Staff', description: '' }).track).toBe('engineering');
+  });
+
+  it('keeps a design/engineer hybrid title on the engineering side', () => {
+    expect(extract({ title: 'Design Engineer', description: '' }).track).toBe('engineering');
+    expect(extract({ title: 'Designer/Engineer', description: '' }).track).toBe('engineering');
+    expect(extract({ title: 'Product Designer', description: '' }).track).toBe('design');
   });
 
   it('vetoes a GTM or PM role that happens to contain a track word', () => {
@@ -251,6 +265,14 @@ describe('pay rate', () => {
 
   it('reads a k-suffixed range', () => {
     expect(pay('Compensation is $120k-$160k.')).toEqual({ min: 120_000, max: 160_000, period: 'year' });
+  });
+
+  it('applies a range\'s single k suffix to both ends', () => {
+    // "$120-160k" writes the multiplier once and means it twice. Reading the low end as
+    // $120 turned a stated salary band into an hourly rate, or into no pay at all.
+    expect(pay('Compensation: $120-160k, plus equity.')).toEqual({ min: 120_000, max: 160_000, period: 'year' });
+    expect(pay('Salary: $120-160k per year.')).toEqual({ min: 120_000, max: 160_000, period: 'year' });
+    expect(pay('Base is $120.5k annually.')).toEqual({ min: 120_500, max: null, period: 'year' });
   });
 
   it('infers the period from magnitude when the posting states none', () => {
