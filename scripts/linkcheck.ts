@@ -196,7 +196,8 @@ export async function checkLink(
   } catch (error) {
     const { status, reason } = failure(error);
     if (status === null || !HEAD_NOT_SUPPORTED.has(status)) {
-      // A network error, a timeout, a 429 or a 403 is not evidence the posting is gone.
+      // A network error, a timeout or a 429 is not evidence the posting is gone. (403 is
+      // NOT handled here - it is in HEAD_NOT_SUPPORTED and takes the fall-through below.)
       return { id, url, verdict: verdictFor(status), status, reason };
     }
     // 403/405/501 on HEAD: fall through and ask for the body instead.

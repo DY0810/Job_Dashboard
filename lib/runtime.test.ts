@@ -304,6 +304,18 @@ describe('publicOnly — the SSRF boundary for remotely-supplied URLs', () => {
     }
   });
 
+  // The 192.0.x reservations are /24s, not /16s. A guard that ignores the third octet
+  // blocks 65,536 addresses instead of 512 and silently reports live postings on ordinary
+  // public 192.0.x hosts as unverifiable. Fails closed, so no test caught it by accident.
+  it('treats 192.0.0.0/24 and 192.0.2.0/24 as reservations without swallowing 192.0.0.0/16', () => {
+    for (const blocked of ['192.0.0.1', '192.0.0.255', '192.0.2.1', '192.0.2.254']) {
+      expect(isPrivateAddress(blocked), blocked).toBe(true);
+    }
+    for (const allowed of ['192.0.1.1', '192.0.3.1', '192.0.100.1', '192.0.255.254']) {
+      expect(isPrivateAddress(allowed), allowed).toBe(false);
+    }
+  });
+
   it('refuses a URL that resolves to a private address before any request goes out', async () => {
     let calls = 0;
     const runtime = createRuntime({
