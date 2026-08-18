@@ -158,6 +158,11 @@ function atsConnector(name: string, map: Mapper): Connector {
   return {
     name,
     kind: 'ats',
+    // NO `minIntervalMs`, deliberately. The ATS boards are where a new posting appears
+    // FIRST — polling them on every cycle is the entire point of the tool, and the
+    // scheduler's own 30-minute interval already is their floor. Declaring 30 minutes here
+    // as well would only mean an occasional cycle lands a second early and gets skipped,
+    // silently halving the poll rate on the sources that matter most.
     async fetch(context: ConnectorContext): Promise<ConnectorPosting[]> {
       const targets = registry().filter((entry) => entry.ats === name);
       const postings: ConnectorPosting[] = [];

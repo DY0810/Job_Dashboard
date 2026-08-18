@@ -90,6 +90,9 @@ export function parseReadmeTable(markdown: string, now: number): ConnectorPostin
 export const simplifyInternships: Connector = {
   name: 'simplify-internships',
   kind: 'repo',
+  // A hand-maintained GitHub README. It takes a few commits a day; three hours keeps us
+  // within one edit of current without re-downloading an unchanged file 48 times.
+  minIntervalMs: 3 * 60 * 60 * 1000,
   async fetch(context) {
     const markdown = await context.runtime.fetchText(README_URL);
     const postings = parseReadmeTable(markdown, Date.now());

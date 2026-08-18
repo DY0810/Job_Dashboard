@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Workie's 30-minute refresh, as a launchd user agent. Install (from the repo root):
+
+    sed -e "s|__WORKIE_DIR__|$PWD|g" -e "s|__NODE_BIN__|$(dirname "$(command -v node)")|g" \
+      scripts/com.workie.refresh.plist > ~/Library/LaunchAgents/com.workie.refresh.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.workie.refresh.plist
+
+  The two substitutions are not decoration. launchd gives a job a bare
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin, so an nvm- or homebrew-installed node is simply not
+  found — the single most common reason a launchd job "does nothing". Baking in the directory
+  that `command -v node` resolves to is what makes it work outside your shell.
+
+    launchctl kickstart -p gui/$(id -u)/com.workie.refresh   run one cycle now
+    launchctl print gui/$(id -u)/com.workie.refresh          state and last exit status
+    launchctl bootout gui/$(id -u)/com.workie.refresh        stop and uninstall
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.workie.refresh</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__WORKIE_DIR__/scripts/refresh.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__WORKIE_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__NODE_BIN__:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- Every 30 minutes. launchd will not start a second copy while one is still running, so a
+       cycle that overruns (the weekly linkcheck does) delays the next one rather than racing
+       it for the SQLite write lock. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <!-- Also run once at load, so a machine that was asleep is current by the time you look. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- refresh.sh redirects its own output into logs/refresh-YYYY-MM-DD.log and prunes after
+       a fortnight. These two catch only what happens BEFORE that redirect — "node: command
+       not found" being the one that matters. -->
+  <key>StandardOutPath</key>
+  <string>__WORKIE_DIR__/logs/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__WORKIE_DIR__/logs/launchd.log</string>
+
+  <!-- Background: throughput-insensitive, so macOS may schedule it around the user's work
+       and defer it on battery. Correct for a job whose only deadline is "sometime this half
+       hour", and it keeps a laptop's fans out of it. -->
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+</dict>
+</plist>

@@ -553,6 +553,19 @@ export interface Connector {
    * the absence as "this source dropped its postings" (finding C).
    */
   skip?(env: Record<string, string | undefined>): string | null;
+  /**
+   * Do not poll this source again until this long after its last **successful** run. Omit it
+   * — as every ATS connector does — to run on every cycle; the scheduler's own interval is
+   * the floor, and declaring a value equal to it would only risk losing a cycle to jitter.
+   *
+   * Measured from the last `ok` run, not the last attempt: the reason to wait is "the data
+   * cannot have changed since we last got it", and after a failure we never got it.
+   *
+   * A cadence skip writes no `connector_runs` row, exactly as a missing-key skip does not.
+   * Ghost detection counts an absence only against an `ok` run (finding C), and a source
+   * that sat out a cycle must not accrue a phantom absence from it.
+   */
+  minIntervalMs?: number;
   fetch(context: ConnectorContext): Promise<ConnectorPosting[]>;
 }
 

@@ -63,6 +63,10 @@ export function hnConnector(extractor: CompanyExtractor = heuristicExtractor): C
   return {
     name: 'hn',
     kind: 'aggregator',
+    // "Who is Hiring" is ONE THREAD PER MONTH. New comments trickle in through the month,
+    // so it is not static — but 48 polls a day against a thread that gains a handful of
+    // replies is waste at our end and rudeness at theirs. Four a day sees everything.
+    minIntervalMs: 6 * 60 * 60 * 1000,
     async fetch(context: ConnectorContext): Promise<ConnectorPosting[]> {
       const stories = await context.runtime.fetchJson<{
         hits?: { objectID?: string; title?: string; created_at_i?: number }[];
@@ -133,6 +137,9 @@ interface RemoteOkJob {
 export const remoteok: Connector = {
   name: 'remoteok',
   kind: 'aggregator',
+  // One endpoint returning the WHOLE board on every call, and RemoteOK asks callers to cache
+  // it. Hourly is generous for a feed whose jobs also reach us through their own ATS.
+  minIntervalMs: 60 * 60 * 1000,
   async fetch(context) {
     const jobs = await context.runtime.fetchJson<RemoteOkJob[]>('https://remoteok.com/api');
     return (Array.isArray(jobs) ? jobs : [])
@@ -209,6 +216,8 @@ interface ArbeitnowJob {
 export const arbeitnow: Connector = {
   name: 'arbeitnow',
   kind: 'aggregator',
+  /** Whole board in one response, same as RemoteOK. Hourly. */
+  minIntervalMs: 60 * 60 * 1000,
   async fetch(context) {
     const body = await context.runtime.fetchJson<{ data?: ArbeitnowJob[] }>(
       'https://www.arbeitnow.com/api/job-board-api',
@@ -246,6 +255,8 @@ interface WorkingNomadsJob {
 export const workingnomads: Connector = {
   name: 'workingnomads',
   kind: 'aggregator',
+  /** A feed in all but name (see above) and feeds publish hourly at best. Hourly. */
+  minIntervalMs: 60 * 60 * 1000,
   async fetch(context) {
     const jobs = await context.runtime.fetchJson<WorkingNomadsJob[]>(
       'https://www.workingnomads.com/api/exposed_jobs/',
