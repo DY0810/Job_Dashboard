@@ -125,6 +125,58 @@ describe('track', () => {
     expect(extract({ title: 'Product Designer', description: '' }).track).toBe('design');
   });
 
+  /**
+   * Titles taken verbatim off the live Design tab, where they were all wrong. `DESIGN_TITLE`
+   * was tested before `ENGINEERING_TITLE`, so any title carrying "design", "visual", "brand"
+   * or "creative" claimed the Design tab first — and four NVIDIA silicon internships led the
+   * board because "Hardware ASIC Design Intern" reads as a design title.
+   */
+  it.each([
+    'Hardware ASIC Design Intern - Hardware',
+    'Hardware Design for Test Intern - DFT',
+    'Hardware Physical Design / VLSI Intern',
+    'Mixed Signal Design Intern',
+    'Analog Design Intern',
+    'Software Engineer, Silicon Design Methodology',
+    'Machine Learning Engineer Intern - Brand Ads',
+    'Visual Generation & Multimodal Evaluation Machine Learning Engineer Intern - AML-ARK',
+    'Machine Learning Engineer Intern - Data Search - Visual Search',
+    'Software Engineer Intern - Creative Intelligence and Brand Innovation',
+  ])('sends the engineering role %s to engineering, not design', (title) => {
+    expect(extract({ title, description: '' }).track).toBe('engineering');
+  });
+
+  /**
+   * The other half of the same rule, and the reason it is scoped to silicon terms and role
+   * nouns rather than to the bare words `hardware` or `developer`. Each of these is a real
+   * design role that a blunter fix would have moved to the wrong tab.
+   */
+  it.each([
+    'Hardware Product Designer', // industrial design, not silicon
+    'Product Designer, Developer Tools', // a trailing qualifier must not decide the track
+    'Designer, Developer Experience',
+    'Design Systems Designer', // `systems` is an ENGINEERING_TITLE word
+    'UX Researcher', // `researcher` is deliberately not a role noun here
+    'Design Researcher',
+    'AI Agent Experience Designer',
+    'Intern - Product Design', // head decides nothing; the full title still does
+    'Graphic Design Assistant',
+  ])('keeps the design role %s on design', (title) => {
+    expect(extract({ title, description: '' }).track).toBe('design');
+  });
+
+  /** A spaced dash separates a qualifier; a bare hyphen is part of the word. */
+  it('splits the title head on a spaced dash only', () => {
+    expect(extract({ title: 'Full-Stack Engineer', description: '' }).track).toBe('engineering');
+    expect(extract({ title: 'Front-End Engineer - Growth', description: '' }).track).toBe('engineering');
+  });
+
+  it('vetoes an administrative role naming both tracks', () => {
+    expect(
+      extract({ title: 'Administrative Business Partner I - Engineering, Product and Design', description: '' }).track,
+    ).toBe('other');
+  });
+
   it('vetoes a GTM or PM role that happens to contain a track word', () => {
     expect(extract({ title: 'Sales Engineer', description: '' }).track).toBe('other');
     expect(extract({ title: 'Design Program Manager', description: '' }).track).toBe('other');

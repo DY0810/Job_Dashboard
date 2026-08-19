@@ -406,7 +406,46 @@ function extractSeniority(title: string, body: string): Seniority {
  * that happen to contain a track word.
  */
 const TRACK_VETO =
-  /\b(?:sales|account\s+(?:executive|manager|director)|business\s+development|revenue|quota|marketing|brand\s+marketing|communications|public\s+relations|recruit\w*|talent|people\s+(?:ops|operations|partner)|human\s+resources|hr\b|finance|accounting|controller|legal|counsel|paralegal|compliance|policy|lobby\w*|customer\s+(?:success|support|experience)|technical\s+support|support\s+engineer|help\s+desk|solutions?\s+(?:consultant|architect|engineer)|sales\s+engineer|pre-?sales|partnerships?|alliance\w*|procurement|facilities|executive\s+assistant|office\s+manager|chief\s+of\s+staff|program\s+manager|project\s+manager|product\s+manager|operations\s+manager|engagement\s+(?:manager|lead)|general\s+manager|store\s+manager|employer\s+brand|(?:sales|partner|revenue|gtm|customer|field|technology)\s+enablement|enablement\s+(?:manager|lead|analyst|specialist)|strategist|buyer|purchaser|patent\w*|community\s+(?:manager|engagement)|product\s+management|product\s+marketing|produktmanage\w*|vertrieb\w*|scrum\s+master|trust\s+(?:and|&)\s+safety|content\s+(?:writer|strategist|marketer)|copywriter|social\s+media|community\s+manager|event\w*|teacher|instructor|nurse|physician|clinician|driver|warehouse|logistics|supply\s+chain)\b/i;
+  /\b(?:sales|account\s+(?:executive|manager|director)|business\s+development|revenue|quota|marketing|brand\s+marketing|communications|public\s+relations|recruit\w*|talent|people\s+(?:ops|operations|partner)|human\s+resources|hr\b|finance|accounting|controller|legal|counsel|paralegal|compliance|policy|lobby\w*|customer\s+(?:success|support|experience)|technical\s+support|support\s+engineer|help\s+desk|solutions?\s+(?:consultant|architect|engineer)|sales\s+engineer|pre-?sales|partnerships?|alliance\w*|procurement|facilities|administrative|executive\s+assistant|office\s+manager|chief\s+of\s+staff|program\s+manager|project\s+manager|product\s+manager|operations\s+manager|engagement\s+(?:manager|lead)|general\s+manager|store\s+manager|employer\s+brand|(?:sales|partner|revenue|gtm|customer|field|technology)\s+enablement|enablement\s+(?:manager|lead|analyst|specialist)|strategist|buyer|purchaser|patent\w*|community\s+(?:manager|engagement)|product\s+management|product\s+marketing|produktmanage\w*|vertrieb\w*|scrum\s+master|trust\s+(?:and|&)\s+safety|content\s+(?:writer|strategist|marketer)|copywriter|social\s+media|community\s+manager|event\w*|teacher|instructor|nurse|physician|clinician|driver|warehouse|logistics|supply\s+chain)\b/i;
+
+/**
+ * A title states its role first and qualifies it afterwards: "Machine Learning Engineer Intern
+ * - Brand Ads" is an ML engineer, not a brand designer. So the design/engineering decision is
+ * made on the HEAD of the title — everything before the first comma, bracket, pipe or spaced
+ * dash — and only falls back to the whole string when the head decides nothing ("Intern -
+ * Product Design").
+ *
+ * The dash must be spaced. Splitting on a bare hyphen would cut "Full-Stack Engineer" down to
+ * "Full" and lose the role entirely.
+ */
+const TITLE_TAIL = /\s+[–—-]\s+|[,(|]/;
+
+function titleHead(title: string): string {
+  const head = title.split(TITLE_TAIL)[0]?.trim() ?? '';
+  return head.length >= 3 ? head : title;
+}
+
+/**
+ * Engineering role NOUNS, which outrank a design word in the same head: "Software Engineer,
+ * Silicon Design Methodology" is an engineer.
+ *
+ * Deliberately excludes `scientist`, `researcher` and `architect`, which `ENGINEERING_TITLE`
+ * still carries: "UX Researcher" and "Design Researcher" are design roles, and promoting those
+ * words here would send every one of them to the wrong tab. This list is only the words that
+ * cannot be anything but engineering.
+ */
+const ENGINEERING_ROLE = /\b(?:engineer(?:ing|s)?|developer|programmer|swe|sde|sdet)\b/i;
+
+/**
+ * Silicon. "Design" in this company is chip design — hardware engineering — and it was the
+ * single largest source of wrong rows on the Design tab: four NVIDIA hardware internships led
+ * the board because "Hardware ASIC Design Intern" reads as a design title.
+ *
+ * Scoped to terms that can only mean silicon, NOT to the bare word `hardware`. "Hardware
+ * Product Designer" is a real industrial-design role and stays on the Design tab.
+ */
+const SILICON_DESIGN =
+  /\b(?:asic|vlsi|dft|rtl|soc|pcb|fpga|silicon|semiconductor|tapeout|verilog|vhdl|mixed[\s-]signal|physical\s+design|design\s+for\s+test|chip\s+design\w*|analog|firmware)\b/i;
 
 const DESIGN_TITLE =
   /\b(?:design(?:er)?s?\b(?![\s/-]*engineer)|ux|ui\b|user\s+experience|user\s+interface|interaction|visual|graphic|motion|brand(?:ing)?|industrial\s+design|illustrat\w*|typograph\w*|art\s+direct\w*|creative\s+direct\w*|design\s+research|ux\s+research|user\s+research|design\s+system|product\s+design|(?:3d|vfx|concept|character|environment)\s+artist|animator|vfx)\b/i;
@@ -447,8 +486,20 @@ function countMatches(text: string, pattern: RegExp): number {
 function extractTrack(title: string, body: string, source: SourceFields | null | undefined): Track | 'other' {
   if (TRACK_VETO.test(title)) return 'other';
 
-  if (DESIGN_TITLE.test(title)) return 'design';
-  if (ENGINEERING_TITLE.test(title)) return 'engineering';
+  // The head first, then the whole title. Reading the head alone is what stops a trailing
+  // qualifier deciding the track — "Product Designer, Developer Tools" is a designer, and
+  // testing the whole string for `developer` would have called it engineering. The full-title
+  // pass is the fallback for titles that lead with something uninformative ("Intern - Product
+  // Design"), which is how this behaved before the head existed.
+  const head = titleHead(title);
+  for (const text of head === title ? [title] : [head, title]) {
+    // Ahead of the design check, and that order is the fix: `DESIGN_TITLE` matching first is
+    // why "Hardware ASIC Design Intern" and "Machine Learning Engineer Intern - Brand Ads"
+    // were on the Design tab. An engineering role noun, or silicon, settles it.
+    if (ENGINEERING_ROLE.test(text) || SILICON_DESIGN.test(text)) return 'engineering';
+    if (DESIGN_TITLE.test(text)) return 'design';
+    if (ENGINEERING_TITLE.test(text)) return 'engineering';
+  }
 
   const department = `${source?.department ?? ''} ${source?.team ?? ''}`.trim();
   if (department) {
