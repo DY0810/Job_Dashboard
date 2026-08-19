@@ -9,6 +9,16 @@
     "verified_at": "2026-08-18T04:01:18.998Z"
   },
   {
+    "name": "Airtable",
+    "ats": "greenhouse",
+    "token": "airtable",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:35:58.933Z",
+    "postings_at_probe": 16
+  },
+  {
     "name": "Anthropic",
     "ats": "greenhouse",
     "token": "anthropic",
@@ -25,6 +35,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:19.379Z"
+  },
+  {
+    "name": "Asana",
+    "ats": "greenhouse",
+    "token": "asana",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:35:59.481Z",
+    "postings_at_probe": 129
   },
   {
     "name": "Asimov",
@@ -54,6 +74,16 @@
     "verified_at": "2026-08-18T04:01:20.303Z"
   },
   {
+    "name": "Athletics",
+    "ats": "greenhouse",
+    "token": "athletics",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-19T05:35:51.923Z",
+    "postings_at_probe": 0
+  },
+  {
     "name": "Avoca",
     "ats": "ashby",
     "token": "avoca",
@@ -79,6 +109,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:21.910Z"
+  },
+  {
+    "name": "Brex",
+    "ats": "greenhouse",
+    "token": "brex",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:04.484Z",
+    "postings_at_probe": 303
   },
   {
     "name": "Cardboard",
@@ -108,6 +148,26 @@
     "verified_at": "2026-08-18T04:01:19.962Z"
   },
   {
+    "name": "Clay",
+    "ats": "recruitee",
+    "token": "clay",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-19T05:36:28.615Z",
+    "postings_at_probe": 25
+  },
+  {
+    "name": "Code and Theory",
+    "ats": "greenhouse",
+    "token": "codeandtheory",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-19T05:35:48.954Z",
+    "postings_at_probe": 47
+  },
+  {
     "name": "Cohere",
     "ats": "ashby",
     "token": "cohere",
@@ -115,6 +175,16 @@
       "ai"
     ],
     "verified_at": "2026-08-18T04:01:23.313Z"
+  },
+  {
+    "name": "Collins",
+    "ats": "recruitee",
+    "token": "collins",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-19T05:37:07.707Z",
+    "postings_at_probe": 105
   },
   {
     "name": "Complir",
@@ -153,6 +223,16 @@
     "verified_at": "2026-08-18T04:01:24.801Z"
   },
   {
+    "name": "Dept",
+    "ats": "greenhouse",
+    "token": "dept",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-19T05:35:55.001Z",
+    "postings_at_probe": 230
+  },
+  {
     "name": "DiligenceSquared",
     "ats": "ashby",
     "token": "diligencesquared",
@@ -162,6 +242,16 @@
     "verified_at": "2026-08-18T04:01:25.368Z"
   },
   {
+    "name": "Discord",
+    "ats": "greenhouse",
+    "token": "discord",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:01.443Z",
+    "postings_at_probe": 51
+  },
+  {
     "name": "Dispatch",
     "ats": "greenhouse",
     "token": "dispatch",
@@ -169,6 +259,26 @@
       "yc"
     ],
     "verified_at": "2026-08-18T04:01:20.807Z"
+  },
+  {
+    "name": "Dropbox",
+    "ats": "greenhouse",
+    "token": "dropbox",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:35:59.962Z",
+    "postings_at_probe": 39
+  },
+  {
+    "name": "Duolingo",
+    "ats": "greenhouse",
+    "token": "duolingo",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:00.961Z",
+    "postings_at_probe": 64
   },
   {
     "name": "ElevenLabs",
@@ -187,6 +297,16 @@
       "design-studio"
     ],
     "verified_at": "2026-08-18T04:01:19.132Z"
+  },
+  {
+    "name": "Figma",
+    "ats": "greenhouse",
+    "token": "figma",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:35:55.470Z",
+    "postings_at_probe": 162
   },
   {
     "name": "Fireworks AI",
@@ -225,6 +345,16 @@
     "verified_at": "2026-08-18T04:01:19.383Z"
   },
   {
+    "name": "Gusto",
+    "ats": "greenhouse",
+    "token": "gusto",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:05.951Z",
+    "postings_at_probe": 87
+  },
+  {
     "name": "Haladir",
     "ats": "ashby",
     "token": "haladir",
@@ -250,6 +380,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:28.410Z"
+  },
+  {
+    "name": "Huge",
+    "ats": "greenhouse",
+    "token": "hugeinc",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-19T05:36:08.946Z",
+    "postings_at_probe": 16
   },
   {
     "name": "Hugging Face",
@@ -297,6 +437,26 @@
     "verified_at": "2026-08-18T04:01:29.349Z"
   },
   {
+    "name": "Instrument",
+    "ats": "lever",
+    "token": "instrument",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-19T05:36:21.427Z",
+    "postings_at_probe": 10
+  },
+  {
+    "name": "Intercom",
+    "ats": "greenhouse",
+    "token": "intercom",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:02.961Z",
+    "postings_at_probe": 122
+  },
+  {
     "name": "Juno",
     "ats": "greenhouse",
     "token": "juno",
@@ -342,6 +502,16 @@
     "verified_at": "2026-08-18T04:01:23.368Z"
   },
   {
+    "name": "Linear",
+    "ats": "ashby",
+    "token": "linear",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:28.977Z",
+    "postings_at_probe": 32
+  },
+  {
     "name": "LiveKit",
     "ats": "ashby",
     "token": "livekit",
@@ -369,6 +539,16 @@
     "verified_at": "2026-08-18T04:01:24.311Z"
   },
   {
+    "name": "Miro",
+    "ats": "ashby",
+    "token": "miro",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:30.047Z",
+    "postings_at_probe": 45
+  },
+  {
     "name": "Miso Labs",
     "ats": "ashby",
     "token": "misolabs",
@@ -394,6 +574,16 @@
       "yc"
     ],
     "verified_at": "2026-08-18T04:01:32.854Z"
+  },
+  {
+    "name": "Notion",
+    "ats": "ashby",
+    "token": "notion",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:28.035Z",
+    "postings_at_probe": 127
   },
   {
     "name": "Numa",
@@ -450,6 +640,16 @@
     "verified_at": "2026-08-18T04:01:26.322Z"
   },
   {
+    "name": "Patreon",
+    "ats": "ashby",
+    "token": "patreon",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:34.462Z",
+    "postings_at_probe": 7
+  },
+  {
     "name": "Perplexity",
     "ats": "ashby",
     "token": "perplexity",
@@ -466,6 +666,26 @@
       "ai"
     ],
     "verified_at": "2026-08-18T04:01:34.772Z"
+  },
+  {
+    "name": "Pinterest",
+    "ats": "greenhouse",
+    "token": "pinterest",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:02.498Z",
+    "postings_at_probe": 218
+  },
+  {
+    "name": "Plaid",
+    "ats": "ashby",
+    "token": "plaid",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:31.493Z",
+    "postings_at_probe": 106
   },
   {
     "name": "Ploy",
@@ -495,6 +715,16 @@
     "verified_at": "2026-08-18T04:01:35.772Z"
   },
   {
+    "name": "Ramp",
+    "ats": "ashby",
+    "token": "ramp",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:31.005Z",
+    "postings_at_probe": 137
+  },
+  {
     "name": "Replicant",
     "ats": "ashby",
     "token": "replicant",
@@ -520,6 +750,16 @@
       "game-studio"
     ],
     "verified_at": "2026-08-18T04:01:27.355Z"
+  },
+  {
+    "name": "Robinhood",
+    "ats": "greenhouse",
+    "token": "robinhood",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:01.980Z",
+    "postings_at_probe": 124
   },
   {
     "name": "Runway",
@@ -594,6 +834,16 @@
     "verified_at": "2026-08-18T04:01:28.593Z"
   },
   {
+    "name": "Squarespace",
+    "ats": "greenhouse",
+    "token": "squarespace",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:00.434Z",
+    "postings_at_probe": 23
+  },
+  {
     "name": "Stilta",
     "ats": "ashby",
     "token": "stilta",
@@ -619,6 +869,16 @@
       "yc"
     ],
     "verified_at": "2026-08-18T04:01:28.869Z"
+  },
+  {
+    "name": "Superside",
+    "ats": "lever",
+    "token": "superside",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-19T05:36:29.180Z",
+    "postings_at_probe": 16
   },
   {
     "name": "Together AI",
@@ -658,6 +918,16 @@
     "verified_at": "2026-08-18T04:01:40.350Z"
   },
   {
+    "name": "Vercel",
+    "ats": "greenhouse",
+    "token": "vercel",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:35:57.945Z",
+    "postings_at_probe": 85
+  },
+  {
     "name": "Vooma",
     "ats": "ashby",
     "token": "vooma",
@@ -665,5 +935,25 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:40.774Z"
+  },
+  {
+    "name": "Webflow",
+    "ats": "greenhouse",
+    "token": "webflow",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:35:55.933Z",
+    "postings_at_probe": 29
+  },
+  {
+    "name": "Zapier",
+    "ats": "ashby",
+    "token": "zapier",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-19T05:36:32.959Z",
+    "postings_at_probe": 10
   }
 ]

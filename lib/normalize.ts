@@ -249,12 +249,27 @@ export function normalizeTitle(input: string | null | undefined): string {
 }
 
 /**
+ * Eligibility qualifiers, which name no place: the remote boards state a restriction as
+ * "United States only", "US only", "Europe only". Without this the whole string misses every
+ * lookup and lands in `city_norm` as the junk key `united states only` — country null, state
+ * null — which on the Design tab means an American posting classified as elsewhere and hidden.
+ *
+ * Applied to location strings only, never through `slug` itself, which also normalizes company
+ * and title text where a trailing "Only" could be part of a real name.
+ */
+const QUALIFIER = /\s+only$/;
+
+function placeSlug(input: string): string {
+  return slug(input).replace(QUALIFIER, '').trim();
+}
+
+/**
  * True only for strings this module actually recognizes as a place or a work mode — never
  * for a slug guess. Work modes count because "Product Designer - Hybrid" and "Product
  * Designer" are one job, and a title suffix is the only place this is asked.
  */
 function isRecognizedLocation(input: string): boolean {
-  const text = slug(input);
+  const text = placeSlug(input);
   if (!text) return false;
   if (REMOTE_MARKERS.some((marker) => text.includes(marker))) return true;
   if (WORK_MODE_MARKERS.some((marker) => text.includes(marker))) return true;
@@ -276,7 +291,7 @@ function isRecognizedLocation(input: string): boolean {
  * a city — the remote-vs-city merge pass in `dedupe.ts` is what reconciles those.
  */
 export function normalizeLocation(input: string | null | undefined): NormalizedLocation {
-  const text = slug(input ?? '');
+  const text = placeSlug(input ?? '');
   const empty: NormalizedLocation = {
     city_norm: null,
     state: null,
@@ -296,7 +311,7 @@ export function normalizeLocation(input: string | null | undefined): NormalizedL
     // ...but "on-site" is one work-mode word, not the city "on".
     .replace(/\b(on|in)-(?=site|office|person)/gi, '$1 ')
     .split(/[,;/()[\]]|[-–—]/)
-    .map((part) => slug(part))
+    .map((part) => placeSlug(part))
     .filter(Boolean);
 
   // "City, ST" is the conventional order, so a trailing two-letter state code is

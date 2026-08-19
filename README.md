@@ -53,12 +53,40 @@ cannot have changed are not asked.
 | ATS boards — Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee | every cycle | Where a new posting appears first. This is the point of the tool. |
 | `hn` | 6h | "Who is Hiring" is one thread a month. |
 | `simplify-internships` | 3h | A hand-maintained GitHub README; a few commits a day. |
-| RSS + feed-shaped aggregators — WeWorkRemotely, Jobspresso, Working Nomads, RemoteOK, Arbeitnow | 1h | Whole board in one response; feeds publish hourly at best. |
+| RSS + feed-shaped aggregators — WeWorkRemotely (all + design), Dribbble, Jobspresso, Working Nomads, RemoteOK, Arbeitnow, Braintrust, Himalayas | 1h | Whole board in one response; feeds publish hourly at best. |
 | Keyed aggregators — Adzuna, Careerjet, Jooble, USAJobs | 6h | Metered free tiers, measured in calls per month. |
 
 A cadence skip and a missing-key skip are logged apart (`kind: cadence` / `kind: config`) and
 neither writes a `connector_runs` row — ghost detection counts a posting absent only against
 a run that actually succeeded, so a source that sat out a cycle accrues nothing.
+
+## Design sources
+
+The Design tab is fed differently from Engineering, because design work is published
+differently. Three tiers, in descending order of how much they actually contribute:
+
+| Source | What it adds | Note |
+| --- | --- | --- |
+| `companies.json` design employers | US-based, non-remote, employed design roles | 16 studios and 23 design-led product companies were seeded; 29 confirmed a board. The ATS tier is the only one that reaches an employer's own listing, and the only one carrying office-based US roles. |
+| `weworkremotely-design`, `dribbble` | Design-only boards | WWR's design feed states employment type per item in `<type>`, which is where contract design work comes from. Dribbble is design-only but publishes no description — the whole posting is one sentence in the title. |
+| `braintrust` | US freelance design | `?role=3` is Braintrust's own Design filter. Every row is freelance with structured US city/state. Small (single digits) but the only verified source of its kind. |
+
+Sources that were evaluated and rejected, so they are not re-litigated: Freelancer.com
+ignores its own `category` parameter and publishes company-less gig projects; Authentic Jobs'
+feed is now a blog; Coroflot's robots.txt is `Disallow: /`; Core77, Krop, AIGA and Contra
+publish no usable feed.
+
+### The Design freelance split
+
+The Design tab is partitioned, not filtered — `employed` and `freelance`, one always on,
+`?basis=freelance` in the URL. `freelance` covers `contract` as well, because the extractor
+writes `freelance` only when a posting says the word and the same engagement described as "a
+6-month contract role" lands as `contract`. An employment type that was never determined
+belongs to the employed side; it is not freelance, and a row that matched neither side would
+vanish from the tab entirely.
+
+The `type` dropdown narrows to the side being shown, so no reachable URL asks for a full-time
+freelance posting. Engineering has no split and no `basis`.
 
 ## Database
 

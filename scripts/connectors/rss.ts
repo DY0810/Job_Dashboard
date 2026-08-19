@@ -9,6 +9,7 @@
 
 import Parser from 'rss-parser';
 
+import type { EmploymentType } from '../../lib/extract.ts';
 import { normalizeDescription } from '../../lib/normalize.ts';
 import {
   toEpochMs,
@@ -27,9 +28,22 @@ interface FeedItem {
   contentSnippet?: string;
   creator?: string;
   region?: string;
+  type?: string;
+  category?: string;
 }
 
-type FeedMapper = (item: FeedItem) => { company: string; title: string; location: string | null };
+/**
+ * `employmentType` is optional and only set when the feed states it outright. A source that
+ * says `<type>Contract</type>` is a better authority on the engagement than the prose
+ * heuristics in `extract.ts`, and `sourceFields` is read before the body — which is the whole
+ * reason the Design freelance split has anything to sort WeWorkRemotely rows by.
+ */
+type FeedMapper = (item: FeedItem) => {
+  company: string;
+  title: string;
+  location: string | null;
+  employmentType?: EmploymentType;
+};
 
 function rssConnector(
   name: string,
@@ -37,7 +51,7 @@ function rssConnector(
   map: FeedMapper,
   fetchOptions: FetchOptions = {},
 ): Connector {
-  const parser = new Parser<unknown, FeedItem>({ customFields: { item: ['region'] } });
+  const parser = new Parser<unknown, FeedItem>({ customFields: { item: ['region', 'type', 'category'] } });
   return {
     name,
     kind: 'rss',
@@ -59,26 +73,86 @@ function rssConnector(
             title: mapped.title,
             location: mapped.location,
             description: normalizeDescription(item.content ?? item.contentSnippet ?? ''),
+            ...(mapped.employmentType ? { sourceFields: { employmentType: mapped.employmentType } } : {}),
           };
         });
     },
   };
 }
 
+/**
+ * WWR's `<type>` element, which it publishes on every item. The live design feed carries only
+ * `Full-Time` and `Contract` today, but WWR's own board offers the other three, so all five
+ * are mapped rather than the two currently observed — an unmapped value is left undefined and
+ * falls back to the prose heuristics, never guessed at.
+ */
+const WWR_TYPE: Record<string, EmploymentType> = {
+  'full-time': 'full-time',
+  'part-time': 'part-time',
+  contract: 'contract',
+  freelance: 'freelance',
+  internship: 'internship',
+};
+
 /** WWR encodes the pair as `"Company: Role"` and puts the location in a `<region>` element. */
+const wwrItem: FeedMapper = (item) => {
+  const raw = item.title ?? '';
+  const split = raw.indexOf(':');
+  return {
+    company: split > 0 ? raw.slice(0, split).trim() : '',
+    title: (split > 0 ? raw.slice(split + 1) : raw).trim(),
+    location: item.region?.trim() || 'Remote',
+    employmentType: WWR_TYPE[(item.type ?? '').trim().toLowerCase()],
+  };
+};
+
 export const weworkremotely = rssConnector(
   'weworkremotely',
   'https://weworkremotely.com/remote-jobs.rss',
-  (item) => {
-    const raw = item.title ?? '';
-    const split = raw.indexOf(':');
-    return {
-      company: split > 0 ? raw.slice(0, split).trim() : '',
-      title: (split > 0 ? raw.slice(split + 1) : raw).trim(),
-      location: item.region?.trim() || 'Remote',
-    };
-  },
+  wwrItem,
 );
+
+/**
+ * The same board, filtered to design by WWR itself. Worth a second connector rather than
+ * relying on the feed above: that one is the 100 most recent postings across every category,
+ * of which design is a small slice, while this is 82 design postings and reaches months
+ * further back. Where they overlap, dedupe merges them into one posting with two sources.
+ *
+ * This is also the only source that supplies contract design work in any volume — WWR marks
+ * it in `<type>`, which `wwrItem` passes through to the Design tab's freelance side.
+ */
+export const weworkremotelyDesign = rssConnector(
+  'weworkremotely-design',
+  'https://weworkremotely.com/categories/remote-design-jobs.rss',
+  wwrItem,
+);
+
+/**
+ * Dribbble's job board — the highest-signal design-only source available, and the reason it is
+ * worth a bespoke parser: the feed carries no description and no structured fields at all, only
+ * a sentence.
+ *
+ *   "Aurify LLC is hiring for a position of AI Creative Director in South Korea"
+ *   "KAP STRATEGIES is hiring for a position of Graphic Designer anywhere"
+ *
+ * 53 of the 55 items parse; the two that do not are the channel's own title and the `anywhere`
+ * form, both handled below. An item that still does not match keeps the whole sentence as its
+ * title rather than being dropped — a posting with an ugly title is recoverable, a silently
+ * skipped one is not.
+ */
+const DRIBBBLE = /^(.+?) is hiring for a position of (.+?)(?: in (.+)| anywhere)$/;
+
+export const dribbble = rssConnector('dribbble', 'https://dribbble.com/jobs.rss', (item) => {
+  const raw = (item.title ?? '').trim();
+  const parsed = DRIBBBLE.exec(raw);
+  return {
+    // `dc:creator` is the employer and is present even on the items the sentence parse misses.
+    company: (item.creator ?? parsed?.[1] ?? '').trim(),
+    title: (parsed?.[2] ?? raw).trim(),
+    // Group 3 is undefined for the `anywhere` form, which is Dribbble's way of saying remote.
+    location: parsed ? (parsed[3]?.trim() ?? 'Remote') : null,
+  };
+});
 
 /** Jobspresso puts `"Company<br>⚲&nbsp;Location"` in `dc:creator` and the role in the title. */
 export const jobspresso: Connector = {
@@ -109,4 +183,4 @@ export const jobspresso: Connector = {
   skip: () => 'jobspresso.co/robots.txt disallows /*? (its own feed URL) — left in place, not run',
 };
 
-export const rssConnectors: Connector[] = [weworkremotely, jobspresso];
+export const rssConnectors: Connector[] = [weworkremotely, weworkremotelyDesign, dribbble, jobspresso];

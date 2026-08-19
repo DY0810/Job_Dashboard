@@ -8,6 +8,7 @@
  * filter on the Design tab only, and only through `lib/geo.ts`.
  */
 
+import type { EmploymentType } from '../../lib/extract.ts';
 import { normalizeDescription } from '../../lib/normalize.ts';
 import {
   toEpochMs,
@@ -276,4 +277,170 @@ export const workingnomads: Connector = {
   },
 };
 
-export const aggConnectors: Connector[] = [hn, remoteok, remotive, arbeitnow, workingnomads];
+// ---------------------------------------------------------------------------------------
+// Braintrust — freelance design, which the ATS boards structurally cannot supply
+// ---------------------------------------------------------------------------------------
+
+interface BraintrustJob {
+  id?: number;
+  title?: string;
+  employer?: { name?: string };
+  job_type?: string;
+  payment_type?: string;
+  budget_minimum_usd?: string;
+  budget_maximum_usd?: string;
+  expected_hours_per_week?: number;
+  created?: string;
+  main_skills?: { name?: string }[];
+  locations?: { location?: string; country?: string }[];
+}
+
+/** `?role=3` is Braintrust's own Design filter — the whole board narrowed at the source. */
+const BRAINTRUST_URL = 'https://app.usebraintrust.com/api/jobs/?role=3&page_size=100';
+
+/** `payment_type` to the phrasing `extract.ts` already parses out of prose. */
+const BRAINTRUST_PERIOD: Record<string, string> = { hourly: 'per hour', annual: 'per year' };
+
+/**
+ * Every posting here is freelance, which is the point: the ATS connectors poll employers'
+ * own boards, and an employer's own board does not carry the contract work it hands to
+ * agencies and marketplaces. This is the one source verified to supply US freelance design
+ * with structured locations — small (4 open design roles at the time of writing) but exactly
+ * on target, where a general gig marketplace would be large and mostly irrelevant.
+ *
+ * The API publishes no description at all, so one is assembled from the structured fields.
+ * That is not decoration: `extract.ts` reads pay out of prose, so the rate has to be written
+ * in a form it parses or a $130/hour engagement lands with no pay rate at all. `paid` follows
+ * from the same sentence.
+ */
+export const braintrust: Connector = {
+  name: 'braintrust',
+  kind: 'aggregator',
+  /** One request covers the whole design board. Hourly, like the other whole-board sources. */
+  minIntervalMs: 60 * 60 * 1000,
+  async fetch(context) {
+    const body = await context.runtime.fetchJson<{ results?: BraintrustJob[] }>(BRAINTRUST_URL);
+    return (body.results ?? [])
+      .filter((job) => job.id && job.title)
+      .map((job) => {
+        const period = BRAINTRUST_PERIOD[job.payment_type ?? ''];
+        const min = Number(job.budget_minimum_usd);
+        const max = Number(job.budget_maximum_usd);
+        const rate =
+          period && Number.isFinite(min) && min > 0
+            ? `Rate: $${min} - $${Number.isFinite(max) && max > min ? max : min} ${period}. `
+            : '';
+        const hours = job.expected_hours_per_week ? `Expected ${job.expected_hours_per_week} hours per week. ` : '';
+        const skills = (job.main_skills ?? []).map((skill) => skill.name).filter(Boolean);
+
+        // A role is often open in several places at once. Prefer a US one: the Design tab
+        // hides everything outside the target locations, so picking a non-US location off a
+        // role that is also open in New York would hide a posting that qualifies.
+        const locations = job.locations ?? [];
+        const location = (locations.find((l) => l.country === 'US') ?? locations[0])?.location ?? null;
+
+        return {
+          ...aggRow('braintrust', {
+            company: job.employer?.name,
+            title: job.title,
+            location,
+            url: `https://app.usebraintrust.com/jobs/${job.id}/`,
+            postedAt: toEpochMs(job.created),
+            description: `${rate}${hours}Freelance engagement via Braintrust.${skills.length ? ` Skills: ${skills.join(', ')}.` : ''}`,
+          }),
+          // Braintrust is a freelance marketplace end to end; `job_type` has read `freelance`
+          // on every row observed. Trusted only when it says so, never assumed.
+          ...(job.job_type === 'freelance' ? { sourceFields: { employmentType: 'freelance' as const } } : {}),
+        };
+      });
+  },
+};
+
+// ---------------------------------------------------------------------------------------
+// Himalayas
+// ---------------------------------------------------------------------------------------
+
+interface HimalayasJob {
+  title?: string;
+  companyName?: string;
+  employmentType?: string;
+  locationRestrictions?: string[];
+  pubDate?: number;
+  applicationLink?: string;
+  guid?: string;
+  description?: string;
+  excerpt?: string;
+}
+
+/** Himalayas spells the type with a space and title case; the schema uses hyphenated lower. */
+const HIMALAYAS_TYPE: Record<string, EmploymentType> = {
+  'full time': 'full-time',
+  'part time': 'part-time',
+  contract: 'contract',
+  freelance: 'freelance',
+  internship: 'internship',
+  temporary: 'contract',
+};
+
+/**
+ * A general remote board rather than a design one, so it feeds both tracks. Worth having for
+ * the same reason arbeitnow and workingnomads are: `track` is decided from the title, so a
+ * broad board costs nothing but a classification pass and widens both tabs.
+ *
+ * `locationRestrictions` is where the US filter is actually won — a row restricted to
+ * "United States" normalizes to a US location instead of the bare "Remote" that most remote
+ * boards report, which is the difference between landing in a target tier and landing nowhere.
+ *
+ * PAGED, because the endpoint caps a page at 20 however large a `limit` you send — it echoes
+ * `"limit": 20` back at you — and one page an hour off a board of 100k postings is a trickle
+ * that would mostly re-fetch what it already had. Five pages is 100 newest per run, bounded so
+ * a board that keeps answering cannot turn one cycle into an unbounded crawl.
+ */
+const HIMALAYAS_PAGES = 5;
+const HIMALAYAS_PAGE = 20;
+
+export const himalayas: Connector = {
+  name: 'himalayas',
+  kind: 'aggregator',
+  minIntervalMs: 60 * 60 * 1000,
+  async fetch(context) {
+    const jobs: HimalayasJob[] = [];
+    for (let page = 0; page < HIMALAYAS_PAGES; page += 1) {
+      const body = await context.runtime.fetchJson<{ jobs?: HimalayasJob[] }>(
+        `https://himalayas.app/jobs/api?limit=${HIMALAYAS_PAGE}&offset=${page * HIMALAYAS_PAGE}`,
+      );
+      // A short page means the board ran out; asking for the next one would return nothing.
+      if (!body.jobs?.length) break;
+      jobs.push(...body.jobs);
+      if (body.jobs.length < HIMALAYAS_PAGE) break;
+    }
+    return jobs
+      .filter((job) => job.applicationLink ?? job.guid)
+      .map((job) => {
+        const type = HIMALAYAS_TYPE[(job.employmentType ?? '').trim().toLowerCase()];
+        return {
+          ...aggRow('himalayas', {
+            company: job.companyName,
+            title: job.title,
+            // Several restrictions means several eligible countries; the first is enough for
+            // the normalizer, and "Remote" is the honest fallback when there are none.
+            location: job.locationRestrictions?.[0] ?? 'Remote',
+            url: (job.applicationLink ?? job.guid)!,
+            postedAt: toEpochMs(job.pubDate),
+            description: job.description ?? job.excerpt ?? '',
+          }),
+          ...(type ? { sourceFields: { employmentType: type } } : {}),
+        };
+      });
+  },
+};
+
+export const aggConnectors: Connector[] = [
+  hn,
+  remoteok,
+  remotive,
+  arbeitnow,
+  workingnomads,
+  braintrust,
+  himalayas,
+];
