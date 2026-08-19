@@ -9,7 +9,7 @@ SQLite (`better-sqlite3`) · connectors as standalone Node scripts run by cron �
 repo, runs locally.
 
 **Mode:** `git init` + private GitHub repo. One branch + PR per phase. A phase merges only
-when its gate passes. `gh` is authenticated as `dongyeop-cmyk`; node v22.22.1.
+when its gate passes. `gh` is authenticated as `dongyeop-cmyk`, but the repo now lives at `DY0810/Job_Dashboard` (the old path redirects); node v22.22.1.
 
 **Design context:** [`.impeccable.md`](../.impeccable.md) — read it before any UI phase.
 It is the tiebreaker where the loaded design skills disagree, and it records which of
