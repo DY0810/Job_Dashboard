@@ -48,8 +48,14 @@ export const DESIGN_TYPE = {
 } as const satisfies Record<Basis, readonly string[]>;
 
 /**
- * Per-tab filter vocabulary, straight from the spec. The Design tab deliberately offers one
- * posted-window (`week`) and no seasons; Engineering offers four windows and no
+ * The posted-within windows, shared by both tabs. Design used to offer `week` alone, which
+ * read as a broken control: a dropdown with one option cannot narrow anything twice, and the
+ * tab next to it had four. Written once so the two cannot drift apart again.
+ */
+export const POSTED_WINDOWS = ['hour', 'day', 'week', 'month'] as const;
+
+/**
+ * Per-tab filter vocabulary, straight from the spec. Design has no seasons; Engineering has no
  * freelance/part-time. A value outside its tab's vocabulary is dropped by `parseParams`.
  *
  * Design's `type` here is the union of both sides of the split — the answer to "does Design
@@ -57,12 +63,12 @@ export const DESIGN_TYPE = {
  */
 export const VOCAB = {
   design: {
-    posted: ['week'],
+    posted: POSTED_WINDOWS,
     type: [...DESIGN_TYPE.employed, ...DESIGN_TYPE.freelance],
     season: [],
   },
   engineering: {
-    posted: ['hour', 'day', 'week', 'month'],
+    posted: POSTED_WINDOWS,
     type: ['full-time', 'internship'],
     season: ['summer', 'fall', 'winter', 'spring'],
   },

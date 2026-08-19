@@ -108,6 +108,10 @@ const FIXTURES: Fixture[] = [
   { ref: 'd-contract', track: 'design', company: 'Solder Studio', title: 'UX Designer', place: 'nyc', age: 7 * HOUR, seniority: 'mid', type: 'contract', mode: 'hybrid', paid: true, pay: [70, 85, 'hour'] },
   { ref: 'd-austin', track: 'design', company: 'Pilot Grove', title: 'Product Designer', place: 'austin', age: 16 * HOUR, seniority: 'junior', type: 'full-time', mode: 'hybrid', paid: true, pay: [92_000, 112_000, 'year'] },
   { ref: 'd-sparse', track: 'design', company: 'Quarry Works', title: 'Communication Designer', place: 'remote', age: 21 * DAY, seniority: 'junior', type: 'full-time', mode: 'remote', paid: null },
+  // 45 days: inside the 60-day cutoff, outside the 30-day window. Without a row in that band
+  // the `month` option cannot narrow anything on this tab, and "every dropdown narrows on its
+  // own" would pass by having nothing to exclude rather than by working.
+  { ref: 'd-45d', track: 'design', company: 'Barrow & Field', title: 'Packaging Designer', place: 'sf', age: 45 * DAY, seniority: 'mid', type: 'full-time', mode: 'onsite', paid: true, pay: [96_000, 118_000, 'year'] },
   { ref: 'd-nyc-mid', track: 'design', company: 'Cadence Union', title: 'Interaction Designer', place: 'nyc', age: 6 * DAY, seniority: 'mid', type: 'full-time', mode: 'onsite', paid: true, pay: [118_000, 140_000, 'year'] },
   // The location rule's hard cases: two target metros spelled the way a real board spells
   // them, a remote role its location string calls London, and a posting with no location.

@@ -28,6 +28,7 @@ import {
 import {
   DEFAULT_BASIS,
   FILTERS,
+  POSTED_WINDOWS,
   TABS,
   WINDOW_MS,
   cleared,
@@ -425,9 +426,15 @@ describe('badges and dropdowns write the same filter', () => {
   });
 
   it('a filter link cannot carry a value the tab does not offer', async () => {
+    // Season is Engineering's; `posted` is now shared, so it survives on both tabs.
     expect(withFilter(params('design'), 'season', 'summer')).toBe('/');
-    expect(withFilter(params('design'), 'posted', 'hour')).toBe('/');
+    expect(withFilter(params('design'), 'posted', 'hour')).toBe('/?posted=hour');
     expect(withFilter(params('engineering'), 'posted', 'hour')).toBe('/?tab=engineering&posted=hour');
+  });
+
+  /** Design offered `week` alone until a one-option dropdown read as a broken control. */
+  it.each(TABS)('%s offers every posted window', (tab) => {
+    expect(vocab(tab, 'posted')).toEqual([...POSTED_WINDOWS]);
   });
 
   it('changing a filter closes the drawer rather than carrying it along', async () => {
@@ -536,7 +543,7 @@ describe('search params are validated, not trusted', () => {
 
   it('drops values outside the tab vocabulary', async () => {
     const p = parseParams({ tab: 'design', posted: 'hour', season: 'summer', type: 'part-time' });
-    expect(p.posted).toBeNull(); // Design offers `week` only
+    expect(p.posted).toBe('hour'); // every window is offered on both tabs now
     expect(p.season).toBeNull(); // Design has no seasons
     expect(p.type).toBe('part-time');
   });
