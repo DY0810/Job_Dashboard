@@ -9,7 +9,7 @@
 
 import { and, asc, count, desc, eq, gte, inArray, isNull, like, sql, type SQL } from 'drizzle-orm';
 import { cutoffTimestamp } from './dedupe.ts';
-import type { Db } from './db/index.ts';
+import { driver, type ReadDb } from './db/index.ts';
 import { postings } from './db/schema.ts';
 import { GEO_TIER } from './geo.ts';
 import { VISIBLE_SENIORITY, WINDOW_MS, bare, type Params } from './params.ts';
@@ -131,8 +131,8 @@ function where(p: Params, now: number): SQL {
  * The page's "last 24 hours" band depends on this being the first key, and `query.test.ts`
  * asserts that the fresh rows come back as a prefix.
  */
-export function listPostings(db: Db, p: Params, now: number = Date.now()) {
-  return db
+export async function listPostings(db: ReadDb, p: Params, now: number = Date.now()) {
+  return await driver(db)
     .select(ROW)
     .from(postings)
     .where(where(p, now))
@@ -140,11 +140,17 @@ export function listPostings(db: Db, p: Params, now: number = Date.now()) {
     .all();
 }
 
-export type Row = ReturnType<typeof listPostings>[number];
+export type Row = Awaited<ReturnType<typeof listPostings>>[number];
 
 /** True when the tab holds no rows at all — the difference between "empty" and "no matches". */
-export function tabIsEmpty(db: Db, p: Params, now: number = Date.now()): boolean {
-  return db.select({ id: postings.id }).from(postings).where(where(bare(p), now)).limit(1).all().length === 0;
+export async function tabIsEmpty(db: ReadDb, p: Params, now: number = Date.now()): Promise<boolean> {
+  const rows = await driver(db)
+    .select({ id: postings.id })
+    .from(postings)
+    .where(where(bare(p), now))
+    .limit(1)
+    .all();
+  return rows.length === 0;
 }
 
 /**
@@ -154,20 +160,23 @@ export function tabIsEmpty(db: Db, p: Params, now: number = Date.now()): boolean
  * under the same filters it is explaining, so the number is an answer to the question the
  * reader just asked rather than a fact about the whole tab.
  */
-export function outsideTargetLocations(db: Db, p: Params, now: number = Date.now()): number {
-  return (
-    db
-      .select({ n: count() })
-      .from(postings)
-      .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), outsideTargets))
-      .get()?.n ?? 0
-  );
+export async function outsideTargetLocations(
+  db: ReadDb,
+  p: Params,
+  now: number = Date.now(),
+): Promise<number> {
+  const row = await driver(db)
+    .select({ n: count() })
+    .from(postings)
+    .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), outsideTargets))
+    .get();
+  return row?.n ?? 0;
 }
 
 /** Drawer-only fields. The one route handler serves exactly this shape. */
-export function getPostingDetail(db: Db, id: number, now: number = Date.now()) {
+export async function getPostingDetail(db: ReadDb, id: number, now: number = Date.now()) {
   return (
-    db
+    (await driver(db)
       .select({
         id: postings.id,
         title: postings.title,
@@ -182,8 +191,8 @@ export function getPostingDetail(db: Db, id: number, now: number = Date.now()) {
       })
       .from(postings)
       .where(and(eq(postings.id, id), ...visible(now)))
-      .get() ?? null
+      .get()) ?? null
   );
 }
 
-export type PostingDetail = NonNullable<ReturnType<typeof getPostingDetail>>;
+export type PostingDetail = NonNullable<Awaited<ReturnType<typeof getPostingDetail>>>;

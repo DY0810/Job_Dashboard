@@ -1,7 +1,7 @@
 import { desc } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDb } from "@/lib/db";
+import { TURSO_ENV, driver, getDb, needsTurso } from "@/lib/db";
 import { connectorRuns } from "@/lib/db/schema";
 import {
   TABS,
@@ -253,6 +253,33 @@ function Empty({ outside }: { outside: number }) {
   );
 }
 
+/** The deployment URL exists before the Turso database does, so the first thing the hosted
+ *  site is asked to render is often this. Name the two variables rather than throwing. */
+function NotConfigured() {
+  return (
+    <main className="min-h-dvh px-4 pb-16">
+      <header className="flex items-baseline gap-6 border-b border-rule py-2">
+        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
+        <span className="w-wide text-[11px] text-fg-dim">not configured</span>
+      </header>
+      <div className="prose max-w-lg py-12">
+        <p>No database is configured for this deployment.</p>
+        <p className="mt-3">
+          Create a Turso database and set{" "}
+          {TURSO_ENV.map((name, index) => (
+            <span key={name}>
+              {index > 0 ? " and " : ""}
+              <Command>{name}</Command>
+            </span>
+          ))}{" "}
+          in the project&rsquo;s environment variables, then redeploy. Mirror the local corpus
+          into it with <Command>npm run push:remote</Command>.
+        </p>
+      </div>
+    </main>
+  );
+}
+
 function NoMatches({ p, outside }: { p: Params; outside: number }) {
   return (
     <div className="prose max-w-lg py-12">
@@ -279,11 +306,13 @@ export default async function Page({
   // and a copied URL all agree, and `?type=` never becomes a second spelling of "no filter".
   if (Object.values(raw).some((value) => value === "")) redirect(href(p));
 
+  if (needsTurso()) return <NotConfigured />;
+
   const now = Date.now();
   const db = getDb();
 
-  const rows = listPostings(db, p, now);
-  const lastRun = db
+  const rows = await listPostings(db, p, now);
+  const lastRun = await driver(db)
     .select({ startedAt: connectorRuns.startedAt })
     .from(connectorRuns)
     .orderBy(desc(connectorRuns.startedAt))
@@ -333,10 +362,10 @@ export default async function Page({
       {rows.length === 0 ? (
         // The counts below are the only extra queries, and only on a page with no rows: the
         // empty state asks about the tab, the zero-result state asks about these filters.
-        tabIsEmpty(db, p, now) ? (
-          <Empty outside={outsideTargetLocations(db, bare(p), now)} />
+        (await tabIsEmpty(db, p, now)) ? (
+          <Empty outside={await outsideTargetLocations(db, bare(p), now)} />
         ) : (
-          <NoMatches p={p} outside={outsideTargetLocations(db, p, now)} />
+          <NoMatches p={p} outside={await outsideTargetLocations(db, p, now)} />
         )
       ) : (
         <table className="rows">
