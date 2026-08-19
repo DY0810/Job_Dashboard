@@ -31,6 +31,9 @@ export const CITY_ALIASES = {
       'SF',
       'San Francisco',
       'San Francisco Bay Area',
+      'SF Bay Area',
+      'Bay Area',
+      'Silicon Valley',
       'Palo Alto',
       'Mountain View',
       'South Bay',
@@ -159,12 +162,25 @@ for (const [key, entry] of Object.entries(CITY_ALIASES)) {
  */
 const FACILITY_TAIL = /\s+(?:office|offices|hq|headquarters|campus|city|metro|area|region)$/;
 
-function metroAlias(segment: string): MetroKey | undefined {
+/** The other half of the same habit: "Greater Seattle Area", "Greater New York City Area". */
+const LEADING_MODIFIER = /^greater\s+/;
+
+/**
+ * Spellings of a segment to try against the *city* tables, longest first. Both affixes are
+ * stripped and every intermediate form is offered, so "Greater New York City Area" reaches
+ * "new york" through "new york city".
+ *
+ * City tables only, and that restriction is the whole point of returning a list instead of
+ * stripping up front: `STATE_LOOKUP` must never see a stripped form, or "Kansas City, MO"
+ * becomes the state of Kansas. An unrecognized segment keeps its original spelling, which is
+ * what leaves "Salt Lake City" and "New York Mills" alone.
+ */
+function citySpellings(segment: string): string[] {
+  const spellings = [segment];
   for (let text = segment; ; ) {
-    const hit = ALIAS_LOOKUP.get(text);
-    if (hit) return hit;
-    const stripped = text.replace(FACILITY_TAIL, '');
-    if (stripped === text) return undefined;
+    const stripped = text.replace(FACILITY_TAIL, '').replace(LEADING_MODIFIER, '');
+    if (stripped === text) return spellings;
+    spellings.push(stripped);
     text = stripped;
   }
 }
@@ -174,6 +190,53 @@ for (const code of new Set(Object.values(US_STATES))) STATE_LOOKUP.set(code.toLo
 
 const COUNTRY_LOOKUP = new Map(Object.entries(COUNTRIES));
 const CALIFORNIA_SET = new Set(CALIFORNIA_CITIES);
+
+/**
+ * A city is disambiguated by the state written *next to it* and by nothing else. "Manhattan,
+ * KS" is not New York and "Pasadena, TX" is not Los Angeles; but
+ * "New York, New York, United States, San Francisco, CA | New York City, NY | Seattle, WA"
+ * genuinely is New York, and its trailing WA belongs to Seattle. Comparing a city against the
+ * record's accumulated state instead of its own neighbour reads that string as a
+ * contradiction and strips metro status from ~281 real multi-location postings.
+ */
+function contradicts(next: string | undefined, state: string): boolean {
+  const adjacent = next === undefined ? undefined : STATE_LOOKUP.get(next);
+  return adjacent !== undefined && adjacent !== state;
+}
+
+interface CityHit {
+  city: string;
+  state: string;
+  country: string;
+}
+
+/** Metro alias or named California city, with the facility tolerance and the guard applied. */
+function resolveCity(segment: string, next: string | undefined): CityHit | undefined {
+  for (const spelling of citySpellings(segment)) {
+    const alias: MetroKey | undefined = ALIAS_LOOKUP.get(spelling);
+    if (alias) {
+      const entry = CITY_ALIASES[alias];
+      if (contradicts(next, entry.state)) return undefined;
+      return { city: alias, state: entry.state, country: entry.country };
+    }
+    if (CALIFORNIA_SET.has(spelling)) {
+      if (contradicts(next, 'CA')) return undefined;
+      return { city: spelling, state: 'CA', country: 'US' };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whole tokens. `segment.includes('in office')` also matched inside "berl-in office", which
+ * discarded the only segment of "Berlin Office" and left the posting with no location at all
+ * — tier `unknown`, which the Design tab shows. Segments are slugs, so padding with spaces is
+ * a word-boundary search.
+ */
+function hasWorkMode(segment: string): boolean {
+  const padded = ` ${segment} `;
+  return WORK_MODE_MARKERS.some((marker) => padded.includes(` ${marker} `));
+}
 
 /** lowercase · drop apostrophes · every other non-alphanumeric run becomes one space. */
 function slug(input: string): string {
@@ -257,10 +320,11 @@ function isRecognizedLocation(input: string): boolean {
   const text = slug(input);
   if (!text) return false;
   if (REMOTE_MARKERS.some((marker) => text.includes(marker))) return true;
-  if (WORK_MODE_MARKERS.some((marker) => text.includes(marker))) return true;
+  if (hasWorkMode(text)) return true;
   return (
-    ALIAS_LOOKUP.has(text) ||
-    CALIFORNIA_SET.has(text) ||
+    // Same tolerance as `normalizeLocation`, for the same reason: aggregators append the
+    // location to the title, and "… - New York City" has to strip like "… - New York, NY".
+    citySpellings(text).some((spelling) => ALIAS_LOOKUP.has(spelling) || CALIFORNIA_SET.has(spelling)) ||
     STATE_LOOKUP.has(text) ||
     COUNTRY_LOOKUP.has(text)
   );
@@ -310,9 +374,20 @@ export function normalizeLocation(input: string | null | undefined): NormalizedL
     }
   }
 
-  for (const segment of segments) {
+  /**
+   * Whether `city_norm` came from a table or from giving up. A posting listed in several
+   * places writes the ATS's own city first and the board's list after — "Washington, District
+   * of Columbia, United States, San Francisco, CA; St. Louis, MO; New York, NY" — so taking
+   * the first segment that stuck reads a job listed in SF, NYC and DC as Washington, and the
+   * Design tab drops it. A recognized city displaces a slug the parser merely gave up on;
+   * among recognized cities the first still wins.
+   */
+  let recognized = false;
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
     if (REMOTE_MARKERS.some((marker) => segment.includes(marker))) continue;
-    if (WORK_MODE_MARKERS.some((marker) => segment.includes(marker))) continue;
+    if (hasWorkMode(segment)) continue;
 
     // A two-letter code following a city is a state code, not a metro alias: "New Orleans,
     // LA" is Louisiana, not Los Angeles. Ambiguous codes resolve to the US state ("de" is
@@ -326,17 +401,14 @@ export function normalizeLocation(input: string | null | undefined): NormalizedL
       }
     }
 
-    const alias = metroAlias(segment);
-    if (alias) {
-      result.city_norm ??= alias;
-      result.state ??= CITY_ALIASES[alias].state;
-      result.country ??= CITY_ALIASES[alias].country;
-      continue;
-    }
-    if (CALIFORNIA_SET.has(segment)) {
-      result.city_norm ??= segment;
-      result.state ??= 'CA';
-      result.country ??= 'US';
+    const city = resolveCity(segment, segments[index + 1]);
+    if (city) {
+      if (!recognized) {
+        result.city_norm = city.city;
+        recognized = true;
+      }
+      result.state ??= city.state;
+      result.country ??= city.country;
       continue;
     }
     const state = STATE_LOOKUP.get(segment);
