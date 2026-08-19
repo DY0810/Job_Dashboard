@@ -1,4 +1,3 @@
-import Form from 'next/form';
 import Link from 'next/link';
 import {
   FILTERS,
@@ -92,14 +91,22 @@ function Select({ p, filter, values }: { p: Params; filter: Filter; values: read
  * That behaviour is WCAG 3.2.2 (On Input) failure F37, and it can make options unreachable by
  * keyboard on the platforms where a closed select fires `change` per arrow key.
  *
- * `next/form` submits client-side when JS is available and degrades to a plain GET form when
- * it is not. Row badges stay single-click links: a filter you can see is still one action.
+ * A PLAIN `<form>`, not `next/form`, and that is the fix for a broken filter button rather
+ * than a preference. `next/form` submits through a client-side navigation: the submit event
+ * fired, it issued the RSC request for the right URL, the server answered 200 — and the router
+ * never committed, so the button did nothing at all. Verified in a browser against a trusted
+ * click, while `Link` navigation on the same page committed normally, so the router was fine
+ * and the form wrapper was not.
+ *
+ * A native GET submit is the behaviour `next/form` was wrapping anyway: it navigates to
+ * `/?tab=…&posted=…`, which the page renders directly. The cost is a full page load instead of
+ * a client-side one, which for a control that replaces the entire table is not a real loss.
+ * Row badges stay single-click links: a filter you can see is still one action.
  */
 export function Filters({ p }: { p: Params }) {
   return (
-    <Form
+    <form
       action="/"
-      scroll={false}
       className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-rule py-2"
     >
       {/* Submitting replaces the whole query string, so state that is not a control here has
@@ -135,6 +142,6 @@ export function Filters({ p }: { p: Params }) {
           </span>
         )}
       </span>
-    </Form>
+    </form>
   );
 }

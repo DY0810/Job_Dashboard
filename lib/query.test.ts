@@ -512,6 +512,28 @@ describe('the Design freelance split', () => {
 });
 
 describe('search params are validated, not trusted', () => {
+  /**
+   * The invariant the filter button rests on. That GET form submits every control, including
+   * the ones left on "any", so the page is asked for `?type=&pay=&mode=` constantly. The page
+   * used to refuse to render those and `redirect()` to the tidy URL instead, which broke the
+   * button outright — `next/form` navigates on the client and a redirect thrown mid-stream
+   * leaves an empty tree. Nothing needs the redirect as long as a form-shaped URL parses to
+   * exactly what the tidy one parses to, which is what this pins.
+   */
+  it.each([
+    ['design employed', { tab: 'design', basis: 'employed', posted: 'week' }, { posted: 'week' }],
+    ['design freelance', { tab: 'design', basis: 'freelance', type: 'contract' }, { basis: 'freelance', type: 'contract' }],
+    ['engineering', { tab: 'engineering', posted: 'day', level: 'entry' }, { tab: 'engineering', posted: 'day', level: 'entry' }],
+    ['nothing chosen', { tab: 'design', basis: 'employed' }, {}],
+  ])('%s: a form submission parses to the same params as the tidy URL', (_label, chosen, tidy) => {
+    const empties = { type: '', pay: '', mode: '', season: '', level: '', posted: '' };
+    // The form sends every control; the chosen ones overwrite their empty defaults.
+    const submitted = parseParams({ ...empties, ...chosen });
+    expect(submitted).toEqual(parseParams(tidy));
+    // And the URL the page would tidy to is reachable from what was submitted.
+    expect(fromUrl(href(submitted))).toEqual(submitted);
+  });
+
   it('drops values outside the tab vocabulary', async () => {
     const p = parseParams({ tab: 'design', posted: 'hour', season: 'summer', type: 'part-time' });
     expect(p.posted).toBeNull(); // Design offers `week` only

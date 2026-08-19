@@ -1,6 +1,5 @@
 import { desc } from "drizzle-orm";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { TURSO_ENV, driver, getDb, needsTurso } from "@/lib/db";
 import { connectorRuns } from "@/lib/db/schema";
 import {
@@ -114,13 +113,12 @@ function Badges({ row, p }: { row: Row; p: Params }) {
       {row.internshipSeason ? (
         <RowChip p={p} group="season" value={row.internshipSeason} />
       ) : null}
-      {/* Engineering carries seniority in its own column; Design has no such column. */}
+      {/* Engineering carries seniority in its own column; Design has no such column, so the
+          level rides along as a badge. It used to relabel `entry` as `junior` to match the
+          folded filter option — with `entry` its own option, that badge now both misnamed the
+          row and filtered to the wrong level when clicked. */}
       {p.tab === "design" && row.seniority ? (
-        <RowChip
-          p={p}
-          group="level"
-          value={row.seniority === "entry" ? "junior" : row.seniority}
-        />
+        <RowChip p={p} group="level" value={row.seniority} />
       ) : null}
       {(row.badges ?? []).map((badge) => (
         <BadgeChip key={badge} p={p} value={badge} />
@@ -303,10 +301,25 @@ export default async function Page({
 }) {
   const raw = await searchParams;
   const p = parseParams(raw);
-  // The filter form is a GET form, so it submits every control including the ones set to
-  // "any". Land on the URL `href()` would have written, so the address bar, the badge links
-  // and a copied URL all agree, and `?type=` never becomes a second spelling of "no filter".
-  if (Object.values(raw).some((value) => value === "")) redirect(href(p));
+
+  // NO REDIRECT HERE, and it is not an omission.
+  //
+  // The filter form is a GET form, so it submits every control including the ones left on
+  // "any" — `?type=&pay=&mode=`. This used to `redirect(href(p))` to tidy those away so the
+  // address bar matched what the badge links write. That redirect broke the filter button
+  // outright: `next/form` submits through a client-side navigation, and a `redirect()` thrown
+  // while this page is already streaming (it has a `loading.tsx`) leaves the router with an
+  // empty tree — a blank page at the un-normalized URL, no table, no filter row. Reproduced on
+  // both a real click and a plain navigation; a native full-page GET redirected fine, which is
+  // exactly why it survived being tested by hand.
+  //
+  // Nothing needs the redirect. `parseParams` already reads `?type=` as "no filter", so this
+  // renders precisely what the tidy URL would have rendered — asserted in query.test.ts — and
+  // every link on the page is written by `href(p)`, so the empty params never propagate. The
+  // only cost is a scruffy address bar until the next badge, tab or clear click rewrites it.
+  //
+  // To tidy it anyway, do it AFTER render from the client (`router.replace` in an effect), not
+  // by refusing to render on the server.
 
   if (needsTurso()) return <NotConfigured />;
 
