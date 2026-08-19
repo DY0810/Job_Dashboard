@@ -12,7 +12,7 @@ import { cutoffTimestamp } from './dedupe.ts';
 import { driver, type ReadDb } from './db/index.ts';
 import { postings } from './db/schema.ts';
 import { GEO_TIER } from './geo.ts';
-import { VISIBLE_SENIORITY, WINDOW_MS, bare, type Params } from './params.ts';
+import { DESIGN_TYPE, VISIBLE_SENIORITY, WINDOW_MS, bare, type Params } from './params.ts';
 
 /** The table never selects `description` — ~2k full bodies is ~8MB the table cannot use. */
 const ROW = {
@@ -62,8 +62,26 @@ export const geoTierSql: SQL<number> = sql<number>`(case
 const outsideTargets: SQL = sql`${geoTierSql} = ${GEO_TIER.elsewhere}`;
 
 /**
- * Sort key 2 on both tabs: entry and junior above mid (finding F). Entry outranks junior too —
- * the spec only pins both above mid, and a total order beats an arbitrary one.
+ * The two sides of the Design split, built from `DESIGN_TYPE` so the SQL and the dropdown
+ * vocabulary cannot disagree about which types are freelance.
+ *
+ * `coalesce` on the employed side is the whole reason this is not one negated expression: a
+ * posting whose employment type was never determined is NULL, `NULL not in (...)` answers NULL,
+ * and the row would then belong to neither side and vanish from the tab entirely. Unknown is
+ * not freelance, so it belongs with the employed rows — and today that is 18 of ~58 Design
+ * postings, not an edge case.
+ */
+const freelanceTypes: SQL = sql.join(
+  DESIGN_TYPE.freelance.map((type) => sql`${type}`),
+  sql`, `,
+);
+const isFreelance: SQL = sql`${postings.employmentType} in (${freelanceTypes})`;
+const isEmployed: SQL = sql`coalesce(${postings.employmentType}, '') not in (${freelanceTypes})`;
+
+/**
+ * Sort key 2 on both tabs: entry and junior above mid. Entry outranks junior too — the spec
+ * only pins both above mid, and a total order beats an arbitrary one. Unchanged by entry
+ * getting its own filter option: they were always separate here, only the filter folded them.
  */
 const seniorityRank = sql<number>`(case ${postings.seniority}
   when 'entry' then 0 when 'junior' then 1 when 'mid' then 2 else 3 end)`;
@@ -104,14 +122,12 @@ function userFilters(p: Params, now: number): SQL[] {
   // is off (finding G). SQL NULL is not equal to anything, so `eq` already does that.
   if (p.pay) parts.push(eq(postings.paid, p.pay === 'paid'));
 
-  // `junior` covers entry as well; there is no entry option.
-  if (p.level) {
-    parts.push(
-      p.level === 'junior'
-        ? inArray(postings.seniority, ['entry', 'junior'])
-        : eq(postings.seniority, p.level as never),
-    );
-  }
+  // One option, one value. `entry` used to fold into `junior` here; it is its own option now,
+  // so `junior` means junior and nothing else.
+  if (p.level) parts.push(eq(postings.seniority, p.level as never));
+
+  // The Design split. Not reachable on Engineering — `parseParams` nulls `basis` there.
+  if (p.basis) parts.push(p.basis === 'freelance' ? isFreelance : isEmployed);
 
   // ponytail: substring match on the JSON array text. Badge slugs are `[a-z0-9-]+` (enforced
   // in params.ts) so they cannot contain a quote and cannot partially match another slug.

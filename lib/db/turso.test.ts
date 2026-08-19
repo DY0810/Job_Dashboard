@@ -21,7 +21,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { fixtures } from '../../scripts/seed.ts';
 import { pushRemote } from '../../scripts/push-remote.ts';
-import { bare, type Params, type Tab } from '../params.ts';
+import {
+  DEFAULT_BASIS, bare, type Params, type Tab
+} from '../params.ts';
 import { getPostingDetail, listPostings, outsideTargetLocations, tabIsEmpty } from '../query.ts';
 import { needsTurso, openDb, type Db, type ReadDb } from './index.ts';
 import * as schema from './schema.ts';
@@ -36,6 +38,9 @@ let remote: ReadDb;
 function params(tab: Tab, over: Partial<Params> = {}): Params {
   return {
     tab,
+    // Faithful to `parseParams`: Design always lands on a side of the freelance split,
+    // Engineering has no split at all.
+    basis: tab === 'design' ? DEFAULT_BASIS : null,
     posted: null,
     type: null,
     pay: null,

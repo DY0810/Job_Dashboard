@@ -4,17 +4,19 @@ import { redirect } from "next/navigation";
 import { TURSO_ENV, driver, getDb, needsTurso } from "@/lib/db";
 import { connectorRuns } from "@/lib/db/schema";
 import {
+  BASES,
   TABS,
   WINDOW_MS,
   bare,
   cleared,
   href,
   parseParams,
-  withJob,
-  withTab,
   type Params,
   type RawSearchParams,
   type Tab,
+  withBasis,
+  withJob,
+  withTab,
 } from "@/lib/params";
 import { listPostings, outsideTargetLocations, tabIsEmpty, type Row } from "@/lib/query";
 import { Drawer } from "./drawer";
@@ -347,6 +349,25 @@ export default async function Page({
             </Link>
           ))}
         </nav>
+        {/* The Design split. A partition of the tab rather than a filter, so it sits with the
+            tabs and not in the filter row: there is no "any", one side is always showing, and
+            `clear` does not reset it. Absent on Engineering, where `basis` is null. */}
+        {p.basis ? (
+          <nav className="flex gap-1.5" aria-label="Engagement">
+            {BASES.map((basis) => (
+              <Link
+                key={basis}
+                href={withBasis(p, basis)}
+                scroll={false}
+                aria-current={basis === p.basis ? "true" : undefined}
+                className="chip"
+              >
+                {basis}
+              </Link>
+            ))}
+          </nav>
+        ) : null}
+
         <div className="ml-auto flex items-baseline gap-4 text-[11px] text-fg-dim">
           <span className="nums">
             {lastRun
@@ -372,6 +393,7 @@ export default async function Page({
             <caption className="sr-only">
               {p.tab} postings, newest first
               {p.tab === "design" ? ", target locations only" : ""}
+              {p.basis ? `, ${p.basis} roles` : ""}
             </caption>
             <thead>
               <tr>

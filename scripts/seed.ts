@@ -102,6 +102,10 @@ const FIXTURES: Fixture[] = [
   { ref: 'd-parttime', track: 'design', company: 'Ridgeline Print', title: 'Packaging Designer', place: 'oakland', age: 4 * DAY, seniority: 'junior', type: 'part-time', mode: 'hybrid', paid: true, pay: [38, 46, 'hour'] },
   { ref: 'd-remote-mid', track: 'design', company: 'Solder Studio', title: 'Design Systems Designer', place: 'remote', age: 9 * HOUR, seniority: 'mid', type: 'full-time', mode: 'remote', paid: true, pay: [125_000, 150_000, 'year'], badges: ['design-systems'] },
   { ref: 'd-freelance', track: 'design', company: 'Aperture Weekly', title: 'Editorial Designer', place: 'remote', age: 11 * DAY, seniority: 'junior', type: 'freelance', mode: 'remote', paid: true, pay: [55, 70, 'hour'] },
+  // `contract`, not `freelance` — the same engagement as the row above described the way a real
+  // board usually describes it. The freelance side of the Design split has to hold both, or the
+  // toggle hides the majority of the freelance work it claims to show.
+  { ref: 'd-contract', track: 'design', company: 'Solder Studio', title: 'UX Designer', place: 'nyc', age: 7 * HOUR, seniority: 'mid', type: 'contract', mode: 'hybrid', paid: true, pay: [70, 85, 'hour'] },
   { ref: 'd-austin', track: 'design', company: 'Pilot Grove', title: 'Product Designer', place: 'austin', age: 16 * HOUR, seniority: 'junior', type: 'full-time', mode: 'hybrid', paid: true, pay: [92_000, 112_000, 'year'] },
   { ref: 'd-sparse', track: 'design', company: 'Quarry Works', title: 'Communication Designer', place: 'remote', age: 21 * DAY, seniority: 'junior', type: 'full-time', mode: 'remote', paid: null },
   { ref: 'd-nyc-mid', track: 'design', company: 'Cadence Union', title: 'Interaction Designer', place: 'nyc', age: 6 * DAY, seniority: 'mid', type: 'full-time', mode: 'onsite', paid: true, pay: [118_000, 140_000, 'year'] },

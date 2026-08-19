@@ -26,15 +26,18 @@ import {
   tabIsEmpty,
 } from './query.ts';
 import {
+  DEFAULT_BASIS,
   FILTERS,
   TABS,
   WINDOW_MS,
+  cleared,
   href,
   parseParams,
-  vocab,
-  withFilter,
   type Params,
   type Tab,
+  vocab,
+  withBasis,
+  withFilter,
 } from './params.ts';
 
 const NOW = Date.UTC(2026, 2, 17, 12, 0, 0);
@@ -46,6 +49,9 @@ let refOf: Map<number, string>;
 function params(tab: Tab, over: Partial<Params> = {}): Params {
   return {
     tab,
+    // Faithful to `parseParams`: Design always lands on a side of the freelance split,
+    // Engineering has no split at all.
+    basis: tab === 'design' ? DEFAULT_BASIS : null,
     posted: null,
     type: null,
     pay: null,
@@ -106,9 +112,12 @@ describe('recency first, on both tabs', () => {
     expect(list).toEqual([...list].sort((a, b) => b - a));
   });
 
+  // All three are employed-side rows, which is the side `params('design')` lands on. The
+  // 6h-old `d-unknown-pay` used to be the newest here and is freelance, so it now sits on the
+  // other side of the split — see the split's own describe block for the ordering there.
   it('design: three known timestamps come back newest first', async () => {
     const list = await order(params('design'));
-    before(list, 'd-unknown-pay', 'd-unpaid-intern'); // 6h before 2d
+    before(list, 'd-remote-mid', 'd-unpaid-intern'); // 9h before 2d
     before(list, 'd-unpaid-intern', 'd-sparse'); // 2d before 21d
   });
 
@@ -143,9 +152,9 @@ describe('design shows the target locations, engineering shows every location', 
   });
 
   it('hides it even when it would otherwise lead the table', async () => {
-    // Two hours old against a six-hour-old survivor: recency does not buy an exemption.
+    // Two hours old against a nine-hour-old survivor: recency does not buy an exemption.
     expect(await order(params('design'))).not.toContain('d-berlin-2h');
-    expect((await order(params('design')))[0]).toBe('d-unknown-pay');
+    expect((await order(params('design')))[0]).toBe('d-remote-mid');
   });
 
   it('keeps tier 0, tier 1 and tier 2', async () => {
@@ -304,18 +313,27 @@ describe('rows that must never render', () => {
 });
 
 describe('filters', () => {
+  // `d-sparse` rather than `d-unknown-pay`: both have no pay, and this one is on the employed
+  // side, so the assertion is about the pay rule and not about which side of the split it is on.
   it('pay unknown matches neither value but stays visible with the filter off (finding G)', async () => {
-    expect(await order(params('design'))).toContain('d-unknown-pay');
-    expect(await order(params('design', { pay: 'paid' }))).not.toContain('d-unknown-pay');
-    expect(await order(params('design', { pay: 'unpaid' }))).not.toContain('d-unknown-pay');
+    expect(await order(params('design'))).toContain('d-sparse');
+    expect(await order(params('design', { pay: 'paid' }))).not.toContain('d-sparse');
+    expect(await order(params('design', { pay: 'unpaid' }))).not.toContain('d-sparse');
     expect(await order(params('design', { pay: 'unpaid' }))).toContain('d-unpaid-intern');
   });
 
-  it('the junior option covers entry as well (finding F)', async () => {
-    const list = await order(params('engineering', { level: 'junior' }));
-    expect(list).toContain('e-nyc-entry'); // entry
-    expect(list).toContain('e-sf-3d'); // junior
-    expect(list).not.toContain('e-tie-mid'); // mid
+  /**
+   * Was "the junior option covers entry as well (finding F)". Entry has its own option now, so
+   * the two are asserted apart: each level option returns its own rows and nothing else. The
+   * fold was hiding the larger group (281 entry engineering postings against 13 junior) behind
+   * the smaller one's label.
+   */
+  it.each(['entry', 'junior', 'mid'] as const)('the %s option means exactly that level', async (level) => {
+    const list = await order(params('engineering', { level }));
+    const others = { entry: ['e-sf-3d', 'e-tie-mid'], junior: ['e-nyc-entry', 'e-tie-mid'], mid: ['e-nyc-entry', 'e-sf-3d'] }[level];
+    const own = { entry: 'e-nyc-entry', junior: 'e-sf-3d', mid: 'e-tie-mid' }[level];
+    expect(list, `${level} should list its own rows`).toContain(own);
+    for (const ref of others) expect(list, `${level} must not list ${ref}`).not.toContain(ref);
   });
 
   it('posted-within windows narrow monotonically', async () => {
@@ -417,12 +435,100 @@ describe('badges and dropdowns write the same filter', () => {
   });
 });
 
+/**
+ * The Design freelance split. A partition, not a filter: the properties worth pinning are that
+ * it loses nothing and duplicates nothing, because either failure is silent — a posting that
+ * falls between the sides is simply never seen again, and nothing else in the app would notice.
+ */
+describe('the Design freelance split', () => {
+  const both = async () => [
+    await order(params('design', { basis: 'employed' })),
+    await order(params('design', { basis: 'freelance' })),
+  ];
+
+  it('puts every visible Design posting on exactly one side', async () => {
+    const [employed, freelance] = await both();
+    const overlap = employed.filter((ref) => freelance.includes(ref));
+    expect(overlap, 'a posting on both sides would be double-counted').toEqual([]);
+    // The union has to equal what the tab shows with no split applied at all, which is what
+    // `basis: null` asks for — a shape only reachable here, never from a URL.
+    const whole = await order(params('design', { basis: null }));
+    expect([...employed, ...freelance].sort()).toEqual([...whole].sort());
+  });
+
+  it('routes freelance and contract to the freelance side', async () => {
+    const [employed, freelance] = await both();
+    expect(freelance).toContain('d-unknown-pay'); // type: freelance
+    expect(freelance).toContain('d-contract'); // type: contract — the case a literal match misses
+    expect(freelance).toContain('d-freelance');
+    expect(employed).not.toContain('d-contract');
+  });
+
+  it('keeps an undetermined employment type on the employed side rather than dropping it', async () => {
+    // `d-sparse` has no employment type at all. `NULL not in (...)` is NULL, so without the
+    // coalesce in `isEmployed` this row would belong to neither side and vanish from the tab.
+    const [employed, freelance] = await both();
+    expect(employed).toContain('d-sparse');
+    expect(freelance).not.toContain('d-sparse');
+  });
+
+  it('sorts each side by the same two keys as the tab', async () => {
+    before(await order(params('design', { basis: 'freelance' })), 'd-unknown-pay', 'd-contract'); // 6h before 7h
+    before(await order(params('design', { basis: 'freelance' })), 'd-contract', 'd-freelance'); // 7h before 11d
+  });
+
+  it('still obeys the location rule and the structural rules on both sides', async () => {
+    for (const list of await both()) {
+      expect(list).not.toContain('d-berlin-3d'); // elsewhere
+      expect(list).not.toContain('d-senior'); // senior+
+      expect(list).not.toContain('d-delisted');
+      expect(list).not.toContain('d-old'); // past the 60-day cutoff
+    }
+  });
+
+  it('is a Design control only — Engineering has no side', async () => {
+    expect(parseParams({ tab: 'engineering', basis: 'freelance' }).basis).toBeNull();
+    expect(parseParams({ tab: 'design' }).basis).toBe(DEFAULT_BASIS);
+    expect(parseParams({ tab: 'design', basis: 'nonsense' }).basis).toBe(DEFAULT_BASIS);
+  });
+
+  it('writes only the non-default side into the URL', async () => {
+    expect(href(params('design', { basis: 'employed' }))).toBe('/');
+    expect(href(params('design', { basis: 'freelance' }))).toBe('/?basis=freelance');
+    expect(withBasis(params('design'), 'freelance')).toBe('/?basis=freelance');
+    expect(withBasis(params('design', { basis: 'freelance' }), 'employed')).toBe('/');
+  });
+
+  it('drops a type the destination side does not offer when crossing', async () => {
+    // Carrying `type=part-time` onto the freelance side would show an empty table under a
+    // control set to a value that side cannot have.
+    expect(withBasis(params('design', { type: 'part-time' }), 'freelance')).toBe('/?basis=freelance');
+    expect(withBasis(params('design', { type: 'contract', basis: 'freelance' }), 'employed')).toBe('/');
+  });
+
+  it('survives clearing the filters — clear is not a way across the split', async () => {
+    expect(cleared(params('design', { basis: 'freelance', type: 'contract' }))).toBe('/?basis=freelance');
+  });
+});
+
 describe('search params are validated, not trusted', () => {
   it('drops values outside the tab vocabulary', async () => {
-    const p = parseParams({ tab: 'design', posted: 'hour', season: 'summer', type: 'freelance' });
+    const p = parseParams({ tab: 'design', posted: 'hour', season: 'summer', type: 'part-time' });
     expect(p.posted).toBeNull(); // Design offers `week` only
     expect(p.season).toBeNull(); // Design has no seasons
-    expect(p.type).toBe('freelance');
+    expect(p.type).toBe('part-time');
+  });
+
+  /**
+   * The vocabulary a value is checked against depends on the side of the split, so `type` is
+   * validated after `basis` is resolved. Both directions matter: a bookmarked
+   * `?type=freelance` must not survive onto the employed side and quietly return nothing.
+   */
+  it('drops a type belonging to the other side of the split', async () => {
+    expect(parseParams({ tab: 'design', type: 'freelance' }).type).toBeNull();
+    expect(parseParams({ tab: 'design', basis: 'freelance', type: 'freelance' }).type).toBe('freelance');
+    expect(parseParams({ tab: 'design', basis: 'freelance', type: 'full-time' }).type).toBeNull();
+    expect(parseParams({ tab: 'design', basis: 'freelance', type: 'contract' }).type).toBe('contract');
   });
 
   it('falls back rather than throwing on junk', async () => {

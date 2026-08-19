@@ -82,6 +82,29 @@ describe('normalizeTitle', () => {
 
 describe('normalizeLocation', () => {
   /**
+   * The remote boards state a restriction rather than a place: "United States only", "US only".
+   * Without the qualifier strip the whole string misses every lookup and lands in `city_norm`
+   * as the junk key `united states only` with country null — which on the Design tab reads as
+   * elsewhere, so an American posting is hidden by the location rule.
+   */
+  it.each([
+    ['United States only', 'US'],
+    ['US only', 'US'],
+    ['USA only', 'US'],
+    ['United States', 'US'],
+    ['Canada only', 'CA'],
+  ])('reads %s as an eligibility qualifier, not a place name', (input, country) => {
+    const result = normalizeLocation(input);
+    expect(result.country).toBe(country);
+    expect(result.city_norm).toBeNull();
+  });
+
+  /** Only a TRAILING qualifier is noise — a leading "Only" can be part of a real name. */
+  it('leaves a name that merely starts with Only alone', () => {
+    expect(normalizeLocation('Only Connect Studios').city_norm).toBe('only connect studios');
+  });
+
+  /**
    * Job boards hang a facility noun off the city: "New York City", "New York HQ", "San
    * Francisco Office". These resolve to the metro's alias key rather than to a raw slug,
    * because `city_norm` feeds both `dedupe_key` and the Design tab's location rule — a miss

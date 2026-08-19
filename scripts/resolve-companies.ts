@@ -12,6 +12,7 @@
 //   node scripts/resolve-companies.ts --limit=5        only the first N seeds per group (smoke test)
 //   node scripts/resolve-companies.ts --dry-run        resolve and log, write nothing
 //   node scripts/resolve-companies.ts --groups=voice-ai            only run these seed groups
+//   node scripts/resolve-companies.ts --groups=design --skip-yc   only the US design employers
 //   node scripts/resolve-companies.ts --extra-ats=teamtailor,pinpoint   also try these ATS types
 //   node scripts/resolve-companies.ts --no-report      write companies.json, skip the report
 
@@ -209,6 +210,69 @@ const STUDIO_SEEDS: Seed[] = [
   { name: "Riot Games", website: "riotgames.com", tags: ["game-studio"], tryWorkday: true },
   { name: "Double Fine", website: "doublefine.com", tags: ["game-studio"] },
   { name: "Klei", website: "klei.com", tags: ["game-studio"] },
+];
+
+// ---------------------------------------------------------------------------------------
+// Design employers, US. The Design tab was thin for a structural reason rather than a
+// connector one: the registry held 74 companies, of which 71 were voice-AI and AI startups
+// and 3 were design studios, so the ATS tier — the only tier that reaches employers' own
+// boards, and the only one that carries non-remote US roles — had almost no design work to
+// find. New feeds cannot fix that; they are mostly remote-worldwide. More design employers can.
+//
+// Two kinds, and both earn their place:
+//   `design-studio`  agencies and studios, where nearly every opening is a design opening.
+//   `design-led`     product companies with large in-house design orgs — a smaller share of
+//                    design roles each, but far more roles, and they are US-metro based.
+//
+// A name here is a CANDIDATE, not an entry. `resolveCompany` probes each against every known
+// ATS and records only a confirmed 200 with a correctly-shaped body; the rest land in the
+// unresolved report. Nothing in this list is assumed to have a board.
+// ---------------------------------------------------------------------------------------
+const DESIGN_SEEDS: Seed[] = [
+  // Studios and agencies
+  { name: "Instrument", website: "instrument.com", tags: ["design-studio"] },
+  { name: "Work & Co", website: "work.co", tags: ["design-studio"] },
+  { name: "Huge", website: "hugeinc.com", tags: ["design-studio"] },
+  { name: "Code and Theory", website: "codeandtheory.com", tags: ["design-studio"] },
+  { name: "Big Human", website: "bighuman.com", tags: ["design-studio"] },
+  { name: "Barrel", website: "barrelny.com", tags: ["design-studio"] },
+  { name: "Ramotion", website: "ramotion.com", tags: ["design-studio"] },
+  { name: "Focus Lab", website: "focuslab.agency", tags: ["design-studio"] },
+  { name: "Clay", website: "clay.global", tags: ["design-studio"] },
+  { name: "Athletics", website: "athleticsnyc.com", tags: ["design-studio"] },
+  { name: "Collins", website: "wearecollins.com", tags: ["design-studio"] },
+  { name: "Moving Brands", website: "movingbrands.com", tags: ["design-studio"] },
+  { name: "Thoughtbot", website: "thoughtbot.com", tags: ["design-studio"] },
+  { name: "Superside", website: "superside.com", tags: ["design-studio"] },
+  { name: "Design Pickle", website: "designpickle.com", tags: ["design-studio"] },
+  { name: "Dept", website: "deptagency.com", tags: ["design-studio"] },
+
+  // Design-led product companies
+  { name: "Figma", website: "figma.com", tags: ["design-led"] },
+  { name: "Webflow", website: "webflow.com", tags: ["design-led"] },
+  { name: "Framer", website: "framer.com", tags: ["design-led"] },
+  { name: "Notion", website: "notion.so", tags: ["design-led"] },
+  { name: "Linear", website: "linear.app", tags: ["design-led"] },
+  { name: "Vercel", website: "vercel.com", tags: ["design-led"] },
+  { name: "Miro", website: "miro.com", tags: ["design-led"] },
+  { name: "Airtable", website: "airtable.com", tags: ["design-led"] },
+  { name: "Asana", website: "asana.com", tags: ["design-led"] },
+  { name: "Dropbox", website: "dropbox.com", tags: ["design-led"] },
+  { name: "Squarespace", website: "squarespace.com", tags: ["design-led"] },
+  { name: "Duolingo", website: "duolingo.com", tags: ["design-led"] },
+  { name: "Discord", website: "discord.com", tags: ["design-led"] },
+  { name: "Robinhood", website: "robinhood.com", tags: ["design-led"] },
+  { name: "Pinterest", website: "pinterest.com", tags: ["design-led"] },
+  { name: "Intercom", website: "intercom.com", tags: ["design-led"] },
+  { name: "Retool", website: "retool.com", tags: ["design-led"] },
+  { name: "Ramp", website: "ramp.com", tags: ["design-led"] },
+  { name: "Brex", website: "brex.com", tags: ["design-led"] },
+  { name: "Plaid", website: "plaid.com", tags: ["design-led"] },
+  { name: "Rippling", website: "rippling.com", tags: ["design-led"] },
+  { name: "Gusto", website: "gusto.com", tags: ["design-led"] },
+  { name: "Zapier", website: "zapier.com", tags: ["design-led"] },
+  { name: "Grammarly", website: "grammarly.com", tags: ["design-led"] },
+  { name: "Patreon", website: "patreon.com", tags: ["design-led"] },
 ];
 
 interface YcSelection {
@@ -608,6 +672,7 @@ async function main(): Promise<void> {
     { label: "voice-ai", seeds: VOICE_AI_SEEDS },
     { label: "ai-startups", seeds: AI_STARTUP_SEEDS },
     { label: "studios", seeds: STUDIO_SEEDS },
+    { label: "design", seeds: DESIGN_SEEDS },
   ];
   const wantsYc = !skipYc && (!onlyGroups || onlyGroups.has("yc"));
   if (wantsYc) {

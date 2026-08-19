@@ -24,14 +24,41 @@ export const WINDOW_MS = {
 } as const;
 
 /**
+ * The Design tab's freelance split. Not a filter: it partitions the tab, so one side is
+ * always on and there is no "any". Design defaults to `employed` — the tab's ordinary use —
+ * and Engineering has no split at all, so its `basis` is null.
+ *
+ * `freelance` covers `contract` too. The extractor writes `freelance` only when a posting
+ * says the word; the same engagement described as "a 6-month contract role" lands as
+ * `contract`, and a split that matched only the literal `freelance` would hide most of it.
+ */
+export const BASES = ['employed', 'freelance'] as const;
+export type Basis = (typeof BASES)[number];
+export const DEFAULT_BASIS: Basis = 'employed';
+
+/**
+ * The employment types each side of the split owns, and the reason the split needs no new
+ * column: it is the same `employment_type` the `type` dropdown filters on, cut in two. Every
+ * value the extractor can produce appears on exactly one side, so no posting can fall between
+ * them and none can appear on both. `lib/query.ts` builds its SQL from this same constant.
+ */
+export const DESIGN_TYPE = {
+  employed: ['full-time', 'part-time', 'internship'],
+  freelance: ['freelance', 'contract'],
+} as const satisfies Record<Basis, readonly string[]>;
+
+/**
  * Per-tab filter vocabulary, straight from the spec. The Design tab deliberately offers one
  * posted-window (`week`) and no seasons; Engineering offers four windows and no
  * freelance/part-time. A value outside its tab's vocabulary is dropped by `parseParams`.
+ *
+ * Design's `type` here is the union of both sides of the split — the answer to "does Design
+ * filter on type at all". `vocab()` narrows it to the side the reader is actually on.
  */
 export const VOCAB = {
   design: {
     posted: ['week'],
-    type: ['full-time', 'freelance', 'part-time', 'internship'],
+    type: [...DESIGN_TYPE.employed, ...DESIGN_TYPE.freelance],
     season: [],
   },
   engineering: {
@@ -41,11 +68,16 @@ export const VOCAB = {
   },
 } as const satisfies Record<Tab, { posted: readonly string[]; type: readonly string[]; season: readonly string[] }>;
 
-/** Shared by both tabs. `entry` folds into the `junior` option (finding F) — no entry option. */
+/**
+ * Shared by both tabs. `entry` is its own option on both: classification produces entry and
+ * junior as different things, and folding them (the original finding F) meant one chip
+ * labelled `junior` silently answered for both — hiding the larger group behind the smaller
+ * one's name. They still sort together, above mid.
+ */
 export const SHARED_VOCAB = {
   pay: ['paid', 'unpaid'],
   mode: ['remote', 'hybrid', 'onsite'],
-  level: ['junior', 'mid'],
+  level: ['entry', 'junior', 'mid'],
 } as const;
 
 /** The groups a row badge can belong to. */
@@ -61,8 +93,13 @@ export type Filter = (typeof FILTERS)[number];
  * Which vocabulary a filter offers on a tab. The one place that routing is written — the
  * dropdowns, the row badges and the tests all read it here, so a filter cannot offer the
  * dropdown one list and the badge another.
+ *
+ * `basis` narrows Design's `type` to the side of the split being shown, which is what keeps
+ * the two controls from contradicting each other: the freelance side cannot offer `full-time`,
+ * so no reachable URL asks for a full-time freelance posting and gets an empty table.
  */
-export function vocab(tab: Tab, filter: Filter): readonly string[] {
+export function vocab(tab: Tab, filter: Filter, basis: Basis | null = null): readonly string[] {
+  if (tab === 'design' && filter === 'type') return DESIGN_TYPE[basis ?? DEFAULT_BASIS];
   return filter === 'posted' || filter === 'type' || filter === 'season'
     ? VOCAB[tab][filter]
     : SHARED_VOCAB[filter];
@@ -74,6 +111,8 @@ export function vocab(tab: Tab, filter: Filter): readonly string[] {
  */
 export interface Params {
   tab: Tab;
+  /** Which side of the Design freelance split. Always set on Design, always null elsewhere. */
+  basis: Basis | null;
   posted: keyof typeof WINDOW_MS | null;
   type: string | null;
   pay: string | null;
@@ -90,6 +129,7 @@ const value = z.string().max(200).optional();
 
 const Raw = z.object({
   tab: z.enum(TABS).catch(DEFAULT_TAB),
+  basis: z.enum(BASES).optional().catch(undefined),
   posted: value.catch(undefined),
   type: value.catch(undefined),
   pay: value.catch(undefined),
@@ -121,6 +161,7 @@ export type RawSearchParams = Record<string, string | string[] | undefined>;
 export function parseParams(input: RawSearchParams): Params {
   const raw = Raw.parse({
     tab: first(input.tab),
+    basis: first(input.basis),
     posted: first(input.posted),
     type: first(input.type),
     pay: first(input.pay),
@@ -130,12 +171,18 @@ export function parseParams(input: RawSearchParams): Params {
     badge: first(input.badge),
     job: first(input.job),
   });
+  // Resolved before the filters, because Design's `type` vocabulary depends on it. A `basis`
+  // on an Engineering URL is dropped rather than honoured: the split is a Design control, and
+  // carrying it silently would let `?tab=engineering&basis=freelance` filter a tab that shows
+  // no such toggle.
+  const basis: Basis | null = raw.tab === 'design' ? (raw.basis ?? DEFAULT_BASIS) : null;
   const chosen = Object.fromEntries(
-    FILTERS.map((filter) => [filter, pick(raw[filter], vocab(raw.tab, filter))]),
+    FILTERS.map((filter) => [filter, pick(raw[filter], vocab(raw.tab, filter, basis))]),
   ) as Record<Filter, string | null>;
   return {
     ...chosen,
     tab: raw.tab,
+    basis,
     posted: chosen.posted as Params['posted'],
     badge: raw.badge ?? null,
     job: raw.job ?? null,
@@ -150,6 +197,9 @@ export function hasFilters(p: Params): boolean {
 export function href(p: Params): string {
   const q = new URLSearchParams();
   if (p.tab !== DEFAULT_TAB) q.set('tab', p.tab);
+  // Only the non-default side is written. `employed` is what a bare `/` already means, and
+  // spelling it out would give the same table two URLs.
+  if (p.basis && p.basis !== DEFAULT_BASIS) q.set('basis', p.basis);
   for (const filter of FILTERS) if (p[filter]) q.set(filter, p[filter]!);
   if (p.badge) q.set('badge', p.badge);
   if (p.job !== null) q.set('job', String(p.job));
@@ -174,9 +224,19 @@ export function withTab(p: Params, tab: Tab): string {
   return href(parseParams({ ...toRaw(p), tab }));
 }
 
+/**
+ * Crossing the Design split. Routed through `parseParams` for the same reason `withTab` is:
+ * the destination side owns a different `type` vocabulary, so a `type` the new side does not
+ * offer is dropped on the way rather than carried into a table that cannot show it.
+ */
+export function withBasis(p: Params, basis: Basis): string {
+  return href(parseParams({ ...toRaw(p), basis }));
+}
+
 /** The same params with every filter off — what `clear` navigates to, and what the "is this
  *  tab empty at all?" probe asks about. Derived from `FILTERS` so a new filter cannot be
- *  missed by one of the two. */
+ *  missed by one of the two. `basis` deliberately survives: it is not a filter, and clearing
+ *  filters should not also walk you across the split. */
 export function bare(p: Params): Params {
   return { ...p, ...Object.fromEntries(FILTERS.map((f) => [f, null])), badge: null } as Params;
 }
@@ -193,6 +253,7 @@ export function withJob(p: Params, job: number | null): string {
 function toRaw(p: Params): RawSearchParams {
   return {
     tab: p.tab,
+    basis: p.basis ?? undefined,
     ...Object.fromEntries(FILTERS.map((filter) => [filter, p[filter] ?? undefined])),
     badge: p.badge ?? undefined,
   };

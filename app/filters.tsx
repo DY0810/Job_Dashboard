@@ -33,9 +33,10 @@ function Chip({ href, on, children }: { href: string; on: boolean; children: Rea
  * a dropdown does not.
  */
 export function RowChip({ p, group, value }: { p: Params; group: Group; value: string }) {
-  // A value with no filter on this tab (a `contract` role on Design, say) still gets shown —
-  // it just is not pressable, because there is no filter for it to apply.
-  if (!vocab(p.tab, group).includes(value)) return <span className="chip">{value}</span>;
+  // A value with no filter on this side still gets shown — it just is not pressable, because
+  // there is no filter for it to apply. `p.basis` is passed so a badge offers what the
+  // dropdown above it offers: on the employed side of Design, a `contract` badge is text.
+  if (!vocab(p.tab, group, p.basis).includes(value)) return <span className="chip">{value}</span>;
   const on = p[group] === value;
   return (
     <Chip href={withFilter(p, group, on ? null : value)} on={on}>
@@ -104,10 +105,13 @@ export function Filters({ p }: { p: Params }) {
       {/* Submitting replaces the whole query string, so state that is not a control here has
           to ride along. `job` deliberately does not: filtering closes the drawer. */}
       <input type="hidden" name="tab" value={p.tab} />
+      {/* The split is a control of its own, above this form. Without it here, submitting the
+          filters would drop the reader back onto the employed side. */}
+      {p.basis ? <input type="hidden" name="basis" value={p.basis} /> : null}
       {p.badge ? <input type="hidden" name="badge" value={p.badge} /> : null}
 
       {FILTERS.map((filter) => {
-        const values = vocab(p.tab, filter);
+        const values = vocab(p.tab, filter, p.basis);
         // Design has no season vocabulary, so it gets no season dropdown.
         if (values.length === 0) return null;
         return <Select key={`${filter}:${href(p)}`} p={p} filter={filter} values={values} />;
