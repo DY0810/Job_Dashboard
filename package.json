@@ -10,6 +10,7 @@
     "lint": "eslint",
     "ingest": "node scripts/ingest.ts",
     "seed": "node scripts/seed.ts",
+    "push:remote": "node scripts/push-remote.ts",
     "enrich": "node scripts/enrich.ts",
     "linkcheck": "node scripts/linkcheck.ts",
     "db:generate": "drizzle-kit generate",
@@ -20,6 +21,7 @@
     "refresh": "bash scripts/refresh.sh"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
     "next": "15.5.15",

@@ -58,12 +58,12 @@ function params(tab: Tab, over: Partial<Params> = {}): Params {
   };
 }
 
-function order(p: Params): string[] {
-  return listPostings(db, p, NOW).map((row) => refOf.get(row.id)!);
+async function order(p: Params): Promise<string[]> {
+  return (await listPostings(db, p, NOW)).map((row) => refOf.get(row.id)!);
 }
 
-function times(p: Params): number[] {
-  return listPostings(db, p, NOW).map((row) => row.postedAt.getTime());
+async function times(p: Params): Promise<number[]> {
+  return (await listPostings(db, p, NOW)).map((row) => row.postedAt.getTime());
 }
 
 function idOf(ref: string): number {
@@ -100,26 +100,26 @@ beforeEach(() => {
 });
 
 describe('recency first, on both tabs', () => {
-  it.each(TABS)('%s: posted_at descends, with no exceptions', (tab) => {
-    const list = times(params(tab));
+  it.each(TABS)('%s: posted_at descends, with no exceptions', async (tab) => {
+    const list = await times(params(tab));
     expect(list.length).toBeGreaterThan(5);
     expect(list).toEqual([...list].sort((a, b) => b - a));
   });
 
-  it('design: three known timestamps come back newest first', () => {
-    const list = order(params('design'));
+  it('design: three known timestamps come back newest first', async () => {
+    const list = await order(params('design'));
     before(list, 'd-unknown-pay', 'd-unpaid-intern'); // 6h before 2d
     before(list, 'd-unpaid-intern', 'd-sparse'); // 2d before 21d
   });
 
-  it('engineering: three known timestamps come back newest first', () => {
-    const list = order(params('engineering'));
+  it('engineering: three known timestamps come back newest first', async () => {
+    const list = await order(params('engineering'));
     before(list, 'e-voice', 'e-intern-summer'); // 3h before 5h
     before(list, 'e-intern-summer', 'e-sf-3d'); // 5h before 3d
   });
 
-  it.each(TABS)('%s: identical posted_at, entry above mid', (tab) => {
-    before(order(params(tab)), `${tab[0]}-tie-entry`, `${tab[0]}-tie-mid`);
+  it.each(TABS)('%s: identical posted_at, entry above mid', async (tab) => {
+    before(await order(params(tab)), `${tab[0]}-tie-entry`, `${tab[0]}-tie-mid`);
   });
 
   /**
@@ -128,8 +128,8 @@ describe('recency first, on both tabs', () => {
    * explicit fresh-bucket key that used to guarantee it is exactly what this change removed.
    * Put any key ahead of recency and stale rows render under the accent band.
    */
-  it.each(TABS)('%s: the fresh rows are a prefix, which is what the band renders', (tab) => {
-    const fresh = times(params(tab)).map((t) => NOW - t < WINDOW_MS.day);
+  it.each(TABS)('%s: the fresh rows are a prefix, which is what the band renders', async (tab) => {
+    const fresh = (await times(params(tab))).map((t) => NOW - t < WINDOW_MS.day);
     const firstStale = fresh.indexOf(false);
     expect(firstStale, 'the corpus needs both fresh and stale rows to test this').toBeGreaterThan(0);
     expect(fresh.slice(firstStale), 'a fresh row sorted below a stale one').not.toContain(true);
@@ -137,19 +137,19 @@ describe('recency first, on both tabs', () => {
 });
 
 describe('design shows the target locations, engineering shows every location', () => {
-  it('hides a Berlin posting that Engineering shows, in the same corpus', () => {
-    expect(order(params('design'))).not.toContain('d-berlin-3d');
-    expect(order(params('engineering'))).toContain('e-berlin-3d');
+  it('hides a Berlin posting that Engineering shows, in the same corpus', async () => {
+    expect(await order(params('design'))).not.toContain('d-berlin-3d');
+    expect(await order(params('engineering'))).toContain('e-berlin-3d');
   });
 
-  it('hides it even when it would otherwise lead the table', () => {
+  it('hides it even when it would otherwise lead the table', async () => {
     // Two hours old against a six-hour-old survivor: recency does not buy an exemption.
-    expect(order(params('design'))).not.toContain('d-berlin-2h');
-    expect(order(params('design'))[0]).toBe('d-unknown-pay');
+    expect(await order(params('design'))).not.toContain('d-berlin-2h');
+    expect((await order(params('design')))[0]).toBe('d-unknown-pay');
   });
 
-  it('keeps tier 0, tier 1 and tier 2', () => {
-    const list = order(params('design'));
+  it('keeps tier 0, tier 1 and tier 2', async () => {
+    const list = await order(params('design'));
     expect(list).toContain('d-sf-3d'); // tier 0, a target metro
     expect(list).toContain('d-oakland-entry'); // tier 1, California outside the metros
     expect(list).toContain('d-remote-mid'); // tier 2, remote
@@ -161,41 +161,41 @@ describe('design shows the target locations, engineering shows every location', 
    * visibility rule it would delete them. `normalizeLocation` resolves the spelling now, so
    * these two carry the canonical key — `normalize.test.ts` guards the resolution itself.
    */
-  it('keeps target metros that arrived with a board-flavoured spelling', () => {
-    const list = order(params('design'));
+  it('keeps target metros that arrived with a board-flavoured spelling', async () => {
+    const list = await order(params('design'));
     expect(list).toContain('d-nyc-loose'); // "New York City, New York, United States"
     expect(list).toContain('d-sf-office'); // "San Francisco Office"
   });
 
-  it('keeps a role whose only remote signal is work_mode', () => {
+  it('keeps a role whose only remote signal is work_mode', async () => {
     // Location says London, is_remote is 0, the body says remote. Remote is a target tier.
-    expect(order(params('design'))).toContain('d-london-remote');
+    expect(await order(params('design'))).toContain('d-london-remote');
   });
 
-  it('keeps a posting whose location never normalized, rather than dropping it silently', () => {
-    expect(order(params('design'))).toContain('d-nowhere');
+  it('keeps a posting whose location never normalized, rather than dropping it silently', async () => {
+    expect(await order(params('design'))).toContain('d-nowhere');
   });
 
-  it('a non-California US city is elsewhere, so Design hides it too', () => {
-    expect(order(params('design'))).not.toContain('d-austin');
-    expect(order(params('engineering'))).toContain('e-austin');
+  it('a non-California US city is elsewhere, so Design hides it too', async () => {
+    expect(await order(params('design'))).not.toContain('d-austin');
+    expect(await order(params('engineering'))).toContain('e-austin');
   });
 
-  it('the rule reads the row, not a list of refs: moving a posting moves it in or out', () => {
+  it('the rule reads the row, not a list of refs: moving a posting moves it in or out', async () => {
     db.update(postings).set(BERLIN).where(eq(postings.id, idOf('d-sf-3d'))).run();
     db.update(postings).set(SF).where(eq(postings.id, idOf('d-berlin-3d'))).run();
 
-    const list = order(params('design'));
+    const list = await order(params('design'));
     expect(list).not.toContain('d-sf-3d'); // now in Berlin
     expect(list).toContain('d-berlin-3d'); // now in SF
   });
 
-  it('engineering ignores location entirely: swapping two of them changes nothing', () => {
-    const first = order(params('engineering'));
+  it('engineering ignores location entirely: swapping two of them changes nothing', async () => {
+    const first = await order(params('engineering'));
     db.update(postings).set(BERLIN).where(eq(postings.id, idOf('e-sf-3d'))).run();
     db.update(postings).set(SF).where(eq(postings.id, idOf('e-berlin-3d'))).run();
 
-    expect(order(params('engineering'))).toEqual(first);
+    expect(await order(params('engineering'))).toEqual(first);
   });
 
   /**
@@ -203,28 +203,28 @@ describe('design shows the target locations, engineering shows every location', 
    * posting the table refuses to list must not be reachable through `?job=<id>` either, and
    * the same rule has to hold for a track the detail query never sees.
    */
-  it('the deep link obeys the location rule, not just the table', () => {
-    expect(getPostingDetail(db, idOf('d-berlin-3d'), NOW), 'design, elsewhere').toBeNull();
-    expect(getPostingDetail(db, idOf('d-nowhere'), NOW), 'design, unknown').not.toBeNull();
-    expect(getPostingDetail(db, idOf('e-berlin-3d'), NOW), 'engineering, elsewhere').not.toBeNull();
+  it('the deep link obeys the location rule, not just the table', async () => {
+    expect(await getPostingDetail(db, idOf('d-berlin-3d'), NOW), 'design, elsewhere').toBeNull();
+    expect(await getPostingDetail(db, idOf('d-nowhere'), NOW), 'design, unknown').not.toBeNull();
+    expect(await getPostingDetail(db, idOf('e-berlin-3d'), NOW), 'engineering, elsewhere').not.toBeNull();
   });
 
-  it('counts what geography hides, so an empty table can say so', () => {
+  it('counts what geography hides, so an empty table can say so', async () => {
     // d-berlin-3d, d-berlin-2h, d-austin. Not d-old-berlin, which is elsewhere too but 62
     // days old — a row the tab would not show anyway must not inflate the count.
-    expect(outsideTargetLocations(db, params('design'), NOW)).toBe(3);
+    expect(await outsideTargetLocations(db, params('design'), NOW)).toBe(3);
   });
 
   /** The count sits under "no postings match these filters", so it has to be an answer to
    *  that question rather than a fact about the whole tab. */
-  it('counts under the same filters it is explaining', () => {
-    expect(outsideTargetLocations(db, params('design', { mode: 'onsite' }), NOW)).toBe(1);
-    expect(outsideTargetLocations(db, params('design', { mode: 'remote' }), NOW)).toBe(0);
+  it('counts under the same filters it is explaining', async () => {
+    expect(await outsideTargetLocations(db, params('design', { mode: 'onsite' }), NOW)).toBe(1);
+    expect(await outsideTargetLocations(db, params('design', { mode: 'remote' }), NOW)).toBe(0);
   });
 });
 
 describe('SQL geo tier matches lib/geo.ts', () => {
-  it('agrees with geoTier() on every fixture', () => {
+  it('agrees with geoTier() on every fixture', async () => {
     const rows = db
       .select({
         tier: geoTierSql,
@@ -269,71 +269,71 @@ describe('rows that must never render', () => {
     return out;
   }
 
-  it.each(TABS)('%s: no senior+ row under any filter', (tab) => {
+  it.each(TABS)('%s: no senior+ row under any filter', async (tab) => {
     const combos = everyFilter(tab);
     expect(combos.length).toBeGreaterThan(8);
     for (const p of combos) {
-      expect(order(p), JSON.stringify(p)).not.toContain(`${tab[0]}-senior`);
+      expect(await order(p), JSON.stringify(p)).not.toContain(`${tab[0]}-senior`);
     }
   });
 
-  it.each(TABS)('%s: nothing older than 60 days', (tab) => {
-    expect(order(params(tab))).not.toContain(`${tab[0]}-old`);
+  it.each(TABS)('%s: nothing older than 60 days', async (tab) => {
+    expect(await order(params(tab))).not.toContain(`${tab[0]}-old`);
   });
 
-  it.each(TABS)('%s: nothing delisted', (tab) => {
-    expect(order(params(tab))).not.toContain(`${tab[0]}-delisted`);
+  it.each(TABS)('%s: nothing delisted', async (tab) => {
+    expect(await order(params(tab))).not.toContain(`${tab[0]}-delisted`);
   });
 
   // The table is not the only way in: `?job=<id>` reaches a posting directly.
-  it.each(['senior', 'old', 'delisted'])('the %s posting is not reachable by deep link', (kind) => {
+  it.each(['senior', 'old', 'delisted'])('the %s posting is not reachable by deep link', async (kind) => {
     for (const tab of ['d', 'e'] as const) {
       const id = idOf(`${tab}-${kind}`);
-      expect(getPostingDetail(db, id, NOW), `${tab}-${kind}`).toBeNull();
+      expect(await getPostingDetail(db, id, NOW), `${tab}-${kind}`).toBeNull();
     }
   });
 
-  it('a visible posting is reachable by deep link', () => {
-    expect(getPostingDetail(db, idOf('e-sf-3d'), NOW)?.company).toBe('Northline');
+  it('a visible posting is reachable by deep link', async () => {
+    expect((await getPostingDetail(db, idOf('e-sf-3d'), NOW))?.company).toBe('Northline');
   });
 
-  it('a tab never shows the other track', () => {
-    expect(order(params('design')).every((ref) => ref.startsWith('d-'))).toBe(true);
-    expect(order(params('engineering')).every((ref) => ref.startsWith('e-'))).toBe(true);
+  it('a tab never shows the other track', async () => {
+    expect((await order(params('design'))).every((ref) => ref.startsWith('d-'))).toBe(true);
+    expect((await order(params('engineering'))).every((ref) => ref.startsWith('e-'))).toBe(true);
   });
 });
 
 describe('filters', () => {
-  it('pay unknown matches neither value but stays visible with the filter off (finding G)', () => {
-    expect(order(params('design'))).toContain('d-unknown-pay');
-    expect(order(params('design', { pay: 'paid' }))).not.toContain('d-unknown-pay');
-    expect(order(params('design', { pay: 'unpaid' }))).not.toContain('d-unknown-pay');
-    expect(order(params('design', { pay: 'unpaid' }))).toContain('d-unpaid-intern');
+  it('pay unknown matches neither value but stays visible with the filter off (finding G)', async () => {
+    expect(await order(params('design'))).toContain('d-unknown-pay');
+    expect(await order(params('design', { pay: 'paid' }))).not.toContain('d-unknown-pay');
+    expect(await order(params('design', { pay: 'unpaid' }))).not.toContain('d-unknown-pay');
+    expect(await order(params('design', { pay: 'unpaid' }))).toContain('d-unpaid-intern');
   });
 
-  it('the junior option covers entry as well (finding F)', () => {
-    const list = order(params('engineering', { level: 'junior' }));
+  it('the junior option covers entry as well (finding F)', async () => {
+    const list = await order(params('engineering', { level: 'junior' }));
     expect(list).toContain('e-nyc-entry'); // entry
     expect(list).toContain('e-sf-3d'); // junior
     expect(list).not.toContain('e-tie-mid'); // mid
   });
 
-  it('posted-within windows narrow monotonically', () => {
-    const count = (posted: Params['posted']) => order(params('engineering', { posted })).length;
-    expect(count('month')).toBeGreaterThan(count('week'));
-    expect(count('week')).toBeGreaterThan(count('day'));
-    expect(count('day')).toBeGreaterThan(count('hour'));
-    expect(count('hour')).toBe(0);
+  it('posted-within windows narrow monotonically', async () => {
+    const count = async (posted: Params['posted']) => (await order(params('engineering', { posted }))).length;
+    expect(await count('month')).toBeGreaterThan(await count('week'));
+    expect(await count('week')).toBeGreaterThan(await count('day'));
+    expect(await count('day')).toBeGreaterThan(await count('hour'));
+    expect(await count('hour')).toBe(0);
   });
 
-  it('every dropdown narrows on its own', () => {
+  it('every dropdown narrows on its own', async () => {
     for (const tab of TABS) {
-      const all = order(params(tab)).length;
+      const all = (await order(params(tab))).length;
       for (const filter of FILTERS) {
         for (const value of vocab(tab, filter)) {
-          const narrowed = order(params(tab, { [filter]: value }));
+          const narrowed = await order(params(tab, { [filter]: value }));
           expect(narrowed.length, `${tab} ${filter}=${value}`).toBeLessThan(all);
-          expect(order(params(tab)), `${tab} ${filter}=${value}`).toEqual(
+          expect(await order(params(tab)), `${tab} ${filter}=${value}`).toEqual(
             expect.arrayContaining(narrowed),
           );
         }
@@ -341,38 +341,38 @@ describe('filters', () => {
     }
   });
 
-  it('filters AND across groups', () => {
-    const remote = order(params('engineering', { mode: 'remote' }));
+  it('filters AND across groups', async () => {
+    const remote = await order(params('engineering', { mode: 'remote' }));
     expect(remote).toContain('e-remote-mid');
     expect(remote).toContain('e-intern-winter');
 
-    const narrowed = order(params('engineering', { mode: 'remote', type: 'internship' }));
+    const narrowed = await order(params('engineering', { mode: 'remote', type: 'internship' }));
     expect(narrowed).toContain('e-intern-winter');
     expect(narrowed).not.toContain('e-remote-mid'); // remote, but full-time
   });
 
-  it('design: the window and a group narrow together', () => {
-    const week = order(params('design', { posted: 'week' }));
+  it('design: the window and a group narrow together', async () => {
+    const week = await order(params('design', { posted: 'week' }));
     expect(week).toContain('d-sf-3d'); // 3 days old
     expect(week).not.toContain('d-freelance'); // 11 days old
-    expect(order(params('design', { posted: 'week', type: 'internship' }))).toEqual([
+    expect(await order(params('design', { posted: 'week', type: 'internship' }))).toEqual([
       'd-unpaid-intern',
     ]);
   });
 
-  it('season filters internships', () => {
-    expect(order(params('engineering', { season: 'summer' }))).toEqual(['e-intern-summer']);
+  it('season filters internships', async () => {
+    expect(await order(params('engineering', { season: 'summer' }))).toEqual(['e-intern-summer']);
   });
 
-  it('a badge is a filter value', () => {
-    expect(order(params('engineering', { badge: 'voice-ai' }))).toEqual(['e-voice', 'e-voice-remote']);
-    expect(order(params('engineering', { badge: 'design-systems' }))).toEqual([]);
+  it('a badge is a filter value', async () => {
+    expect(await order(params('engineering', { badge: 'voice-ai' }))).toEqual(['e-voice', 'e-voice-remote']);
+    expect(await order(params('engineering', { badge: 'design-systems' }))).toEqual([]);
   });
 
-  it('reports zero results without claiming the tab is empty', () => {
+  it('reports zero results without claiming the tab is empty', async () => {
     const p = params('design', { type: 'part-time', mode: 'remote' });
-    expect(order(p)).toEqual([]);
-    expect(tabIsEmpty(db, p, NOW)).toBe(false);
+    expect(await order(p)).toEqual([]);
+    expect(await tabIsEmpty(db, p, NOW)).toBe(false);
   });
 });
 
@@ -383,7 +383,7 @@ describe('badges and dropdowns write the same filter', () => {
    * property that matters is that both land on the same state for every value on offer. Both
    * read their vocabulary from `vocab()`, which is what stops one of them drifting.
    */
-  it('every value of every filter arrives the same way from either control', () => {
+  it('every value of every filter arrives the same way from either control', async () => {
     for (const tab of TABS) {
       for (const filter of FILTERS) {
         for (const value of vocab(tab, filter)) {
@@ -397,7 +397,7 @@ describe('badges and dropdowns write the same filter', () => {
     }
   });
 
-  it('clicking the badge that is already selected clears just that filter', () => {
+  it('clicking the badge that is already selected clears just that filter', async () => {
     const on = fromUrl(withFilter(params('engineering', { level: 'junior' }), 'mode', 'remote'));
     expect([on.mode, on.level]).toEqual(['remote', 'junior']);
 
@@ -406,26 +406,26 @@ describe('badges and dropdowns write the same filter', () => {
     expect(off.level, 'clearing one filter must not clear the others').toBe('junior');
   });
 
-  it('a filter link cannot carry a value the tab does not offer', () => {
+  it('a filter link cannot carry a value the tab does not offer', async () => {
     expect(withFilter(params('design'), 'season', 'summer')).toBe('/');
     expect(withFilter(params('design'), 'posted', 'hour')).toBe('/');
     expect(withFilter(params('engineering'), 'posted', 'hour')).toBe('/?tab=engineering&posted=hour');
   });
 
-  it('changing a filter closes the drawer rather than carrying it along', () => {
+  it('changing a filter closes the drawer rather than carrying it along', async () => {
     expect(withFilter(params('engineering', { job: 12 }), 'mode', 'remote')).not.toContain('job=');
   });
 });
 
 describe('search params are validated, not trusted', () => {
-  it('drops values outside the tab vocabulary', () => {
+  it('drops values outside the tab vocabulary', async () => {
     const p = parseParams({ tab: 'design', posted: 'hour', season: 'summer', type: 'freelance' });
     expect(p.posted).toBeNull(); // Design offers `week` only
     expect(p.season).toBeNull(); // Design has no seasons
     expect(p.type).toBe('freelance');
   });
 
-  it('falls back rather than throwing on junk', () => {
+  it('falls back rather than throwing on junk', async () => {
     const p = parseParams({
       tab: 'marketing',
       level: 'principal,mid',
@@ -442,12 +442,12 @@ describe('search params are validated, not trusted', () => {
 
   /** A URL bookmarked before the filters became dropdowns still parses — to the one value a
    *  dropdown can show, rather than to a filter set the control would misreport. */
-  it('takes the first known value from a legacy comma list', () => {
+  it('takes the first known value from a legacy comma list', async () => {
     expect(parseParams({ tab: 'engineering', mode: 'onsite,remote' }).mode).toBe('onsite');
     expect(parseParams({ tab: 'engineering', mode: 'nonsense,hybrid' }).mode).toBe('hybrid');
   });
 
-  it('round-trips through the URL', () => {
+  it('round-trips through the URL', async () => {
     const p = parseParams({ tab: 'engineering', mode: 'remote', level: 'junior', job: '12' });
     expect(fromUrl(href(p))).toEqual(p);
   });

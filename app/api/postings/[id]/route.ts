@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { getDb } from '@/lib/db';
+import { getDb, needsTurso } from '@/lib/db';
 import { getPostingDetail } from '@/lib/query';
 
 const Id = z.coerce.number().int().positive();
@@ -14,7 +14,9 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   if (!id.success) return Response.json({ error: 'not found' }, { status: 404 });
 
   try {
-    const posting = getPostingDetail(getDb(), id.data);
+    if (needsTurso()) return Response.json({ error: 'database not configured' }, { status: 503 });
+
+    const posting = await getPostingDetail(getDb(), id.data);
     if (!posting) return Response.json({ error: 'not found' }, { status: 404 });
     return Response.json(posting);
   } catch (error) {
