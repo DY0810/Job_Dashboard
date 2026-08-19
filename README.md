@@ -88,6 +88,24 @@ vanish from the tab entirely.
 The `type` dropdown narrows to the side being shown, so no reachable URL asks for a full-time
 freelance posting. Engineering has no split and no `basis`.
 
+## Deploying
+
+Hosted on the **personal** Vercel account (`dongyeop0810@gmail.com`) reading the Turso mirror.
+`scripts/setup-hosting.sh` walks the parts that cannot be automated.
+
+Commits land on `main` by **direct push, not through pull requests**, and that is deliberate.
+Vercel only deploys a pushed commit when its author is an identity on the Vercel account, and
+GitHub re-authors a squash-merged PR to the public email of the account that opened it — which
+put a work address back on `main` even with `user.email` set correctly here. A direct push keeps
+the author this repo is configured with:
+
+```bash
+git config user.email    # dongyeop0810@gmail.com, set repo-locally
+```
+
+A deployment already blocked this way needs no new commit — Redeploy from the dashboard is
+authorized by you rather than by the commit author.
+
 ## Database
 
 SQLite file at `./workie.db`, created by `npm run db:migrate`. Not committed — see
