@@ -10,7 +10,7 @@
     "lint": "eslint",
     "ingest": "node scripts/ingest.ts",
     "seed": "node scripts/seed.ts",
-    "push:remote": "node scripts/push-remote.ts",
+    "push:remote": "node --env-file-if-exists=.env.local scripts/push-remote.ts",
     "enrich": "node scripts/enrich.ts",
     "linkcheck": "node scripts/linkcheck.ts",
     "db:generate": "drizzle-kit generate",
