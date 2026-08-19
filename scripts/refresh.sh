@@ -67,5 +67,15 @@ if [ "${1:-}" = "--linkcheck" ] || [ -z "$(find "$STAMP" -mtime -7 2>/dev/null)"
   say "linkcheck exit=$? (budget 90m; 142 = killed at the budget, 1 = dead links found)"
 fi
 
+# Mirror the corpus up to the hosted read replica, when one is configured. A missing
+# TURSO_DATABASE_URL is a skip, not an error — same rule the keyed connectors follow, and it
+# keeps this cycle working unchanged on a machine that never deploys.
+if [ -f .env.local ] && grep -qE '^TURSO_DATABASE_URL=.+' .env.local; then
+  node --env-file-if-exists=.env.local scripts/push-remote.ts
+  say "push:remote exit=$?"
+else
+  say "push:remote skipped (no TURSO_DATABASE_URL in .env.local)"
+fi
+
 say "cycle end"
 exit $INGEST
