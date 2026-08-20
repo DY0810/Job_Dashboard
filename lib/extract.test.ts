@@ -177,6 +177,52 @@ describe('track', () => {
     ).toBe('other');
   });
 
+  /**
+   * A second round of leaks, found on the live Design tab after Amazon and Workday started
+   * feeding it. Same class as the NVIDIA silicon internships above — engineering and marketing
+   * roles whose titles carry a design word — but none of them was caught by the first fix.
+   */
+  it.each([
+    ['NVIDIA 2027 Internships: Digital Circuit Design', 'engineering'], // silicon, no ASIC/VLSI in the title
+    ['Electrical BIM Designer, DC Design Engineering', 'engineering'], // datacenter electrical
+    ['Audio Visual Technical Producer', 'other'], // matched on "Visual"
+    ['Student Brand Ambassador - Michigan State University', 'other'], // matched on "Brand"
+    ['Solutions Design Analyst', 'other'],
+    ['Safeguards Enforcement Analyst, Age-Appropriate Design', 'other'],
+  ])('keeps %s off the Design tab', (title, track) => {
+    expect(extract({ title, description: '' }).track).toBe(track);
+  });
+
+  /**
+   * The department path needed the same precedence the title has. "Industrial Compute" reads as
+   * neither track from its title, and its team is "Datacenter Design" — which reached
+   * DESIGN_DEPARTMENT on the bare word `design` and put an infrastructure role on the Design tab.
+   */
+  it('does not let a hardware team name claim the Design tab', () => {
+    const sourceFields = { department: 'Scaling', team: 'Datacenter Design' };
+    expect(extract({ title: 'Industrial Compute', description: '', sourceFields }).track).toBe('engineering');
+    // A genuine design department still wins.
+    expect(
+      extract({ title: 'Product Designer', description: '', sourceFields: { department: 'Design', team: 'Design Systems' } }).track,
+    ).toBe('design');
+  });
+
+  /** The vetoes added above are narrow on purpose; these are the near misses they must not take. */
+  it.each([
+    'Production Designer', // `producer` must not match `production`
+    'Quantitative UX Researcher, Applied AI Solutions',
+    'Brand Designer,  Product Launches', // `ambassador` was the veto, not `brand`
+    'Presentation Designer',
+    'UI Designer for Motion & Animation',
+  ])('keeps the design role %s on design', (title) => {
+    expect(extract({ title, description: '' }).track).toBe('design');
+  });
+
+  /** `analyst` was deliberately NOT vetoed wholesale — data analysts are engineering. */
+  it('leaves a data analyst on engineering', () => {
+    expect(extract({ title: 'Data Analyst', description: '' }).track).toBe('engineering');
+  });
+
   it('vetoes a GTM or PM role that happens to contain a track word', () => {
     expect(extract({ title: 'Sales Engineer', description: '' }).track).toBe('other');
     expect(extract({ title: 'Design Program Manager', description: '' }).track).toBe('other');

@@ -406,7 +406,7 @@ function extractSeniority(title: string, body: string): Seniority {
  * that happen to contain a track word.
  */
 const TRACK_VETO =
-  /\b(?:sales|account\s+(?:executive|manager|director)|business\s+development|revenue|quota|marketing|brand\s+marketing|communications|public\s+relations|recruit\w*|talent|people\s+(?:ops|operations|partner)|human\s+resources|hr\b|finance|accounting|controller|legal|counsel|paralegal|compliance|policy|lobby\w*|customer\s+(?:success|support|experience)|technical\s+support|support\s+engineer|help\s+desk|solutions?\s+(?:consultant|architect|engineer)|sales\s+engineer|pre-?sales|partnerships?|alliance\w*|procurement|facilities|administrative|executive\s+assistant|office\s+manager|chief\s+of\s+staff|program\s+manager|project\s+manager|product\s+manager|operations\s+manager|engagement\s+(?:manager|lead)|general\s+manager|store\s+manager|employer\s+brand|(?:sales|partner|revenue|gtm|customer|field|technology)\s+enablement|enablement\s+(?:manager|lead|analyst|specialist)|strategist|buyer|purchaser|patent\w*|community\s+(?:manager|engagement)|product\s+management|product\s+marketing|produktmanage\w*|vertrieb\w*|scrum\s+master|trust\s+(?:and|&)\s+safety|content\s+(?:writer|strategist|marketer)|copywriter|social\s+media|community\s+manager|event\w*|teacher|instructor|nurse|physician|clinician|driver|warehouse|logistics|supply\s+chain)\b/i;
+  /\b(?:sales|account\s+(?:executive|manager|director)|business\s+development|revenue|quota|marketing|brand\s+marketing|communications|public\s+relations|recruit\w*|talent|people\s+(?:ops|operations|partner)|human\s+resources|hr\b|finance|accounting|controller|legal|counsel|paralegal|compliance|policy|lobby\w*|customer\s+(?:success|support|experience)|technical\s+support|support\s+engineer|help\s+desk|solutions?\s+(?:consultant|architect|engineer|analyst|design\w*)|sales\s+engineer|pre-?sales|partnerships?|alliance\w*|procurement|facilities|ambassador|producer|enforcement|administrative|executive\s+assistant|office\s+manager|chief\s+of\s+staff|program\s+manager|project\s+manager|product\s+manager|operations\s+manager|engagement\s+(?:manager|lead)|general\s+manager|store\s+manager|employer\s+brand|(?:sales|partner|revenue|gtm|customer|field|technology)\s+enablement|enablement\s+(?:manager|lead|analyst|specialist)|strategist|buyer|purchaser|patent\w*|community\s+(?:manager|engagement)|product\s+management|product\s+marketing|produktmanage\w*|vertrieb\w*|scrum\s+master|trust\s+(?:and|&)\s+safety|content\s+(?:writer|strategist|marketer)|copywriter|social\s+media|community\s+manager|event\w*|teacher|instructor|nurse|physician|clinician|driver|warehouse|logistics|supply\s+chain)\b/i;
 
 /**
  * A title states its role first and qualifies it afterwards: "Machine Learning Engineer Intern
@@ -437,15 +437,21 @@ function titleHead(title: string): string {
 const ENGINEERING_ROLE = /\b(?:engineer(?:ing|s)?|developer|programmer|swe|sde|sdet)\b/i;
 
 /**
- * Silicon. "Design" in this company is chip design — hardware engineering — and it was the
- * single largest source of wrong rows on the Design tab: four NVIDIA hardware internships led
- * the board because "Hardware ASIC Design Intern" reads as a design title.
+ * Engineering that calls itself design. "Design" here means silicon, circuits, electrical work or
+ * a datacenter — engineering in every case — and it was the largest source of wrong rows on the
+ * Design tab: four NVIDIA hardware internships once led the board because "Hardware ASIC Design
+ * Intern" reads as a design title.
  *
- * Scoped to terms that can only mean silicon, NOT to the bare word `hardware`. "Hardware
+ * Grew twice, both times from rows the previous list missed rather than from imagination:
+ * "NVIDIA 2027 Internships: Digital Circuit Design" (silicon, no ASIC/VLSI in the title),
+ * "Electrical BIM Designer, DC Design Engineering" (datacenter electrical), and a team named
+ * "Datacenter Design" on an OpenAI infrastructure role.
+ *
+ * Still scoped to terms that can only mean hardware, NOT the bare word `hardware`: "Hardware
  * Product Designer" is a real industrial-design role and stays on the Design tab.
  */
-const SILICON_DESIGN =
-  /\b(?:asic|vlsi|dft|rtl|soc|pcb|fpga|silicon|semiconductor|tapeout|verilog|vhdl|mixed[\s-]signal|physical\s+design|design\s+for\s+test|chip\s+design\w*|analog|firmware)\b/i;
+const HARDWARE_DESIGN =
+  /\b(?:asic|vlsi|dft|rtl|soc|pcb|fpga|silicon|semiconductor|tapeout|verilog|vhdl|wafer|foundry|circuit|electrical|bim|datacent(?:er|re)|data\s+cent(?:er|re)|mixed[\s-]signal|physical\s+design|design\s+for\s+test|chip\s+design\w*|analog|firmware)\b/i;
 
 const DESIGN_TITLE =
   /\b(?:design(?:er)?s?\b(?![\s/-]*engineer)|ux|ui\b|user\s+experience|user\s+interface|interaction|visual|graphic|motion|brand(?:ing)?|industrial\s+design|illustrat\w*|typograph\w*|art\s+direct\w*|creative\s+direct\w*|design\s+research|ux\s+research|user\s+research|design\s+system|product\s+design|(?:3d|vfx|concept|character|environment)\s+artist|animator|vfx)\b/i;
@@ -496,7 +502,7 @@ function extractTrack(title: string, body: string, source: SourceFields | null |
     // Ahead of the design check, and that order is the fix: `DESIGN_TITLE` matching first is
     // why "Hardware ASIC Design Intern" and "Machine Learning Engineer Intern - Brand Ads"
     // were on the Design tab. An engineering role noun, or silicon, settles it.
-    if (ENGINEERING_ROLE.test(text) || SILICON_DESIGN.test(text)) return 'engineering';
+    if (ENGINEERING_ROLE.test(text) || HARDWARE_DESIGN.test(text)) return 'engineering';
     if (DESIGN_TITLE.test(text)) return 'design';
     if (ENGINEERING_TITLE.test(text)) return 'engineering';
   }
@@ -504,6 +510,11 @@ function extractTrack(title: string, body: string, source: SourceFields | null |
   const department = `${source?.department ?? ''} ${source?.team ?? ''}`.trim();
   if (department) {
     if (TRACK_VETO.test(department)) return 'other';
+    // The same precedence the title gets, and for the same reason: a team named "Datacenter
+    // Design" is infrastructure, and `DESIGN_DEPARTMENT` matching the bare word `design` was
+    // enough to put an OpenAI compute role ("Industrial Compute", which the title alone reads
+    // as neither track) on the Design tab.
+    if (ENGINEERING_ROLE.test(department) || HARDWARE_DESIGN.test(department)) return 'engineering';
     if (DESIGN_DEPARTMENT.test(department)) return 'design';
     if (ENGINEERING_DEPARTMENT.test(department)) return 'engineering';
   }
