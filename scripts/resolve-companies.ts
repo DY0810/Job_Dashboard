@@ -320,6 +320,66 @@ const DESIGN_SEEDS: Seed[] = [
   { name: "Patreon", website: "patreon.com", tags: ["design-led"] },
 ];
 
+// ---------------------------------------------------------------------------------------
+// Design employers, wave 2. Its own group so it can be re-probed without re-running the
+// first wave, and because the first wave taught two things worth acting on:
+//
+//   - Product companies resolve far better than studios. Of 42 wave-1 seeds, the twelve that
+//     failed were mostly small agencies (Big Human, Barrel, Ramotion, Focus Lab, Moving
+//     Brands, Design Pickle) — studios that size tend to run BambooHR, Notion pages or a
+//     mailto, none of which is an ATS we can probe. So this wave is 25 product companies to
+//     5 agencies, not the even split wave 1 tried.
+//   - Design-led beats design-adjacent. A company with an in-house design org posts several
+//     design roles a quarter; an agency posts one a year.
+//
+// NOTHING HERE HAS BEEN TRIED BEFORE. Already failed and deliberately absent: Work & Co, Big
+// Human, Barrel, Ramotion, Focus Lab, Moving Brands, Thoughtbot, Design Pickle, Framer,
+// Retool, Rippling, Grammarly, Adobe, Salesforce, Intuit, Netflix, Sony, Qualcomm, Cisco,
+// Dell, Pentagram, Ustwo, Frog, Double Fine, Klei. Re-seeding a known failure spends ~24
+// probes to learn nothing.
+// ---------------------------------------------------------------------------------------
+const DESIGN_WAVE2_SEEDS: Seed[] = [
+  // Consumer and marketplace products, where design is the product surface
+  { name: "Stripe", website: "stripe.com", tags: ["design-led"] },
+  { name: "Airbnb", website: "airbnb.com", tags: ["design-led"] },
+  { name: "Reddit", website: "reddit.com", tags: ["design-led"] },
+  { name: "Coinbase", website: "coinbase.com", tags: ["design-led"] },
+  { name: "DoorDash", website: "doordash.com", tags: ["design-led"] },
+  { name: "Instacart", website: "instacart.com", tags: ["design-led"] },
+  { name: "Etsy", website: "etsy.com", tags: ["design-led"] },
+  { name: "Roblox", website: "roblox.com", tags: ["design-led"] },
+  { name: "Unity", website: "unity.com", tags: ["design-led"] },
+  { name: "Calendly", website: "calendly.com", tags: ["design-led"] },
+
+  // Fintech, which hires brand and product design heavily
+  { name: "Affirm", website: "affirm.com", tags: ["design-led"] },
+  { name: "Chime", website: "chime.com", tags: ["design-led"] },
+  { name: "Carta", website: "carta.com", tags: ["design-led"] },
+  { name: "Deel", website: "deel.com", tags: ["design-led"] },
+  { name: "Klaviyo", website: "klaviyo.com", tags: ["design-led"] },
+
+  // Developer tools with unusually strong design cultures — the wave-1 hits (Linear, Vercel,
+  // Figma) all came from this shape of company
+  { name: "Vanta", website: "vanta.com", tags: ["design-led"] },
+  { name: "Sentry", website: "sentry.io", tags: ["design-led"] },
+  { name: "Netlify", website: "netlify.com", tags: ["design-led"] },
+  { name: "Supabase", website: "supabase.com", tags: ["design-led"] },
+  { name: "Replit", website: "replit.com", tags: ["design-led"] },
+  { name: "Raycast", website: "raycast.com", tags: ["design-led"] },
+  { name: "The Browser Company", website: "thebrowser.company", tags: ["design-led"] },
+  { name: "Superhuman", website: "superhuman.com", tags: ["design-led"] },
+  { name: "Front", website: "front.com", tags: ["design-led"] },
+  { name: "Descript", website: "descript.com", tags: ["design-led"] },
+
+  // The five agencies large enough to plausibly run a real ATS, which is what separates them
+  // from the wave-1 studio failures
+  { name: "R/GA", website: "rga.com", tags: ["design-studio"] },
+  { name: "AKQA", website: "akqa.com", tags: ["design-studio"] },
+  { name: "Wieden+Kennedy", website: "wk.com", tags: ["design-studio"] },
+  { name: "Droga5", website: "droga5.com", tags: ["design-studio"] },
+  { name: "Koto", website: "koto.studio", tags: ["design-studio"] },
+];
+
 interface YcSelection {
   seeds: Seed[];
   totalDirectory: number;
@@ -718,6 +778,7 @@ async function main(): Promise<void> {
     { label: "ai-startups", seeds: AI_STARTUP_SEEDS },
     { label: "studios", seeds: STUDIO_SEEDS },
     { label: "design", seeds: DESIGN_SEEDS },
+    { label: "design-wave2", seeds: DESIGN_WAVE2_SEEDS },
     { label: "workday", seeds: WORKDAY_SEEDS },
     { label: "internships", seeds: INTERNSHIP_SEEDS },
   ];
