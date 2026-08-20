@@ -10,6 +10,7 @@ import {
   type Group,
   type Params,
 } from '@/lib/params';
+import { AutoApply } from './auto-apply';
 import { Chevron } from './icons';
 
 const WINDOW_LABEL: Record<string, string> = { hour: '1h', day: '24h', week: '7d', month: '30d' };
@@ -111,6 +112,10 @@ export function Filters({ p }: { p: Params }) {
     >
       {/* Submitting replaces the whole query string, so state that is not a control here has
           to ride along. `job` deliberately does not: filtering closes the drawer. */}
+      {/* Applies a dropdown change without waiting for the button. The button stays: it is the
+          no-JavaScript path, and it is what a keyboard user can still hit deliberately. */}
+      <AutoApply />
+
       <input type="hidden" name="tab" value={p.tab} />
       {/* The split is a control of its own, above this form. Without it here, submitting the
           filters would drop the reader back onto the employed side. */}

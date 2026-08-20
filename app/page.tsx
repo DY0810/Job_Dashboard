@@ -17,6 +17,7 @@ import {
   withJob,
   withTab,
 } from "@/lib/params";
+import { rowChips } from "@/lib/chips";
 import { listPostings, outsideTargetLocations, tabIsEmpty, type Row } from "@/lib/query";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
@@ -100,29 +101,16 @@ function Badges({ row, p }: { row: Row; p: Params }) {
   return (
     // Never wraps: a badge cell that stacks would cost four rows of density for one posting.
     <span className="inline-flex items-center gap-1 whitespace-nowrap">
-      {row.employmentType ? (
-        <RowChip p={p} group="type" value={row.employmentType} />
-      ) : null}
-      {row.workMode ? (
-        <RowChip p={p} group="mode" value={row.workMode} />
-      ) : null}
-      {/* `paid = null` is "the posting does not say" — it claims neither chip. */}
-      {row.paid !== null ? (
-        <RowChip p={p} group="pay" value={row.paid ? "paid" : "unpaid"} />
-      ) : null}
-      {row.internshipSeason ? (
-        <RowChip p={p} group="season" value={row.internshipSeason} />
-      ) : null}
-      {/* Engineering carries seniority in its own column; Design has no such column, so the
-          level rides along as a badge. It used to relabel `entry` as `junior` to match the
-          folded filter option — with `entry` its own option, that badge now both misnamed the
-          row and filtered to the wrong level when clicked. */}
-      {p.tab === "design" && row.seniority ? (
-        <RowChip p={p} group="level" value={row.seniority} />
-      ) : null}
-      {(row.badges ?? []).map((badge) => (
-        <BadgeChip key={badge} p={p} value={badge} />
-      ))}
+      {/* `rowChips` decides what appears and in what order, and drops a label the row states
+          twice — `employment_type` and `badges` both carry `internship`, which printed it twice
+          here. Its own tests pin the rule; this maps the result to controls. */}
+      {rowChips(row, p.tab).map((chip) =>
+        chip.group === null ? (
+          <BadgeChip key={`badge:${chip.value}`} p={p} value={chip.value} />
+        ) : (
+          <RowChip key={`${chip.group}:${chip.value}`} p={p} group={chip.group} value={chip.value} />
+        ),
+      )}
     </span>
   );
 }
