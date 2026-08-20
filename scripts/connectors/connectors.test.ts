@@ -12,7 +12,7 @@ import type { Connector, ConnectorContext, ConnectorPosting, Runtime } from '../
 
 import { ashby, greenhouse, lever, recruitee, smartrecruiters, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
-import { arbeitnow, braintrust, himalayas, hn, remoteok, remotive, workingnomads } from './agg.ts';
+import { arbeitnow, braintrust, himalayas, hn, jobicy, remoteok, remotive, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
 import { adzuna, careerjet, jooble, usajobs } from './keyed.ts';
 import { parseReadmeTable, simplifyInternships } from './repo.ts';
@@ -96,6 +96,7 @@ const RECORDED: Connector[] = [
   simplifyInternships,
   workday,
   amazon,
+  jobicy,
 ];
 
 describe.each(RECORDED.map((connector) => [connector.name, connector] as const))(
@@ -159,15 +160,38 @@ describe('keyed connectors', () => {
     usajobs: { USAJOBS_KEY: 'a', USAJOBS_EMAIL: 'b@c.d' },
   };
 
-  it.each([adzuna, careerjet, jooble, usajobs])('$name skips when its key is absent', (connector) => {
+  /** The two whose key is the only thing standing between them and a run. */
+  const KEYED = [careerjet, jooble];
+  /**
+   * The two that are refused by robots.txt on the API host itself, so no key can enable them.
+   * `api.adzuna.com` and `data.usajobs.gov` both publish `User-agent: * / Disallow: /`
+   * (checked 2026-08-20), which the runtime's robots check honours on every call. Before they
+   * were skipped for this reason, supplying a key produced a RobotsDisallowedError per cycle
+   * instead of postings.
+   */
+  const ROBOTS_BLOCKED = [adzuna, usajobs];
+
+  it.each(KEYED)('$name skips when its key is absent', (connector) => {
     const reason = connector.skip?.({});
     expect(reason).toMatch(/not set in \.env\.local/);
     // The notice must name the variable to set — and never the value of anything.
     expect(reason).toMatch(/[A-Z_]{4,}/);
   });
 
-  it.each([adzuna, careerjet, jooble, usajobs])('$name runs once its key is present', (connector) => {
+  it.each(KEYED)('$name runs once its key is present', (connector) => {
     expect(connector.skip?.(KEYS[connector.name])).toBeNull();
+  });
+
+  it.each(ROBOTS_BLOCKED)('$name skips for robots even WITH a key present', (connector) => {
+    const reason = connector.skip?.(KEYS[connector.name]);
+    // The whole point: a key does not unlock it, and the notice says why rather than
+    // implying a missing variable.
+    expect(reason).toMatch(/robots\.txt disallows/);
+    expect(reason).not.toMatch(/not set in \.env\.local/);
+  });
+
+  it.each(ROBOTS_BLOCKED)('$name names the host that refused it', (connector) => {
+    expect(connector.skip?.({})).toMatch(/^(api\.adzuna\.com|data\.usajobs\.gov)/);
   });
 });
 
@@ -593,5 +617,47 @@ describe('amazon employment type', () => {
       runtime: stub([job('Internal Tools Engineer'), job('International Expansion Engineer')]),
     });
     for (const posting of results) expect(posting.sourceFields?.employmentType).toBe('full-time');
+  });
+});
+
+describe('jobicy', () => {
+  it('carries its own employment type rather than leaving it to the prose', async () => {
+    const results = await jobicy.fetch(replay('jobicy').context);
+    expect(results.length).toBeGreaterThan(0);
+    for (const posting of results) {
+      const type = posting.sourceFields?.employmentType;
+      if (type !== undefined) expect(['full-time', 'part-time', 'contract']).toContain(type);
+    }
+  });
+
+  /**
+   * `jobGeo` is a list of eligible regions ("Europe,  USA" — the doubled spaces are theirs),
+   * not one place. Storing the whole string would put "Europe,  USA" through
+   * `normalizeLocation` as a single city and land it nowhere.
+   */
+  it('takes one region from the eligibility list, not the whole string', async () => {
+    for (const posting of await jobicy.fetch(replay('jobicy').context)) {
+      expect(posting.location, posting.location ?? '').not.toContain(',');
+    }
+  });
+
+  it('falls back to Anywhere rather than a null location', async () => {
+    const stub = await jobicy.fetch({
+      ...replay('jobicy').context,
+      runtime: stubRuntime(
+        JSON.stringify({
+          jobCount: 1,
+          jobs: [{ id: 1, url: 'https://jobicy.com/jobs/1-x', jobTitle: 'Product Designer', companyName: 'Stub', pubDate: '2026-08-20T00:00:00+00:00', jobDescription: 'Design work.' }],
+        }),
+      ),
+    });
+    expect(stub[0].location).toBe('Anywhere');
+  });
+
+  it('is aggregator tier, so an ATS keeps canonical_url when the same job arrives twice', async () => {
+    for (const posting of await jobicy.fetch(replay('jobicy').context)) {
+      expect(posting.sourceKind).toBe('aggregator');
+      expect(posting.sourceUrl).toMatch(/^https:\/\/jobicy\.com\/jobs\//);
+    }
   });
 });

@@ -273,6 +273,9 @@ const WORKDAY_SEEDS: Seed[] = [
 const DESIGN_SEEDS: Seed[] = [
   // Studios and agencies
   { name: "Instrument", website: "instrument.com", tags: ["design-studio"] },
+  // From the 2026-08-20 source survey: a small motion/brand studio on Ashby whose board is
+  // 7 design roles out of 14 — a higher design density than any product company here.
+  { name: "Nen Creative", website: "nen.co", tags: ["design-studio"] },
   { name: "Work & Co", website: "work.co", tags: ["design-studio"] },
   { name: "Huge", website: "hugeinc.com", tags: ["design-studio"] },
   { name: "Code and Theory", website: "codeandtheory.com", tags: ["design-studio"] },

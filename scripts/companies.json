@@ -586,6 +586,16 @@
     "verified_at": "2026-08-18T04:01:32.854Z"
   },
   {
+    "name": "Nen Creative",
+    "ats": "ashby",
+    "token": "nen-creative",
+    "tags": [
+      "design-studio"
+    ],
+    "verified_at": "2026-08-20T07:42:34.536Z",
+    "postings_at_probe": 14
+  },
+  {
     "name": "Notion",
     "ats": "ashby",
     "token": "notion",

@@ -1,14 +1,14 @@
 # Company Registry Report
 
-Generated 2026-08-20T06:06:15.420Z by `scripts/resolve-companies.ts`.
+Generated 2026-08-20T07:43:01.210Z by `scripts/resolve-companies.ts`.
 
 ## Registry — resolved count by ATS
 
-`scripts/companies.json` holds **107** entries total (across every phase this script has been run for).
+`scripts/companies.json` holds **108** entries total (across every phase this script has been run for).
 
 | ATS | Count |
 | --- | --- |
-| ashby | 53 |
+| ashby | 54 |
 | greenhouse | 41 |
 | lever | 5 |
 | recruitee | 3 |
@@ -19,8 +19,8 @@ Generated 2026-08-20T06:06:15.420Z by `scripts/resolve-companies.ts`.
 
 ## Run summary
 
-- Companies considered this run: **14**
-- Newly resolved: **2**
+- Companies considered this run: **42**
+- Newly resolved: **30**
 - Unresolved: **12**
 - Dead / acquired: **0**
 

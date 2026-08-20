@@ -148,7 +148,15 @@ describe('keyed connectors without a key', () => {
       'jooble',
       'usajobs',
     ]);
-    for (const entry of result.skipped) expect(entry.reason).toMatch(/not set in \.env\.local/);
+    // Two skip for a missing key, two because robots.txt on the API host refuses them
+    // outright — a distinction the notice has to carry, since only one of them is fixable
+    // by adding a variable.
+    for (const entry of result.skipped) {
+      expect(entry.reason).toMatch(/not set in \.env\.local|robots\.txt disallows/);
+    }
+    expect(
+      result.skipped.filter((entry) => /robots\.txt disallows/.test(entry.reason ?? '')).map((e) => e.connector).sort(),
+    ).toEqual(['adzuna', 'usajobs']);
 
     // A skip is logged as a notice...
     expect(lines.filter((line) => line.status === 'skipped')).toHaveLength(4);

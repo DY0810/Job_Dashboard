@@ -35,10 +35,25 @@ interface AdzunaResult {
   location?: { display_name?: string };
 }
 
+/**
+ * DISABLED BY ROBOTS, not by a missing key, and the distinction matters: a key would not help.
+ * `api.adzuna.com/robots.txt` is `User-agent: * / Disallow: /` (checked 2026-08-20) — a blanket
+ * refusal on the API host itself, so the runtime's robots check refuses every call this
+ * connector makes. Before this skip existed, adding a key turned a working-looking connector
+ * into a `RobotsDisallowedError` on every cycle.
+ *
+ * Note the trap that hid it: `developer.adzuna.com`, where the docs live, IS permissive. Reading
+ * robots for the documentation host and assuming the API host agrees is how this got written.
+ *
+ * Judged differently from SmartRecruiters, whose `Disallow: /` also sits over a documented API:
+ * there, the vendor carved out an explicit `Allow:` for another crawler, which is a statement
+ * about who may read it. Here there is no carve-out at all. Mapper and shape tests are kept, so
+ * re-enabling is deleting this skip.
+ */
 export const adzuna: Connector = {
   name: 'adzuna',
   kind: 'aggregator',
-  skip: (env) => missing(env, 'ADZUNA_APP_ID', 'ADZUNA_APP_KEY'),
+  skip: () => 'api.adzuna.com/robots.txt disallows / — connector left in place, not run',
   /** Metered free tier — see the file header. */
   minIntervalMs: SIX_HOURS,
   async fetch(context) {
@@ -164,10 +179,19 @@ interface UsaJobsItem {
   };
 }
 
+/**
+ * DISABLED BY ROBOTS, same as `adzuna` above and for the same reason: `data.usajobs.gov/robots.txt`
+ * is `User-agent: * / Disallow: /` (checked 2026-08-20). A federal job board refusing all crawlers
+ * on its API host is surprising, and it is still what the file says.
+ *
+ * Worth a human revisit before deletion — USAJobs issues API keys to named callers, and a
+ * key-issuing programme is arguably the permission that robots.txt is not granting. That is an
+ * argument to make deliberately, in writing, not to assume in code.
+ */
 export const usajobs: Connector = {
   name: 'usajobs',
   kind: 'aggregator',
-  skip: (env) => missing(env, 'USAJOBS_KEY', 'USAJOBS_EMAIL'),
+  skip: () => 'data.usajobs.gov/robots.txt disallows / — connector left in place, not run',
   /** Metered free tier — see the file header. */
   minIntervalMs: SIX_HOURS,
   async fetch(context) {

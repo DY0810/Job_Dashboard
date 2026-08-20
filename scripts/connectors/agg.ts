@@ -435,6 +435,101 @@ export const himalayas: Connector = {
   },
 };
 
+
+// ---------------------------------------------------------------------------------------
+// Jobicy — the one design-filtered board found by the source survey that was still alive
+// ---------------------------------------------------------------------------------------
+
+interface JobicyJob {
+  id?: number;
+  url?: string;
+  jobTitle?: string;
+  companyName?: string;
+  /** "USA" · "Anywhere" · "Europe,  USA" — comma-separated, with doubled spaces. */
+  jobGeo?: string;
+  pubDate?: string;
+  jobDescription?: string;
+  jobExcerpt?: string;
+  /** Array: ["Full-Time"] | ["Part-Time"] | ["Contract"]. */
+  jobType?: string[];
+  jobLevel?: string | string[];
+  salaryMin?: number;
+  salaryMax?: number;
+  salaryPeriod?: string;
+}
+
+/**
+ * ONE REQUEST IS THE WHOLE DESIGN CORPUS, verified rather than assumed: the board publishes two
+ * design industry slugs, and `web-app-design` (15 rows) is entirely contained in
+ * `design-multimedia` (39) — every id in the smaller set appears in the larger. Polling both
+ * would double the requests for nothing.
+ *
+ * The filter genuinely bites, which is why this source is worth having where Freelancer.com was
+ * not: a slug the board does not know returns HTTP 400 with `Invalid 'industry' value`, rather
+ * than silently serving the unfiltered board.
+ */
+const JOBICY_URL = 'https://jobicy.com/api/v2/remote-jobs?count=100&industry=design-multimedia';
+
+/** Their spelling, hyphenated and title-cased, to the schema's. */
+const JOBICY_TYPE: Record<string, EmploymentType> = {
+  'full-time': 'full-time',
+  'part-time': 'part-time',
+  contract: 'contract',
+  freelance: 'freelance',
+  internship: 'internship',
+};
+
+/**
+ * ROBOTS.TXT COULD NOT BE READ, and that is a deliberate exception rather than an oversight.
+ * `jobicy.com/robots.txt` answers a Cloudflare interactive challenge — HTTP 403, "Just a
+ * moment...", a JS challenge page — so there is no allowance to record and no disallowance
+ * either (checked 2026-08-20). The API path itself answers 200 to this User-Agent, so whatever
+ * their edge is protecting, it is not this endpoint.
+ *
+ * Running it anyway follows the precedent this project already set for SmartRecruiters, whose
+ * robots.txt taken literally refuses us over a documented public API: an API the vendor
+ * publishes and documents for programmatic use — Jobicy's is documented at
+ * github.com/Jobicy/remote-jobs-api — is the stronger statement of intent. That is a judgement,
+ * not a rule, and it is the one thing here worth reversing first if the maintainer disagrees:
+ * delete this connector from `aggConnectors`, or give it a `skip` the way `remotive` has.
+ *
+ * ponytail: no paging. The design slug returns 39 of a 100-row cap in one call, so there is
+ * nothing to page through. Add an `offset` loop if the design corpus ever approaches 100.
+ */
+export const jobicy: Connector = {
+  name: 'jobicy',
+  kind: 'aggregator',
+  /** Whole design board in one response; it stamped `lastUpdate` once in the hour observed. */
+  minIntervalMs: 60 * 60 * 1000,
+  async fetch(context) {
+    const body = await context.runtime.fetchJson<{ jobCount?: number; jobs?: JobicyJob[] }>(
+      JOBICY_URL,
+    );
+    const jobs = body.jobs ?? [];
+    context.log({ connector: 'jobicy', fetched: jobs.length, reportedCount: body.jobCount ?? null });
+
+    return jobs
+      .filter((job) => job.url && job.jobTitle)
+      .map((job) => {
+        const type = JOBICY_TYPE[(job.jobType?.[0] ?? '').trim().toLowerCase()];
+        return {
+          ...aggRow('jobicy', {
+            company: job.companyName,
+            title: job.jobTitle,
+            // "Europe,  USA" is a list of eligible regions, not one place, and the doubled
+            // spaces are theirs. The first entry is enough for `normalizeLocation`; "Anywhere"
+            // is already one of its remote markers.
+            location: (job.jobGeo ?? '').split(',')[0]?.trim() || 'Anywhere',
+            url: job.url!,
+            postedAt: toEpochMs(job.pubDate),
+            description: job.jobDescription ?? job.jobExcerpt ?? '',
+          }),
+          ...(type ? { sourceFields: { employmentType: type } } : {}),
+        };
+      });
+  },
+};
+
 export const aggConnectors: Connector[] = [
   hn,
   remoteok,
@@ -443,4 +538,5 @@ export const aggConnectors: Connector[] = [
   workingnomads,
   braintrust,
   himalayas,
+  jobicy,
 ];
