@@ -185,12 +185,27 @@ function where(p: Params, now: number): SQL {
  * The page's "last 24 hours" band depends on this being the first key, and `query.test.ts`
  * asserts that the fresh rows come back as a prefix.
  */
+/**
+ * The most rows a table will render. The Engineering tab had 920 and the cost of a tab switch
+ * was linear in every one of them at once: 4,175 bytes of HTML per row, so 3.7 MB of markup
+ * (886 KB gzipped), ~14,000 DOM nodes for the browser to build, and 978 KB pulled out of Turso
+ * — a 591ms query where the same query capped is 77ms. The table is sorted newest-first and
+ * banded at 24 hours, so the rows past this point are the ones nobody scrolls to; the filters,
+ * not the scrollbar, are how the rest is reached.
+ *
+ * `listPostings` asks for one MORE than this, which is how the page knows to say so without
+ * paying for a second `count(*)` round trip.
+ */
+export const ROW_CAP = 200;
+
 export async function listPostings(db: ReadDb, p: Params, now: number = Date.now()) {
   return await driver(db)
     .select(ROW)
     .from(postings)
     .where(where(p, now))
     .orderBy(desc(postings.postedAt), asc(seniorityRank))
+    // ROW_CAP + 1: the extra row is not rendered, it is the answer to "is there more?".
+    .limit(ROW_CAP + 1)
     .all();
 }
 

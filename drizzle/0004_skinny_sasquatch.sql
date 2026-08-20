@@ -1,0 +1,1 @@
+CREATE INDEX `postings_track_live_posted_idx` ON `postings` (`track`,`delisted_at`,`posted_at`);

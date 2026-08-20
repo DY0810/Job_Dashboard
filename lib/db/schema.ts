@@ -7,78 +7,92 @@
  * Re-running the whole corpus is the correct behaviour and takes seconds.
  */
 
-import { integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 import type { SourceFields } from '../extract.ts';
 
 /** One row per DEDUPED job. `dedupe_key` = sha256(company_norm ␟ title_norm ␟ location_key). */
-export const postings = sqliteTable('postings', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  dedupeKey: text('dedupe_key').notNull().unique(),
-  /** The ATS URL when any source is an ATS, else the highest-priority source URL. */
-  canonicalUrl: text('canonical_url').notNull(),
-  /** MIN across sources, floored at the ATS date when one exists (finding D). */
-  postedAt: integer('posted_at', { mode: 'timestamp_ms' }).notNull(),
-  /** Set by the ghost pass after 2 consecutive absences from *successful* polls (finding C). */
-  delistedAt: integer('delisted_at', { mode: 'timestamp_ms' }),
-  /**
-   * WHICH pass delisted this, and the reason the two do not undo each other.
-   *
-   * `ghost` — every source stopped listing it across two successful polls. Reversible: if a
-   * source lists it again the ghost pass clears both columns.
-   * `linkcheck` — its apply URL serves a gone page. The sources may well still list it, so
-   * its absence counts stay at zero and the ghost pass must NOT read "not a ghost" as
-   * "bring it back". Only `linkcheck` clears a `linkcheck` delisting.
-   */
-  delistedReason: text('delisted_reason', { enum: ['ghost', 'linkcheck'] }),
-  firstSeenRun: text('first_seen_run').notNull(),
+export const postings = sqliteTable(
+  'postings',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    dedupeKey: text('dedupe_key').notNull().unique(),
+    /** The ATS URL when any source is an ATS, else the highest-priority source URL. */
+    canonicalUrl: text('canonical_url').notNull(),
+    /** MIN across sources, floored at the ATS date when one exists (finding D). */
+    postedAt: integer('posted_at', { mode: 'timestamp_ms' }).notNull(),
+    /** Set by the ghost pass after 2 consecutive absences from *successful* polls (finding C). */
+    delistedAt: integer('delisted_at', { mode: 'timestamp_ms' }),
+    /**
+     * WHICH pass delisted this, and the reason the two do not undo each other.
+     *
+     * `ghost` — every source stopped listing it across two successful polls. Reversible: if a
+     * source lists it again the ghost pass clears both columns.
+     * `linkcheck` — its apply URL serves a gone page. The sources may well still list it, so
+     * its absence counts stay at zero and the ghost pass must NOT read "not a ghost" as
+     * "bring it back". Only `linkcheck` clears a `linkcheck` delisting.
+     */
+    delistedReason: text('delisted_reason', { enum: ['ghost', 'linkcheck'] }),
+    firstSeenRun: text('first_seen_run').notNull(),
 
-  // As listed by the highest-priority source. Display only — dedupe never reads these.
-  company: text('company').notNull(),
-  title: text('title').notNull(),
-  /** Full normalized body. Drawer-only; never selected into the table query. */
-  description: text('description'),
-  /**
-   * What the source API already returned as fields — employment type, work mode, location
-   * parts, department/team, and the sections it structured itself. `lib/extract.ts` reads
-   * this BEFORE the prose; see `SourceFields`.
-   */
-  sourceFields: text('source_fields', { mode: 'json' }).$type<SourceFields>(),
+    // As listed by the highest-priority source. Display only — dedupe never reads these.
+    company: text('company').notNull(),
+    title: text('title').notNull(),
+    /** Full normalized body. Drawer-only; never selected into the table query. */
+    description: text('description'),
+    /**
+     * What the source API already returned as fields — employment type, work mode, location
+     * parts, department/team, and the sections it structured itself. `lib/extract.ts` reads
+     * this BEFORE the prose; see `SourceFields`.
+     */
+    sourceFields: text('source_fields', { mode: 'json' }).$type<SourceFields>(),
 
-  // Normalized components, from lib/normalize.ts.
-  companyNorm: text('company_norm').notNull(),
-  titleNorm: text('title_norm').notNull(),
-  locationKey: text('location_key').notNull(),
-  cityNorm: text('city_norm'),
-  state: text('state'),
-  country: text('country'),
-  isRemote: integer('is_remote', { mode: 'boolean' }).notNull().default(false),
+    // Normalized components, from lib/normalize.ts.
+    companyNorm: text('company_norm').notNull(),
+    titleNorm: text('title_norm').notNull(),
+    locationKey: text('location_key').notNull(),
+    cityNorm: text('city_norm'),
+    state: text('state'),
+    country: text('country'),
+    isRemote: integer('is_remote', { mode: 'boolean' }).notNull().default(false),
 
-  // Extraction (lib/extract.ts). Null until `npm run enrich` runs.
-  enrichedAt: integer('enriched_at', { mode: 'timestamp_ms' }),
-  track: text('track', { enum: ['design', 'engineering'] }),
-  seniority: text('seniority', { enum: ['entry', 'junior', 'mid', 'senior+'] }),
-  employmentType: text('employment_type', {
+    // Extraction (lib/extract.ts). Null until `npm run enrich` runs.
+    enrichedAt: integer('enriched_at', { mode: 'timestamp_ms' }),
+    track: text('track', { enum: ['design', 'engineering'] }),
+    seniority: text('seniority', { enum: ['entry', 'junior', 'mid', 'senior+'] }),
+    employmentType: text('employment_type', {
     enum: ['full-time', 'part-time', 'contract', 'freelance', 'internship'],
-  }),
-  internshipSeason: text('internship_season', { enum: ['summer', 'fall', 'winter', 'spring'] }),
-  /** true | false | NULL. NULL is "unknown": it matches neither pay chip (finding G). */
-  paid: integer('paid', { mode: 'boolean' }),
-  workMode: text('work_mode', { enum: ['remote', 'hybrid', 'onsite'] }),
-  /** The human-readable location as classified. `city_norm`/`state` above are the keys. */
-  location: text('location'),
-  payRateMin: real('pay_rate_min'),
-  payRateMax: real('pay_rate_max'),
-  payRatePeriod: text('pay_rate_period', { enum: ['hour', 'week', 'month', 'year'] }),
-  expectedGrad: text('expected_grad'),
-  /** Engineering only — the Design tab has no summary column, so none is generated. */
-  summary: text('summary'),
-  responsibilities: text('responsibilities', { mode: 'json' }).$type<string[]>(),
-  skills: text('skills', { mode: 'json' }).$type<string[]>(),
-  education: text('education', { mode: 'json' }).$type<string[]>(),
-  /** Filter chips, e.g. `voice-ai` (phase 5). Badges are controls, not decoration. */
-  badges: text('badges', { mode: 'json' }).$type<string[]>(),
-});
+    }),
+    internshipSeason: text('internship_season', { enum: ['summer', 'fall', 'winter', 'spring'] }),
+    /** true | false | NULL. NULL is "unknown": it matches neither pay chip (finding G). */
+    paid: integer('paid', { mode: 'boolean' }),
+    workMode: text('work_mode', { enum: ['remote', 'hybrid', 'onsite'] }),
+    /** The human-readable location as classified. `city_norm`/`state` above are the keys. */
+    location: text('location'),
+    payRateMin: real('pay_rate_min'),
+    payRateMax: real('pay_rate_max'),
+    payRatePeriod: text('pay_rate_period', { enum: ['hour', 'week', 'month', 'year'] }),
+    expectedGrad: text('expected_grad'),
+    /** Engineering only — the Design tab has no summary column, so none is generated. */
+    summary: text('summary'),
+    responsibilities: text('responsibilities', { mode: 'json' }).$type<string[]>(),
+    skills: text('skills', { mode: 'json' }).$type<string[]>(),
+    education: text('education', { mode: 'json' }).$type<string[]>(),
+    /** Filter chips, e.g. `voice-ai` (phase 5). Badges are controls, not decoration. */
+    badges: text('badges', { mode: 'json' }).$type<string[]>(),
+  },
+  /**
+   * The shape every page load asks for: one track, not delisted, inside the 60-day window,
+   * newest first. Without it SQLite full-scans a table whose rows average 6.7 KB — a 5,074-byte
+   * description plus 1,687 bytes of `source_fields` each — so reading 15,000 rows to return 900
+   * meant touching ~126 MB, and a cold cache made that a 1.6-SECOND query on a local file.
+   *
+   * Column order is the usable order: the equality columns first, then the one that is both a
+   * range filter and the sort key, so `posted_at` serves the 60-day cutoff and the ORDER BY from
+   * one scan instead of a temp B-tree.
+   */
+  (table) => [index('postings_track_live_posted_idx').on(table.track, table.delistedAt, table.postedAt)],
+);
 
 /** One row per (posting, source). A source is NEVER discarded, only added to. */
 export const postingSources = sqliteTable(

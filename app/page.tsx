@@ -18,7 +18,7 @@ import {
   withTab,
 } from "@/lib/params";
 import { rowChips } from "@/lib/chips";
-import { listPostings, outsideTargetLocations, tabIsEmpty, type Row } from "@/lib/query";
+import { listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } from "@/lib/query";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
 import { Chevron, ExternalLink } from "./icons";
@@ -314,13 +314,21 @@ export default async function Page({
   const now = Date.now();
   const db = getDb();
 
-  const rows = await listPostings(db, p, now);
-  const lastRun = await driver(db)
-    .select({ startedAt: connectorRuns.startedAt })
-    .from(connectorRuns)
-    .orderBy(desc(connectorRuns.startedAt))
-    .limit(1)
-    .get();
+  // In parallel: two independent reads, and against Turso every await is a network round trip.
+  const [fetched, lastRun] = await Promise.all([
+    listPostings(db, p, now),
+    driver(db)
+      .select({ startedAt: connectorRuns.startedAt })
+      .from(connectorRuns)
+      .orderBy(desc(connectorRuns.startedAt))
+      .limit(1)
+      .get(),
+  ]);
+
+  // `listPostings` returns one more than it will render, so the extra row IS the "there is
+  // more" signal — no second count query, no round trip to learn a number we only display.
+  const capped = fetched.length > ROW_CAP;
+  const rows = capped ? fetched.slice(0, ROW_CAP) : fetched;
 
   // Recency is the first sort key, so the fresh rows are a prefix, not a partition. Asserted
   // in query.test.ts against this same constant, because nothing in SQL guarantees it now.
@@ -418,6 +426,13 @@ export default async function Page({
               {rows.slice(freshCount).map((row) => (
                 <PostingRow key={row.id} row={row} p={p} now={now} />
               ))}
+              {capped ? (
+                <tr>
+                  <td colSpan={columns.length} className="py-3 text-center text-[11px] text-muted">
+                    Showing the {ROW_CAP} newest. Narrow with the filters above to reach the rest.
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
         </table>
       )}

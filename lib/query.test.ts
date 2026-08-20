@@ -23,6 +23,7 @@ import {
   getPostingDetail,
   listPostings,
   outsideTargetLocations,
+  ROW_CAP,
   tabIsEmpty,
 } from './query.ts';
 import {
@@ -736,5 +737,52 @@ describe('search params are validated, not trusted', () => {
     expect(p.level).toEqual(['entry', 'mid']);
     expect(fromUrl(href(p))).toEqual(p);
     expect(href(fromUrl(href(p)))).toBe(href(p));
+  });
+});
+
+/**
+ * The Engineering tab had 920 rows and paid for every one of them at once — 3.7 MB of markup,
+ * ~14,000 DOM nodes, 978 KB out of Turso on a 591ms query. The cap is what makes a tab switch
+ * cost the same whatever the corpus grows to.
+ */
+describe('row cap', () => {
+  /** One more engineering row than the cap allows, all inside the window and visible. */
+  function flood(count: number): void {
+    const template = fixtures(NOW).find((row) => row.track === 'engineering' && row.seniority === 'mid')!;
+    db.insert(postings)
+      .values(
+        Array.from({ length: count }, (_, index) => ({
+          ...template,
+          id: 50_000 + index,
+          dedupeKey: `flood-${index}`,
+          canonicalUrl: `https://flood.test/${index}`,
+          // Distinct timestamps so the order is total and the slice is deterministic.
+          postedAt: new Date(NOW - index * 1000),
+        })),
+      )
+      .run();
+  }
+
+  it('asks for exactly one row more than it will render', async () => {
+    flood(ROW_CAP + 50);
+    const rows = await listPostings(db, params('engineering'), NOW);
+
+    // The extra row is the "there is more" signal the page reads instead of a second count.
+    expect(rows).toHaveLength(ROW_CAP + 1);
+  });
+
+  it('does not cap a tab that has fewer rows than the cap', async () => {
+    const rows = await listPostings(db, params('engineering'), NOW);
+    expect(rows.length).toBeLessThan(ROW_CAP);
+  });
+
+  it('caps the NEWEST rows, so the cap never hides something recent', async () => {
+    flood(ROW_CAP + 50);
+    const rows = await listPostings(db, params('engineering'), NOW);
+    const times = rows.map((row) => row.postedAt.getTime());
+
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+    // The oldest row in the corpus must be the one dropped, not one of these.
+    expect(Math.min(...times)).toBeGreaterThan(NOW - (ROW_CAP + 50) * 1000);
   });
 });
