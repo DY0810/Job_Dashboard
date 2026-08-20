@@ -16,15 +16,20 @@
  *   npm run push:remote
  *   npm run push:remote -- --to=file:/tmp/mirror.db     a local libSQL file, no account
  *
- * ponytail: nothing deletes remote rows. Ingest never deletes a posting — delisting is a
- * column — so the only strays are `npm run seed` fixtures, which a real corpus never has.
- * Add a delete-not-in pass if that stops being true.
+ * Strays ARE deleted, and they have to be. This used to say that nothing here deletes, on the
+ * grounds that ingest never removes a posting — delisting is a column. `merge:duplicates`
+ * broke that: it collapses duplicate rows, and an upsert alone cannot express a deletion, so
+ * the remote kept serving rows the local corpus had merged away. It also FAILED outright, and
+ * the failure is worth keeping in mind because it is not obvious. Merging freed a `dedupe_key`
+ * locally, the next ingest moved that key onto the surviving row, and upserting that row into a
+ * remote where the deleted twin still held the key violated the UNIQUE index. Deleting first is
+ * what makes the key available before anything claims it.
  */
 
 import { pathToFileURL } from 'node:url';
 
 import { createClient } from '@libsql/client';
-import { getTableColumns, getTableName, sql } from 'drizzle-orm';
+import { getTableColumns, getTableName, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 
@@ -51,6 +56,22 @@ function overwrite(table: Mirrored): Record<string, unknown> {
   );
 }
 
+/**
+ * Remote ids the local corpus no longer has. Read back and diffed in memory rather than
+ * expressed as `delete where id not in (...)`: the local corpus is ~15,000 rows, and inlining
+ * that many bind parameters is the one thing BATCH exists to avoid.
+ *
+ * Children first at the call site, for the same reason the insert order is parents first.
+ */
+async function deleteStrays(remote: TursoDb, table: Mirrored, keep: Set<number>): Promise<number> {
+  const remoteIds = (await remote.select({ id: table.id }).from(table)).map((row) => row.id);
+  const strays = remoteIds.filter((id) => !keep.has(id));
+  for (let start = 0; start < strays.length; start += BATCH) {
+    await remote.delete(table).where(inArray(table.id, strays.slice(start, start + BATCH)));
+  }
+  return strays.length;
+}
+
 export async function mirrorTable(remote: TursoDb, local: Db, table: Mirrored): Promise<number> {
   // `select()` decodes (Date, boolean, parsed JSON) and `insert()` re-encodes, so the round
   // trip goes through the schema rather than around it.
@@ -65,13 +86,31 @@ export async function mirrorTable(remote: TursoDb, local: Db, table: Mirrored): 
   return rows.length;
 }
 
-export async function pushRemote(url: string, authToken: string | undefined): Promise<number[]> {
+export async function pushRemote(
+  url: string,
+  authToken: string | undefined,
+): Promise<{ rows: number; deleted: number }[]> {
   const remote = drizzle(createClient({ url, authToken }), { schema });
   await migrate(remote, { migrationsFolder: MIGRATIONS_DIR });
 
   const local = openDb();
-  const counts: number[] = [];
-  for (const table of TABLES) counts.push(await mirrorTable(remote, local, table));
+
+  /**
+   * Two passes, in opposite orders, and they cannot be folded into one: a stray
+   * `posting_sources` row must be deleted BEFORE the posting it points at, while a new source
+   * row must be inserted AFTER it. Doing both per-table in one reversed loop inserts the
+   * children first and trips the foreign key — which is exactly what it did on the first try.
+   */
+  const deleted = new Map<Mirrored, number>();
+  for (const table of [...TABLES].reverse()) {
+    const keep = new Set((local.select({ id: table.id }).from(table).all() as { id: number }[]).map((row) => row.id));
+    deleted.set(table, await deleteStrays(remote, table, keep));
+  }
+
+  const counts: { rows: number; deleted: number }[] = [];
+  for (const table of TABLES) {
+    counts.push({ rows: await mirrorTable(remote, local, table), deleted: deleted.get(table) ?? 0 });
+  }
   return counts;
 }
 
@@ -91,7 +130,11 @@ async function main(): Promise<void> {
   const started = Date.now();
   // The token is never logged, and `url` is printed only when it carries no credentials.
   const counts = await pushRemote(url, process.env.TURSO_AUTH_TOKEN);
-  const lines = TABLES.map((table, index) => `  ${getTableName(table)}  ${counts[index]}`);
+  const lines = TABLES.map(
+    (table, index) =>
+      `  ${getTableName(table)}  ${counts[index].rows}` +
+      (counts[index].deleted > 0 ? `  (${counts[index].deleted} stray row(s) deleted)` : ''),
+  );
   console.log(
     [`pushed to ${url.startsWith('file:') ? url : new URL(url).host}`, ...lines, `  ${Date.now() - started}ms`].join(
       '\n',

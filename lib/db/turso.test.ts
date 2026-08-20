@@ -25,7 +25,7 @@ import {
   DEFAULT_BASIS, bare, type Params, type Tab
 } from '../params.ts';
 import { getPostingDetail, listPostings, outsideTargetLocations, tabIsEmpty } from '../query.ts';
-import { needsTurso, openDb, type Db, type ReadDb } from './index.ts';
+import { needsTurso, openDb, type Db, type ReadDb, type TursoDb } from './index.ts';
 import * as schema from './schema.ts';
 import { postings } from './schema.ts';
 
@@ -109,8 +109,27 @@ describe('push:remote', () => {
     const before = await listPostings(remote, params('design'), NOW);
     const counts = await pushRemote(`file:${join(dir, 'remote.db')}`, undefined);
 
-    expect(counts[0]).toBe(fixtures(NOW).length);
+    expect(counts[0].rows).toBe(fixtures(NOW).length);
+    // Nothing was deleted: the local corpus is the same one already up there.
+    expect(counts.map((count) => count.deleted)).toEqual([0, 0, 0]);
     expect(await listPostings(remote, params('design'), NOW)).toEqual(before);
+  });
+
+  /**
+   * The pass that `merge:duplicates` made necessary. An upsert cannot express a deletion, so
+   * a row the local corpus has merged away used to stay up there and keep being served — and
+   * worse, it kept holding a `dedupe_key` the surviving row would later claim, which fails the
+   * UNIQUE index on the way in.
+   */
+  it('deletes a remote row the local corpus no longer has', async () => {
+    const stray = { ...fixtures(NOW)[0], id: 99_001, dedupeKey: 'stray-key', canonicalUrl: 'https://stray.test' };
+    await (remote as unknown as TursoDb).insert(postings).values(stray);
+    expect(await getPostingDetail(remote, 99_001, NOW)).not.toBeNull();
+
+    const counts = await pushRemote(`file:${join(dir, 'remote.db')}`, undefined);
+
+    expect(counts[0].deleted).toBe(1);
+    expect(await getPostingDetail(remote, 99_001, NOW)).toBeNull();
   });
 });
 
