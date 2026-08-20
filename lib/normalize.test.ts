@@ -660,3 +660,43 @@ describe('cities abroad that arrive without a country', () => {
     expect(normalizeLocation('London, San Francisco, CA')).toMatchObject({ city_norm: 'sf', state: 'CA' });
   });
 });
+
+/**
+ * Boards that group several sites under one posting write the group's name into the location
+ * field. 635 live rows arrived that way, and because `city_norm` is a `dedupe_key` component
+ * they had a count acting as a place identity — the same job at two real sites could never
+ * merge with itself.
+ */
+describe('location group names', () => {
+  it('reads the country out of a Greenhouse office group', () => {
+    for (const [input, code] of [
+      ['Ireland Locations', 'IE'],
+      ['India Locations', 'IN'],
+      ['Singapore Locations', 'SG'],
+      ['United Kingdom Locations', 'GB'],
+      ['United Arab Emirates Locations', 'AE'],
+      ['New Zealand Locations', 'NZ'],
+    ] as const) {
+      expect(normalizeLocation(input), input).toMatchObject({ city_norm: null, country: code });
+    }
+  });
+
+  /** A count of sites says nothing about where they are, so the honest answer is nothing. */
+  it.each(['2 Locations', '117 Locations', '3 locations'])('reads %s as no location at all', (input) => {
+    expect(normalizeLocation(input)).toMatchObject({ city_norm: null, state: null, country: null });
+  });
+
+  it('keeps the city that follows a count', () => {
+    expect(normalizeLocation('5 locations waukegan').city_norm).toBe('waukegan');
+    expect(normalizeLocation('8 locations cambridge').city_norm).toBe('cambridge');
+    // And a metro alias still resolves through the stripping.
+    expect(normalizeLocation('9 locations palo alto')).toMatchObject({ city_norm: 'sf', state: 'CA' });
+  });
+
+  /** The stripping is two narrow shapes, not a war on the letters l-o-c. */
+  it('leaves real places alone', () => {
+    expect(normalizeLocation('San Francisco, CA')).toMatchObject({ city_norm: 'sf', state: 'CA' });
+    expect(normalizeLocation('Kansas City, MO')).toMatchObject({ city_norm: 'kansas city', state: 'MO' });
+    expect(normalizeLocation('New York Mills, MN')).toMatchObject({ city_norm: 'new york mills', state: 'MN' });
+  });
+});

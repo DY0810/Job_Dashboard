@@ -531,6 +531,36 @@ describe('employer boards', () => {
       }
     });
 
+    /**
+     * The real shapes, taken from a live page of workday.wd5: a posting spanning sites reports
+     * the count and keeps its primary site only in `externalPath`, and some boards separate with
+     * periods. 353 live rows had a *city* called "2 locations" — and `city_norm` is a
+     * `dedupe_key` component, so a count was acting as a place identity.
+     */
+    it('reads through a location GROUP to the primary site', async () => {
+      const body = JSON.stringify({
+        total: 4,
+        jobPostings: [
+          { title: 'Manager, Sales Development', locationsText: '6 Locations', externalPath: '/job/USA-GA-Atlanta/Manager--Sales-Development_JR-010841', postedOn: 'Posted Today' },
+          { title: 'Partner BI Analyst', locationsText: '3 Locations', externalPath: '/job/USA-TX-Austin/Partner-Business-Intelligence-Analyst_JR-1', postedOn: 'Posted Today' },
+          { title: 'Software Development Engineer', locationsText: 'USA.VA.Reston', externalPath: '/job/USAVAReston/Software-Development-Engineer_JR-2', postedOn: 'Posted Today' },
+          { title: 'Senior Financial Analyst', locationsText: 'Costa Rica', externalPath: '/job/Costa-Rica/Senior-Financial-Analyst_JR-0109274', postedOn: 'Posted Today' },
+        ],
+      });
+      const results = await workday.fetch({ ...replay('workday').context, runtime: stubRuntime(body) });
+      const seen = new Map(results.map((posting) => [posting.title, posting.location]));
+
+      // A count is never the location; the path carries the real one.
+      expect(seen.get('Manager, Sales Development')).toBe('USA-GA-Atlanta');
+      expect(seen.get('Partner BI Analyst')).toBe('USA-TX-Austin');
+      // Period dialect, converted so a comma splitter can reach it.
+      expect(seen.get('Software Development Engineer')).toBe('USA, VA, Reston');
+      // A location the board reported properly is passed through untouched.
+      expect(seen.get('Senior Financial Analyst')).toBe('Costa Rica');
+
+      for (const location of seen.values()) expect(location).not.toMatch(/\d+\s+locations?/i);
+    });
+
     it('keeps the location string the board reported', async () => {
       const results = await workday.fetch(replay('workday').context);
       expect(results.some((posting) => (posting.location ?? '').length > 0)).toBe(true);

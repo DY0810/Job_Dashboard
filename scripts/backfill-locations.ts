@@ -39,13 +39,13 @@
 
 import { pathToFileURL } from 'node:url';
 
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, like, or } from 'drizzle-orm';
 
 import { dedupeKey } from '../lib/dedupe.ts';
 import { GEO_TIER, geoTier } from '../lib/geo.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { normalizeLocation } from '../lib/normalize.ts';
-import { postings } from '../lib/db/schema.ts';
+import { postings, postingSources } from '../lib/db/schema.ts';
 
 /** Tier number back to its name, read off `GEO_TIER` so a new tier cannot go unlabelled. */
 const TIER_NAME: Record<number, string> = Object.fromEntries(
@@ -74,6 +74,11 @@ export interface BackfillStats {
    */
   duplicatePairs: number;
   duplicateRows: number;
+  /**
+   * Rows whose stored `city_norm` was a Workday location GROUP ("2 locations") rather than a
+   * place, repaired from the primary site in their own `source_url`. See `recoverFromUrl`.
+   */
+  fromUrl: number;
 }
 
 export function runBackfill(db: Db, options: { dryRun?: boolean } = {}): BackfillStats {
@@ -88,6 +93,7 @@ export function runBackfill(db: Db, options: { dryRun?: boolean } = {}): Backfil
     hiddenDesign: 0,
     duplicatePairs: 0,
     duplicateRows: 0,
+    fromUrl: 0,
   };
 
   const all = db
@@ -171,7 +177,72 @@ export function runBackfill(db: Db, options: { dryRun?: boolean } = {}): Backfil
     }
   });
 
+  stats.fromUrl = recoverFromUrl(db, options.dryRun ?? false);
   return stats;
+}
+
+/**
+ * The rows the pass above cannot help: their `location` was never persisted, and their stored
+ * `city_norm` is a Workday location GROUP — "2 locations", "117 locations" — so there is no
+ * string to recompute from and the column itself is the corruption.
+ *
+ * Their primary site is still on disk, in the `source_url` the connector built from
+ * `externalPath`: `.../job/USA-GA-Atlanta/Manager--Sales-Development_JR-010841`. `ats.ts` reads
+ * that path for new rows now; this reads it for the ones already stored, because Workday's page
+ * cap only ever re-fetches the newest 100 openings per company — NVIDIA has 2,000, so the older
+ * rows would carry a fake city until they aged out of the corpus entirely.
+ *
+ * `dedupe_key` is left alone, exactly as in the pass above and for the same reason: it is
+ * UNIQUE, and rewriting it here would collide two rows this script has no mandate to merge.
+ */
+function recoverFromUrl(db: Db, dryRun: boolean): number {
+  const rows = db
+    .select({ id: postings.id, url: postingSources.sourceUrl })
+    .from(postings)
+    .innerJoin(postingSources, eq(postingSources.postingId, postings.id))
+    .where(
+      and(
+        eq(postingSources.source, 'workday'),
+        // Never over a remote row: its `source_url` still names the office the posting was
+        // filed against, and reading a city off it would turn "Remote" into onsite Pleasanton.
+        eq(postings.isRemote, false),
+        // Both states this repair has to cover, so it does not depend on running before or
+        // after the pass above: the group name still stored, OR the empty columns that pass
+        // leaves behind once it recomputes from a `location` of "2 Locations" and gets nothing.
+        or(
+          like(postings.cityNorm, '%locations%'),
+          and(isNull(postings.cityNorm), isNull(postings.state), isNull(postings.country)),
+        ),
+      ),
+    )
+    .all();
+
+  let repaired = 0;
+  const seen = new Set<number>();
+  db.transaction((tx) => {
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      const path = /\/job\/([^/]+)/.exec(row.url)?.[1];
+      if (!path) continue;
+      const fresh = normalizeLocation(path);
+      // A path that yields nothing usable is not an improvement over what is stored.
+      if (fresh.city_norm === null && fresh.state === null && fresh.country === null) continue;
+      seen.add(row.id);
+      repaired += 1;
+      if (dryRun) continue;
+      tx.update(postings)
+        .set({
+          cityNorm: fresh.city_norm,
+          state: fresh.state,
+          country: fresh.country,
+          isRemote: fresh.is_remote,
+        })
+        .where(eq(postings.id, row.id))
+        .run();
+    }
+  });
+
+  return repaired;
 }
 
 export function formatStats(stats: BackfillStats, dryRun: boolean): string {
@@ -185,6 +256,8 @@ export function formatStats(stats: BackfillStats, dryRun: boolean): string {
     ...(moves.length > 0
       ? ['tier moves', ...moves.map(([move, count]) => `  ${String(count).padStart(5)}  ${move}`)]
       : ['tier moves  none']),
+    `from url  ${stats.fromUrl} Workday rows whose city_norm was a location group, ` +
+      `recovered from the primary site in their source_url`,
     `duplicates  ${stats.duplicateRows} rows in ${stats.duplicatePairs} groups share a ` +
       `recomputed dedupe_key — NOT merged by this pass, and not by a re-ingest either`,
   ].join('\n');

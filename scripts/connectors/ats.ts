@@ -606,6 +606,32 @@ const WORKDAY_MAX_PAGES = 5;
 /** Their throttle answers slowly on purpose; 20s (the default) reads that as death. */
 const WORKDAY_TIMEOUT_MS = 45_000;
 
+/**
+ * Workday's location field, de-dialected. Two habits, both of which cost us the location:
+ *
+ *  1. A posting that spans sites reports the GROUP — `locationsText: "2 Locations"` — while the
+ *     primary site stays in the URL: `/job/USA-GA-Atlanta/Manager--Sales-Development_JR-010841`.
+ *     Read it back out of `externalPath`; the normalizer already splits on hyphens, so
+ *     "USA-GA-Atlanta" lands on Atlanta, GA the same as "USA, GA, Atlanta" would. NVIDIA and
+ *     Workday's own board together had 353 live rows in this shape.
+ *  2. Some boards separate with periods instead of commas — "USA.VA.Reston" — which no comma
+ *     splitter reaches, so it arrived as the single slug "usa va reston".
+ *
+ * The period swap is deliberately narrow: only when the string carries no comma of its own and
+ * at least two periods, which is the all-periods dialect and nothing else. A blanket swap would
+ * turn Workday's own "USA, MO, St. Louis" into a city called "St". That is also why this lives
+ * here rather than in `normalizeLocation`: a period is Workday-specific punctuation here, and
+ * an abbreviation almost everywhere else.
+ */
+function workdayLocation(job: WorkdayPosting): string | undefined {
+  const reported = job.locationsText?.trim();
+  if (reported && !/^\d+\s+locations?$/i.test(reported)) {
+    const periods = reported.match(/\./g)?.length ?? 0;
+    return !reported.includes(',') && periods >= 2 ? reported.replace(/\./g, ', ') : reported;
+  }
+  return /^\/job\/([^/]+)/.exec(job.externalPath ?? '')?.[1];
+}
+
 export const workday = {
   ...atsConnector('workday', async (entry, context) => {
     if (!entry.wdN || !entry.site) throw new Error(`${entry.name}: workday entry needs wdN and site`);
@@ -640,14 +666,14 @@ export const workday = {
         postings.push(
           row('workday', entry, {
             title: job.title,
-            location: job.locationsText,
+            location: workdayLocation(job),
             url: `https://${entry.token}.${entry.wdN}.myworkdayjobs.com/${entry.site}${job.externalPath}`,
             postedAt: workdayPostedAt(job.postedOn, now),
             // The list endpoint carries no body at all. The detail endpoint does, but one
             // request per posting is 2,000 requests for one company — so these arrive
             // title-only and are classified from the title, as `simplify-internships` is.
             description: '',
-            structured: { location: text(job.locationsText) },
+            structured: { location: text(workdayLocation(job)) },
           }),
         );
       }

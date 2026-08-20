@@ -282,6 +282,27 @@ for (const [key, entry] of Object.entries(CITY_ALIASES)) {
  */
 const FACILITY_TAIL = /\s+(?:office|offices|hq|headquarters|campus|city|metro|area|region)$/;
 
+/**
+ * Boards that hang several sites off one posting write the GROUP's name into the location
+ * field, and the group's name is not a place. Three dialects, 635 live rows:
+ *
+ *   Greenhouse (Stripe)   "Ireland Locations", "India Locations", "United Arab Emirates Locations"
+ *   Workday               "2 Locations", "117 Locations"
+ *   simplify-internships  "5 locations waukegan", "9 locations palo alto"
+ *
+ * The count is noise and `locations` is a common noun, but what sits beside them is real — a
+ * country in the first dialect, a city in the third. Stripping only those two shapes turns
+ * "Ireland Locations" into Ireland and "9 locations palo alto" into Palo Alto, while "2
+ * Locations" correctly becomes nothing at all: a count of sites says nothing about where they
+ * are, and a row with no location is honest missing data. Storing "2 locations" as a *city* was
+ * not — `city_norm` is a `dedupe_key` component, so it made a count into a place identity and
+ * kept the same job at two real sites from ever merging.
+ *
+ * Deliberately not folded into `FACILITY_TAIL`: that list is consulted for city lookups only,
+ * and these have to be gone before the country lookup ever sees the segment.
+ */
+const LOCATION_GROUP = /\b\d+\s+locations?\b|\blocations?\b(?=\s*$)/gi;
+
 /** The other half of the same habit: "Greater Seattle Area", "Greater New York City Area". */
 const LEADING_MODIFIER = /^greater\s+/;
 
@@ -476,7 +497,10 @@ function isRecognizedLocation(input: string): boolean {
  * a city — the remote-vs-city merge pass in `dedupe.ts` is what reconciles those.
  */
 export function normalizeLocation(input: string | null | undefined): NormalizedLocation {
-  const text = placeSlug(input ?? '');
+  // Before anything else, because a group name has to be gone by the time the country lookup
+  // runs — "Ireland Locations" only reads as Ireland once the noun is off it.
+  const cleaned = (input ?? '').replace(LOCATION_GROUP, ' ');
+  const text = placeSlug(cleaned);
   const empty: NormalizedLocation = {
     city_norm: null,
     state: null,
@@ -492,7 +516,7 @@ export function normalizeLocation(input: string | null | undefined): NormalizedL
   // "US-CA-San Francisco" must land on the same place as "San Francisco, CA". A hyphenated
   // city ("Winston-Salem") loses its tail, which is lossy but consistent — `city_norm` is a
   // key, not a display value.
-  const segments = (input ?? '')
+  const segments = cleaned
     // ...but "on-site" is one work-mode word, not the city "on".
     .replace(/\b(on|in)-(?=site|office|person)/gi, '$1 ')
     .split(/[,;/()[\]]|[-–—]/)
