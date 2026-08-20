@@ -29,9 +29,11 @@
  * different `city_norm` values, the two rows still exist and this pass does not merge them.
  * Nor will a re-ingest — `ingest.ts` keeps a row's existing `dedupe_key` when the corrected
  * one is already taken (its `keyTaken` guard), so the pair is permanent, not pending.
- * `duplicatePairs` below counts them so someone can decide whether a merge pass is worth
- * writing. Collapsing rows destroys data in a way recomputing a derived column does not, and
- * it needs its own safety argument.
+ * That merge pass now exists and lives in `merge-duplicates.ts`, which owns duplicate
+ * detection outright. This file used to carry a counter for it and the counter was WRONG: it
+ * hashed `postings.location`, the display string, which is NULL on 12,628 rows — so every one
+ * of them hashed as the same "unknown" location and it reported 2,352 duplicate rows where
+ * there were 16. Two places computing one number is how that survives; there is now one.
  *
  *   npm run backfill:locations -- --dry-run    report only, write nothing
  *   npm run backfill:locations
@@ -41,7 +43,6 @@ import { pathToFileURL } from 'node:url';
 
 import { and, eq, isNull, like, or } from 'drizzle-orm';
 
-import { dedupeKey } from '../lib/dedupe.ts';
 import { GEO_TIER, geoTier } from '../lib/geo.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { normalizeLocation } from '../lib/normalize.ts';
@@ -69,12 +70,6 @@ export interface BackfillStats {
   shownDesign: number;
   hiddenDesign: number;
   /**
-   * Distinct jobs holding more than one posting row once every `dedupe_key` is recomputed
-   * with today's normalizers — the duplicates the old ones created. Reported, never repaired.
-   */
-  duplicatePairs: number;
-  duplicateRows: number;
-  /**
    * Rows whose stored `city_norm` was a Workday location GROUP ("2 locations") rather than a
    * place, repaired from the primary site in their own `source_url`. See `recoverFromUrl`.
    */
@@ -91,8 +86,6 @@ export function runBackfill(db: Db, options: { dryRun?: boolean } = {}): Backfil
     hidden: 0,
     shownDesign: 0,
     hiddenDesign: 0,
-    duplicatePairs: 0,
-    duplicateRows: 0,
     fromUrl: 0,
   };
 
@@ -111,20 +104,6 @@ export function runBackfill(db: Db, options: { dryRun?: boolean } = {}): Backfil
     })
     .from(postings)
     .all();
-
-  // Count the duplicates the old normalizer left behind, over EVERY row: a stale row can be
-  // the twin of one that already normalized correctly.
-  const byKey = new Map<string, number>();
-  for (const row of all) {
-    const key = dedupeKey(row.company, row.title, row.location);
-    byKey.set(key, (byKey.get(key) ?? 0) + 1);
-  }
-  for (const count of byKey.values()) {
-    if (count > 1) {
-      stats.duplicatePairs += 1;
-      stats.duplicateRows += count;
-    }
-  }
 
   const stale = all.filter((row) => row.location !== null);
   stats.examined = stale.length;
@@ -258,8 +237,6 @@ export function formatStats(stats: BackfillStats, dryRun: boolean): string {
       : ['tier moves  none']),
     `from url  ${stats.fromUrl} Workday rows whose city_norm was a location group, ` +
       `recovered from the primary site in their source_url`,
-    `duplicates  ${stats.duplicateRows} rows in ${stats.duplicatePairs} groups share a ` +
-      `recomputed dedupe_key — NOT merged by this pass, and not by a re-ingest either`,
   ].join('\n');
 }
 
