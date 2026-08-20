@@ -453,8 +453,29 @@ const ENGINEERING_ROLE = /\b(?:engineer(?:ing|s)?|developer|programmer|swe|sde|s
 const HARDWARE_DESIGN =
   /\b(?:asic|vlsi|dft|rtl|soc|pcb|fpga|silicon|semiconductor|tapeout|verilog|vhdl|wafer|foundry|circuit|electrical|bim|datacent(?:er|re)|data\s+cent(?:er|re)|mixed[\s-]signal|physical\s+design|design\s+for\s+test|chip\s+design\w*|analog|firmware)\b/i;
 
+/**
+ * Design disciplines this tool does not cover. Not a misclassification like the hardware terms
+ * above — these really are design jobs — but the Design tab means product, visual and brand
+ * design, and an interior designer answering a Revit brief is not competing for the same roles.
+ *
+ * They were 8 of 48 visible rows, mostly one staffing agency reposting the same architecture
+ * briefs: "Remote Interior Designer - Revit & Design-Focused", "Remote Landscape Designer with
+ * LandFX experience", "High-End Hotel Interior Design Specialist", "Remote Archicad expert for
+ * Interior Design & Documentation".
+ *
+ * The AEC and mechanical CAD tool names are here because they are the most reliable signal in the
+ * title — a posting that names Revit, Archicad or LandFX is never a product-design role, whatever
+ * else the title says. `bim` and `electrical` sit in HARDWARE_DESIGN instead, since those titles
+ * are engineering rather than out-of-scope design.
+ *
+ * NOT vetoed, and deliberately: `packaging` and `exhibition` design, which are physical but sit
+ * closer to graphic and brand work than to the built environment. Say so before widening this.
+ */
+const OFF_TRACK_DESIGN =
+  /\b(?:interior\s+design\w*|interior\s+architect\w*|landscape\s+(?:design\w*|architect\w*)|industrial\s+design\w*|revit|archicad|autocad|landfx|sketchup|solidworks)\b/i;
+
 const DESIGN_TITLE =
-  /\b(?:design(?:er)?s?\b(?![\s/-]*engineer)|ux|ui\b|user\s+experience|user\s+interface|interaction|visual|graphic|motion|brand(?:ing)?|industrial\s+design|illustrat\w*|typograph\w*|art\s+direct\w*|creative\s+direct\w*|design\s+research|ux\s+research|user\s+research|design\s+system|product\s+design|(?:3d|vfx|concept|character|environment)\s+artist|animator|vfx)\b/i;
+  /\b(?:design(?:er)?s?\b(?![\s/-]*engineer)|ux|ui\b|user\s+experience|user\s+interface|interaction|visual|graphic|motion|brand(?:ing)?|illustrat\w*|typograph\w*|art\s+direct\w*|creative\s+direct\w*|design\s+research|ux\s+research|user\s+research|design\s+system|product\s+design|(?:3d|vfx|concept|character|environment)\s+artist|animator|vfx)\b/i;
 
 /**
  * NOTE on the `\w*` suffixes: these alternations close with `\b`, so a PREFIX alternative
@@ -490,7 +511,7 @@ function countMatches(text: string, pattern: RegExp): number {
 }
 
 function extractTrack(title: string, body: string, source: SourceFields | null | undefined): Track | 'other' {
-  if (TRACK_VETO.test(title)) return 'other';
+  if (TRACK_VETO.test(title) || OFF_TRACK_DESIGN.test(title)) return 'other';
 
   // The head first, then the whole title. Reading the head alone is what stops a trailing
   // qualifier deciding the track — "Product Designer, Developer Tools" is a designer, and
@@ -509,7 +530,7 @@ function extractTrack(title: string, body: string, source: SourceFields | null |
 
   const department = `${source?.department ?? ''} ${source?.team ?? ''}`.trim();
   if (department) {
-    if (TRACK_VETO.test(department)) return 'other';
+    if (TRACK_VETO.test(department) || OFF_TRACK_DESIGN.test(department)) return 'other';
     // The same precedence the title gets, and for the same reason: a team named "Datacenter
     // Design" is infrastructure, and `DESIGN_DEPARTMENT` matching the bare word `design` was
     // enough to put an OpenAI compute role ("Industrial Compute", which the title alone reads

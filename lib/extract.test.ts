@@ -223,6 +223,43 @@ describe('track', () => {
     expect(extract({ title: 'Data Analyst', description: '' }).track).toBe('engineering');
   });
 
+  /**
+   * Design disciplines out of scope for this tool. Not misclassification — these are real design
+   * jobs — but the Design tab means product, visual and brand work, and these were 8 of 48
+   * visible rows, mostly one staffing agency reposting architecture briefs.
+   */
+  it.each([
+    'Remote Interior Designer - Revit & Design-Focused',
+    'Remote Landscape Designer with LandFX experience',
+    'High-End Hotel Interior Design Specialist (Revit Documentation)',
+    'Remote Archicad expert for Interior Design & Documentation',
+    'Industrial Designer',
+    'Senior Industrial Design Lead',
+    'Landscape Architect',
+    'CAD Designer (AutoCAD)',
+    'Mechanical Designer, SolidWorks',
+  ])('keeps the out-of-scope design role %s off both tabs', (title) => {
+    expect(extract({ title, description: '' }).track).toBe('other');
+  });
+
+  /**
+   * The line that veto must not cross. `packaging` and `exhibition` are physical design and stay,
+   * because they sit closer to graphic and brand work than to the built environment — and the
+   * first four here are seed fixtures, so moving them would silently re-aim the query suite.
+   */
+  it.each([
+    'Packaging Designer',
+    'Exhibition Designer',
+    'Communication Designer',
+    'Editorial Designer',
+    'Product Designer',
+    'Presentation Designer',
+    'Production Designer',
+    'Creative Designer',
+  ])('keeps %s on the Design tab', (title) => {
+    expect(extract({ title, description: '' }).track).toBe('design');
+  });
+
   it('vetoes a GTM or PM role that happens to contain a track word', () => {
     expect(extract({ title: 'Sales Engineer', description: '' }).track).toBe('other');
     expect(extract({ title: 'Design Program Manager', description: '' }).track).toBe('other');
