@@ -204,39 +204,16 @@ export const remotive: Connector = {
   },
 };
 
-interface ArbeitnowJob {
-  title?: string;
-  company_name?: string;
-  url?: string;
-  location?: string;
-  remote?: boolean;
-  created_at?: number;
-  description?: string;
-}
-
-export const arbeitnow: Connector = {
-  name: 'arbeitnow',
-  kind: 'aggregator',
-  /** Whole board in one response, same as RemoteOK. Hourly. */
-  minIntervalMs: 60 * 60 * 1000,
-  async fetch(context) {
-    const body = await context.runtime.fetchJson<{ data?: ArbeitnowJob[] }>(
-      'https://www.arbeitnow.com/api/job-board-api',
-    );
-    return (body.data ?? [])
-      .filter((job) => job.url)
-      .map((job) =>
-        aggRow('arbeitnow', {
-          company: job.company_name,
-          title: job.title,
-          location: job.remote ? 'Remote' : job.location,
-          url: job.url!,
-          postedAt: toEpochMs(job.created_at),
-          description: job.description ?? '',
-        }),
-      );
-  },
-};
+/**
+ * REMOVED: arbeitnow. A German board — 234 of the 235 rows it had contributed were outside the
+ * US, and the one that was not was an accident. Worse, it reported `remote ? 'Remote' : location`,
+ * which threw the country away on exactly the rows the location rules would otherwise have
+ * caught, so a Berlin-onsite job arrived indistinguishable from a work-from-anywhere one.
+ *
+ * Kept as a note rather than deleted silently because "a broad board costs nothing" is written
+ * two connectors down, and it is wrong when the board is national: the cost is a filter that
+ * cannot tell where the job is.
+ */
 
 interface WorkingNomadsJob {
   title?: string;
@@ -384,7 +361,7 @@ const HIMALAYAS_TYPE: Record<string, EmploymentType> = {
 
 /**
  * A general remote board rather than a design one, so it feeds both tracks. Worth having for
- * the same reason arbeitnow and workingnomads are: `track` is decided from the title, so a
+ * the same reason workingnomads is: `track` is decided from the title, so a
  * broad board costs nothing but a classification pass and widens both tabs.
  *
  * `locationRestrictions` is where the US filter is actually won — a row restricted to
@@ -534,7 +511,6 @@ export const aggConnectors: Connector[] = [
   hn,
   remoteok,
   remotive,
-  arbeitnow,
   workingnomads,
   braintrust,
   himalayas,

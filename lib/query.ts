@@ -3,8 +3,9 @@
  * what keeps the page a single round trip and the row cap honest.
  *
  * Both tabs sort the same way — newest first, entry/junior above mid. The tabs differ in one
- * place only: Design shows the target locations and Engineering shows every location, and
+ * place only: Design shows the target locations and Engineering shows every US location, and
  * that difference lives in `visible()` with the other rules that hold on every route in.
+ * Neither tab shows a job that is onsite in another country.
  */
 
 import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, like, sql, type SQL } from 'drizzle-orm';
@@ -45,14 +46,20 @@ const ROW = {
  * `coalesce` on `work_mode` rather than a bare `=`: SQL three-valued logic would turn a NULL
  * work_mode into a NULL branch condition, which is not the same as "no".
  */
+/**
+ * Remote by either signal, written once because two rules read it: the `remote` tier below,
+ * and the foreign-onsite exclusion further down. `coalesce` rather than a bare `=`: SQL
+ * three-valued logic would turn a NULL `work_mode` into a NULL condition, which is not "no".
+ */
+const isRemoteSql: SQL = sql`(${postings.isRemote} = 1 or coalesce(${postings.workMode}, '') = 'remote')`;
+
 export const geoTierSql: SQL<number> = sql<number>`(case
   when ${postings.cityNorm} in (${sql.join(
     GEO_TIER.metros.map((alias) => sql`${alias}`),
     sql`, `,
   )}) then ${GEO_TIER.metro}
   when ${postings.state} = ${GEO_TIER.californiaCode} then ${GEO_TIER.california}
-  when ${postings.isRemote} = 1 or coalesce(${postings.workMode}, '') = 'remote'
-    then ${GEO_TIER.remote}
+  when ${isRemoteSql} then ${GEO_TIER.remote}
   when ${postings.cityNorm} is null and ${postings.state} is null and ${postings.country} is null
     then ${GEO_TIER.unknown}
   else ${GEO_TIER.elsewhere} end)`;
@@ -60,6 +67,30 @@ export const geoTierSql: SQL<number> = sql<number>`(case
 /** The Design tab's one exclusion, written once. `visible()` negates it; the counter that
  *  explains an empty table asserts it, so the two cannot describe different sets. */
 const outsideTargets: SQL = sql`${geoTierSql} = ${GEO_TIER.elsewhere}`;
+
+/**
+ * Onsite in another country — the rows nobody reading this can take. Remote abroad is fine and
+ * stays: a remote job posted from Warsaw is a job you can do from here, which is why this asks
+ * for `not remote` rather than leaning on the geo tier. It cannot be a tier for the same
+ * reason: `remote` is decided before country upstream in `geoTier`, so a foreign remote row is
+ * already tier `remote`, and a foreign onsite row lands in `elsewhere` next to Austin.
+ *
+ * `country is not null` carries weight: an unparsed location is a missing-data problem, not
+ * evidence of being abroad, and `<>` against NULL would answer NULL and hide the row anyway.
+ */
+const foreignOnsite: SQL = sql`(${postings.country} is not null
+  and ${postings.country} <> ${GEO_TIER.usCode}
+  and not ${isRemoteSql})`;
+
+/**
+ * Every row the location rules hide, per track, in one expression — `visible()` negates it and
+ * `outsideTargetLocations` asserts it, so the table and the number explaining an empty table
+ * cannot disagree. Design hides all of `elsewhere`, which already contains every foreign onsite
+ * row; every other track hides only the foreign onsite ones, because `elsewhere` is also where
+ * Austin and Chicago live and Engineering is not a targeted-metro tab.
+ */
+const hiddenByLocation: SQL = sql`(${foreignOnsite}
+  or (${postings.track} is 'design' and ${outsideTargets}))`;
 
 /**
  * The two sides of the Design split, built from `DESIGN_TYPE` so the SQL and the dropdown
@@ -97,16 +128,16 @@ function structural(now: number): SQL[] {
 
 /**
  * Structural visibility — not filters, and not negotiable. The 60-day cutoff, delisting, the
- * seniority ceiling and Design's location rule apply to every way into a posting, including
- * the `?job=<id>` deep link: a bookmarked drawer must not resurrect a delisted role, a
- * `senior+` one, or a Design posting the Design table refuses to list.
+ * seniority ceiling and the location rules apply to every way into a posting, including the
+ * `?job=<id>` deep link: a bookmarked drawer must not resurrect a delisted role, a `senior+`
+ * one, or a posting the table it came from refuses to list.
  *
- * The location rule is written against `track` rather than against the requested tab, so it
- * holds in `getPostingDetail`, which has no tab. `is not` rather than `<>`: a posting with no
- * track yet is not a Design posting, and `<>` would answer NULL and hide it.
+ * The location rules are written against `track` rather than against the requested tab, so
+ * they hold in `getPostingDetail`, which has no tab. `is not` rather than `<>`: a posting with
+ * no track yet is not a Design posting, and `<>` would answer NULL and hide it.
  */
 function visible(now: number): SQL[] {
-  return [...structural(now), sql`(${postings.track} is not 'design' or not ${outsideTargets})`];
+  return [...structural(now), sql`not ${hiddenByLocation}`];
 }
 
 /** What the reader asked for, as opposed to what they are allowed to see. */
@@ -177,11 +208,12 @@ export async function tabIsEmpty(db: ReadDb, p: Params, now: number = Date.now()
 }
 
 /**
- * How many postings these params would have matched but for the location rule. Design's rule
- * is not a filter — it is not in `Params`, so `clear` cannot lift it — which means an empty
- * table has to be able to say that geography is why, rather than blaming the ingest. It counts
- * under the same filters it is explaining, so the number is an answer to the question the
- * reader just asked rather than a fact about the whole tab.
+ * How many postings these params would have matched but for the location rules. They are not
+ * filters — they are not in `Params`, so `clear` cannot lift them — which means an empty table
+ * has to be able to say that geography is why, rather than blaming the ingest. It counts under
+ * the same filters it is explaining, so the number is an answer to the question the reader just
+ * asked rather than a fact about the whole tab, and it counts exactly what the tab hid: all of
+ * `elsewhere` on Design, foreign onsite anywhere else.
  */
 export async function outsideTargetLocations(
   db: ReadDb,
@@ -191,7 +223,7 @@ export async function outsideTargetLocations(
   const row = await driver(db)
     .select({ n: count() })
     .from(postings)
-    .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), outsideTargets))
+    .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), hiddenByLocation))
     .get();
   return row?.n ?? 0;
 }

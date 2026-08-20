@@ -18,6 +18,13 @@ export const GEO_TIER = {
   metros: Object.keys(CITY_ALIASES) as readonly string[],
   /** The state whose every city counts, metro or not. */
   californiaCode: 'CA',
+  /**
+   * The only country that may be listed onsite. A job in another country is shown only when
+   * it is remote — see `hiddenByLocation` in `query.ts`, which is the one place that rule
+   * lives. Onsite abroad is not a tier, because a foreign onsite row is not "somewhere we
+   * rank lower", it is a row nobody here can take.
+   */
+  usCode: 'US',
   metro: 0,
   /** Anywhere else in California — Sacramento and San Diego land here, not in `elsewhere`. */
   california: 1,

@@ -612,3 +612,51 @@ describe('idempotency over a generated input set', () => {
     }
   });
 });
+
+/**
+ * A city abroad written without its country used to leave `country` NULL, and the
+ * foreign-onsite rule in `query.ts` asks `country` whether a job is abroad — so ~1,000 live
+ * rows in London, Bengaluru and Amsterdam were invisible to it. The table that fixes that is
+ * only safe because it is consulted last and assigns through `??=`; these tests are the guard
+ * on that ordering, not on the spellings.
+ */
+describe('cities abroad that arrive without a country', () => {
+  it('reads a bare foreign city as that country', () => {
+    expect(normalizeLocation('London').country).toBe('GB');
+    expect(normalizeLocation('Bengaluru').country).toBe('IN');
+    expect(normalizeLocation('Amsterdam').country).toBe('NL');
+    expect(normalizeLocation('São Paulo').country).toBe('BR');
+    expect(normalizeLocation('Tel Aviv').country).toBe('IL');
+  });
+
+  it('reads a country name as a country, not as a city', () => {
+    // These fell through to the give-up branch before, landing in `city_norm` as "israel".
+    for (const [input, code] of [['Israel', 'IL'], ['China', 'CN'], ['Mexico', 'MX'], ['Brazil', 'BR']] as const) {
+      expect(normalizeLocation(input), input).toMatchObject({ city_norm: null, country: code });
+    }
+  });
+
+  /** The whole reason the table is consulted last: a US namesake with its state spelled out. */
+  it.each([
+    ['Dublin, OH', 'OH'],
+    ['London, KY', 'KY'],
+    ['Berlin, CT', 'CT'],
+    ['Toronto, OH', 'OH'],
+    ['Vancouver, WA', 'WA'],
+    ['Warsaw, IN', 'IN'],
+    ['Amsterdam, NY', 'NY'],
+    ['Paris, TX', 'TX'],
+  ])('keeps %s in the US', (input, state) => {
+    expect(normalizeLocation(input)).toMatchObject({ state, country: 'US' });
+  });
+
+  /** A US city with no state is missing data, not evidence of being abroad. */
+  it.each(['Chicago', 'Austin', 'Denver', 'Boston'])('does not guess a country for %s', (input) => {
+    expect(normalizeLocation(input).country).toBeNull();
+  });
+
+  it('a recognized metro later in the string still wins the city', () => {
+    // "London, San Francisco, CA" is a job listed in both; SF is the one that matters here.
+    expect(normalizeLocation('London, San Francisco, CA')).toMatchObject({ city_norm: 'sf', state: 'CA' });
+  });
+});

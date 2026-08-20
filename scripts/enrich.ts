@@ -20,6 +20,7 @@ import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 // extension resolution. Extensionless specifiers only work under vitest and Next.
 import * as schema from '../lib/db/schema.ts';
 import { extract, toStored } from '../lib/extract.ts';
+import { normalizeLocation } from '../lib/normalize.ts';
 
 const { postings } = schema;
 
@@ -43,6 +44,12 @@ export interface EnrichStats {
  * because each one cost an API call; extraction costs nothing, so skipping would only mean a
  * rule change never reaches the rows it was written for.
  */
+/** The geo columns, derived from the display string so the two can never disagree. */
+function geoColumns(location: string) {
+  const geo = normalizeLocation(location);
+  return { cityNorm: geo.city_norm, state: geo.state, country: geo.country, isRemote: geo.is_remote };
+}
+
 export function runEnrich(db: WorkieDatabase): EnrichStats {
   const startedAt = Date.now();
   const rows = db
@@ -89,6 +96,19 @@ export function runEnrich(db: WorkieDatabase): EnrichStats {
           paid: found?.paid ?? null,
           workMode: found?.work_mode ?? null,
           location: found?.location ?? null,
+          /**
+           * Extraction is the only writer of `location`, and the geo columns are what the
+           * location rules in `query.ts` actually read — so writing one without the other is
+           * how a row ends up displaying "London" while being filtered as San Francisco.
+           * 288 live rows were in exactly that state.
+           *
+           * Only when extraction produced a location: `found.location` is NULL for most rows,
+           * and recomputing from NULL would erase the geo that `ingest` derived from the ATS's
+           * own spelling. Nulling the display string while keeping those columns is the
+           * existing behaviour and stays — `backfill:locations` skips rows with no string for
+           * the same reason.
+           */
+          ...(found?.location ? geoColumns(found.location) : {}),
           payRateMin: found?.pay_rate?.min ?? null,
           payRateMax: found?.pay_rate?.max ?? null,
           payRatePeriod: found?.pay_rate?.period ?? null,

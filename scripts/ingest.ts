@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { dedupePostings, SOURCE_PRIORITY } from '../lib/dedupe.ts';
+import { normalizeLocation } from '../lib/normalize.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { connectorRuns, postingSources, postings } from '../lib/db/schema.ts';
 import type { SourceFields } from '../lib/extract.ts';
@@ -417,16 +418,31 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
       const sourceFields: SourceFields | null =
         structured || location ? { ...structured, ...(location ? { location } : {}) } : null;
 
+      /**
+       * The stored geo columns must describe the stored string. `location` above is the
+       * highest-priority *structured* source's spelling, while `post.location` is whichever
+       * group `dedupePostings` kept — usually the same source, but when a merge pass joins a
+       * remote listing to a city one they are different, and the row then displayed "New York,
+       * New York, United States" while its `city_norm` said `sf`. The location rules read the
+       * columns and the reader reads the string, so a row that disagrees with itself is a row
+       * filtered on a city it does not claim to be in. 288 live rows were in that state.
+       *
+       * `locationKey` and `dedupe_key` deliberately keep coming from `post` — those are the
+       * posting's identity, they are what merged these sources in the first place, and
+       * recomputing them here would split the group back apart.
+       */
+      const geo = location === undefined ? post.location : normalizeLocation(location);
+
       const shared = {
         company: best?.company ?? '',
         title: best?.title ?? '',
         companyNorm: post.companyNorm,
         titleNorm: post.titleNorm,
         locationKey: post.locationKey,
-        cityNorm: post.location.city_norm,
-        state: post.location.state,
-        country: post.location.country,
-        isRemote: post.location.is_remote,
+        cityNorm: geo.city_norm,
+        state: geo.state,
+        country: geo.country,
+        isRemote: geo.is_remote,
       };
 
       if (postingId === undefined) {

@@ -92,6 +92,8 @@ function before(list: string[], a: string, b: string) {
 
 const SF = { cityNorm: 'sf', state: 'CA', country: 'US', isRemote: false };
 const BERLIN = { cityNorm: 'berlin', state: null, country: 'DE', isRemote: false };
+const AUSTIN = { cityNorm: 'austin', state: 'TX', country: 'US', isRemote: false };
+const BERLIN_REMOTE = { ...BERLIN, isRemote: true };
 
 beforeEach(() => {
   db = drizzle(new Database(':memory:')) as unknown as Db;
@@ -149,9 +151,22 @@ describe('recency first, on both tabs', () => {
 });
 
 describe('design shows the target locations, engineering shows every location', () => {
-  it('hides a Berlin posting that Engineering shows, in the same corpus', async () => {
+  it('hides an onsite Berlin posting on BOTH tabs — nobody reading this can take it', async () => {
     expect(await order(params('design'))).not.toContain('d-berlin-3d');
+    expect(await order(params('engineering'))).not.toContain('e-berlin-3d');
+  });
+
+  /**
+   * The other half of that rule, and the reason it is not simply "no foreign rows": a remote
+   * job posted from Berlin is a job you can do from here. Onsite is what makes abroad
+   * disqualifying, so the same row flips to visible on both tabs the moment it is remote.
+   */
+  it('keeps the same Berlin posting once it is remote, on both tabs', async () => {
+    db.update(postings).set(BERLIN_REMOTE).where(eq(postings.id, idOf('e-berlin-3d'))).run();
+    db.update(postings).set(BERLIN_REMOTE).where(eq(postings.id, idOf('d-berlin-3d'))).run();
+
     expect(await order(params('engineering'))).toContain('e-berlin-3d');
+    expect(await order(params('design'))).toContain('d-berlin-3d');
   });
 
   it('hides it even when it would otherwise lead the table', async () => {
@@ -202,10 +217,16 @@ describe('design shows the target locations, engineering shows every location', 
     expect(list).toContain('d-berlin-3d'); // now in SF
   });
 
-  it('engineering ignores location entirely: swapping two of them changes nothing', async () => {
+  /**
+   * Narrower than it used to be, and deliberately so: Engineering ignores WHERE in the US a job
+   * is — Austin ranks with San Francisco — but it no longer ignores location entirely, because
+   * onsite-abroad is now hidden there too. Swapping two US cities is the strongest form of the
+   * claim that still holds.
+   */
+  it('engineering ignores location within the US: swapping two US ones changes nothing', async () => {
     const first = await order(params('engineering'));
-    db.update(postings).set(BERLIN).where(eq(postings.id, idOf('e-sf-3d'))).run();
-    db.update(postings).set(SF).where(eq(postings.id, idOf('e-berlin-3d'))).run();
+    db.update(postings).set(AUSTIN).where(eq(postings.id, idOf('e-sf-3d'))).run();
+    db.update(postings).set(SF).where(eq(postings.id, idOf('e-austin'))).run();
 
     expect(await order(params('engineering'))).toEqual(first);
   });
@@ -218,7 +239,8 @@ describe('design shows the target locations, engineering shows every location', 
   it('the deep link obeys the location rule, not just the table', async () => {
     expect(await getPostingDetail(db, idOf('d-berlin-3d'), NOW), 'design, elsewhere').toBeNull();
     expect(await getPostingDetail(db, idOf('d-nowhere'), NOW), 'design, unknown').not.toBeNull();
-    expect(await getPostingDetail(db, idOf('e-berlin-3d'), NOW), 'engineering, elsewhere').not.toBeNull();
+    expect(await getPostingDetail(db, idOf('e-berlin-3d'), NOW), 'engineering, onsite abroad').toBeNull();
+    expect(await getPostingDetail(db, idOf('e-austin'), NOW), 'engineering, elsewhere but US').not.toBeNull();
   });
 
   it('counts what geography hides, so an empty table can say so', async () => {

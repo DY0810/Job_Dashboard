@@ -12,7 +12,7 @@ import type { Connector, ConnectorContext, ConnectorPosting, Runtime } from '../
 
 import { ashby, greenhouse, lever, recruitee, smartrecruiters, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
-import { arbeitnow, braintrust, himalayas, hn, jobicy, remoteok, remotive, workingnomads } from './agg.ts';
+import { braintrust, himalayas, hn, jobicy, remoteok, remotive, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
 import { adzuna, careerjet, jooble, usajobs } from './keyed.ts';
 import { parseReadmeTable, simplifyInternships } from './repo.ts';
@@ -85,7 +85,6 @@ const RECORDED: Connector[] = [
   recruitee,
   hn,
   remoteok,
-  arbeitnow,
   workingnomads,
   weworkremotely,
   weworkremotelyDesign,

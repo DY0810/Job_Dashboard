@@ -118,7 +118,127 @@ const COUNTRIES: Record<string, string> = {
   in: 'IN', india: 'IN',
   au: 'AU', australia: 'AU',
   jp: 'JP', japan: 'JP',
-  sg: 'SG', singapore: 'SG',
+  sg: 'SG', sgp: 'SG', singapore: 'SG',
+  il: 'IL', israel: 'IL',
+  cn: 'CN', china: 'CN',
+  hk: 'HK', 'hong kong': 'HK',
+  tw: 'TW', taiwan: 'TW',
+  kr: 'KR', 'south korea': 'KR', korea: 'KR',
+  mx: 'MX', mexico: 'MX', méxico: 'MX',
+  br: 'BR', brazil: 'BR', brasil: 'BR',
+  ar: 'AR', argentina: 'AR',
+  cl: 'CL', chile: 'CL',
+  co: 'CO', colombia: 'CO',
+  pe: 'PE', peru: 'PE',
+  se: 'SE', sweden: 'SE',
+  no: 'NO', norway: 'NO',
+  dk: 'DK', denmark: 'DK',
+  fi: 'FI', finland: 'FI',
+  ch: 'CH', switzerland: 'CH',
+  at: 'AT', austria: 'AT',
+  be: 'BE', belgium: 'BE',
+  pt: 'PT', portugal: 'PT',
+  it: 'IT', italy: 'IT',
+  gr: 'GR', greece: 'GR',
+  cz: 'CZ', 'czech republic': 'CZ', czechia: 'CZ',
+  ro: 'RO', romania: 'RO',
+  hu: 'HU', hungary: 'HU',
+  ua: 'UA', ukraine: 'UA',
+  tr: 'TR', turkey: 'TR', türkiye: 'TR',
+  ae: 'AE', 'united arab emirates': 'AE',
+  za: 'ZA', 'south africa': 'ZA',
+  ng: 'NG', nigeria: 'NG',
+  ke: 'KE', kenya: 'KE',
+  eg: 'EG', egypt: 'EG',
+  pk: 'PK', pakistan: 'PK',
+  bd: 'BD', bangladesh: 'BD',
+  lk: 'LK', 'sri lanka': 'LK',
+  my: 'MY', malaysia: 'MY',
+  id: 'ID', indonesia: 'ID',
+  ph: 'PH', philippines: 'PH',
+  th: 'TH', thailand: 'TH',
+  vn: 'VN', vietnam: 'VN',
+  nz: 'NZ', 'new zealand': 'NZ',
+  lu: 'LU', luxembourg: 'LU',
+  cr: 'CR', 'costa rica': 'CR',
+  uy: 'UY', uruguay: 'UY',
+};
+
+/**
+ * Cities abroad that job boards write without their country: "London", "Bengaluru",
+ * "Amsterdam". Without this they fall through to the give-up branch, land in `city_norm` as a
+ * bare slug with `country` still NULL, and the foreign-onsite rule in `query.ts` — which asks
+ * whether `country` is a non-US country — cannot see them. That was ~1,000 live rows.
+ *
+ * Consulted LAST, and only via `??=`, which is what makes it safe: "Dublin, OH", "London, KY"
+ * and "Berlin, CT" have already had `country = 'US'` stamped by the trailing-state pass before
+ * the loop reaches here, so a US namesake with its state spelled out keeps its state. A bare
+ * namesake does not, and cannot: nothing in "Dublin" says Ohio.
+ *
+ * Only names actually seen in the corpus, so this stays a list of observed spellings rather
+ * than a world gazetteer nobody maintains.
+ *
+ * ponytail: `vancouver` is the one real gamble — Vancouver, WA is a US city of 190k, and a
+ * posting that says only "Vancouver" is read as British Columbia. Tech postings skew BC hard
+ * enough to be worth it; if a Washington role is ever wrongly hidden, spell the state.
+ */
+const FOREIGN_CITIES: Record<string, string> = {
+  london: 'GB',
+  bengaluru: 'IN', bangalore: 'IN', hyderabad: 'IN', mumbai: 'IN', pune: 'IN',
+  'new delhi': 'IN', delhi: 'IN', chennai: 'IN', gurgaon: 'IN', gurugram: 'IN', noida: 'IN',
+  amsterdam: 'NL', hoofddorp: 'NL', rotterdam: 'NL', utrecht: 'NL',
+  berlin: 'DE', munich: 'DE', münchen: 'DE', hamburg: 'DE', cologne: 'DE', köln: 'DE',
+  frankfurt: 'DE', stuttgart: 'DE',
+  toronto: 'CA', vancouver: 'CA', montreal: 'CA', montréal: 'CA', ottawa: 'CA',
+  calgary: 'CA', waterloo: 'CA', mississauga: 'CA',
+  dublin: 'IE', cork: 'IE',
+  shanghai: 'CN', beijing: 'CN', guangzhou: 'CN', shenzhen: 'CN', hangzhou: 'CN',
+  tokyo: 'JP', osaka: 'JP', kyoto: 'JP',
+  'mexico city': 'MX', 'cidade do méxico': 'MX', guadalajara: 'MX', monterrey: 'MX',
+  'são paulo': 'BR', 'sao paulo': 'BR', 'rio de janeiro': 'BR', 'belo horizonte': 'BR',
+  sydney: 'AU', melbourne: 'AU', brisbane: 'AU', perth: 'AU',
+  seoul: 'KR',
+  helsinki: 'FI',
+  stockholm: 'SE', gothenburg: 'SE',
+  oslo: 'NO',
+  copenhagen: 'DK', københavn: 'DK',
+  warsaw: 'PL', warszawa: 'PL', krakow: 'PL', kraków: 'PL', wroclaw: 'PL', wrocław: 'PL',
+  dubai: 'AE', 'abu dhabi': 'AE',
+  bogotá: 'CO', bogota: 'CO', medellin: 'CO', medellín: 'CO',
+  madrid: 'ES', barcelona: 'ES', valencia: 'ES',
+  budapest: 'HU',
+  'taipei city': 'TW', taipei: 'TW',
+  'tel aviv': 'IL', 'tel aviv yafo': 'IL', jerusalem: 'IL', herzliya: 'IL',
+  paris: 'FR', lyon: 'FR', toulouse: 'FR',
+  zurich: 'CH', zürich: 'CH', geneva: 'CH', lausanne: 'CH',
+  vienna: 'AT', wien: 'AT',
+  brussels: 'BE', antwerp: 'BE',
+  lisbon: 'PT', lisboa: 'PT', porto: 'PT',
+  milan: 'IT', milano: 'IT', rome: 'IT', roma: 'IT',
+  athens: 'GR',
+  prague: 'CZ', praha: 'CZ', brno: 'CZ',
+  bucharest: 'RO', bucuresti: 'RO', cluj: 'RO',
+  kyiv: 'UA', kiev: 'UA', lviv: 'UA',
+  istanbul: 'TR', ankara: 'TR',
+  'cape town': 'ZA', johannesburg: 'ZA',
+  lagos: 'NG',
+  nairobi: 'KE',
+  cairo: 'EG',
+  karachi: 'PK', lahore: 'PK',
+  dhaka: 'BD',
+  colombo: 'LK',
+  'kuala lumpur': 'MY',
+  jakarta: 'ID',
+  manila: 'PH', 'quezon city': 'PH', cebu: 'PH',
+  bangkok: 'TH',
+  hanoi: 'VN', 'ho chi minh city': 'VN',
+  auckland: 'NZ', wellington: 'NZ',
+  'buenos aires': 'AR',
+  santiago: 'CL',
+  lima: 'PE',
+  'san jose costa rica': 'CR',
+  montevideo: 'UY',
+  edinburgh: 'GB', glasgow: 'GB', bristol: 'GB', leeds: 'GB', cambridgeshire: 'GB',
 };
 
 const REMOTE_MARKERS = [
@@ -189,6 +309,7 @@ const STATE_LOOKUP = new Map(Object.entries(US_STATES));
 for (const code of new Set(Object.values(US_STATES))) STATE_LOOKUP.set(code.toLowerCase(), code);
 
 const COUNTRY_LOOKUP = new Map(Object.entries(COUNTRIES));
+const FOREIGN_CITY_LOOKUP = new Map(Object.entries(FOREIGN_CITIES));
 const CALIFORNIA_SET = new Set(CALIFORNIA_CITIES);
 
 /**
@@ -441,6 +562,14 @@ export function normalizeLocation(input: string | null | undefined): NormalizedL
     const country = COUNTRY_LOOKUP.get(segment);
     if (country) {
       result.country ??= country;
+      continue;
+    }
+    // A city abroad that arrived without its country. `??=` on both fields: a US state already
+    // read from this string wins, and a recognized metro earlier in it keeps `city_norm`.
+    const abroad = FOREIGN_CITY_LOOKUP.get(segment);
+    if (abroad) {
+      result.country ??= abroad;
+      result.city_norm ??= segment;
       continue;
     }
     result.city_norm ??= segment;
