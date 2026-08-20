@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { GEO_TIER, geoTier } from './geo.ts';
 import {
   CALIFORNIA_CITIES,
   CITY_ALIASES,
@@ -248,6 +249,199 @@ describe('normalizeLocation', () => {
     expect(normalizeLocation(null)).toEqual(empty);
     expect(normalizeLocation('')).toEqual(empty);
     expect(normalizeLocation('   ')).toEqual(empty);
+  });
+});
+
+/**
+ * GEO_TIER is a visibility gate on the Design tab, not a sort key: `elsewhere` deletes the
+ * row. Every case below is a spelling the shipped normalizer got wrong, and the strings are
+ * taken from the live corpus wherever the corpus has one — the synthetic fixtures above are
+ * exactly why these shipped green.
+ */
+describe('normalizeLocation as a visibility gate', () => {
+  const tierOf = (input: string) => geoTier(normalizeLocation(input));
+
+  /**
+   * `'berl-in office'` contains `'in office'`. The substring test discarded the only segment
+   * of "Berlin Office", so every field came back null, `geoTier` said `unknown` — a tier the
+   * Design tab deliberately shows — and a Berlin role rendered on a tab whose whole rule is
+   * that it does not show Berlin.
+   */
+  it.each(['Berlin Office', 'Austin Office', 'Dublin Office', 'Turin Office'])(
+    'does not read a work mode out of the middle of a word: %s',
+    (input) => {
+      expect(tierOf(input)).toBe(GEO_TIER.elsewhere);
+    },
+  );
+
+  it('still reads a work mode that really is one', () => {
+    const sf = normalizeLocation('San Francisco, CA');
+    expect(normalizeLocation('Hybrid - San Francisco, CA')).toEqual(sf);
+    // Real corpus spellings — a work-mode word can share a segment with other words.
+    expect(normalizeLocation('San Francisco, CA (onsite)')).toEqual(sf);
+    expect(normalizeLocation('NYC, on-site').city_norm).toBe('nyc');
+    expect(normalizeLocation('Sydney, Australia (Bankstown), hybrid').country).toBe('AU');
+  });
+
+  /**
+   * The facility tolerance was wired into the metro lookup only, so every California city
+   * outside the four metros lost its `CA` and with it its place on the tab. It also split
+   * `dedupe_key`: `onsite|oakland office||` against `onsite|oakland|CA|US`.
+   */
+  it.each([
+    ['Oakland Office', 'oakland'],
+    ['San Diego Office', 'san diego'],
+    ['Berkeley HQ', 'berkeley'],
+    ['San Jose Office', 'san jose'],
+    ['Sacramento HQ', 'sacramento'],
+  ])('gives %s the same city_norm and tier as the bare city', (input, city) => {
+    expect(normalizeLocation(input)).toEqual(normalizeLocation(city));
+    expect(tierOf(input)).toBe(GEO_TIER.california);
+  });
+
+  /** A modifier in front is the same habit as a facility noun behind. */
+  it.each([
+    ['Greater Seattle Area', 'sea'],
+    ['Greater New York City Area', 'nyc'],
+    ['Greater Los Angeles Area', 'la'],
+    ['SF Bay Area', 'sf'],
+    ['Bay Area', 'sf'],
+    ['Silicon Valley', 'sf'],
+  ])('resolves the aggregator spelling %s to %s', (input, expected) => {
+    expect(normalizeLocation(input).city_norm).toBe(expected);
+    expect(tierOf(input)).toBe(GEO_TIER.metro);
+  });
+
+  /**
+   * A city is disambiguated by the state written next to it. "Brooklyn, OH" is two live
+   * postings that rendered on the Design tab as New York.
+   */
+  it.each([
+    ['Manhattan, KS', 'manhattan', 'KS'],
+    ['Brooklyn, OH', 'brooklyn', 'OH'],
+    ['Pasadena, TX', 'pasadena', 'TX'],
+    ['Bellevue, NE', 'bellevue', 'NE'],
+    ['Redmond, OR', 'redmond', 'OR'],
+  ])('%s is not the metro of the same name', (input, city, state) => {
+    expect(normalizeLocation(input)).toEqual({
+      city_norm: city,
+      state,
+      country: 'US',
+      is_remote: false,
+    });
+    expect(tierOf(input)).toBe(GEO_TIER.elsewhere);
+  });
+
+  it('does not let a state name masquerading as a metro alias survive either', () => {
+    // "LA" is Los Angeles on its own, and Louisiana when Louisiana is written next to it.
+    expect(normalizeLocation('LA').city_norm).toBe('la');
+    expect(normalizeLocation('LA, Louisiana')).toEqual({
+      city_norm: null,
+      state: 'LA',
+      country: 'US',
+      is_remote: false,
+    });
+  });
+
+  it.each(['Manhattan', 'Brooklyn', 'Pasadena', 'Bellevue', 'Redmond'])(
+    'leaves %s alone when no state contradicts it',
+    (input) => {
+      expect(tierOf(input)).toBe(GEO_TIER.metro);
+    },
+  );
+
+  /**
+   * THE TRAP. These are verbatim corpus strings: one posting listed in several places, the
+   * ATS city first and the board's own list after. 257 live postings look like this, and
+   * almost all of them are Anthropic and Scale AI design roles. Guarding the alias on the
+   * record's accumulated state — rather than on the city's own neighbour — reads the
+   * trailing "Seattle, WA" as a contradiction of the leading "New York" and sends the whole
+   * cohort to `elsewhere`. Nothing in the synthetic fixtures above has this shape.
+   */
+  it.each([
+    'San Francisco, California, United States, San Francisco, CA | New York City, NY',
+    'San Francisco, California, United States, San Francisco, CA | New York City, NY | Seattle, WA',
+    'New York, New York, United States, San Francisco, CA | New York City, NY | Seattle, WA',
+    'San Francisco, California, United States, San Francisco, CA; New York, NY',
+    'New York, New York, United States, New York, NY; San Francisco, CA',
+    'New York, New York, United States, New York, NY; San Francisco, CA; Seattle, WA; Washington, DC',
+    'New York, New York, United States, New York Office',
+  ])('keeps metro status for the multi-location posting %#', (input) => {
+    expect(GEO_TIER.metros).toContain(normalizeLocation(input).city_norm);
+    expect(tierOf(input)).toBe(GEO_TIER.metro);
+  });
+
+  /** Same shape, but the board also called the whole thing remote — a target tier of its own. */
+  it('keeps a multi-location remote posting visible', () => {
+    const input =
+      'Remote-Friendly US (Travel Required), Remote-Friendly (Travel-Required) | San Francisco, CA | Seattle, WA | New York City, NY';
+    expect(normalizeLocation(input).is_remote).toBe(true);
+    expect(tierOf(input)).toBe(GEO_TIER.remote);
+  });
+
+  /** Whole trailing tokens only, still — the tolerance must not reach a state name. */
+  it.each([
+    ['Kansas City, MO', 'kansas city'],
+    ['Salt Lake City, UT', 'salt lake city'],
+    ['New York Mills, MN', 'new york mills'],
+    ['Brooklyn Center, MN', 'brooklyn center'],
+    ['Brooklyn Park, MN', 'brooklyn park'],
+    ['Berkeley, MO', 'berkeley'],
+  ])('does not let %s reach a city table', (input, expected) => {
+    expect(normalizeLocation(input).city_norm).toBe(expected);
+    expect(tierOf(input)).toBe(GEO_TIER.elsewhere);
+  });
+
+  /** Plain foreign and out-of-target cities are unmoved by any of the above. */
+  it.each(['Berlin', 'Berlin, Germany', 'London, United Kingdom', 'Austin, TX', 'Toronto, Canada'])(
+    '%s still does not show',
+    (input) => {
+      expect(tierOf(input)).toBe(GEO_TIER.elsewhere);
+    },
+  );
+
+  it.each(['Oakland', 'Seattle', 'San Francisco, California, United States', 'NYC'])(
+    '%s still shows',
+    (input) => {
+      expect(tierOf(input)).not.toBe(GEO_TIER.elsewhere);
+    },
+  );
+});
+
+/**
+ * Aggregators append the location to the title, so the same job arrives as
+ * "… - New York City" from one source and "… - New York, NY" from another. `title_norm` is a
+ * `dedupe_key` component, so a spelling the title stripper does not recognize is a duplicate
+ * posting — the thing dedupe exists to prevent.
+ */
+describe('normalizeTitle strips the same location spellings', () => {
+  it.each([
+    'Product Designer - New York, NY',
+    'Product Designer - New York City',
+    'Product Designer - Greater Seattle Area',
+    'Product Designer - San Francisco Office',
+    'Product Designer - Bay Area',
+    'Product Designer - Oakland HQ',
+  ])('%s normalizes to the bare title', (input) => {
+    expect(normalizeTitle(input)).toBe('product designer');
+  });
+
+  /**
+   * The other half of the substring bug: "Hybridisation" contains "hybrid", and one live
+   * posting had its subject matter deleted out of its title because of it.
+   */
+  it('does not strip a real word that merely contains a work mode', () => {
+    expect(normalizeTitle('Sr Product Manager - Hybridisation')).toBe(
+      'sr product manager hybridisation',
+    );
+  });
+
+  /** Unchanged: a place the module does not recognize is not a place. */
+  it.each([
+    ['Engineer - Kansas City', 'engineer kansas city'],
+    ['Engineer - Salt Lake City', 'engineer salt lake city'],
+  ])('%s keeps its tail', (input, expected) => {
+    expect(normalizeTitle(input)).toBe(expected);
   });
 });
 

@@ -18,6 +18,7 @@
     "db:studio": "drizzle-kit studio",
     "test": "vitest run",
     "status": "node scripts/status.ts",
+    "backfill:locations": "node scripts/backfill-locations.ts",
     "refresh": "bash scripts/refresh.sh"
   },
   "dependencies": {
