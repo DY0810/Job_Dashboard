@@ -23,7 +23,9 @@ function run(events: ApplyEvent[], from: ApplyState = IDLE) {
 }
 
 const arrow = { kind: 'keydown', key: 'ArrowDown' } as const;
-const change = (control = 'level') => ({ kind: 'change', control }) as const;
+const change = (control = 'level') => ({ kind: 'change', control, from: 'select' }) as const;
+const tick = (control = 'level') => ({ kind: 'change', control, from: 'checkbox' }) as const;
+const idle = { kind: 'idle' } as const;
 const focusout = (control = 'level') => ({ kind: 'focusout', control }) as const;
 
 describe('applyReducer', () => {
@@ -83,5 +85,56 @@ describe('applyReducer', () => {
 
   it('starts out assuming a pointer', () => {
     expect(IDLE).toEqual({ mode: 'pointer', pending: null });
+  });
+});
+
+/**
+ * Checkboxes, which is where a set filter is actually built. The failure this guards against is
+ * not accessibility but plain uselessness: applying on the first tick navigates, re-renders the
+ * form, and turns "entry and junior" into two page loads — punishing the exact use multi-select
+ * exists for.
+ */
+describe('applyReducer — checkbox sets', () => {
+  const tickBox = (control = 'level') => ({ kind: 'change', control, from: 'checkbox' }) as const;
+  const idleEvent = { kind: 'idle' } as const;
+
+  it('does not apply while boxes are still being ticked', () => {
+    expect(run([tickBox(), tickBox(), tickBox()]).submits).toBe(0);
+  });
+
+  it('applies once when the ticking stops, however many boxes were ticked', () => {
+    expect(run([tickBox(), tickBox(), tickBox(), idleEvent]).submits).toBe(1);
+  });
+
+  it('waits even under the pointer, unlike a dropdown', () => {
+    // The pointer shortcut is a select-only rule: a mouse user ticking two boxes needs the
+    // same grace a keyboard user needs.
+    expect(run([{ kind: 'pointerdown' }, tickBox()]).submits).toBe(0);
+    expect(run([{ kind: 'pointerdown' }, tickBox(), idleEvent]).submits).toBe(1);
+  });
+
+  it('applies boxes ticked across different groups in one submit', () => {
+    expect(run([tickBox('level'), tickBox('mode'), tickBox('type'), idleEvent]).submits).toBe(1);
+  });
+
+  it('does not re-apply on a second idle', () => {
+    expect(run([tickBox(), idleEvent, idleEvent]).submits).toBe(1);
+  });
+
+  it('ignores an idle with nothing held', () => {
+    expect(run([idleEvent]).submits).toBe(0);
+  });
+
+  /** A tick then Tab away: focusout must not steal a commit that belongs to the idle timer. */
+  it('is committed by idle, not by focusout', () => {
+    expect(run([tickBox('level'), { kind: 'focusout', control: 'level' }]).submits).toBe(0);
+    expect(run([tickBox('level'), { kind: 'focusout', control: 'level' }, idleEvent]).submits).toBe(1);
+  });
+
+  /** A dropdown change after ticking replaces the held checkbox commit with its own rule. */
+  it('lets an immediate select change apply without waiting for the idle', () => {
+    const { submits, state } = run([tickBox('level'), { kind: 'pointerdown' }, { kind: 'change', control: 'posted', from: 'select' }]);
+    expect(submits).toBe(1);
+    expect(state.pending, 'the select submit clears the held tick').toBeNull();
   });
 });

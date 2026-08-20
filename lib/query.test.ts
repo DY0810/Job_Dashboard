@@ -28,6 +28,7 @@ import {
 import {
   DEFAULT_BASIS,
   FILTERS,
+  GROUPS,
   POSTED_WINDOWS,
   TABS,
   WINDOW_MS,
@@ -38,6 +39,7 @@ import {
   type Tab,
   vocab,
   withBasis,
+  toggleFilter,
   withFilter,
 } from './params.ts';
 
@@ -54,11 +56,11 @@ function params(tab: Tab, over: Partial<Params> = {}): Params {
     // Engineering has no split at all.
     basis: tab === 'design' ? DEFAULT_BASIS : null,
     posted: null,
-    type: null,
-    pay: null,
-    mode: null,
-    season: null,
-    level: null,
+    type: [],
+    pay: [],
+    mode: [],
+    season: [],
+    level: [],
     badge: null,
     job: null,
     ...over,
@@ -228,8 +230,8 @@ describe('design shows the target locations, engineering shows every location', 
   /** The count sits under "no postings match these filters", so it has to be an answer to
    *  that question rather than a fact about the whole tab. */
   it('counts under the same filters it is explaining', async () => {
-    expect(await outsideTargetLocations(db, params('design', { mode: 'onsite' }), NOW)).toBe(1);
-    expect(await outsideTargetLocations(db, params('design', { mode: 'remote' }), NOW)).toBe(0);
+    expect(await outsideTargetLocations(db, params('design', { mode: ['onsite'] }), NOW)).toBe(1);
+    expect(await outsideTargetLocations(db, params('design', { mode: ['remote'] }), NOW)).toBe(0);
   });
 });
 
@@ -273,7 +275,7 @@ describe('rows that must never render', () => {
   function everyFilter(tab: Tab): Params[] {
     const out = [params(tab)];
     for (const filter of FILTERS) {
-      for (const value of vocab(tab, filter)) out.push(params(tab, { [filter]: value }));
+      for (const value of vocab(tab, filter)) out.push(params(tab, { [filter]: [value] }));
     }
     out.push(params(tab, { badge: 'voice-ai' }));
     return out;
@@ -318,9 +320,9 @@ describe('filters', () => {
   // side, so the assertion is about the pay rule and not about which side of the split it is on.
   it('pay unknown matches neither value but stays visible with the filter off (finding G)', async () => {
     expect(await order(params('design'))).toContain('d-sparse');
-    expect(await order(params('design', { pay: 'paid' }))).not.toContain('d-sparse');
-    expect(await order(params('design', { pay: 'unpaid' }))).not.toContain('d-sparse');
-    expect(await order(params('design', { pay: 'unpaid' }))).toContain('d-unpaid-intern');
+    expect(await order(params('design', { pay: ['paid'] }))).not.toContain('d-sparse');
+    expect(await order(params('design', { pay: ['unpaid'] }))).not.toContain('d-sparse');
+    expect(await order(params('design', { pay: ['unpaid'] }))).toContain('d-unpaid-intern');
   });
 
   /**
@@ -330,11 +332,67 @@ describe('filters', () => {
    * the smaller one's label.
    */
   it.each(['entry', 'junior', 'mid'] as const)('the %s option means exactly that level', async (level) => {
-    const list = await order(params('engineering', { level }));
+    const list = await order(params('engineering', { level: [level] }));
     const others = { entry: ['e-sf-3d', 'e-tie-mid'], junior: ['e-nyc-entry', 'e-tie-mid'], mid: ['e-nyc-entry', 'e-sf-3d'] }[level];
     const own = { entry: 'e-nyc-entry', junior: 'e-sf-3d', mid: 'e-tie-mid' }[level];
     expect(list, `${level} should list its own rows`).toContain(own);
     for (const ref of others) expect(list, `${level} must not list ${ref}`).not.toContain(ref);
+  });
+
+  /**
+   * The point of the whole change: a group is a UNION, not a second `eq` that intersects to
+   * nothing. Asserted as set algebra against the real corpus rather than against a fixed count,
+   * so it keeps holding as the fixtures grow.
+   */
+  it.each([
+    ['level', 'entry', 'junior'],
+    ['mode', 'remote', 'hybrid'],
+    ['type', 'full-time', 'internship'],
+  ] as const)('%s: selecting two values returns exactly the union of selecting each', async (group, a, b) => {
+    const onlyA = await order(params('engineering', { [group]: [a] }));
+    const onlyB = await order(params('engineering', { [group]: [b] }));
+    const both = await order(params('engineering', { [group]: [a, b] }));
+
+    expect(onlyA.length, `${group}=${a} needs rows to be a real test`).toBeGreaterThan(0);
+    expect(onlyB.length, `${group}=${b} needs rows to be a real test`).toBeGreaterThan(0);
+    expect([...both].sort()).toEqual([...new Set([...onlyA, ...onlyB])].sort());
+    // And a union is at least as wide as either half — the bug this replaces made it empty.
+    expect(both.length).toBeGreaterThan(Math.max(onlyA.length, onlyB.length) - 1);
+  });
+
+  it('an empty set is "any", not "none"', async () => {
+    expect((await order(params('engineering', { level: [] }))).length).toBe(
+      (await order(params('engineering'))).length,
+    );
+  });
+
+  it('selecting every value of a group is the same as selecting none of it', async () => {
+    const all = await order(params('engineering', { mode: ['remote', 'hybrid', 'onsite'] }));
+    const none = await order(params('engineering'));
+    // Not identical: a posting with NO work_mode matches "any" but no explicit value.
+    expect(all.length).toBeLessThanOrEqual(none.length);
+    expect(none).toEqual(expect.arrayContaining(all));
+  });
+
+  /**
+   * `pay` is the group where picking BOTH values differs from picking neither, because
+   * `paid = NULL` means "the posting does not say" (finding G). Both = "it says something";
+   * neither = "do not ask". If those two ever return the same rows, the multi-select on this
+   * filter has quietly become decorative.
+   */
+  it('pay: both values means "stated", which is narrower than not asking', async () => {
+    const both = await order(params('design', { pay: ['paid', 'unpaid'] }));
+    const neither = await order(params('design'));
+    const paid = await order(params('design', { pay: ['paid'] }));
+    const unpaid = await order(params('design', { pay: ['unpaid'] }));
+
+    expect([...both].sort()).toEqual([...new Set([...paid, ...unpaid])].sort());
+    expect(both.length, 'the corpus needs a pay-unknown row for this to mean anything').toBeLessThan(
+      neither.length,
+    );
+    // `d-sparse` has no pay at all, so it is in neither half.
+    expect(neither).toContain('d-sparse');
+    expect(both).not.toContain('d-sparse');
   });
 
   it('posted-within windows narrow monotonically', async () => {
@@ -350,7 +408,7 @@ describe('filters', () => {
       const all = (await order(params(tab))).length;
       for (const filter of FILTERS) {
         for (const value of vocab(tab, filter)) {
-          const narrowed = await order(params(tab, { [filter]: value }));
+          const narrowed = await order(params(tab, { [filter]: [value] }));
           expect(narrowed.length, `${tab} ${filter}=${value}`).toBeLessThan(all);
           expect(await order(params(tab)), `${tab} ${filter}=${value}`).toEqual(
             expect.arrayContaining(narrowed),
@@ -361,11 +419,11 @@ describe('filters', () => {
   });
 
   it('filters AND across groups', async () => {
-    const remote = await order(params('engineering', { mode: 'remote' }));
+    const remote = await order(params('engineering', { mode: ['remote'] }));
     expect(remote).toContain('e-remote-mid');
     expect(remote).toContain('e-intern-winter');
 
-    const narrowed = await order(params('engineering', { mode: 'remote', type: 'internship' }));
+    const narrowed = await order(params('engineering', { mode: ['remote'], type: ['internship'] }));
     expect(narrowed).toContain('e-intern-winter');
     expect(narrowed).not.toContain('e-remote-mid'); // remote, but full-time
   });
@@ -374,13 +432,13 @@ describe('filters', () => {
     const week = await order(params('design', { posted: 'week' }));
     expect(week).toContain('d-sf-3d'); // 3 days old
     expect(week).not.toContain('d-freelance'); // 11 days old
-    expect(await order(params('design', { posted: 'week', type: 'internship' }))).toEqual([
+    expect(await order(params('design', { posted: 'week', type: ['internship'] }))).toEqual([
       'd-unpaid-intern',
     ]);
   });
 
   it('season filters internships', async () => {
-    expect(await order(params('engineering', { season: 'summer' }))).toEqual(['e-intern-summer']);
+    expect(await order(params('engineering', { season: ['summer'] }))).toEqual(['e-intern-summer']);
   });
 
   it('a badge is a filter value', async () => {
@@ -389,7 +447,7 @@ describe('filters', () => {
   });
 
   it('reports zero results without claiming the tab is empty', async () => {
-    const p = params('design', { type: 'part-time', mode: 'remote' });
+    const p = params('design', { type: ['part-time'], mode: ['remote'] });
     expect(await order(p)).toEqual([]);
     expect(await tabIsEmpty(db, p, NOW)).toBe(false);
   });
@@ -397,32 +455,61 @@ describe('filters', () => {
 
 describe('badges and dropdowns write the same filter', () => {
   /**
-   * The two controls reach the same param by different routes — a badge renders a link built
-   * by `withFilter`, a dropdown submits `<select name={filter}>` with the raw value — so the
+   * The two controls reach the same param by different routes — a badge renders a link built by
+   * `toggleFilter`, a checkbox submits `<input name={group}>` with the raw value — so the
    * property that matters is that both land on the same state for every value on offer. Both
    * read their vocabulary from `vocab()`, which is what stops one of them drifting.
    */
-  it('every value of every filter arrives the same way from either control', async () => {
+  it('every value of every group arrives the same way from either control', async () => {
     for (const tab of TABS) {
-      for (const filter of FILTERS) {
-        for (const value of vocab(tab, filter)) {
-          const badge = fromUrl(withFilter(params(tab), filter, value));
-          const dropdown = parseParams({ tab, [filter]: value });
-          expect(badge[filter], `${tab} ${filter}=${value} via badge`).toBe(value);
-          expect(dropdown[filter], `${tab} ${filter}=${value} via dropdown`).toBe(value);
-          expect(href(badge)).toBe(href(dropdown));
+      for (const group of GROUPS) {
+        for (const value of vocab(tab, group)) {
+          const badge = fromUrl(toggleFilter(params(tab), group, value));
+          const checkbox = parseParams({ tab, [group]: value });
+          expect(badge[group], `${tab} ${group}=${value} via badge`).toEqual([value]);
+          expect(checkbox[group], `${tab} ${group}=${value} via checkbox`).toEqual([value]);
+          expect(href(badge)).toBe(href(checkbox));
         }
       }
     }
   });
 
-  it('clicking the badge that is already selected clears just that filter', async () => {
-    const on = fromUrl(withFilter(params('engineering', { level: 'junior' }), 'mode', 'remote'));
-    expect([on.mode, on.level]).toEqual(['remote', 'junior']);
+  /**
+   * The behaviour that made single-valued groups feel broken: clicking a second badge in the
+   * same group used to throw the first away. It must now ADD, and clicking an on badge must
+   * remove only itself.
+   */
+  it('a second badge in the same group adds to the filter rather than replacing it', async () => {
+    const one = fromUrl(toggleFilter(params('engineering'), 'level', 'entry'));
+    expect(one.level).toEqual(['entry']);
 
-    const off = fromUrl(withFilter(on, 'mode', null));
-    expect(off.mode).toBeNull();
-    expect(off.level, 'clearing one filter must not clear the others').toBe('junior');
+    const two = fromUrl(toggleFilter(one, 'level', 'junior'));
+    expect(two.level, 'the second click must not evict the first').toEqual(['entry', 'junior']);
+
+    const back = fromUrl(toggleFilter(two, 'level', 'entry'));
+    expect(back.level, 'un-ticking one leaves the rest').toEqual(['junior']);
+  });
+
+  it('clicking the badge that is already selected clears just that filter', async () => {
+    const on = fromUrl(toggleFilter(params('engineering', { level: ['junior'] }), 'mode', 'remote'));
+    expect([on.mode, on.level]).toEqual([['remote'], ['junior']]);
+
+    const off = fromUrl(toggleFilter(on, 'mode', 'remote'));
+    expect(off.mode).toEqual([]);
+    expect(off.level, 'clearing one filter must not clear the others').toEqual(['junior']);
+  });
+
+  /**
+   * Vocabulary order, not click order. `?level=junior,entry` and `?level=entry,junior` are the
+   * same filter, so they have to serialize identically or the same table has two addresses and
+   * `href` stops being idempotent.
+   */
+  it('serializes a set in vocabulary order however it was built', async () => {
+    const forwards = fromUrl(toggleFilter(fromUrl(toggleFilter(params('engineering'), 'level', 'entry')), 'level', 'mid'));
+    const backwards = fromUrl(toggleFilter(fromUrl(toggleFilter(params('engineering'), 'level', 'mid')), 'level', 'entry'));
+    expect(href(forwards)).toBe(href(backwards));
+    expect(href(forwards)).toContain('level=entry%2Cmid');
+    expect(fromUrl('/?tab=engineering&level=mid,entry').level).toEqual(['entry', 'mid']);
   });
 
   it('a filter link cannot carry a value the tab does not offer', async () => {
@@ -509,12 +596,12 @@ describe('the Design freelance split', () => {
   it('drops a type the destination side does not offer when crossing', async () => {
     // Carrying `type=part-time` onto the freelance side would show an empty table under a
     // control set to a value that side cannot have.
-    expect(withBasis(params('design', { type: 'part-time' }), 'freelance')).toBe('/?basis=freelance');
-    expect(withBasis(params('design', { type: 'contract', basis: 'freelance' }), 'employed')).toBe('/');
+    expect(withBasis(params('design', { type: ['part-time'] }), 'freelance')).toBe('/?basis=freelance');
+    expect(withBasis(params('design', { type: ['contract'], basis: 'freelance' }), 'employed')).toBe('/');
   });
 
   it('survives clearing the filters — clear is not a way across the split', async () => {
-    expect(cleared(params('design', { basis: 'freelance', type: 'contract' }))).toBe('/?basis=freelance');
+    expect(cleared(params('design', { basis: 'freelance', type: ['contract'] }))).toBe('/?basis=freelance');
   });
 });
 
@@ -529,8 +616,8 @@ describe('search params are validated, not trusted', () => {
    */
   it.each([
     ['design employed', { tab: 'design', basis: 'employed', posted: 'week' }, { posted: 'week' }],
-    ['design freelance', { tab: 'design', basis: 'freelance', type: 'contract' }, { basis: 'freelance', type: 'contract' }],
-    ['engineering', { tab: 'engineering', posted: 'day', level: 'entry' }, { tab: 'engineering', posted: 'day', level: 'entry' }],
+    ['design freelance', { tab: 'design', basis: 'freelance', type: ['contract'] }, { basis: 'freelance', type: ['contract'] }],
+    ['engineering', { tab: 'engineering', posted: 'day', level: ['entry'] }, { tab: 'engineering', posted: 'day', level: ['entry'] }],
     ['nothing chosen', { tab: 'design', basis: 'employed' }, {}],
   ])('%s: a form submission parses to the same params as the tidy URL', (_label, chosen, tidy) => {
     const empties = { type: '', pay: '', mode: '', season: '', level: '', posted: '' };
@@ -542,10 +629,30 @@ describe('search params are validated, not trusted', () => {
   });
 
   it('drops values outside the tab vocabulary', async () => {
-    const p = parseParams({ tab: 'design', posted: 'hour', season: 'summer', type: 'part-time' });
+    const p = parseParams({ tab: 'design', posted: 'hour', season: ['summer'], type: ['part-time'] });
     expect(p.posted).toBe('hour'); // every window is offered on both tabs now
-    expect(p.season).toBeNull(); // Design has no seasons
-    expect(p.type).toBe('part-time');
+    expect(p.season).toEqual([]); // Design has no seasons
+    expect(p.type).toEqual(['part-time']);
+  });
+
+  /** A set drops only the members the tab does not know, not the whole filter. */
+  it('keeps the known members of a partly-unknown set', async () => {
+    expect(parseParams({ tab: 'engineering', level: 'entry,principal,mid' }).level).toEqual(['entry', 'mid']);
+    expect(parseParams({ tab: 'engineering', mode: 'nonsense,hybrid' }).mode).toEqual(['hybrid']);
+    expect(parseParams({ tab: 'engineering', level: 'principal,staff' }).level).toEqual([]);
+  });
+
+  /** Both spellings of a set parse: a checkbox group repeats the key, `href` writes a list. */
+  it('parses a repeated key and a comma list to the same set', async () => {
+    const repeated = parseParams({ tab: 'engineering', level: ['entry', 'junior'] });
+    const commas = parseParams({ tab: 'engineering', level: 'entry,junior' });
+    expect(repeated.level).toEqual(['entry', 'junior']);
+    expect(repeated).toEqual(commas);
+  });
+
+  it('dedupes a value repeated in either spelling', async () => {
+    expect(parseParams({ tab: 'engineering', level: 'mid,mid,mid' }).level).toEqual(['mid']);
+    expect(parseParams({ tab: 'engineering', level: ['mid', 'mid'] }).level).toEqual(['mid']);
   });
 
   /**
@@ -554,10 +661,13 @@ describe('search params are validated, not trusted', () => {
    * `?type=freelance` must not survive onto the employed side and quietly return nothing.
    */
   it('drops a type belonging to the other side of the split', async () => {
-    expect(parseParams({ tab: 'design', type: 'freelance' }).type).toBeNull();
-    expect(parseParams({ tab: 'design', basis: 'freelance', type: 'freelance' }).type).toBe('freelance');
-    expect(parseParams({ tab: 'design', basis: 'freelance', type: 'full-time' }).type).toBeNull();
-    expect(parseParams({ tab: 'design', basis: 'freelance', type: 'contract' }).type).toBe('contract');
+    expect(parseParams({ tab: 'design', type: ['freelance'] }).type).toEqual([]);
+    expect(parseParams({ tab: 'design', basis: 'freelance', type: ['freelance'] }).type).toEqual(['freelance']);
+    expect(parseParams({ tab: 'design', basis: 'freelance', type: ['full-time'] }).type).toEqual([]);
+    expect(parseParams({ tab: 'design', basis: 'freelance', type: ['contract'] }).type).toEqual(['contract']);
+    // A set spanning both sides keeps only the side it is on.
+    expect(parseParams({ tab: 'design', type: 'full-time,contract' }).type).toEqual(['full-time']);
+    expect(parseParams({ tab: 'design', basis: 'freelance', type: 'full-time,contract' }).type).toEqual(['contract']);
   });
 
   it('falls back rather than throwing on junk', async () => {
@@ -569,21 +679,40 @@ describe('search params are validated, not trusted', () => {
       badge: 'DROP TABLE',
     });
     expect(p.tab).toBe('design');
-    expect(p.level).toBe('mid');
-    expect(p.pay).toBeNull();
+    expect(p.level).toEqual(['mid']);
+    expect(p.pay).toEqual([]);
     expect(p.job).toBeNull();
     expect(p.badge).toBeNull();
   });
 
-  /** A URL bookmarked before the filters became dropdowns still parses — to the one value a
-   *  dropdown can show, rather than to a filter set the control would misreport. */
-  it('takes the first known value from a legacy comma list', async () => {
-    expect(parseParams({ tab: 'engineering', mode: 'onsite,remote' }).mode).toBe('onsite');
-    expect(parseParams({ tab: 'engineering', mode: 'nonsense,hybrid' }).mode).toBe('hybrid');
+  /**
+   * A comma list used to yield ONE value, because one was all a dropdown could show and a
+   * control that misreports its filter is worse than a narrower filter. Checkboxes can show a
+   * set, so the whole list is honoured now — the old URL means more than it used to, which is
+   * the right direction: it never meant "only onsite".
+   */
+  it('honours every value of a legacy comma list now that a control can show them', async () => {
+    expect(parseParams({ tab: 'engineering', mode: 'onsite,remote' }).mode).toEqual(['remote', 'onsite']);
   });
 
   it('round-trips through the URL', async () => {
-    const p = parseParams({ tab: 'engineering', mode: 'remote', level: 'junior', job: '12' });
+    const p = parseParams({ tab: 'engineering', mode: ['remote'], level: ['junior'], job: '12' });
     expect(fromUrl(href(p))).toEqual(p);
+  });
+
+  /** Idempotence with sets, which is what the vocabulary ordering in `pickAll` buys. */
+  it('round-trips a multi-value filter set', async () => {
+    const p = parseParams({
+      tab: 'engineering',
+      level: 'mid,entry',
+      mode: 'onsite,remote',
+      pay: 'unpaid,paid',
+      type: 'internship,full-time',
+      season: 'winter,summer',
+      posted: 'week',
+    });
+    expect(p.level).toEqual(['entry', 'mid']);
+    expect(fromUrl(href(p))).toEqual(p);
+    expect(href(fromUrl(href(p)))).toBe(href(p));
   });
 });

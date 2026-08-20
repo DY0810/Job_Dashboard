@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import {
-  FILTERS,
+  GROUPS,
   cleared,
   hasFilters,
   href,
   vocab,
+  toggleFilter,
   withFilter,
   type Filter,
   type Group,
@@ -27,19 +28,19 @@ function Chip({ href, on, children }: { href: string; on: boolean; children: Rea
 }
 
 /**
- * Row badges are the same control as the dropdown above them: both write one value into the
- * same param through the same vocabulary, so clicking a badge is what selects it in its
- * dropdown. The toggle is written here rather than inside the setter — a badge toggles,
- * a dropdown does not.
+ * Row badges are the same control as the checkbox above them: both write into the same param
+ * through the same vocabulary, so clicking a badge ticks its box. Now that a group holds a set,
+ * clicking a second badge in the same group ADDS to the filter rather than replacing it — which
+ * is what made the old behaviour feel broken, since clicking `junior` after `entry` used to
+ * throw the first one away.
  */
 export function RowChip({ p, group, value }: { p: Params; group: Group; value: string }) {
   // A value with no filter on this side still gets shown — it just is not pressable, because
   // there is no filter for it to apply. `p.basis` is passed so a badge offers what the
-  // dropdown above it offers: on the employed side of Design, a `contract` badge is text.
+  // checkbox above it offers: on the employed side of Design, a `contract` badge is text.
   if (!vocab(p.tab, group, p.basis).includes(value)) return <span className="chip">{value}</span>;
-  const on = p[group] === value;
   return (
-    <Chip href={withFilter(p, group, on ? null : value)} on={on}>
+    <Chip href={toggleFilter(p, group, value)} on={p[group].includes(value)}>
       {value}
     </Chip>
   );
@@ -62,7 +63,7 @@ export function BadgeChip({ p, value }: { p: Params; value: string }) {
  * reports the state, and the state is the URL. The alternative, a pending selection that
  * outlives the page it was made on, leaves a dropdown displaying a filter that is not applied.
  */
-function Select({ p, filter, values }: { p: Params; filter: Filter; values: readonly string[] }) {
+function Select({ p, filter, values }: { p: Params; filter: 'posted'; values: readonly string[] }) {
   const selected = p[filter];
   const id = `filter-${filter}`;
   return (
@@ -82,6 +83,44 @@ function Select({ p, filter, values }: { p: Params; filter: Filter; values: read
         <Chevron />
       </span>
     </span>
+  );
+}
+
+/**
+ * A group filter, as real checkboxes.
+ *
+ * NOT a `<select multiple>`, which is the obvious answer and the wrong one: it needs ctrl-click
+ * to select a second value, gives no hint that it can, and collapses to a tiny scrolling box on
+ * a phone. Checkboxes say what they are, each is independently focusable, space toggles one, and
+ * the whole thing works before hydration — a checked box submits its name, so the browser
+ * produces `?level=entry&level=junior` on its own.
+ *
+ * The native box is visually hidden rather than removed: it still takes focus, still announces
+ * itself as a checkbox with its state, and `.chip-check` paints the label from `:has(:checked)`
+ * and `:has(:focus-visible)`. Removing it and painting a div would have cost the keyboard and
+ * the screen reader.
+ */
+function CheckGroup({ p, group, values }: { p: Params; group: Group; values: readonly string[] }) {
+  const chosen = p[group];
+  return (
+    <fieldset className="flex items-baseline gap-1.5 border-0 p-0">
+      {/* A legend rather than a label: this names a set of controls, not one of them. */}
+      <legend className="float-left text-[10px] uppercase tracking-[0.1em] text-fg-dim">
+        {group}
+      </legend>
+      {values.map((value) => (
+        <label key={value} className="chip-check" data-on={chosen.includes(value) ? 'true' : undefined}>
+          <input
+            type="checkbox"
+            name={group}
+            value={value}
+            defaultChecked={chosen.includes(value)}
+            className="chip-check-input"
+          />
+          {value}
+        </label>
+      ))}
+    </fieldset>
   );
 }
 
@@ -122,11 +161,16 @@ export function Filters({ p }: { p: Params }) {
       {p.basis ? <input type="hidden" name="basis" value={p.basis} /> : null}
       {p.badge ? <input type="hidden" name="badge" value={p.badge} /> : null}
 
-      {FILTERS.map((filter) => {
-        const values = vocab(p.tab, filter, p.basis);
-        // Design has no season vocabulary, so it gets no season dropdown.
+      {/* `posted` is the one single-valued filter, so it stays a dropdown. Its windows nest —
+          24h is inside 7d — so offering a multi-select there would offer a choice with no
+          distinct outcome. */}
+      <Select key={`posted:${href(p)}`} p={p} filter="posted" values={vocab(p.tab, 'posted', p.basis)} />
+
+      {GROUPS.map((group) => {
+        const values = vocab(p.tab, group, p.basis);
+        // Design has no season vocabulary, so it gets no season control at all.
         if (values.length === 0) return null;
-        return <Select key={`${filter}:${href(p)}`} p={p} filter={filter} values={values} />;
+        return <CheckGroup key={`${group}:${href(p)}`} p={p} group={group} values={values} />;
       })}
 
       {/* Badges are free slugs, not a fixed vocabulary, so the active one stays a chip. */}

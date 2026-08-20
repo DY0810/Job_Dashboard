@@ -42,11 +42,11 @@ function params(tab: Tab, over: Partial<Params> = {}): Params {
     // Engineering has no split at all.
     basis: tab === 'design' ? DEFAULT_BASIS : null,
     posted: null,
-    type: null,
-    pay: null,
-    mode: null,
-    season: null,
-    level: null,
+    type: [],
+    pay: [],
+    mode: [],
+    season: [],
+    level: [],
     badge: null,
     job: null,
     ...over,
@@ -79,10 +79,10 @@ describe('the read path gives the same answers on either driver', () => {
   });
 
   it('the same rows under a filter, and the same empty result', async () => {
-    const p = params('engineering', { mode: 'remote', type: 'internship' });
+    const p = params('engineering', { mode: ['remote'], type: ['internship'] });
     expect(await listPostings(remote, p, NOW)).toEqual(await listPostings(local, p, NOW));
 
-    const none = params('design', { type: 'part-time', mode: 'remote' });
+    const none = params('design', { type: ['part-time'], mode: ['remote'] });
     expect(await listPostings(remote, none, NOW)).toEqual([]);
     expect(await tabIsEmpty(remote, none, NOW)).toBe(false);
   });

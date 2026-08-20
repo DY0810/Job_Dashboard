@@ -238,6 +238,7 @@
  * identical to an unset one while the badge beside it shows the state correctly.
  */
 .chip,
+.chip-check,
 .select-box {
   display: inline-flex;
   align-items: center;
@@ -258,12 +259,14 @@
 }
 
 .chip:hover,
+.chip-check:hover,
 .select-box:hover {
   color: var(--fg);
   border-color: var(--fg-faint);
 }
 
 .chip[aria-current="true"],
+.chip-check[data-on="true"],
 .select-box[data-on="true"] {
   background: var(--surface);
   border-color: var(--fg-dim);
@@ -279,6 +282,7 @@
 
 /* Feedback, not animation — every pressable in the app gets it, and a dropdown is one. */
 .chip:active,
+.chip-check:active,
 .select-box:active {
   transform: scale(0.97);
 }
@@ -442,4 +446,55 @@ dialog.drawer[open]::backdrop {
 .prose strong {
   color: var(--fg);
   font-weight: 500;
+}
+
+/* ──────────────────────────────────────────────────────── checkbox chips ──
+ * A group filter is a set, so its control is a checkbox — but a bare checkbox row would
+ * double the height of a header this dense. The label wears the `.chip` look above and the
+ * native input is visually hidden INSIDE it.
+ *
+ * Visually hidden, not removed, and not `display: none`: the input must still take focus, still
+ * be reachable by Tab, still toggle on Space, and still announce itself to a screen reader as a
+ * checkbox with a checked state. `appearance: none` plus zero size keeps it in the accessibility
+ * tree and out of the layout. Painting a <div> instead would have cost all four.
+ *
+ * `:has(:focus-visible)` puts the focus ring on the label, because that is what the reader sees
+ * — the input itself has no size to draw one around. Without this the keyboard user has no idea
+ * where they are.
+ */
+.chip-check {
+  cursor: pointer;
+  user-select: none;
+}
+
+.chip-check-input {
+  appearance: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chip-check:has(.chip-check-input:focus-visible) {
+  outline: 1px solid var(--fg);
+  outline-offset: 1px;
+  color: var(--fg);
+}
+
+/* The checked state is driven by the DOM, not only by the server-rendered `data-on`, so ticking
+   a box looks applied the instant it is clicked — before the navigation that applies it lands. */
+.chip-check:has(.chip-check-input:checked) {
+  background: var(--surface);
+  border-color: var(--fg-dim);
+  color: var(--fg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip-check {
+    transition: none;
+  }
 }

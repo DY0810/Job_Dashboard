@@ -7,7 +7,7 @@
  * that difference lives in `visible()` with the other rules that hold on every route in.
  */
 
-import { and, asc, count, desc, eq, gte, inArray, isNull, like, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, like, sql, type SQL } from 'drizzle-orm';
 import { cutoffTimestamp } from './dedupe.ts';
 import { driver, type ReadDb } from './db/index.ts';
 import { postings } from './db/schema.ts';
@@ -114,17 +114,24 @@ function userFilters(p: Params, now: number): SQL[] {
   const parts: (SQL | undefined)[] = [];
 
   if (p.posted) parts.push(gte(postings.postedAt, new Date(now - WINDOW_MS[p.posted])));
-  if (p.type) parts.push(eq(postings.employmentType, p.type as never));
-  if (p.mode) parts.push(eq(postings.workMode, p.mode as never));
-  if (p.season) parts.push(eq(postings.internshipSeason, p.season as never));
 
-  // `paid = NULL` is "unknown": it matches neither value, but stays visible while the filter
-  // is off (finding G). SQL NULL is not equal to anything, so `eq` already does that.
-  if (p.pay) parts.push(eq(postings.paid, p.pay === 'paid'));
+  // Every group filter is a SET, so each is an `in`. An empty set is "any" and adds nothing —
+  // which is what makes the union semantics right: selecting `entry` and `junior` widens the
+  // result, it does not intersect to nothing the way two `eq`s on one column would.
+  if (p.type.length > 0) parts.push(inArray(postings.employmentType, p.type as never[]));
+  if (p.mode.length > 0) parts.push(inArray(postings.workMode, p.mode as never[]));
+  if (p.season.length > 0) parts.push(inArray(postings.internshipSeason, p.season as never[]));
+  if (p.level.length > 0) parts.push(inArray(postings.seniority, p.level as never[]));
 
-  // One option, one value. `entry` used to fold into `junior` here; it is its own option now,
-  // so `junior` means junior and nothing else.
-  if (p.level) parts.push(eq(postings.seniority, p.level as never));
+  // `paid` is the one group that is not a text column, so it cannot use `inArray`.
+  //
+  // `paid = NULL` is "unknown": it matches neither value, but stays visible while the filter is
+  // off (finding G). SQL NULL is not equal to anything, so `eq` already does that — and picking
+  // BOTH values is therefore not the same as picking neither. Both means "the posting says
+  // something about pay", which excludes the unknowns; neither means "do not ask", which keeps
+  // them. That distinction is the reason this filter is worth making multi-select at all.
+  if (p.pay.length === 1) parts.push(eq(postings.paid, p.pay[0] === 'paid'));
+  else if (p.pay.length > 1) parts.push(isNotNull(postings.paid));
 
   // The Design split. Not reachable on Engineering — `parseParams` nulls `basis` there.
   if (p.basis) parts.push(p.basis === 'freelance' ? isFreelance : isEmployed);

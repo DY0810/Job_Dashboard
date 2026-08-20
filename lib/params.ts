@@ -112,19 +112,28 @@ export function vocab(tab: Tab, filter: Filter, basis: Basis | null = null): rea
 }
 
 /**
- * One value per filter, or null for "any" — which is exactly what one dropdown can show, so
- * the control and the URL can never disagree about what is on.
+ * A SET per group filter, and one value for `posted`.
+ *
+ * The groups are sets because the questions they answer are naturally plural — "entry or
+ * junior", "remote or hybrid", "full-time or internship" — and answering them one value at a
+ * time made the reader run the same search twice. An empty array is "any", which is the same
+ * thing `null` used to mean.
+ *
+ * `posted` stays single, and that is not an oversight: the windows nest. 24h is inside 7d, so
+ * selecting both is selecting 7d, and a control that offers a choice with no distinct outcome
+ * is a control that lies. `badge` stays single because it is a free slug off one posting, not a
+ * vocabulary anything can enumerate.
  */
 export interface Params {
   tab: Tab;
   /** Which side of the Design freelance split. Always set on Design, always null elsewhere. */
   basis: Basis | null;
   posted: keyof typeof WINDOW_MS | null;
-  type: string | null;
-  pay: string | null;
-  mode: string | null;
-  season: string | null;
-  level: string | null;
+  type: string[];
+  pay: string[];
+  mode: string[];
+  season: string[];
+  level: string[];
   /** One free badge slug from `postings.badges`, e.g. `voice-ai`. */
   badge: string | null;
   /** The posting whose drawer is open, from `?job=<id>`. */
@@ -148,18 +157,36 @@ const Raw = z.object({
     .catch(undefined),
 });
 
-/** Next hands repeated params through as arrays; the first one wins. */
+/** Next hands repeated params through as arrays; for a single-valued param the first wins. */
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
 /**
- * A URL bookmarked before the filters became dropdowns can still carry a comma list. Take the
- * first value it offers that this tab knows, because one is all a dropdown can show — dropping
- * the rest silently beats a control that misreports the filter it is applying.
+ * BOTH spellings of a set have to parse, because both are produced. A checkbox group submits
+ * its name once per checked box (`?level=entry&level=junior`, which Next hands over as an
+ * array), while `href` writes one comma list (`?level=entry,junior`) so a shared URL stays
+ * short. Joining first means one parser handles either.
  */
+function collect(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value.join(',') : value;
+}
+
+/** One value, for `posted` — the first the tab recognizes. */
 function pick(raw: string | undefined, allowed: readonly string[]): string | null {
   return raw ? (raw.split(',').find((v) => allowed.includes(v)) ?? null) : null;
+}
+
+/**
+ * Every value the tab recognizes, deduped, IN VOCABULARY ORDER rather than in the order they
+ * arrived. The ordering is what makes the URL canonical: `?level=junior,entry` and
+ * `?level=entry,junior` are the same filter and must serialize identically, or the same table
+ * has two addresses and `href(parseParams(x))` stops being idempotent.
+ */
+function pickAll(raw: string | undefined, allowed: readonly string[]): string[] {
+  if (!raw) return [];
+  const chosen = new Set(raw.split(','));
+  return allowed.filter((value) => chosen.has(value));
 }
 
 export type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -169,11 +196,11 @@ export function parseParams(input: RawSearchParams): Params {
     tab: first(input.tab),
     basis: first(input.basis),
     posted: first(input.posted),
-    type: first(input.type),
-    pay: first(input.pay),
-    mode: first(input.mode),
-    season: first(input.season),
-    level: first(input.level),
+    type: collect(input.type),
+    pay: collect(input.pay),
+    mode: collect(input.mode),
+    season: collect(input.season),
+    level: collect(input.level),
     badge: first(input.badge),
     job: first(input.job),
   });
@@ -182,21 +209,21 @@ export function parseParams(input: RawSearchParams): Params {
   // carrying it silently would let `?tab=engineering&basis=freelance` filter a tab that shows
   // no such toggle.
   const basis: Basis | null = raw.tab === 'design' ? (raw.basis ?? DEFAULT_BASIS) : null;
-  const chosen = Object.fromEntries(
-    FILTERS.map((filter) => [filter, pick(raw[filter], vocab(raw.tab, filter, basis))]),
-  ) as Record<Filter, string | null>;
+  const groups = Object.fromEntries(
+    GROUPS.map((group) => [group, pickAll(raw[group], vocab(raw.tab, group, basis))]),
+  ) as Record<Group, string[]>;
   return {
-    ...chosen,
+    ...groups,
     tab: raw.tab,
     basis,
-    posted: chosen.posted as Params['posted'],
+    posted: pick(raw.posted, vocab(raw.tab, 'posted', basis)) as Params['posted'],
     badge: raw.badge ?? null,
     job: raw.job ?? null,
   };
 }
 
 export function hasFilters(p: Params): boolean {
-  return p.badge !== null || FILTERS.some((filter) => p[filter] !== null);
+  return p.badge !== null || p.posted !== null || GROUPS.some((group) => p[group].length > 0);
 }
 
 /** Serializes state back to a URL. Unset filters are omitted, so a bare tab stays a bare URL. */
@@ -206,7 +233,10 @@ export function href(p: Params): string {
   // Only the non-default side is written. `employed` is what a bare `/` already means, and
   // spelling it out would give the same table two URLs.
   if (p.basis && p.basis !== DEFAULT_BASIS) q.set('basis', p.basis);
-  for (const filter of FILTERS) if (p[filter]) q.set(filter, p[filter]!);
+  if (p.posted) q.set('posted', p.posted);
+  // One comma list per group rather than a repeated key: both parse, and this is the shorter
+  // of the two to paste into a message.
+  for (const group of GROUPS) if (p[group].length > 0) q.set(group, p[group].join(','));
   if (p.badge) q.set('badge', p.badge);
   if (p.job !== null) q.set('job', String(p.job));
   const s = q.toString();
@@ -214,15 +244,39 @@ export function href(p: Params): string {
 }
 
 /**
- * The one writer. `null` clears; anything else is validated against the tab's vocabulary on
- * the way out, so a filter link cannot carry a value the tab does not offer.
+ * Replaces a filter outright. `null` clears it; a value or list is validated against the tab's
+ * vocabulary on the way out, so a link cannot carry a value the tab does not offer.
  *
- * It does not toggle. Toggling is written at the call site — `withFilter(p, g, p[g] === v ?
- * null : v)` — because a badge toggles and a dropdown does not, and burying that difference
- * inside a name is how you get two same-shaped writers with opposite contracts.
+ * Still does not toggle, and the reason is the same as when the filters were single-valued: a
+ * badge toggles and a dropdown does not, and hiding that difference inside one name is how you
+ * get two same-shaped writers with opposite contracts. Toggling now has its own writer below,
+ * because with sets the toggle is no longer expressible at the call site as a ternary.
  */
-export function withFilter(p: Params, filter: Filter | 'badge', value: string | null): string {
-  return href(parseParams({ ...toRaw(p), [filter]: value ?? '' }));
+export function withFilter(
+  p: Params,
+  filter: Filter | 'badge',
+  value: string | readonly string[] | null,
+): string {
+  const raw: string = value === null ? '' : typeof value === 'string' ? value : value.join(',');
+  return href(parseParams({ ...toRaw(p), [filter]: raw }));
+}
+
+/**
+ * Adds a value to a group, or removes it if it is already there — what a row badge does, and
+ * what a checkbox does. This is the writer the multi-select needs: with a set, "the other
+ * state" is not a single alternative the call site can name, it is the current set plus or
+ * minus one member.
+ *
+ * The result goes back through `parseParams`, so the new set is re-ordered into vocabulary
+ * order and re-validated against the tab. Toggling a value the tab does not offer is therefore
+ * a no-op rather than a URL that filters on something invisible.
+ */
+export function toggleFilter(p: Params, group: Group, value: string): string {
+  const current = p[group];
+  const next = current.includes(value)
+    ? current.filter((existing) => existing !== value)
+    : [...current, value];
+  return withFilter(p, group, next);
 }
 
 /** Switching tabs drops filters whose vocabulary does not exist on the destination tab. */
@@ -244,7 +298,12 @@ export function withBasis(p: Params, basis: Basis): string {
  *  missed by one of the two. `basis` deliberately survives: it is not a filter, and clearing
  *  filters should not also walk you across the split. */
 export function bare(p: Params): Params {
-  return { ...p, ...Object.fromEntries(FILTERS.map((f) => [f, null])), badge: null } as Params;
+  return {
+    ...p,
+    posted: null,
+    ...(Object.fromEntries(GROUPS.map((group) => [group, [] as string[]])) as Record<Group, string[]>),
+    badge: null,
+  };
 }
 
 export function cleared(p: Params): string {
@@ -260,7 +319,10 @@ function toRaw(p: Params): RawSearchParams {
   return {
     tab: p.tab,
     basis: p.basis ?? undefined,
-    ...Object.fromEntries(FILTERS.map((filter) => [filter, p[filter] ?? undefined])),
+    posted: p.posted ?? undefined,
+    ...Object.fromEntries(
+      GROUPS.map((group) => [group, p[group].length > 0 ? p[group].join(',') : undefined]),
+    ),
     badge: p.badge ?? undefined,
   };
 }
