@@ -101,7 +101,7 @@ async function fetchThrottled(url, init) {
 /**
  * @param {string} ats
  * @param {string} token
- * @param {{ wdN?: string, site?: string }} [extra]
+ * @param {{ wdN?: string, site?: string, offset?: number }} [extra]
  * @returns {{ url: string, init?: RequestInit }}
  */
 export function buildRequest(ats, token, extra) {
@@ -127,13 +127,18 @@ export function buildRequest(ats, token, extra) {
       // and confirmed 404-on-unknown-tenant. postings.json supersedes their older jobs.json.
       return { url: `https://${token}.pinpointhq.com/postings.json` };
     case "workday": {
-      const { wdN, site } = extra;
+      // `limit` is capped at 20 by the endpoint — asking for 100 returns HTTP 400 — so a large
+      // board is read by paging. `offset` also rides in the QUERY STRING, which Workday ignores:
+      // it is what makes each page a distinct URL, and both the fixture recorder and the rate
+      // limiter key on URL. Without it every page would collide on one key and replay the same 20.
+      const { wdN, site, offset = 0 } = extra;
+      const base = `https://${token}.${wdN}.myworkdayjobs.com/wday/cxs/${token}/${site}/jobs`;
       return {
-        url: `https://${token}.${wdN}.myworkdayjobs.com/wday/cxs/${token}/${site}/jobs`,
+        url: offset > 0 ? `${base}?offset=${offset}` : base,
         init: {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ appliedFacets: {}, limit: 20, offset: 0, searchText: "" }),
+          body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: "" }),
         },
       };
     }
@@ -245,7 +250,19 @@ const WORKDAY_WDN = ["wd1", "wd3", "wd5", "wd103"];
 
 function workdaySiteGuesses(token) {
   const cap = token.charAt(0).toUpperCase() + token.slice(1);
-  return [token, cap, `${cap}Careers`, `${cap}ExternalCareerSite`, "External", "Careers"];
+  const upper = token.toUpperCase();
+  return [
+    token,
+    cap,
+    `${cap}Careers`,
+    `${cap}ExternalCareerSite`,
+    // Acronym brands upper-case the whole token: NVIDIA publishes `NVIDIAExternalCareerSite`,
+    // which the capitalised form above misses because the path is case-sensitive.
+    `${upper}ExternalCareerSite`,
+    `${upper}Careers`,
+    "External",
+    "Careers",
+  ];
 }
 
 /**

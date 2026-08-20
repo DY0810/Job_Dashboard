@@ -10,7 +10,8 @@ import { extract } from '../../lib/extract.ts';
 import { normalizeCompany, normalizeTitle } from '../../lib/normalize.ts';
 import type { Connector, ConnectorContext, ConnectorPosting, Runtime } from '../../lib/runtime.ts';
 
-import { ashby, greenhouse, lever, recruitee, smartrecruiters, workable } from './ats.ts';
+import { ashby, greenhouse, lever, recruitee, smartrecruiters, workable, workday, workdayPostedAt } from './ats.ts';
+import { amazon } from './amazon.ts';
 import { arbeitnow, braintrust, himalayas, hn, remoteok, remotive, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
 import { adzuna, careerjet, jooble, usajobs } from './keyed.ts';
@@ -69,7 +70,11 @@ function expectCanonicalShape(posting: ConnectorPosting, expected: Connector): v
  * item — the whole posting is the one sentence in the title. Same rule as above, an empty
  * description beats an invented one, and the title alone is enough for classification.
  */
-const NO_DESCRIPTION_AVAILABLE = new Set(['simplify-internships', 'dribbble']);
+/**
+ * `workday` is the third: its list endpoint returns no body at all, and the per-posting detail
+ * endpoint would be one request each — 2,000 for NVIDIA alone. Title-only, like the two above.
+ */
+const NO_DESCRIPTION_AVAILABLE = new Set(['simplify-internships', 'dribbble', 'workday']);
 
 const RECORDED: Connector[] = [
   greenhouse,
@@ -89,6 +94,8 @@ const RECORDED: Connector[] = [
   himalayas,
   jobspresso,
   simplifyInternships,
+  workday,
+  amazon,
 ];
 
 describe.each(RECORDED.map((connector) => [connector.name, connector] as const))(
@@ -437,6 +444,111 @@ describe('design and freelance sources', () => {
       const results = await himalayas.fetch({ ...replay('himalayas').context, runtime: stubRuntime(body) });
       expect(results[0].location).toBe('Remote');
       expect(results[0].sourceFields?.employmentType).toBe('contract');
+    });
+  });
+});
+
+/**
+ * The two employer-board connectors added so large companies arrive from their own listing
+ * rather than second-hand through an internship aggregator.
+ */
+describe('employer boards', () => {
+  /**
+   * The one piece of the Workday connector that can be wrong without failing: it publishes no
+   * timestamp on the list endpoint, only the phrase shown in its UI, and `posted_at` is the
+   * FIRST sort key on both tabs. A bad parse does not error, it silently mis-dates a posting.
+   */
+  describe('workdayPostedAt', () => {
+    const NOW = Date.UTC(2026, 7, 20, 12, 0, 0);
+    const days = (n: number) => NOW - n * 24 * 60 * 60 * 1000;
+
+    it.each([
+      ['Posted Today', NOW],
+      ['Posted Yesterday', days(1)],
+      ['Posted 5 Days Ago', days(5)],
+      ['Posted 1 Day Ago', days(1)],
+      // NVIDIA's board floors at this phrase; it must not read as 30 days *plus* something.
+      ['Posted 30+ Days Ago', days(30)],
+      ['Just posted', NOW],
+    ])('reads %s', (phrase, expected) => {
+      expect(workdayPostedAt(phrase, NOW)).toBe(expected);
+    });
+
+    it('returns NaN for a phrase it does not know rather than guessing a date', () => {
+      // `dedupePostings` already falls back when nothing parsed. A wrong date outranks a
+      // missing one on a recency-sorted table, so guessing is the worse failure.
+      for (const phrase of ['Posted Sometime', '', undefined, 'Reposted']) {
+        expect(Number.isNaN(workdayPostedAt(phrase, NOW)), String(phrase)).toBe(true);
+      }
+    });
+
+    it('is monotonic — an older phrase never sorts newer', () => {
+      const ages = ['Posted Today', 'Posted Yesterday', 'Posted 5 Days Ago', 'Posted 30+ Days Ago'].map(
+        (p) => workdayPostedAt(p, NOW),
+      );
+      expect(ages).toEqual([...ages].sort((a, b) => b - a));
+    });
+  });
+
+  describe('workday', () => {
+    it('builds the posting URL from the tenant, not from the API host', async () => {
+      const results = await workday.fetch(replay('workday').context);
+      expect(results.length).toBeGreaterThan(0);
+      for (const posting of results) {
+        // The API lives under /wday/cxs/; a human-facing URL must not.
+        expect(posting.sourceUrl).not.toContain('/wday/cxs/');
+        expect(posting.sourceUrl).toMatch(/^https:\/\/[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com\/.+\/job\//);
+      }
+    });
+
+    it('is priority-1 ATS, so its URL beats an aggregator syndicating the same job', async () => {
+      for (const posting of await workday.fetch(replay('workday').context)) {
+        expect(posting.sourceKind).toBe('ats');
+      }
+    });
+
+    it('keeps the location string the board reported', async () => {
+      const results = await workday.fetch(replay('workday').context);
+      expect(results.some((posting) => (posting.location ?? '').length > 0)).toBe(true);
+    });
+  });
+
+  describe('amazon', () => {
+    it('normalizes the employment type from the schedule and the intern flag', async () => {
+      const results = await amazon.fetch(replay('amazon').context);
+      expect(results.length).toBeGreaterThan(0);
+      const types = new Set(results.map((posting) => posting.sourceFields?.employmentType));
+      for (const type of types) {
+        if (type !== undefined) expect(['full-time', 'part-time', 'internship']).toContain(type);
+      }
+    });
+
+    it('prefers the normalized location, which parses, over the display form', async () => {
+      // "US, CO, Denver" leads with a country code that reads as a city segment;
+      // "Denver, Colorado, USA" is the form `normalizeLocation` can use.
+      const results = await amazon.fetch(replay('amazon').context);
+      const withLocation = results.filter((posting) => posting.location);
+      expect(withLocation.length).toBeGreaterThan(0);
+      for (const posting of withLocation) {
+        expect(posting.location, posting.location ?? '').not.toMatch(/^US,\s/);
+      }
+    });
+
+    it('stores every location as reported — no geography filter at the source', async () => {
+      // The endpoint accepts a country filter and this connector deliberately does not use it:
+      // geo is a view concern, and a filter applied during ingest cannot be lifted later.
+      const results = await amazon.fetch(replay('amazon').context);
+      const countries = new Set(
+        results.map((posting) => (posting.location ?? '').split(',').pop()?.trim()).filter(Boolean),
+      );
+      expect(countries.size).toBeGreaterThan(1);
+    });
+
+    it('points at amazon.jobs itself', async () => {
+      for (const posting of await amazon.fetch(replay('amazon').context)) {
+        expect(posting.sourceUrl).toMatch(/^https:\/\/www\.amazon\.jobs\/en\/jobs\//);
+        expect(posting.sourceKind).toBe('ats');
+      }
     });
   });
 });

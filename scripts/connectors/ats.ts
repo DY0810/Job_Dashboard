@@ -6,10 +6,10 @@
  * Endpoint shapes come from `scripts/ats-probe.js`, which is what confirmed every token in
  * `companies.json` in the first place. Re-deriving them here would let the two drift.
  *
- * WORKDAY IS DEFERRED, not forgotten: `companies.json` has zero Workday tenants, so a
- * Workday connector would iterate an empty list on every run and could not be tested against
- * a real target. `buildRequest('workday', ...)` already holds the POST shape for whenever a
- * Workday company lands in the registry.
+ * WORKDAY SHIPS NOW (see the bottom of this file). It was deferred while `companies.json` held
+ * zero Workday tenants; NVIDIA is confirmed in the registry, so the connector has a real target.
+ * It is the one ATS here that pages, and the one with a cadence, both for reasons documented at
+ * the connector.
  */
 
 import { readFileSync } from 'node:fs';
@@ -532,6 +532,144 @@ export const recruitee = atsConnector('recruitee', async (entry, context) => {
     );
 });
 
+
+// ---------------------------------------------------------------------------------------
+// Workday
+// ---------------------------------------------------------------------------------------
+
+interface WorkdayPosting {
+  title?: string;
+  /** Relative to the site root: `/job/US-CA-Santa-Clara/Some-Title_JR123`. */
+  externalPath?: string;
+  locationsText?: string;
+  /** "Posted Today" · "Posted Yesterday" · "Posted 5 Days Ago" · "Posted 30+ Days Ago". */
+  postedOn?: string;
+  bulletFields?: string[];
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Workday publishes no timestamp on the list endpoint, only the phrase it shows in the UI.
+ *
+ * Exported because it is the one piece of this connector that can be wrong quietly: a bad parse
+ * does not fail, it dates a posting wrongly, and `posted_at` is the FIRST sort key on both tabs.
+ *
+ * Returns NaN for a phrase it does not recognize rather than guessing a date — `dedupePostings`
+ * already falls back when nothing parsed, and a wrong date outranks a missing one on the table.
+ */
+export function workdayPostedAt(postedOn: string | undefined, now: number): number {
+  const text = (postedOn ?? '').toLowerCase();
+  if (!text) return Number.NaN;
+  if (/\btoday\b|\bjust posted\b/.test(text)) return now;
+  if (/\byesterday\b/.test(text)) return now - DAY_MS;
+  const days = /(\d+)\+?\s*days?\s*ago/.exec(text);
+  if (days) return now - Number(days[1]) * DAY_MS;
+  const months = /(\d+)\+?\s*months?\s*ago/.exec(text);
+  if (months) return now - Number(months[1]) * 30 * DAY_MS;
+  const hours = /(\d+)\+?\s*hours?\s*ago/.exec(text);
+  if (hours) return now - Number(hours[1]) * 60 * 60 * 1000;
+  return Number.NaN;
+}
+
+/**
+ * `limit` is capped at 20 by the endpoint (100 returns HTTP 400), so NVIDIA's 2,000 openings
+ * would take 100 requests to read in full. That is why this is the only ATS connector here with
+ * a `minIntervalMs`: every other one is a single request and belongs on every cycle, while this
+ * one at a 30-minute cadence would make 4,800 requests a day to one company.
+ *
+ * THE CAP IS 5 PAGES BECAUSE WORKDAY RATE-LIMITS PAGING, and it took two corrections to find
+ * the number. A first run read 100 pages per tenant; 25 was no better. Measured, their edge
+ * answers a burst with 429 and a `Retry-After` the runtime honours — one page took 21s of
+ * legitimate waiting — and sometimes simply holds the connection open past the per-attempt
+ * budget. A single POST outside a burst is ~1.2s, so the slowness is entirely their throttle.
+ *
+ * 5 pages is 100 postings per tenant per run, 20 requests a day at this cadence. It is enough
+ * because it is matched to how fast the board actually moves: offset 0 is all "Posted Today" and
+ * offset 200 is 2-3 days old, so NVIDIA publishes on the order of 80 a day and four runs a day
+ * see them all. `timeoutMs` is raised well above the default for the same reason — a throttled
+ * page that answers in 25s is a success, and cutting it at 20 turns a slow source into a dead one.
+ *
+ * A cap is only honest if what it cuts is the OLD end, and here it is: the endpoint returns
+ * newest-first, measured against NVIDIA's board —
+ *
+ *   offset    0 → "Posted Today"          offset  800 → "Posted 19-20 Days Ago"
+ *   offset  200 → "Posted 2-3 Days Ago"   offset 1800 → "Posted 30+ Days Ago"
+ *
+ * so 500 postings is roughly the last two weeks, which is where new openings appear and well
+ * inside the corpus's 60-day cutoff. Deeper pages are older postings, already collected by
+ * earlier runs. `degraded` is still called when the cap bites, because a source that silently
+ * reads a slice of a board while reporting `ok` is how ghost detection starts delisting.
+ */
+const WORKDAY_PAGE = 20;
+const WORKDAY_MAX_PAGES = 5;
+/** Their throttle answers slowly on purpose; 20s (the default) reads that as death. */
+const WORKDAY_TIMEOUT_MS = 45_000;
+
+export const workday = {
+  ...atsConnector('workday', async (entry, context) => {
+    if (!entry.wdN || !entry.site) throw new Error(`${entry.name}: workday entry needs wdN and site`);
+
+    const now = Date.now();
+    const postings: ConnectorPosting[] = [];
+    let pages = 0;
+    let total: number | undefined;
+
+    for (; pages < WORKDAY_MAX_PAGES; pages += 1) {
+      const request = buildRequest('workday', entry.token, {
+        wdN: entry.wdN,
+        site: entry.site,
+        offset: pages * WORKDAY_PAGE,
+      }) as { url: string; init: { method: string; headers: Record<string, string>; body: string } };
+
+      const body = await context.runtime.fetchJson<{ total?: number; jobPostings?: WorkdayPosting[] }>(
+        request.url,
+        {
+          method: request.init.method,
+          headers: request.init.headers,
+          body: request.init.body,
+          timeoutMs: WORKDAY_TIMEOUT_MS,
+        },
+      );
+      // Only the first page reports it; later pages answer 0.
+      total ??= body.total;
+
+      const page = body.jobPostings ?? [];
+      for (const job of page) {
+        if (!job.externalPath) continue;
+        postings.push(
+          row('workday', entry, {
+            title: job.title,
+            location: job.locationsText,
+            url: `https://${entry.token}.${entry.wdN}.myworkdayjobs.com/${entry.site}${job.externalPath}`,
+            postedAt: workdayPostedAt(job.postedOn, now),
+            // The list endpoint carries no body at all. The detail endpoint does, but one
+            // request per posting is 2,000 requests for one company — so these arrive
+            // title-only and are classified from the title, as `simplify-internships` is.
+            description: '',
+            structured: { location: text(job.locationsText) },
+          }),
+        );
+      }
+      if (page.length < WORKDAY_PAGE) break;
+    }
+
+    if (pages >= WORKDAY_MAX_PAGES && total !== undefined && total > postings.length) {
+      context.degraded(`${entry.name}: read ${postings.length} of ${total} openings (page cap)`);
+    }
+    context.log({
+      connector: 'workday',
+      company: entry.name,
+      pages,
+      fetched: postings.length,
+      reportedTotal: total ?? null,
+    });
+    return postings;
+  }),
+  /** See above: 100 requests per company per run, so not on every 30-minute cycle. */
+  minIntervalMs: 6 * 60 * 60 * 1000,
+};
+
 export const atsConnectors: Connector[] = [
   greenhouse,
   lever,
@@ -539,4 +677,5 @@ export const atsConnectors: Connector[] = [
   smartrecruiters,
   workable,
   recruitee,
+  workday,
 ];

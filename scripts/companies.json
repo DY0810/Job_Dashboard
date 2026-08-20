@@ -595,6 +595,18 @@
     "verified_at": "2026-08-18T04:01:24.851Z"
   },
   {
+    "name": "NVIDIA",
+    "ats": "workday",
+    "token": "nvidia",
+    "wdN": "wd5",
+    "site": "NvidiaExternalCareerSite",
+    "tags": [
+      "hardware"
+    ],
+    "verified_at": "2026-08-20T03:55:06.609Z",
+    "postings_at_probe": 20
+  },
+  {
     "name": "Observe.AI",
     "ats": "greenhouse",
     "token": "observeai",
@@ -945,6 +957,18 @@
     ],
     "verified_at": "2026-08-19T05:35:55.933Z",
     "postings_at_probe": 29
+  },
+  {
+    "name": "Workday",
+    "ats": "workday",
+    "token": "workday",
+    "wdN": "wd5",
+    "site": "workday",
+    "tags": [
+      "enterprise"
+    ],
+    "verified_at": "2026-08-20T03:55:13.657Z",
+    "postings_at_probe": 20
   },
   {
     "name": "Zapier",

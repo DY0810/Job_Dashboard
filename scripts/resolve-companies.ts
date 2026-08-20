@@ -228,6 +228,25 @@ const STUDIO_SEEDS: Seed[] = [
 // ATS and records only a confirmed 200 with a correctly-shaped body; the rest land in the
 // unresolved report. Nothing in this list is assumed to have a board.
 // ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
+// Workday tenants. Large employers overwhelmingly run Workday, and until now the registry had
+// none — which is why the Workday connector sat deferred with nothing to iterate. `tryWorkday`
+// makes the resolver attempt the Workday shapes after the cheaper ATS families, so a company
+// that turns out to be on Greenhouse still resolves there first.
+// ---------------------------------------------------------------------------------------
+const WORKDAY_SEEDS: Seed[] = [
+  { name: "NVIDIA", website: "nvidia.com", tags: ["hardware"], tryWorkday: true },
+  { name: "Adobe", website: "adobe.com", tags: ["design-led"], tryWorkday: true },
+  { name: "Salesforce", website: "salesforce.com", tags: ["enterprise"], tryWorkday: true },
+  { name: "Intuit", website: "intuit.com", tags: ["design-led"], tryWorkday: true },
+  { name: "Workday", website: "workday.com", tags: ["enterprise"], tryWorkday: true },
+  { name: "Netflix", website: "netflix.com", tags: ["design-led"], tryWorkday: true },
+  { name: "Sony", website: "sony.com", tags: ["hardware"], tryWorkday: true },
+  { name: "Qualcomm", website: "qualcomm.com", tags: ["hardware"], tryWorkday: true },
+  { name: "Cisco", website: "cisco.com", tags: ["enterprise"], tryWorkday: true },
+  { name: "Dell", website: "dell.com", tags: ["hardware"], tryWorkday: true },
+];
+
 const DESIGN_SEEDS: Seed[] = [
   // Studios and agencies
   { name: "Instrument", website: "instrument.com", tags: ["design-studio"] },
@@ -673,6 +692,7 @@ async function main(): Promise<void> {
     { label: "ai-startups", seeds: AI_STARTUP_SEEDS },
     { label: "studios", seeds: STUDIO_SEEDS },
     { label: "design", seeds: DESIGN_SEEDS },
+    { label: "workday", seeds: WORKDAY_SEEDS },
   ];
   const wantsYc = !skipYc && (!onlyGroups || onlyGroups.has("yc"));
   if (wantsYc) {
