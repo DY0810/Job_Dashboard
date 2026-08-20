@@ -327,6 +327,16 @@
     "verified_at": "2026-08-18T04:01:26.776Z"
   },
   {
+    "name": "Fooji",
+    "ats": "workable",
+    "token": "fooji",
+    "tags": [
+      "ai"
+    ],
+    "verified_at": "2026-08-20T06:05:18.827Z",
+    "postings_at_probe": 2
+  },
+  {
     "name": "General Legal",
     "ats": "greenhouse",
     "token": "general",
@@ -641,6 +651,16 @@
       "yc"
     ],
     "verified_at": "2026-08-18T04:01:25.818Z"
+  },
+  {
+    "name": "Palantir Technologies",
+    "ats": "lever",
+    "token": "palantir",
+    "tags": [
+      "ai"
+    ],
+    "verified_at": "2026-08-20T06:05:36.596Z",
+    "postings_at_probe": 307
   },
   {
     "name": "Parloa",

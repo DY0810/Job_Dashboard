@@ -552,3 +552,46 @@ describe('employer boards', () => {
     });
   });
 });
+
+/**
+ * Amazon labels its internships `job_schedule_type: "full-time"` and leaves `is_intern` null, so
+ * the schedule field cannot be trusted for this. `sourceFields` is read before the prose
+ * heuristics, which makes a wrong structured value worse than none — it outranks the title parse
+ * that would have been right.
+ */
+describe('amazon employment type', () => {
+  const stub = (jobs: unknown[]) => stubRuntime(JSON.stringify({ hits: jobs.length, jobs }));
+  const job = (title: string, extra: Record<string, unknown> = {}) => ({
+    title,
+    job_path: '/en/jobs/1/x',
+    posted_date: 'August 19, 2026',
+    job_schedule_type: 'full-time',
+    is_intern: null,
+    description: 'Build things.',
+    normalized_location: 'Seattle, Washington, USA',
+    ...extra,
+  });
+
+  it.each([
+    'Software Development Engineer Intern',
+    'Operations Engineer Internship',
+    'Robotics - Software Development Engineer Intern/Co-op - 2026',
+    '【Class of 2029／Internship】Applied Scientists',
+  ])('reads %s as an internship despite the full-time schedule', async (title) => {
+    const results = await amazon.fetch({ ...replay('amazon').context, runtime: stub([job(title)]) });
+    expect(results[0]?.sourceFields?.employmentType).toBe('internship');
+  });
+
+  it('still uses the schedule when the title says nothing', async () => {
+    const results = await amazon.fetch({ ...replay('amazon').context, runtime: stub([job('Software Development Engineer II')]) });
+    expect(results[0]?.sourceFields?.employmentType).toBe('full-time');
+  });
+
+  it('does not mistake a word merely containing "intern" for an internship', async () => {
+    const results = await amazon.fetch({
+      ...replay('amazon').context,
+      runtime: stub([job('Internal Tools Engineer'), job('International Expansion Engineer')]),
+    });
+    for (const posting of results) expect(posting.sourceFields?.employmentType).toBe('full-time');
+  });
+});

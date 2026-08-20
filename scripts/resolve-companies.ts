@@ -229,6 +229,29 @@ const STUDIO_SEEDS: Seed[] = [
 // unresolved report. Nothing in this list is assumed to have a board.
 // ---------------------------------------------------------------------------------------
 // ---------------------------------------------------------------------------------------
+// Companies seen on a LinkedIn internship search that the registry did not hold. Worth noting
+// what this list is NOT: it is not scraped from LinkedIn. The names were read off the screen by
+// a human and are probed here against each company's own board, which is the difference between
+// using LinkedIn as a directory and using it as a source.
+// ---------------------------------------------------------------------------------------
+const INTERNSHIP_SEEDS: Seed[] = [
+  { name: "Palantir Technologies", website: "palantir.com", tags: ["ai"] },
+  { name: "L3Harris Technologies", website: "l3harris.com", tags: ["hardware"], tryWorkday: true },
+  { name: "Sandhills Global", website: "sandhills.com", tags: ["enterprise"] },
+  { name: "Hunter Engineering", website: "hunter.com", tags: ["hardware"] },
+  { name: "Foundation Finance", website: "foundationfinance.com", tags: ["fintech"] },
+  { name: "Garda Capital Partners", website: "gardacap.com", tags: ["fintech"] },
+  { name: "Verition", website: "verition.com", tags: ["fintech"] },
+  { name: "Jobright", website: "jobright.ai", tags: ["ai"] },
+  { name: "Sixtyfour", website: "sixtyfour.ai", tags: ["ai"] },
+  { name: "Genia", website: "genia.com", tags: ["ai"] },
+  { name: "Trendline", website: "trendline.ai", tags: ["ai"] },
+  { name: "Fooji", website: "fooji.com", tags: ["ai"] },
+  { name: "MeeBoss", website: "meeboss.com", tags: ["ai"] },
+  { name: "FetchJobs", website: "fetchjobs.co", tags: ["ai"] },
+];
+
+// ---------------------------------------------------------------------------------------
 // Workday tenants. Large employers overwhelmingly run Workday, and until now the registry had
 // none — which is why the Workday connector sat deferred with nothing to iterate. `tryWorkday`
 // makes the resolver attempt the Workday shapes after the cheaper ATS families, so a company
@@ -693,6 +716,7 @@ async function main(): Promise<void> {
     { label: "studios", seeds: STUDIO_SEEDS },
     { label: "design", seeds: DESIGN_SEEDS },
     { label: "workday", seeds: WORKDAY_SEEDS },
+    { label: "internships", seeds: INTERNSHIP_SEEDS },
   ];
   const wantsYc = !skipYc && (!onlyGroups || onlyGroups.has("yc"));
   if (wantsYc) {

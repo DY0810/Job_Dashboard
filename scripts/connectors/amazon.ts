@@ -54,11 +54,23 @@ interface AmazonJob {
 const PAGE = 100;
 
 /**
- * Five pages, so 500 of the newest per run. Unlike the Workday board this endpoint DOES sort by
- * recency, which is what makes a cap defensible: the cut falls at "older than the newest 500"
- * rather than at an arbitrary slice, and the next run picks up whatever appeared since.
+ * Fifteen pages, so 1,500 of the newest per run. The cut is defensible because this endpoint
+ * sorts by recency, so it falls at "older than the newest 1,500" rather than on an arbitrary
+ * slice — but the number had to be measured, because Amazon's volume is the whole problem:
+ *
+ *   offset    0 → August 20-19        offset  900 → August 14-13
+ *   offset  400 → August 19-18        offset 1900 → August 10
+ *
+ * 500 covered barely a day and a half. 1,500 reaches roughly a week, which matters because
+ * postings arrive here in bursts and a run that lands after a busy afternoon would otherwise
+ * miss everything published before it. Amazon does not throttle this endpoint — 500 postings
+ * came back in 4.7s — so the cost is 15 cheap requests every six hours.
+ *
+ * Deeper is not better: past ~2,000 the ordering stops agreeing with `posted_date` (offset 3900
+ * returned August 14 alongside August 3), so the endpoint is evidently sorting on something
+ * adjacent to it. Paging further buys jumble, not history.
  */
-const MAX_PAGES = 5;
+const MAX_PAGES = 15;
 
 function searchUrl(offset: number): string {
   const params = new URLSearchParams({
@@ -70,9 +82,22 @@ function searchUrl(offset: number): string {
   return `https://www.amazon.jobs/en/search.json?${params.toString()}`;
 }
 
-/** `job_schedule_type` is `full-time` / `part-time`; an internship is flagged separately. */
+/**
+ * THE TITLE DECIDES AN INTERNSHIP, NOT THE SCHEDULE FIELD, and that ordering is the fix for a
+ * bug this connector shipped with. Amazon sets `job_schedule_type: "full-time"` on its
+ * internships — an internship is full-time hours, which is true and useless — and the `is_intern`
+ * flag it also returns is `null` on every posting observed, never `true`. Trusting the schedule
+ * therefore labelled "Operations Engineer Internship" as `full-time`.
+ *
+ * That is worse than returning nothing, because `sourceFields` is read BEFORE the prose
+ * heuristics in `extract.ts`: a wrong structured value silently outranks the title parse that
+ * would have got it right. So the title is checked first, and the schedule only answers when the
+ * title is silent.
+ */
+const INTERN_TITLE = /\b(?:intern|interns|internship|internships|co-?op)\b/i;
+
 function employmentType(job: AmazonJob): EmploymentType | undefined {
-  if (job.is_intern === true) return 'internship';
+  if (job.is_intern === true || INTERN_TITLE.test(job.title ?? '')) return 'internship';
   const raw = (job.job_schedule_type ?? '').toLowerCase().replace(/[\s_-]/g, '');
   if (raw === 'fulltime') return 'full-time';
   if (raw === 'parttime') return 'part-time';
@@ -92,7 +117,7 @@ function body(job: AmazonJob): string {
 export const amazon: Connector = {
   name: 'amazon',
   kind: 'ats',
-  /** One employer, 500 postings a run, and its board does not turn over in half an hour. */
+  /** One employer, 1,500 postings a run, and its board does not turn over in half an hour. */
   minIntervalMs: 6 * 60 * 60 * 1000,
   async fetch(context) {
     const postings: ConnectorPosting[] = [];

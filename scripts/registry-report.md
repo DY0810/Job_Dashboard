@@ -1,27 +1,27 @@
 # Company Registry Report
 
-Generated 2026-08-20T03:55:44.693Z by `scripts/resolve-companies.ts`.
+Generated 2026-08-20T06:06:15.420Z by `scripts/resolve-companies.ts`.
 
 ## Registry — resolved count by ATS
 
-`scripts/companies.json` holds **105** entries total (across every phase this script has been run for).
+`scripts/companies.json` holds **107** entries total (across every phase this script has been run for).
 
 | ATS | Count |
 | --- | --- |
 | ashby | 53 |
 | greenhouse | 41 |
-| lever | 4 |
+| lever | 5 |
 | recruitee | 3 |
+| workable | 2 |
 | workday | 2 |
 | smartrecruiters | 1 |
-| workable | 1 |
 
 
 ## Run summary
 
-- Companies considered this run: **10**
+- Companies considered this run: **14**
 - Newly resolved: **2**
-- Unresolved: **8**
+- Unresolved: **12**
 - Dead / acquired: **0**
 
 ## Voice-AI seed accounting (Phase 5a — plans/workie.md §5a, 42 companies)
