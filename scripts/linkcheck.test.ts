@@ -11,7 +11,7 @@ function memoryDb(): Db {
 
 let nextKey = 0;
 
-function seed(db: Db, url: string): number {
+function seed(db: Db, url: string, track: 'design' | 'engineering' | null = 'design'): number {
   nextKey += 1;
   return db
     .insert(postings)
@@ -25,6 +25,7 @@ function seed(db: Db, url: string): number {
       companyNorm: 'acme',
       titleNorm: 'product designer',
       locationKey: 'remote',
+      track,
     })
     .returning({ id: postings.id })
     .get().id;
@@ -253,5 +254,49 @@ describe('a bad status is not automatically a dead posting', () => {
     const summary = await runLinkcheck(db, runtimeWith(() => ({ status: 429, body: '' })), { log: () => {} });
     expect(summary).toMatchObject({ dead: 0, unverifiable: 1, marked: 0 });
     expect(db.select().from(postings).get()!.delistedAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Why the weekly run had never committed anything: 153 HN canonical URLs on one host that
+// answers 429 behind a 30s crawl-delay burned ~76 of the 90 budgeted minutes for verdicts
+// that carry no signal (a thread item does not 404 when the job dies), the alarm killed
+// the run, and the single end-of-run transaction meant zero delistings — forever, while
+// looking installed. Same run: the corpus tripled, but apply links only exist on visible
+// rows, so the check's scope is visible rows.
+// ---------------------------------------------------------------------------------------
+
+describe('the run fits its budget', () => {
+  it('never fetches a no-signal host, and reports it unverifiable', async () => {
+    const db = memoryDb();
+    const id = seed(db, 'https://news.ycombinator.com/item?id=41234567');
+    const fetched: string[] = [];
+    const runtime = runtimeWith((url) => {
+      fetched.push(url);
+      return { status: 429, body: '' };
+    });
+    const logged: Record<string, unknown>[] = [];
+    const summary = await runLinkcheck(db, runtime, { log: (record) => logged.push(record) });
+
+    expect(fetched).toHaveLength(0);
+    expect(summary).toMatchObject({ checked: 1, unverifiable: 1, dead: 0, marked: 0 });
+    expect(logged[0]).toMatchObject({ posting: id, verdict: 'unverifiable' });
+  });
+
+  it('checks only visible rows — a dropped posting has no apply button to verify', async () => {
+    const db = memoryDb();
+    seed(db, URL_FOR.ashby, null); // track null: extraction dropped it, no tab renders it
+    const visible = seed(db, URL_FOR.lever, 'engineering');
+    const fetched: string[] = [];
+    const runtime = runtimeWith((url) => {
+      fetched.push(url);
+      return { status: 200, body: BODY.ashbyLive };
+    });
+    const summary = await runLinkcheck(db, runtime, { log: () => {} });
+
+    expect(summary.checked).toBe(1);
+    expect(fetched.some((u) => u === URL_FOR.lever)).toBe(true);
+    expect(fetched.some((u) => u === URL_FOR.ashby)).toBe(false);
+    void visible;
   });
 });

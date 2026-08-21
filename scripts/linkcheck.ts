@@ -25,7 +25,7 @@
 
 import { pathToFileURL } from 'node:url';
 
-import { eq, isNull } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 
 import { openDb, type Db } from '../lib/db/index.ts';
 import { postings } from '../lib/db/schema.ts';
@@ -181,11 +181,27 @@ function failure(error: unknown): { status: number | null; reason: string } {
  * the URL is whatever a job board put in the posting, so every hop is a destination we did
  * not choose.
  */
+const NO_SIGNAL_HOSTS = new Set(['news.ycombinator.com']);
+
 export async function checkLink(
   runtime: Runtime,
   posting: { id: number; url: string },
 ): Promise<LinkResult> {
   const { id, url } = posting;
+
+  // Hosts whose checks carry no signal at any price. news.ycombinator.com answers 429
+  // behind a 30-second crawl-delay, and an HN thread item does not 404 when the job dies —
+  // 153 of these burned ~76 of the run's 90 budgeted minutes, the alarm killed the run,
+  // and the single end-of-run transaction meant linkcheck had never delisted anything
+  // (every cycle log: exit=142). Unverifiable without a request.
+  try {
+    if (NO_SIGNAL_HOSTS.has(new URL(url).hostname)) {
+      return { id, url, verdict: 'unverifiable', status: null, reason: 'no-signal host' };
+    }
+  } catch {
+    return { id, url, verdict: 'unverifiable', status: null, reason: 'unparseable URL' };
+  }
+
   const options: FetchOptions = { retries: 1, timeoutMs: 15_000, publicOnly: true };
 
   const verdictFor = (status: number | null): Verdict =>
@@ -238,12 +254,14 @@ export async function runLinkcheck(
   const log = options.log ?? ((record) => console.log(JSON.stringify(record)));
   const concurrency = options.concurrency ?? 8;
 
-  // Already-delisted postings are not re-checked: they are out of the UI either way, and the
-  // point of the run is the links a user can still click.
+  // Already-delisted postings are not re-checked, and neither are rows extraction dropped
+  // (`track` null): the point of the run is the links a user can still click, and only
+  // visible rows render an apply button. This is also what keeps the run inside its 90-minute
+  // alarm — the corpus tripled, but the clickable slice is ~2,000 rows, not ~14,000.
   const base = db
     .select({ id: postings.id, url: postings.canonicalUrl })
     .from(postings)
-    .where(isNull(postings.delistedAt));
+    .where(and(isNull(postings.delistedAt), isNotNull(postings.track)));
   const queue = (options.limit === undefined ? base : base.limit(options.limit)).all();
 
   const total = queue.length;
