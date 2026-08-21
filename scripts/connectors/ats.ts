@@ -25,6 +25,7 @@ import {
 } from '../../lib/extract.ts';
 import { normalizeDescription } from '../../lib/normalize.ts';
 import {
+  RobotsDisallowedError,
   redact,
   toEpochMs,
   type Connector,
@@ -183,12 +184,14 @@ function atsConnector(name: string, map: Mapper): Connector {
       const targets = registry().filter((entry) => entry.ats === name);
       const postings: ConnectorPosting[] = [];
       let failed = 0;
+      let refused = 0;
 
       for (const entry of targets) {
         try {
           postings.push(...(await map(entry, context)));
         } catch (error) {
           failed += 1;
+          if (error instanceof RobotsDisallowedError) refused += 1;
           // We are about to return the other boards' postings and report `ok`. Say so, or the
           // ghost pass reads this board's absent postings as withdrawn and delists them.
           context.degraded(`${entry.name}: fetch failed`);
@@ -202,7 +205,14 @@ function atsConnector(name: string, map: Mapper): Connector {
       }
 
       if (targets.length > 0 && failed === targets.length) {
-        throw new Error(`all ${targets.length} ${name} targets failed`);
+        // A wall of robots refusals is policy, not an outage. Name the cause so
+        // `npm run status` can render it as `refused` instead of ERROR — smartrecruiters
+        // publishes `Disallow: /` and sat in every table looking broken.
+        throw new Error(
+          refused === failed
+            ? `all ${targets.length} ${name} targets refused by robots.txt`
+            : `all ${targets.length} ${name} targets failed`,
+        );
       }
       return postings;
     },

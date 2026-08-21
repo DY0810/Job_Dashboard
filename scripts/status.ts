@@ -173,7 +173,12 @@ export function formatStatus(status: Status): string {
         ? '-'
         : connector.lastStatus === 'ok'
           ? 'ok'
-          : 'ERROR';
+          : // Only robots refusals ever put "robots.txt" in an error — the aggregate
+            // "refused by robots.txt" and the runtime's raw "robots.txt disallows <url>".
+            // Policy, not fault; `refused` keeps ERROR meaning "something is broken".
+            /robots\.txt/.test(connector.error ?? '')
+            ? 'refused'
+            : 'ERROR';
     // The disabled reason is a sentence; it goes in the footer rather than stretching the
     // table past a terminal's width for the sake of four rows.
     const next = connector.disabled

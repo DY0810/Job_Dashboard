@@ -4,7 +4,7 @@ import { openDb, type Db } from '../lib/db/index.ts';
 import { postings } from '../lib/db/schema.ts';
 import { createRuntime, type Connector, type ConnectorPosting } from '../lib/runtime.ts';
 import { runIngest } from './ingest.ts';
-import { collectStatus, duration, formatStatus } from './status.ts';
+import { collectStatus, duration, formatStatus, type ConnectorStatus, type Status } from './status.ts';
 
 const CYCLE = 30 * 60 * 1000;
 const T0 = Date.parse('2026-08-18T09:00:00Z');
@@ -107,5 +107,31 @@ describe('npm run status', () => {
     [26 * 60 * 60 * 1000, '1d 2h'],
   ])('duration(%i) = %s', (ms, expected) => {
     expect(duration(ms)).toBe(expected);
+  });
+});
+
+// A robots.txt refusal is policy, not a fault. smartrecruiters sat in every status table as
+// ERROR — indistinguishable from a real outage — because the per-target refusal kind was
+// discarded before the aggregate "all N targets failed" throw. The table now says `refused`
+// when every failing target was refused by robots.txt; a genuine failure stays ERROR.
+describe('a robots refusal is not an outage', () => {
+  const row = (over: Partial<ConnectorStatus>): ConnectorStatus => ({
+    connector: 'x', disabled: null, lastStatus: 'error', lastRunAt: T0, lastOkAt: null,
+    error: null, fetched: 0, newPostings: 0, merged: 0, live: 0, dueInMs: null,
+    minIntervalMs: null, ...over,
+  });
+  const status = (connectors: ConnectorStatus[]): Status => ({
+    now: T0, connectors,
+    totals: { postings: 0, live: 0, delisted: 0, ghosted: 0, deadLink: 0, enriched: 0, design: 0, engineering: 0 },
+    recent: [],
+  });
+
+  it('renders refused when the failure was robots.txt, ERROR otherwise', () => {
+    const text = formatStatus(status([
+      row({ connector: 'smartrecruiters', error: 'all 7 smartrecruiters targets refused by robots.txt' }),
+      row({ connector: 'broken', error: 'all 3 broken targets failed' }),
+    ]));
+    expect(text).toMatch(/^smartrecruiters\s+refused\s/m);
+    expect(text).toMatch(/^broken\s+ERROR\s/m);
   });
 });

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import { extract } from '../../lib/extract.ts';
 import { normalizeCompany, normalizeTitle } from '../../lib/normalize.ts';
+import { RobotsDisallowedError } from '../../lib/runtime.ts';
 import type { Connector, ConnectorContext, ConnectorPosting, Runtime } from '../../lib/runtime.ts';
 
 import { ashby, greenhouse, lever, recruitee, smartrecruiters, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
@@ -813,5 +814,20 @@ describe('direct application URLs', () => {
     const posts = await lever.fetch(context);
     expect(posts.length).toBeGreaterThan(0);
     for (const post of posts) expect(post.applyUrl).toBe(`${post.sourceUrl}/apply`);
+  });
+});
+
+// When every target of an ATS connector is refused by robots.txt, the aggregate error names
+// the cause instead of discarding it — that is what lets `npm run status` say `refused`.
+describe('a fully robots-refused connector says so', () => {
+  it('smartrecruiters throws a refusal, not a generic failure', async () => {
+    const refusing: Runtime = {
+      fetchText: async (url) => { throw new RobotsDisallowedError(url); },
+      fetchJson: async (url: string) => { throw new RobotsDisallowedError(url); },
+      isAllowed: async () => false,
+    };
+    const context = { runtime: refusing, env: {}, log: () => {}, degraded: () => {} };
+    await expect(smartrecruiters.fetch(context as Parameters<typeof smartrecruiters.fetch>[0]))
+      .rejects.toThrow(/refused by robots\.txt/);
   });
 });
