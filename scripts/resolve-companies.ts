@@ -20,6 +20,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { resolveCompany } from "./ats-probe.js";
+import Database from "better-sqlite3";
 
 interface RegistryEntry {
   name: string;
@@ -257,6 +258,47 @@ const INTERNSHIP_SEEDS: Seed[] = [
 // makes the resolver attempt the Workday shapes after the cheaper ATS families, so a company
 // that turns out to be on Greenhouse still resolves there first.
 // ---------------------------------------------------------------------------------------
+/**
+ * Aggregators that answer their JSON API happily and then serve their job PAGES behind a bot
+ * check. himalayas.app and jobicy.com both return 403 with a Cloudflare challenge to any server
+ * fetch, and a reader clicking "apply" gets the verification screen instead of an application
+ * form.
+ *
+ * What makes it unfixable at the link level: neither API carries the employer's own URL.
+ * `applicationLink`, `guid`, and every single link inside the description body point back at the
+ * aggregator — checked across a live page of each. So the only way to give one of these postings
+ * a working apply button is to find the company's real job board.
+ */
+const GATED_HOSTS = ["himalayas.app", "jobicy.com"] as const;
+
+/**
+ * The companies currently reachable ONLY through one of those pages, read from the corpus rather
+ * than typed out here: the set changes with every ingest, and "which employers are stuck behind
+ * a bot check" is a question the database can already answer.
+ *
+ * Resolving one of them fixes the row the reader is already looking at, not just future ones —
+ * the same job arrives from greenhouse/lever/ashby on the next ingest, `dedupePostings` merges it
+ * into the existing posting, and `canonical_url` prefers an ATS over an aggregator. The apply
+ * button changes under the row without the listing moving.
+ *
+ * Returns nothing when there is no local corpus, so a checkout without `workie.db` still runs
+ * every other group.
+ */
+function gatedAggregatorSeeds(): Seed[] {
+  const dbPath = join(dirname(fileURLToPath(import.meta.url)), "..", "workie.db");
+  if (!existsSync(dbPath)) return [];
+  const clauses = GATED_HOSTS.map((host) => `canonical_url like '%${host}%'`).join(" or ");
+  const rows = new Database(dbPath, { readonly: true })
+    .prepare(
+      `select distinct company from postings where delisted_at is null and (${clauses}) order by company`,
+    )
+    .all() as { company: string }[];
+  return rows
+    .map((row) => row.company.trim())
+    .filter(Boolean)
+    .map((name) => ({ name, tags: ["gated-aggregator"] }));
+}
+
 const WORKDAY_SEEDS: Seed[] = [
   { name: "NVIDIA", website: "nvidia.com", tags: ["hardware"], tryWorkday: true },
   { name: "Adobe", website: "adobe.com", tags: ["design-led"], tryWorkday: true },
@@ -782,6 +824,13 @@ async function main(): Promise<void> {
     { label: "workday", seeds: WORKDAY_SEEDS },
     { label: "internships", seeds: INTERNSHIP_SEEDS },
   ];
+  // Computed only when it will be used — it opens the local corpus, which a bare checkout has no
+  // reason to require for a `--groups=design` run.
+  if (!onlyGroups || onlyGroups.has("gated")) {
+    const gated = gatedAggregatorSeeds();
+    if (gated.length > 0) groups.push({ label: "gated", seeds: gated });
+    console.log(`resolve-companies: ${gated.length} companies reachable only behind a bot check`);
+  }
   const wantsYc = !skipYc && (!onlyGroups || onlyGroups.has("yc"));
   if (wantsYc) {
     ycMeta = await fetchYcSeeds(YC_CAP);
