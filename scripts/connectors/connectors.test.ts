@@ -798,3 +798,20 @@ describe('teamtailor location, and the country-code collision', () => {
     expect(await locationOf({ addressLocality: 'Berlin', addressCountry: 'Germany' })).toBe('Berlin, Germany');
   });
 });
+
+// The apply button lands on the form, not the description (fixtures are recorded live).
+describe('direct application URLs', () => {
+  it('ashby carries applyUrl from the list API', async () => {
+    const { context } = replay('ashby');
+    const posts = await ashby.fetch(context);
+    expect(posts.length).toBeGreaterThan(0);
+    for (const post of posts) expect(post.applyUrl).toBe(`${post.sourceUrl}/application`);
+  });
+
+  it('lever derives /apply from every hostedUrl', async () => {
+    const { context } = replay('lever');
+    const posts = await lever.fetch(context);
+    expect(posts.length).toBeGreaterThan(0);
+    for (const post of posts) expect(post.applyUrl).toBe(`${post.sourceUrl}/apply`);
+  });
+});

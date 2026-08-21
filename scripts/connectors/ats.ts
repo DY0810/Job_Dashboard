@@ -137,6 +137,8 @@ function row(
     title: unknown;
     location: unknown;
     url: string;
+    /** The application form, when the vendor publishes one distinct from the posting page. */
+    applyUrl?: string;
     postedAt: number;
     description: string;
     /** The structured fields THIS vendor returned. `location` here is display-only. */
@@ -147,6 +149,7 @@ function row(
     source,
     sourceKind: 'ats',
     sourceUrl: fields.url,
+    applyUrl: fields.applyUrl,
     postedAt: fields.postedAt,
     company: entry.name,
     title: typeof fields.title === 'string' ? fields.title : '',
@@ -292,6 +295,8 @@ export const lever = atsConnector('lever', async (entry, context) => {
         title: job.text,
         location: job.categories?.location ?? job.categories?.allLocations?.join(', '),
         url: job.hostedUrl!,
+        // Lever's hosted page is the description; its application form lives at /apply.
+        applyUrl: `${job.hostedUrl!.replace(/\/+$/, '')}/apply`,
         postedAt: toEpochMs(job.createdAt),
         // Lever splits the body across three fields plus a `lists[]` array of HTML bullets.
         // Reassembling them here is what makes its enrichment hash match Greenhouse's for
@@ -318,6 +323,7 @@ interface AshbyJob {
   location?: string;
   publishedAt?: string;
   jobUrl?: string;
+  applyUrl?: string;
   descriptionPlain?: string;
   descriptionHtml?: string;
   isListed?: boolean;
@@ -342,6 +348,8 @@ export const ashby = atsConnector('ashby', async (entry, context) => {
         title: job.title,
         location: job.location,
         url: job.jobUrl!,
+        // jobUrl is the description page; applyUrl is the form (jobUrl + "/application").
+        applyUrl: job.applyUrl,
         postedAt: toEpochMs(job.publishedAt),
         // Ashby's "plain" text is really markdown; normalizeDescription strips the markers.
         description: job.descriptionPlain ?? job.descriptionHtml ?? '',

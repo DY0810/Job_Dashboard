@@ -22,6 +22,12 @@ export interface RawPosting {
   source: string;
   sourceKind: SourceKind;
   sourceUrl: string;
+  /**
+   * The application form itself, when this source publishes one distinct from the posting
+   * page (Ashby's applyUrl, Lever's /apply). Optional: sourceUrl stays the stable identity
+   * ghost detection counts absences against; this only redirects the apply button.
+   */
+  applyUrl?: string;
   /** Epoch ms as reported by THIS source. Never overwritten by the merge. */
   postedAt: number;
   company: string | null | undefined;
@@ -33,6 +39,7 @@ export interface PostingSource {
   source: string;
   sourceKind: SourceKind;
   sourceUrl: string;
+  applyUrl?: string;
   sourcePriority: number;
   postedAt: number;
 }
@@ -230,6 +237,7 @@ function groupByKey(postings: RawPosting[]): Group[] {
       source: raw.source,
       sourceKind: raw.sourceKind,
       sourceUrl: raw.sourceUrl,
+      applyUrl: raw.applyUrl,
       sourcePriority: SOURCE_PRIORITY[raw.sourceKind],
       postedAt: raw.postedAt,
     };
@@ -302,7 +310,10 @@ function materialize(group: Group, fallbackPostedAt: number): DedupedPosting {
   const postedAt = atsDates.length > 0 ? Math.max(minAll, Math.min(...atsDates)) : minAll;
 
   const ats = sources.filter((source) => source.sourceKind === 'ats');
-  const canonicalUrl = (ats.length > 0 ? ats : sources)[0]?.sourceUrl ?? '';
+  // The winner's application-form URL beats its posting page: the apply button should land
+  // the user on the form, not one click away from it.
+  const winner = (ats.length > 0 ? ats : sources)[0];
+  const canonicalUrl = winner?.applyUrl ?? winner?.sourceUrl ?? '';
 
   return { ...group, sources, postedAt, canonicalUrl };
 }

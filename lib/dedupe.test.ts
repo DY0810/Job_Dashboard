@@ -440,3 +440,36 @@ describe('60-day cutoff', () => {
     expect(isWithinCutoff(merged[0].postedAt, now)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// The apply button should land on the application form, not the description page. Sources
+// that publish a distinct form URL (Ashby's applyUrl, Lever's /apply) carry it as
+// `applyUrl`; the winning source's applyUrl beats its sourceUrl for canonical_url, while
+// sourceUrl stays the stable identity ghost detection counts absences against.
+// ---------------------------------------------------------------------------------------
+
+describe('canonical_url prefers the winning source applyUrl', () => {
+  const base = {
+    company: 'Vapi', title: 'Product Engineer', location: 'San Francisco, CA',
+    postedAt: Date.UTC(2026, 7, 18),
+  };
+
+  it('an ATS source with an applyUrl wins with the form URL, keeping sourceUrl as identity', () => {
+    const [post] = dedupePostings([
+      { ...base, source: 'ashby', sourceKind: 'ats' as const,
+        sourceUrl: 'https://jobs.ashbyhq.com/vapi/abc', applyUrl: 'https://jobs.ashbyhq.com/vapi/abc/application' },
+      { ...base, source: 'remoteok', sourceKind: 'aggregator' as const,
+        sourceUrl: 'https://remoteok.com/jobs/999' },
+    ]);
+    expect(post.canonicalUrl).toBe('https://jobs.ashbyhq.com/vapi/abc/application');
+    expect(post.sources.map((s) => s.sourceUrl)).toContain('https://jobs.ashbyhq.com/vapi/abc');
+  });
+
+  it('a source without an applyUrl still uses its sourceUrl', () => {
+    const [post] = dedupePostings([
+      { ...base, source: 'greenhouse', sourceKind: 'ats' as const,
+        sourceUrl: 'https://boards.greenhouse.io/vapi/jobs/1' },
+    ]);
+    expect(post.canonicalUrl).toBe('https://boards.greenhouse.io/vapi/jobs/1');
+  });
+});
