@@ -25,7 +25,7 @@ import {
   DEFAULT_BASIS, bare, type Params, type Tab
 } from '../params.ts';
 import { getPostingDetail, listPostings, outsideTargetLocations, tabIsEmpty } from '../query.ts';
-import { needsTurso, openDb, type Db, type ReadDb, type TursoDb } from './index.ts';
+import { needsTurso, openDb, prefersTurso, type Db, type ReadDb, type TursoDb } from './index.ts';
 import * as schema from './schema.ts';
 import { postings } from './schema.ts';
 
@@ -138,5 +138,40 @@ describe('an unconfigured deploy', () => {
     expect(needsTurso({ VERCEL: '1' }), 'hosted, no Turso yet').toBe(true);
     expect(needsTurso({ VERCEL: '1', TURSO_DATABASE_URL: 'libsql://x' })).toBe(false);
     expect(needsTurso({}), 'a local checkout reads workie.db').toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Driver selection. The regression this pins: the wizard writes TURSO_DATABASE_URL into
+// .env.local so `push:remote` can read it — and Next.js loads that same file for the app,
+// so a machine with a perfectly good workie.db on disk silently switched every page load
+// to the network. Measured: 1-2ms warm queries became 52-60ms, and 1.1s cold.
+// Presence of a credential is not intent to use it; deployment context is.
+// ---------------------------------------------------------------------------------------
+
+describe('prefersTurso', () => {
+  const TURSO = { TURSO_DATABASE_URL: 'libsql://x.turso.io', TURSO_AUTH_TOKEN: 't' };
+
+  it('never chooses turso without a URL', () => {
+    expect(prefersTurso({}, true)).toBe(false);
+    expect(prefersTurso({}, false)).toBe(false);
+  });
+
+  it('chooses turso on Vercel, where no local file can exist', () => {
+    expect(prefersTurso({ ...TURSO, VERCEL: '1' }, false)).toBe(true);
+  });
+
+  it('prefers the local file when one exists, even with credentials present', () => {
+    // The bug: credentials in .env.local made the local dev server query the
+    // hosted replica while workie.db sat on disk, 25-50x faster.
+    expect(prefersTurso(TURSO, true)).toBe(false);
+  });
+
+  it('falls back to turso on a machine with credentials but no local database', () => {
+    expect(prefersTurso(TURSO, false)).toBe(true);
+  });
+
+  it('WORKIE_DB_DRIVER=turso is an explicit override for remote previews', () => {
+    expect(prefersTurso({ ...TURSO, WORKIE_DB_DRIVER: 'turso' }, true)).toBe(true);
   });
 });

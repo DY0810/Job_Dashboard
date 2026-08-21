@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -85,11 +86,30 @@ export function openDb(
   return db;
 }
 
+/**
+ * Whether the app should read the hosted Turso replica instead of a local file.
+ *
+ * Presence of a credential is not intent to use it: the setup wizard writes
+ * TURSO_DATABASE_URL into `.env.local` so `push:remote` can mirror the corpus up, and
+ * Next.js loads that same file for the app — which silently switched a machine with a
+ * perfectly good `workie.db` onto the network (measured: 1-2ms warm queries became
+ * 52-60ms, and 1.1s cold). Turso is for where no local database can exist — Vercel, or
+ * a machine without the file — plus WORKIE_DB_DRIVER=turso as a deliberate override.
+ */
+export function prefersTurso(
+  env: Record<string, string | undefined> = process.env,
+  hasLocalDb: boolean = existsSync(env.WORKIE_DB ?? 'workie.db'),
+): boolean {
+  if (!env.TURSO_DATABASE_URL) return false;
+  if (env.WORKIE_DB_DRIVER === 'turso') return true;
+  return Boolean(env.VERCEL) || !hasLocalDb;
+}
+
 export function getDb(): ReadDb {
-  cache.__workieDb ??= process.env.TURSO_DATABASE_URL
+  cache.__workieDb ??= prefersTurso()
     ? drizzleTurso({
         connection: {
-          url: process.env.TURSO_DATABASE_URL,
+          url: process.env.TURSO_DATABASE_URL!,
           authToken: process.env.TURSO_AUTH_TOKEN,
         },
         schema,
