@@ -300,21 +300,22 @@ function NoteCard({
       style={{ left: r.x, top: r.y, width: r.w, minHeight: (live ? live.h : note.h) || undefined }}
     >
       {live ? <span className="note-size">{live.w} × {live.h}</span> : null}
-      <div
-        className="note-body"
-        tabIndex={canWrite ? 0 : -1}
-        onClick={() => canWrite && setEditing(true)}
-        onKeyDown={(e) => canWrite && e.key === 'Enter' && setEditing(true)}
-      >
-        {note.body}
-      </div>
+      {/* Plain text, nothing else. It used to open the editor on click — and a drag to
+          highlight ends with a click, so the selection vanished into a textarea the moment
+          it was made. Editing is its own control now, beside delete. */}
+      <div className="note-body">{note.body}</div>
       <div className="note-meta">
         {note.author ? <span>{note.author}</span> : null}
         <When at={note.createdAt} mounted={mounted} />
         {canWrite ? (
-          <button type="button" className="note-delete" onClick={onDelete}>
-            delete
-          </button>
+          <span className="note-actions">
+            <button type="button" className="note-action" onClick={() => setEditing(true)}>
+              edit
+            </button>
+            <button type="button" className="note-action" onClick={onDelete}>
+              delete
+            </button>
+          </span>
         ) : null}
       </div>
 

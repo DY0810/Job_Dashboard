@@ -530,20 +530,20 @@ dialog.drawer[open]::backdrop {
   transition: border-color 120ms var(--ease-state);
 }
 .note:hover, .note:focus-within { border-color: var(--fg-faint); }
-.note-body { white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; outline: none; }
-.note-body:focus-visible { box-shadow: 0 0 0 1px var(--fg-dim); }
+.note-body { white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; user-select: text; }
 .note-meta {
   display: flex; gap: 8px; margin-top: 8px;
   font-size: 11px; line-height: 16px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
 }
 /* Destructive controls are visible, not discovered: a hover-only × does not exist on a phone
    and is easy to miss on a desktop. Quiet in the meta row, full-strength on hover. */
-.note-delete {
-  margin-left: auto; padding: 0; background: none; border: 0; cursor: pointer;
+.note-actions { margin-left: auto; display: inline-flex; gap: 10px; }
+.note-action {
+  padding: 0; background: none; border: 0; cursor: pointer;
   font: inherit; font-size: 11px; color: var(--fg-dim);
   transition: color 120ms var(--ease-state);
 }
-.note-delete:hover, .note-delete:focus-visible { color: var(--fg); }
+.note-action:hover, .note-action:focus-visible { color: var(--fg); }
 .comment-close {
   display: inline-flex; padding: 2px; color: var(--fg-faint);
   transition: color 120ms var(--ease-state);
@@ -611,5 +611,5 @@ dialog.drawer[open]::backdrop {
 .weeks a { display: block; padding: 5px 10px; font-size: 11px; color: var(--fg-dim); }
 .weeks a:hover, .weeks a[aria-current] { color: var(--fg); background: var(--surface); }
 @media (prefers-reduced-motion: reduce) {
-  .note, .note-delete, .comment-close { transition: none; }
+  .note, .note-action, .comment-close { transition: none; }
 }
