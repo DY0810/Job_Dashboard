@@ -109,6 +109,15 @@
     background: var(--surface);
   }
 
+  /* Notes are painted with --surface, so the quiet surface-tinted selection above is
+     surface-on-surface there: a selection that exists but does not show. Inverted, like the
+     focus ring: fg is the maximum-contrast token against every surface, in both themes. */
+  .note ::selection,
+  .note::selection {
+    background: var(--fg);
+    color: var(--canvas);
+  }
+
   a {
     color: inherit;
     text-decoration: none;
