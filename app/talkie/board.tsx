@@ -224,6 +224,11 @@ function NoteCard({
       <div className="note-meta">
         {note.author ? <span>{note.author}</span> : null}
         <When at={note.createdAt} mounted={mounted} />
+        {canWrite ? (
+          <button type="button" className="note-delete" onClick={onDelete}>
+            delete
+          </button>
+        ) : null}
       </div>
 
       {note.comments.length > 0 || canWrite ? (
@@ -257,11 +262,6 @@ function NoteCard({
         </div>
       ) : null}
 
-      {canWrite ? (
-        <button type="button" className="note-close" onClick={onDelete} aria-label="Delete note">
-          <Close />
-        </button>
-      ) : null}
     </div>
   );
 }
