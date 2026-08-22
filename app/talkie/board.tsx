@@ -294,17 +294,19 @@ function NoteEditor({
 
   return (
     <div className="note note-editing" style={{ left: rect.x, top: rect.y, width: rect.w, minHeight: rect.h || undefined }}>
+      {/* Enter commits; Shift+Enter is a new line; Esc discards. Clicking away does nothing —
+          the draft stays open with its text, waiting. Saving on blur meant a stray click
+          published a half-written note. */}
       <textarea
         ref={ref}
         defaultValue={initial}
         maxLength={1000}
         rows={1}
-        placeholder="Type, then click away to save. Esc discards."
+        placeholder="Type, then Enter to save. Shift+Enter for a new line. Esc discards."
         onInput={fit}
-        onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void commit(); }
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commit(); }
         }}
       />
       {error ? <div className="note-meta text-accent">{error}</div> : null}
