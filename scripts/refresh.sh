@@ -33,6 +33,23 @@ exec >>"$LOG_DIR/refresh-$(date +%Y-%m-%d).log" 2>&1
 
 say() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
 
+# One cycle at a time. launchd never overlaps itself, but the dashboard's refresh button can
+# now start a cycle by hand, and two ingests interleaving is at best wasted requests. A
+# mkdir is atomic; the pid inside lets a crashed cycle's lock be reclaimed rather than
+# wedging every cycle after it. 75 is EX_TEMPFAIL: "try again later", not "broken".
+LOCK="$LOG_DIR/.refresh.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  other=$(cat "$LOCK/pid" 2>/dev/null || true)
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+    say "another cycle is running (pid $other); not starting a second"
+    exit 75
+  fi
+  say "stale lock left by pid ${other:-?}; taking over"
+  rm -rf "$LOCK" && mkdir "$LOCK" || exit 75
+fi
+echo $$ > "$LOCK/pid"
+trap 'rm -rf "$LOCK"' EXIT
+
 say "cycle start"
 node scripts/ingest.ts
 INGEST=$?

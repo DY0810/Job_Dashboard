@@ -19,6 +19,7 @@ import {
 } from "@/lib/params";
 import { rowChips } from "@/lib/chips";
 import { listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } from "@/lib/query";
+import { RefreshButton } from "./refresh-button";
 import { TalkieBadge } from "./talkie-badge";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
@@ -389,6 +390,8 @@ export default async function Page({
               ? `last run ${ago(lastRun.startedAt, now)} ago`
               : "no ingest run yet"}
           </span>
+          {/* Runs the real cycle where the pipeline lives; on Vercel it re-pulls the last push. */}
+          <RefreshButton hosted={Boolean(process.env.VERCEL)} />
           <ThemeToggle />
         </div>
       </header>
