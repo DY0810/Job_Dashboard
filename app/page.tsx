@@ -443,3 +443,7 @@ export default async function Page({
 }
 
 export const dynamic = "force-dynamic";
+// Run next to the database. Vercel's default region is iad1 (Virginia); the Turso replica is
+// aws-us-west-2, which is Vercel's pdx1. Measured from sfo1 before this: every page paid two
+// cross-continent round trips (~170ms warm TTFB) for queries that take 1-2ms locally.
+export const preferredRegion = "pdx1";

@@ -9,6 +9,8 @@ const Id = z.coerce.number().int().positive();
  * exists solely so full description bodies are fetched one at a time instead of shipped for
  * every posting on first paint.
  */
+export const preferredRegion = 'pdx1';
+
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const id = Id.safeParse((await context.params).id);
   if (!id.success) return Response.json({ error: 'not found' }, { status: 404 });
