@@ -137,3 +137,28 @@ export const connectorRuns = sqliteTable(
   },
   (table) => [uniqueIndex('connector_runs_run_connector_idx').on(table.runId, table.connector)],
 );
+
+/**
+ * Talkie: shared post-it notes. Lives in whichever database the app is READING — the hosted
+ * replica is the shared board, written by the Vercel function itself. Deliberately absent
+ * from `push:remote`'s table list, which mirrors the corpus up and deletes strays: a table the
+ * hosted site writes must never be overwritten by the laptop's copy.
+ *
+ * Geometry is in board pixels; a note never moves after it is drawn, so there is no layout
+ * engine to keep in sync. `created_at` is the week bucket and the unread cursor at once.
+ */
+export const notes = sqliteTable(
+  'notes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    body: text('body').notNull(),
+    author: text('author'),
+    x: integer('x').notNull(),
+    y: integer('y').notNull(),
+    w: integer('w').notNull(),
+    h: integer('h').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (table) => [index('notes_created_idx').on(table.createdAt)],
+);

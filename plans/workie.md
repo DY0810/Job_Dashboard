@@ -792,6 +792,20 @@ row that cites a deleted assertion is worse than no row.
 
 *Amendments so far, all P8, all 2026-08-18, all from one session with the user:*
 
+*Amendment, 2026-08-20, from the user:*
+
+- **A third tab exists: Talkie.** The original "Do NOT add a third tab" (§6) was about voice-AI
+  roles, which stay a badge inside Engineering. The user asked, verbatim: *"add a new tab called
+  Talkie where we can add post it notes (drag creates a text box with indication of the box size)
+  and we can leave notes for each other to see and you can filter the notes by week so every week
+  the notes get refreshed but kept (filter via calendar icon) whenever a new note is created there
+  should be a number inside a circle that shows how many new notes were added that were not
+  viewed."* It is its own route, `/talkie`, not a `?tab=` value: the edge cache on `/` would hide
+  a fresh note for five minutes, and Talkie has no filters, sort, or drawer to share with the two
+  job tabs. **Cost:** a public write endpoint on a site with no accounts — capped per note and per
+  week, but anyone with the URL can post; "viewed" and the author name are per device, because
+  there is no identity to attach them to.
+
 1. **Recency first.** *"rank the newest job postings on the top ranked by recency."* Sort is
    `posted_at` desc then entry/junior above mid, on both tabs. **Cost:** none measurable — the
    24h-bucket key it replaced was a monotonic function of `posted_at`, so above a recency sort

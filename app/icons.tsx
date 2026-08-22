@@ -37,3 +37,13 @@ export function Close() {
     </svg>
   );
 }
+
+/** Four: the week picker on Talkie. Same 12px grid, same hairline stroke as the other three. */
+export function Calendar() {
+  return (
+    <svg {...base}>
+      <rect x="1.5" y="2.5" width="9" height="8" rx="1" />
+      <path d="M1.5 5h9M4 1.5v2M8 1.5v2" />
+    </svg>
+  );
+}

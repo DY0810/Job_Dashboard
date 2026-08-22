@@ -19,6 +19,7 @@ import {
 } from "@/lib/params";
 import { rowChips } from "@/lib/chips";
 import { listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } from "@/lib/query";
+import { TalkieBadge } from "./talkie-badge";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
 import { Chevron, ExternalLink } from "./icons";
@@ -357,6 +358,11 @@ export default async function Page({
               {tab}
             </Link>
           ))}
+          {/* The notes board is its own route, not a tab value: see app/talkie/page.tsx. */}
+          <Link href="/talkie" className="w-wide inline-flex items-center gap-1.5 pb-1 text-[11px] text-fg-dim hover:text-fg">
+            talkie
+            <TalkieBadge />
+          </Link>
         </nav>
         {/* The Design split. A partition of the tab rather than a filter, so it sits with the
             tabs and not in the filter row: there is no "any", one side is always showing, and

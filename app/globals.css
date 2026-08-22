@@ -498,3 +498,77 @@ dialog.drawer[open]::backdrop {
     transition: none;
   }
 }
+
+/* ── Talkie ─────────────────────────────────────────────────────────────── */
+/* A drawing surface announces itself with a dot grid on the rule token — the same hairline
+   vocabulary as the tables, at its quietest. Nothing here animates: drawing is direct
+   manipulation, and a note appears exactly where it was drawn. */
+.board {
+  position: relative;
+  min-height: 72vh;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+  background-image: radial-gradient(var(--rule) 0.6px, transparent 0.6px);
+  background-size: 16px 16px;
+}
+.board[data-readonly] { cursor: default; }
+.note {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--fg);
+  user-select: text;
+  overflow: hidden;
+  transition: border-color 120ms var(--ease-state);
+}
+.note:hover, .note:focus-within { border-color: var(--fg-faint); }
+.note-body { flex: 1; min-height: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; outline: none; }
+.note-body:focus-visible { box-shadow: 0 0 0 1px var(--fg-dim); }
+.note-meta {
+  display: flex; gap: 8px; margin-top: 6px;
+  font-size: 10px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
+}
+.note-close {
+  position: absolute; top: 4px; right: 4px;
+  display: inline-flex; padding: 2px; color: var(--fg-dim);
+  opacity: 0; transition: opacity 120ms var(--ease-state);
+}
+.note:hover .note-close, .note:focus-within .note-close, .note-close:focus-visible { opacity: 1; }
+.note-close:hover { color: var(--fg); }
+.note-editing { cursor: text; }
+.note textarea {
+  flex: 1; width: 100%; min-height: 0; resize: none;
+  background: transparent; border: 0; outline: 0;
+  font: inherit; color: inherit; line-height: inherit;
+}
+.note textarea::placeholder { color: var(--fg-faint); }
+.draft { position: absolute; border: 1px dashed var(--accent); pointer-events: none; }
+.draft-small { border-color: var(--fg-faint); }
+.draft-size {
+  position: absolute; top: -18px; left: -1px; white-space: nowrap;
+  font-size: 10px; color: var(--accent); font-variant-numeric: tabular-nums;
+}
+.draft-small .draft-size { color: var(--fg-dim); }
+.badge {
+  display: inline-flex; justify-content: center; align-items: center;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+  background: var(--accent); color: var(--canvas);
+  font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums;
+}
+.weeks {
+  position: absolute; top: 100%; right: 0; z-index: 10;
+  margin-top: 4px; min-width: 180px;
+  background: var(--canvas); border: 1px solid var(--rule);
+}
+.weeks a { display: block; padding: 5px 10px; font-size: 11px; color: var(--fg-dim); }
+.weeks a:hover, .weeks a[aria-current] { color: var(--fg); background: var(--surface); }
+@media (prefers-reduced-motion: reduce) {
+  .note, .note-close { transition: none; }
+}
