@@ -502,7 +502,8 @@ dialog.drawer[open]::backdrop {
 /* ── Talkie ─────────────────────────────────────────────────────────────── */
 /* A drawing surface announces itself with a dot grid on the rule token — the same hairline
    vocabulary as the tables, at its quietest. Nothing here animates: drawing is direct
-   manipulation, and a note appears exactly where it was drawn. */
+   manipulation, and a note appears exactly where it was drawn. A note is sized by what it
+   holds: the drag fixes its width, the text and its replies decide its height. */
 .board {
   position: relative;
   min-height: 72vh;
@@ -517,38 +518,57 @@ dialog.drawer[open]::backdrop {
   position: absolute;
   display: flex;
   flex-direction: column;
+  min-height: 48px;
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: 2px;
-  padding: 8px 10px;
-  font-size: 11px;
-  line-height: 16px;
+  padding: 12px 14px;
+  font-size: 16px;
+  line-height: 1.4;
   color: var(--fg);
   user-select: text;
-  overflow: hidden;
   transition: border-color 120ms var(--ease-state);
 }
 .note:hover, .note:focus-within { border-color: var(--fg-faint); }
-.note-body { flex: 1; min-height: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; outline: none; }
+.note-body { white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; outline: none; }
 .note-body:focus-visible { box-shadow: 0 0 0 1px var(--fg-dim); }
 .note-meta {
-  display: flex; gap: 8px; margin-top: 6px;
-  font-size: 10px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
+  display: flex; gap: 8px; margin-top: 8px;
+  font-size: 11px; line-height: 16px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
 }
-.note-close {
-  position: absolute; top: 4px; right: 4px;
+.note-close, .comment-close {
   display: inline-flex; padding: 2px; color: var(--fg-dim);
   opacity: 0; transition: opacity 120ms var(--ease-state);
 }
-.note:hover .note-close, .note:focus-within .note-close, .note-close:focus-visible { opacity: 1; }
-.note-close:hover { color: var(--fg); }
+.note-close { position: absolute; top: 6px; right: 6px; }
+.note:hover .note-close, .note:focus-within .note-close, .note-close:focus-visible,
+.comment:hover .comment-close, .comment-close:focus-visible { opacity: 1; }
+.note-close:hover, .comment-close:hover { color: var(--fg); }
 .note-editing { cursor: text; }
 .note textarea {
-  flex: 1; width: 100%; min-height: 0; resize: none;
+  width: 100%; resize: none; overflow: hidden;
   background: transparent; border: 0; outline: 0;
   font: inherit; color: inherit; line-height: inherit;
 }
 .note textarea::placeholder { color: var(--fg-faint); }
+.comments { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule); }
+.comment {
+  display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
+  padding: 3px 0; font-size: 13px; line-height: 1.4;
+}
+.comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-author { color: var(--fg-dim); }
+.comment-meta {
+  display: inline-flex; gap: 4px; align-items: center; flex: none;
+  font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
+}
+.reply {
+  width: 100%; margin-top: 4px; padding: 3px 0;
+  background: transparent; border: 0; border-bottom: 1px solid var(--rule); outline: 0;
+  font: inherit; font-size: 13px; color: var(--fg);
+}
+.reply::placeholder { color: var(--fg-faint); }
+.reply:focus { border-bottom-color: var(--fg-dim); }
 .draft { position: absolute; border: 1px dashed var(--accent); pointer-events: none; }
 .draft-small { border-color: var(--fg-faint); }
 .draft-size {
@@ -570,5 +590,5 @@ dialog.drawer[open]::backdrop {
 .weeks a { display: block; padding: 5px 10px; font-size: 11px; color: var(--fg-dim); }
 .weeks a:hover, .weeks a[aria-current] { color: var(--fg); background: var(--surface); }
 @media (prefers-reduced-motion: reduce) {
-  .note, .note-close { transition: none; }
+  .note, .note-close, .comment-close { transition: none; }
 }

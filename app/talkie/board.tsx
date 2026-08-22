@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import type { Note } from '@/lib/notes';
+import type { Comment, NoteWithComments } from '@/lib/notes';
 import { Close } from '../icons';
 import { SEEN_KEY } from '../talkie-badge';
 
@@ -12,13 +12,19 @@ const AUTHOR_KEY = 'talkie-author';
 
 type Rect = { x: number; y: number; w: number; h: number };
 
+async function call<T>(url: string, init: RequestInit, fallback: string): Promise<T> {
+  const res = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...init.headers } });
+  if (!res.ok) throw new Error(res.status === 429 ? 'this week is full' : fallback);
+  return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
+}
+
 /**
  * A drag on empty board draws a box — dashed, labelled with its size, faint until it is big
- * enough to read — and releasing turns the box into a note with the cursor in it. Nothing
- * animates: drawing is direct manipulation, and a note that appears where you drew it needs
- * no choreography to explain itself.
+ * enough to read — and releasing turns the box into a note with the cursor in it. The drag
+ * decides a note's WIDTH; its height follows whatever it holds, replies included, so nothing
+ * is ever clipped behind a scrollbar. Nothing animates: drawing is direct manipulation.
  */
-export function Board({ notes: initial, canWrite }: { notes: Note[]; canWrite: boolean }) {
+export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[]; canWrite: boolean }) {
   const [notes, setNotes] = useState(initial);
   const [draft, setDraft] = useState<Rect | null>(null);
   const [pending, setPending] = useState<Rect | null>(null);
@@ -37,7 +43,6 @@ export function Board({ notes: initial, canWrite }: { notes: Note[]; canWrite: b
     const r = e.currentTarget.getBoundingClientRect();
     return { x: Math.max(0, Math.round(e.clientX - r.left)), y: Math.max(0, Math.round(e.clientY - r.top)) };
   };
-
   const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!canWrite || pending || e.target !== e.currentTarget || e.button !== 0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -61,31 +66,37 @@ export function Board({ notes: initial, canWrite }: { notes: Note[]; canWrite: b
     setDraft(null);
   };
 
+  const patch = (id: number, fn: (n: NoteWithComments) => NoteWithComments) =>
+    setNotes((all) => all.map((n) => (n.id === id ? fn(n) : n)));
+  const touch = () => localStorage.setItem(SEEN_KEY, String(Date.now()));
+
   const save = async (rect: Rect, body: string) => {
-    const res = await fetch('/api/notes', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...rect, body, author: author || undefined }),
-    });
-    if (!res.ok) throw new Error(res.status === 429 ? 'this week is full' : 'could not save');
-    const note = (await res.json()) as Note;
-    setNotes((all) => [...all, { ...note, createdAt: new Date(note.createdAt), updatedAt: new Date(note.updatedAt) }]);
+    const note = await call<NoteWithComments>('/api/notes', {
+      method: 'POST', body: JSON.stringify({ ...rect, body, author: author || undefined }),
+    }, 'could not save');
+    setNotes((all) => [...all, { ...note, createdAt: new Date(note.createdAt), updatedAt: new Date(note.updatedAt), comments: [] }]);
     setPending(null);
-    localStorage.setItem(SEEN_KEY, String(Date.now()));
+    touch();
   };
   const edit = async (id: number, body: string) => {
-    const res = await fetch(`/api/notes/${id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ body }),
-    });
-    if (!res.ok) throw new Error('could not save');
-    setNotes((all) => all.map((n) => (n.id === id ? { ...n, body } : n)));
+    await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ body }) }, 'could not save');
+    patch(id, (n) => ({ ...n, body }));
   };
   const remove = async (id: number) => {
-    if (!confirm('Delete this note?')) return;
-    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
-    if (res.ok || res.status === 404) setNotes((all) => all.filter((n) => n.id !== id));
+    if (!confirm('Delete this note and its replies?')) return;
+    await call(`/api/notes/${id}`, { method: 'DELETE' }, 'could not delete').catch(() => {});
+    setNotes((all) => all.filter((n) => n.id !== id));
+  };
+  const reply = async (id: number, body: string) => {
+    const comment = await call<Comment>(`/api/notes/${id}/comments`, {
+      method: 'POST', body: JSON.stringify({ body, author: author || undefined }),
+    }, 'could not reply');
+    patch(id, (n) => ({ ...n, comments: [...n.comments, { ...comment, createdAt: new Date(comment.createdAt) }] }));
+    touch();
+  };
+  const unreply = async (id: number, cid: number) => {
+    await call(`/api/notes/${id}/comments/${cid}`, { method: 'DELETE' }, 'could not delete').catch(() => {});
+    patch(id, (n) => ({ ...n, comments: n.comments.filter((c) => c.id !== cid) }));
   };
 
   const tooSmall = draft !== null && (draft.w < MIN.w || draft.h < MIN.h);
@@ -108,10 +119,7 @@ export function Board({ notes: initial, canWrite }: { notes: Note[]; canWrite: b
               value={author}
               maxLength={40}
               placeholder="your name"
-              onChange={(e) => {
-                setAuthor(e.target.value);
-                localStorage.setItem(AUTHOR_KEY, e.target.value);
-              }}
+              onChange={(e) => { setAuthor(e.target.value); localStorage.setItem(AUTHOR_KEY, e.target.value); }}
             />
           </label>
         ) : null}
@@ -135,6 +143,8 @@ export function Board({ notes: initial, canWrite }: { notes: Note[]; canWrite: b
             canWrite={canWrite}
             onEdit={(body) => edit(note.id, body)}
             onDelete={() => remove(note.id)}
+            onReply={(body) => reply(note.id, body)}
+            onUnreply={(cid) => unreply(note.id, cid)}
           />
         ))}
 
@@ -159,29 +169,50 @@ export function Board({ notes: initial, canWrite }: { notes: Note[]; canWrite: b
   );
 }
 
+function When({ at, mounted }: { at: Date; mounted: boolean }) {
+  // Formatted after mount: the server renders in UTC and the reader is not in UTC.
+  const text = mounted
+    ? new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(at)
+    : '';
+  return <time dateTime={at.toISOString()}>{text}</time>;
+}
+
 function NoteCard({
-  note, mounted, canWrite, onEdit, onDelete,
+  note, mounted, canWrite, onEdit, onDelete, onReply, onUnreply,
 }: {
-  note: Note; mounted: boolean; canWrite: boolean;
+  note: NoteWithComments; mounted: boolean; canWrite: boolean;
   onEdit: (body: string) => Promise<void>; onDelete: () => void;
+  onReply: (body: string) => Promise<void>; onUnreply: (cid: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const when = mounted
-    ? new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(note.createdAt)
-    : '';
+  const [error, setError] = useState<string | null>(null);
+  const replyRef = useRef<HTMLInputElement>(null);
 
   if (editing) {
     return (
       <NoteEditor
-        rect={note}
+        rect={{ ...note, h: 0 }}
         initial={note.body}
         onSave={async (body) => { await onEdit(body); setEditing(false); }}
         onCancel={() => setEditing(false)}
       />
     );
   }
+
+  const submitReply = async () => {
+    const body = replyRef.current?.value.trim() ?? '';
+    if (!body) return;
+    try {
+      await onReply(body);
+      if (replyRef.current) replyRef.current.value = '';
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   return (
-    <div className="note" style={{ left: note.x, top: note.y, width: note.w, height: note.h }}>
+    <div className="note" style={{ left: note.x, top: note.y, width: note.w }}>
       <div
         className="note-body"
         tabIndex={canWrite ? 0 : -1}
@@ -192,8 +223,40 @@ function NoteCard({
       </div>
       <div className="note-meta">
         {note.author ? <span>{note.author}</span> : null}
-        <time dateTime={note.createdAt.toISOString()}>{when}</time>
+        <When at={note.createdAt} mounted={mounted} />
       </div>
+
+      {note.comments.length > 0 || canWrite ? (
+        <div className="comments">
+          {note.comments.map((comment) => (
+            <div key={comment.id} className="comment">
+              <span className="comment-body">
+                {comment.author ? <span className="comment-author">{comment.author} </span> : null}
+                {comment.body}
+              </span>
+              <span className="comment-meta">
+                <When at={comment.createdAt} mounted={mounted} />
+                {canWrite ? (
+                  <button type="button" className="comment-close" onClick={() => onUnreply(comment.id)} aria-label="Delete reply">
+                    <Close />
+                  </button>
+                ) : null}
+              </span>
+            </div>
+          ))}
+          {canWrite ? (
+            <input
+              ref={replyRef}
+              className="reply"
+              placeholder={note.comments.length ? 'reply…' : 'reply to this note…'}
+              maxLength={500}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submitReply(); } }}
+            />
+          ) : null}
+          {error ? <div className="note-meta text-accent">{error}</div> : null}
+        </div>
+      ) : null}
+
       {canWrite ? (
         <button type="button" className="note-close" onClick={onDelete} aria-label="Delete note">
           <Close />
@@ -211,24 +274,33 @@ function NoteEditor({
   const ref = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
-  useEffect(() => ref.current?.focus(), []);
+
+  // The box fits its text: the textarea grows with every keystroke and never scrolls.
+  const fit = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = '0px';
+    el.style.height = `${el.scrollHeight}px`;
+  };
+  useEffect(() => { ref.current?.focus(); fit(); }, []);
 
   const commit = async () => {
     if (busy.current) return;
     const body = ref.current?.value.trim() ?? '';
-    if (!body) return onCancel();
-    if (body === initial) return onCancel();
+    if (!body || body === initial) return onCancel();
     busy.current = true;
     try { await onSave(body); } catch (e) { setError((e as Error).message); busy.current = false; }
   };
 
   return (
-    <div className="note note-editing" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
+    <div className="note note-editing" style={{ left: rect.x, top: rect.y, width: rect.w, minHeight: rect.h || undefined }}>
       <textarea
         ref={ref}
         defaultValue={initial}
         maxLength={1000}
+        rows={1}
         placeholder="Type, then click away to save. Esc discards."
+        onInput={fit}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === 'Escape') { e.preventDefault(); onCancel(); }

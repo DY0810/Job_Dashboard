@@ -6,7 +6,7 @@ export const SEEN_KEY = 'talkie-seen-at';
 const WEEK_MS = 7 * 86_400_000;
 
 /**
- * The number in the circle: notes created since this device last opened Talkie. Fetched on the
+ * The number in the circle: notes and replies since this device last opened Talkie. Fetched on the
  * client because the job tabs are held at the edge for five minutes, and a count baked into
  * that HTML would be stale by design. A first-time device starts its cursor a week back — "new
  * this week", not "every note ever written".
@@ -24,7 +24,7 @@ export function TalkieBadge() {
 
   if (count === 0) return null;
   return (
-    <span className="badge" aria-label={`${count} new note${count === 1 ? '' : 's'}`}>
+    <span className="badge" aria-label={`${count} new on Talkie`}>
       {count > 99 ? '99+' : count}
     </span>
   );

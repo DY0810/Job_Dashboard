@@ -10,13 +10,16 @@
  * laptop does not; computing in UTC is what makes "this week" mean the same thing on both.
  */
 
-import { and, count, eq, gt, gte, lt } from 'drizzle-orm';
+import { and, count, eq, gt, gte, inArray, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { driver, type ReadDb } from './db/index.ts';
-import { notes } from './db/schema.ts';
+import { noteComments, notes } from './db/schema.ts';
 
 export type Note = typeof notes.$inferSelect;
+export type Comment = typeof noteComments.$inferSelect;
+/** What the board renders: a note with its thread, oldest reply first. */
+export type NoteWithComments = Note & { comments: Comment[] };
 
 const DAY_MS = 86_400_000;
 const WEEK_MS = 7 * DAY_MS;
@@ -34,6 +37,12 @@ export const NoteInput = z.object({
   h: z.number().int().min(80).max(600),
 });
 export type NoteInput = z.infer<typeof NoteInput>;
+
+export const CommentInput = z.object({
+  body: z.string().trim().min(1).max(500),
+  author: z.string().trim().max(40).optional(),
+});
+export type CommentInput = z.infer<typeof CommentInput>;
 
 // ---------------------------------------------------------------------------------------
 // ISO weeks
@@ -80,15 +89,26 @@ export function weekLabel(key: string): string {
 // The board
 // ---------------------------------------------------------------------------------------
 
-export async function listNotes(db: ReadDb, week: string): Promise<Note[]> {
+export async function listNotes(db: ReadDb, week: string): Promise<NoteWithComments[]> {
   const range = weekRange(week);
   if (!range) return [];
-  return driver(db)
+  const rows = await driver(db)
     .select()
     .from(notes)
     .where(and(gte(notes.createdAt, new Date(range.start)), lt(notes.createdAt, new Date(range.end))))
     .orderBy(notes.createdAt)
     .all();
+  if (rows.length === 0) return [];
+  // One query for every thread on the board, then grouped: two round trips per page, not 1+N.
+  const threads = await driver(db)
+    .select()
+    .from(noteComments)
+    .where(inArray(noteComments.noteId, rows.map((row) => row.id)))
+    .orderBy(noteComments.createdAt)
+    .all();
+  const byNote = new Map<number, Comment[]>();
+  for (const comment of threads) byNote.set(comment.noteId, [...(byNote.get(comment.noteId) ?? []), comment]);
+  return rows.map((row) => ({ ...row, comments: byNote.get(row.id) ?? [] }));
 }
 
 /** Every week that has a note, newest first — the calendar's contents. */
@@ -127,12 +147,50 @@ export async function updateNote(
 }
 
 export async function deleteNote(db: ReadDb, id: number): Promise<boolean> {
+  // Explicit, not ON DELETE CASCADE: SQLite only enforces foreign keys when the connection
+  // turns the pragma on, and neither driver here promises that. Orphans would still count
+  // as unread activity, so the thread goes first.
+  await driver(db).delete(noteComments).where(eq(noteComments.noteId, id)).run();
   const rows = await driver(db).delete(notes).where(eq(notes.id, id)).returning({ id: notes.id }).all();
   return rows.length > 0;
 }
 
-/** The unread bubble: notes created strictly after the viewer's cursor. */
-export async function countNotesSince(db: ReadDb, sinceMs: number): Promise<number> {
-  const rows = await driver(db).select({ n: count() }).from(notes).where(gt(notes.createdAt, new Date(sinceMs))).all();
-  return rows[0]?.n ?? 0;
+/** The unread bubble: notes AND replies created strictly after the viewer's cursor. */
+export async function countActivitySince(db: ReadDb, sinceMs: number): Promise<number> {
+  const since = new Date(sinceMs);
+  const [n, c] = await Promise.all([
+    driver(db).select({ n: count() }).from(notes).where(gt(notes.createdAt, since)).all(),
+    driver(db).select({ n: count() }).from(noteComments).where(gt(noteComments.createdAt, since)).all(),
+  ]);
+  return (n[0]?.n ?? 0) + (c[0]?.n ?? 0);
+}
+
+// ---------------------------------------------------------------------------------------
+// Threads
+// ---------------------------------------------------------------------------------------
+
+/** Null when the note is gone — a reply to nothing is refused, not orphaned. */
+export async function addComment(
+  db: ReadDb,
+  noteId: number,
+  input: CommentInput,
+  now: number = Date.now(),
+): Promise<Comment | null> {
+  const exists = await driver(db).select({ id: notes.id }).from(notes).where(eq(notes.id, noteId)).all();
+  if (exists.length === 0) return null;
+  const rows = await driver(db)
+    .insert(noteComments)
+    .values({ noteId, body: input.body, author: input.author || null, createdAt: new Date(now) })
+    .returning()
+    .all();
+  return rows[0]!;
+}
+
+export async function deleteComment(db: ReadDb, id: number): Promise<boolean> {
+  const rows = await driver(db)
+    .delete(noteComments)
+    .where(eq(noteComments.id, id))
+    .returning({ id: noteComments.id })
+    .all();
+  return rows.length > 0;
 }

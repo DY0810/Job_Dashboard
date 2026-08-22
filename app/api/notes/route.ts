@@ -1,15 +1,15 @@
 import { z } from 'zod';
 import { getDb, needsTurso } from '@/lib/db';
-import { MAX_NOTES_PER_WEEK, NoteInput, countNotesSince, createNote, listNotes, weekKey } from '@/lib/notes';
+import { MAX_NOTES_PER_WEEK, NoteInput, countActivitySince, createNote, listNotes, weekKey } from '@/lib/notes';
 
 const Since = z.coerce.number().int().min(0).catch(0);
 
-/** `?since=<ms>` → how many notes a viewer has not seen. Never cached: see next.config.ts. */
+/** `?since=<ms>` → how many notes and replies a viewer has not seen. Never cached. */
 export async function GET(request: Request) {
   try {
     if (needsTurso()) return Response.json({ error: 'database not configured' }, { status: 503 });
     const since = Since.parse(new URL(request.url).searchParams.get('since'));
-    return Response.json({ count: await countNotesSince(getDb(), since) });
+    return Response.json({ count: await countActivitySince(getDb(), since) });
   } catch (error) {
     console.error('GET /api/notes', error);
     return Response.json({ error: 'internal error' }, { status: 500 });

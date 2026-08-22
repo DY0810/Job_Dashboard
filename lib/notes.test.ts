@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { Db } from './db/index.ts';
 import {
-  MAX_NOTES_PER_WEEK, NoteInput, countNotesSince, createNote, deleteNote, listNotes,
-  listWeeks, updateNote, weekKey, weekLabel, weekRange,
+  CommentInput, MAX_NOTES_PER_WEEK, NoteInput, addComment, countActivitySince, createNote,
+  deleteComment, deleteNote, listNotes, listWeeks, updateNote, weekKey, weekLabel, weekRange,
 } from './notes.ts';
 
 function memoryDb(): Db {
@@ -105,16 +105,57 @@ describe('the board', () => {
     expect(await listNotes(db, '2026-W34')).toEqual([]);
   });
 
-  it('counts what a viewer has not seen — strictly after their cursor', async () => {
+  it('counts what a viewer has not seen — notes AND replies, strictly after their cursor', async () => {
     const db = memoryDb();
-    await createNote(db, NOTE, T('2026-08-20T10:00:00Z'));
+    const a = await createNote(db, NOTE, T('2026-08-20T10:00:00Z'));
     await createNote(db, NOTE, T('2026-08-20T12:00:00Z'));
-    expect(await countNotesSince(db, T('2026-08-20T10:00:00Z'))).toBe(1);
-    expect(await countNotesSince(db, 0)).toBe(2);
-    expect(await countNotesSince(db, T('2026-08-20T12:00:00Z'))).toBe(0);
+    await addComment(db, a.id, { body: 'on it', author: 'sam' }, T('2026-08-20T13:00:00Z'));
+    expect(await countActivitySince(db, T('2026-08-20T10:00:00Z'))).toBe(2); // one note, one reply
+    expect(await countActivitySince(db, 0)).toBe(3);
+    expect(await countActivitySince(db, T('2026-08-20T13:00:00Z'))).toBe(0);
   });
 
   it('publishes the per-week cap the public route enforces', () => {
     expect(MAX_NOTES_PER_WEEK).toBeGreaterThanOrEqual(100);
+  });
+});
+
+
+describe('comments', () => {
+  it('thread under a note, oldest first, and come back with the note', async () => {
+    const db = memoryDb();
+    const a = await createNote(db, NOTE, T('2026-08-20T10:00:00Z'));
+    await addComment(db, a.id, { body: 'second', author: 'sam' }, T('2026-08-20T11:00:00Z'));
+    await addComment(db, a.id, { body: 'first' }, T('2026-08-20T10:30:00Z'));
+
+    const [note] = await listNotes(db, '2026-W34');
+    expect(note.comments.map((c) => c.body)).toEqual(['first', 'second']);
+    expect(note.comments[1]).toMatchObject({ author: 'sam', noteId: a.id });
+  });
+
+  it('validates at the seam like a note does', () => {
+    expect(CommentInput.safeParse({ body: '  ok  ' }).success).toBe(true);
+    expect(CommentInput.safeParse({ body: '   ' }).success).toBe(false);
+    expect(CommentInput.safeParse({ body: 'x'.repeat(501) }).success).toBe(false);
+    expect(CommentInput.safeParse({ body: 'x', author: 'a'.repeat(41) }).success).toBe(false);
+  });
+
+  it('refuses to comment on a note that does not exist', async () => {
+    const db = memoryDb();
+    expect(await addComment(db, 999, { body: 'ghost' }, T('2026-08-20T10:00:00Z'))).toBeNull();
+  });
+
+  it('deletes one, and deletes them all with their note', async () => {
+    const db = memoryDb();
+    const a = await createNote(db, NOTE, T('2026-08-20T10:00:00Z'));
+    const c1 = (await addComment(db, a.id, { body: 'one' }, T('2026-08-20T11:00:00Z')))!;
+    await addComment(db, a.id, { body: 'two' }, T('2026-08-20T12:00:00Z'));
+
+    expect(await deleteComment(db, c1.id)).toBe(true);
+    expect(await deleteComment(db, c1.id)).toBe(false);
+    expect((await listNotes(db, '2026-W34'))[0].comments.map((c) => c.body)).toEqual(['two']);
+
+    await deleteNote(db, a.id);
+    expect(await countActivitySince(db, 0)).toBe(0); // no orphaned replies counted as activity
   });
 });

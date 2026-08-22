@@ -162,3 +162,20 @@ export const notes = sqliteTable(
   },
   (table) => [index('notes_created_idx').on(table.createdAt)],
 );
+
+/**
+ * A thread under a note. Deleted with its note explicitly in `lib/notes.ts` rather than by
+ * ON DELETE CASCADE: SQLite only honours foreign keys when the connection turns the pragma on,
+ * and neither driver here promises that.
+ */
+export const noteComments = sqliteTable(
+  'note_comments',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    noteId: integer('note_id').notNull(),
+    body: text('body').notNull(),
+    author: text('author'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (table) => [index('note_comments_note_idx').on(table.noteId), index('note_comments_created_idx').on(table.createdAt)],
+);
