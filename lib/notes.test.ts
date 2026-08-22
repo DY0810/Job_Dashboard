@@ -59,6 +59,10 @@ describe('validation at the public write seam', () => {
     expect(parsed.success && parsed.data.body).toBe('hello');
   });
 
+  it('height 0 means "fits the text" — the default for a freshly drawn note', () => {
+    expect(NoteInput.safeParse({ ...NOTE, h: 0 }).success).toBe(true);
+  });
+
   it.each([
     ['empty body', { ...NOTE, body: '   ' }],
     ['body over 1000 chars', { ...NOTE, body: 'x'.repeat(1001) }],
@@ -66,6 +70,7 @@ describe('validation at the public write seam', () => {
     ['negative position', { ...NOTE, x: -1 }],
     ['a note too small to read', { ...NOTE, w: 20 }],
     ['a note the size of the board', { ...NOTE, w: 5000 }],
+    ['a negative height', { ...NOTE, h: -1 }],
   ])('rejects %s', (_label, input) => {
     expect(NoteInput.safeParse(input).success).toBe(false);
   });
@@ -100,10 +105,17 @@ describe('the board', () => {
     expect(edited!.updatedAt.getTime()).toBe(T('2026-08-20T11:00:00Z'));
     expect(await updateNote(db, 999, { body: 'ghost' }, T('2026-08-20T11:00:00Z'))).toBeNull();
 
-    // A note can be resized after it is written: width changes, nothing else moves.
+    // A note can be resized from any edge after it is written: a left or top grip moves
+    // the note as it shrinks, so a patch may carry position as well as size.
     const wider = await updateNote(db, a.id, { w: 360 }, T('2026-08-20T12:00:00Z'));
     expect(wider).toMatchObject({ body: 'ship it today', x: 40, y: 60, w: 360, h: 160 });
+    const fromLeft = await updateNote(db, a.id, { x: 80, w: 320 }, T('2026-08-20T12:30:00Z'));
+    expect(fromLeft).toMatchObject({ x: 80, y: 60, w: 320 });
+    const fromTop = await updateNote(db, a.id, { y: 20, h: 200 }, T('2026-08-20T12:45:00Z'));
+    expect(fromTop).toMatchObject({ x: 80, y: 20, h: 200 });
     expect(NotePatch.safeParse({ w: 360 }).success).toBe(true);
+    expect(NotePatch.safeParse({ x: 0, y: 0 }).success).toBe(true);
+    expect(NotePatch.safeParse({ h: 0 }).success).toBe(true); // back to fitting the text
     expect(NotePatch.safeParse({}).success).toBe(false); // a patch must change something
     expect(NotePatch.safeParse({ w: 20 }).success).toBe(false); // same bounds as creation
 

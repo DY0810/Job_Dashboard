@@ -11,6 +11,8 @@ const MAX = { w: 800, h: 600 };
 const AUTHOR_KEY = 'talkie-author';
 
 type Rect = { x: number; y: number; w: number; h: number };
+type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
 async function call<T>(url: string, init: RequestInit, fallback: string): Promise<T> {
   const res = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...init.headers } });
@@ -72,7 +74,9 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
 
   const save = async (rect: Rect, body: string) => {
     const note = await call<NoteWithComments>('/api/notes', {
-      method: 'POST', body: JSON.stringify({ ...rect, body, author: author || undefined }),
+      // h: 0 — the drawn height sized the editor; the saved note fits its text until a
+      // top or bottom grip sets a minimum.
+      method: 'POST', body: JSON.stringify({ ...rect, h: 0, body, author: author || undefined }),
     }, 'could not save');
     setNotes((all) => [...all, { ...note, createdAt: new Date(note.createdAt), updatedAt: new Date(note.updatedAt), comments: [] }]);
     setPending(null);
@@ -85,9 +89,9 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
   // No confirmation, at the user's request: delete means delete. The control is quiet and
   // sits in the meta row rather than under the pointer's natural path, which is the only
   // guard against a stray click — there is no undo.
-  const resize = async (id: number, w: number) => {
-    await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ w }) }, 'could not resize');
-    patch(id, (n) => ({ ...n, w }));
+  const resize = async (id: number, geometry: Partial<Rect>) => {
+    await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(geometry) }, 'could not resize');
+    patch(id, (n) => ({ ...n, ...geometry }));
   };
   const remove = async (id: number) => {
     await call(`/api/notes/${id}`, { method: 'DELETE' }, 'could not delete').catch(() => {});
@@ -148,7 +152,7 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
             mounted={mounted}
             canWrite={canWrite}
             onEdit={(body) => edit(note.id, body)}
-            onResize={(w) => resize(note.id, w)}
+            onResize={(geometry) => resize(note.id, geometry)}
             onDelete={() => remove(note.id)}
             onReply={(body) => reply(note.id, body)}
             onUnreply={(cid) => unreply(note.id, cid)}
@@ -188,38 +192,66 @@ function NoteCard({
   note, mounted, canWrite, onEdit, onResize, onDelete, onReply, onUnreply,
 }: {
   note: NoteWithComments; mounted: boolean; canWrite: boolean;
-  onEdit: (body: string) => Promise<void>; onResize: (w: number) => Promise<void>; onDelete: () => void;
+  onEdit: (body: string) => Promise<void>; onResize: (geometry: Partial<Rect>) => Promise<void>; onDelete: () => void;
   onReply: (body: string) => Promise<void>; onUnreply: (cid: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const replyRef = useRef<HTMLInputElement>(null);
 
-  // Resizing after the fact: the right edge is a grip. Width is the dimension that is
-  // yours to change — height follows the text. Live while dragging, saved on release,
-  // snapped back if the save fails.
-  const [liveW, setLiveW] = useState<number | null>(null);
-  const grip = useRef<{ startX: number; startW: number } | null>(null);
-  const onGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  // Resizing after the fact: every edge and corner is a grip. Right/left change the width
+  // (left moves the note as it shrinks); bottom/top set a MINIMUM height (top moves it) —
+  // the text still grows the note past that, so auto-fit survives. Live while dragging,
+  // saved on release, snapped back if the save fails.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [live, setLive] = useState<Rect | null>(null);
+  const grip = useRef<{ edge: Edge; startX: number; startY: number; start: Rect } | null>(null);
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+  const onGripDown = (edge: Edge) => (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    grip.current = { startX: e.clientX, startW: note.w };
-    setLiveW(note.w);
+    // A note that fits its text has no stored height; the drag starts from what is on screen.
+    const h = note.h || Math.round(cardRef.current?.getBoundingClientRect().height ?? MIN.h);
+    grip.current = { edge, startX: e.clientX, startY: e.clientY, start: { x: note.x, y: note.y, w: note.w, h } };
+    setLive(grip.current.start);
   };
   const onGripMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!grip.current) return;
-    const w = grip.current.startW + (e.clientX - grip.current.startX);
-    setLiveW(Math.round(Math.min(MAX.w, Math.max(MIN.w, w))));
+    const g = grip.current;
+    if (!g) return;
+    const dx = e.clientX - g.startX;
+    const dy = e.clientY - g.startY;
+    let { x, y, w, h } = g.start;
+    if (g.edge.includes('e')) w = clamp(g.start.w + dx, MIN.w, MAX.w);
+    if (g.edge.includes('w')) {
+      w = clamp(g.start.w - dx, MIN.w, MAX.w);
+      x = g.start.x + g.start.w - w;
+      if (x < 0) { x = 0; w = g.start.x + g.start.w; }
+    }
+    if (g.edge.includes('s')) h = clamp(g.start.h + dy, MIN.h, MAX.h);
+    if (g.edge.includes('n')) {
+      h = clamp(g.start.h - dy, MIN.h, MAX.h);
+      y = g.start.y + g.start.h - h;
+      if (y < 0) { y = 0; h = g.start.y + g.start.h; }
+    }
+    setLive({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
   };
   const onGripUp = async (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
-    if (!grip.current) return;
-    const w = liveW ?? note.w;
+    const g = grip.current;
+    if (!g) return;
+    const r = live ?? g.start;
     grip.current = null;
-    setLiveW(null);
-    if (w === note.w) return;
-    try { await onResize(w); } catch (err) { setError((err as Error).message); }
+    setLive(null);
+    const geometry: Partial<Rect> = {};
+    if (r.x !== note.x) geometry.x = r.x;
+    if (r.y !== note.y) geometry.y = r.y;
+    if (r.w !== note.w) geometry.w = r.w;
+    // Only a vertical grip turns the on-screen height into a stored minimum.
+    if ((g.edge.includes('n') || g.edge.includes('s')) && r.h !== note.h) geometry.h = r.h;
+    if (Object.keys(geometry).length === 0) return;
+    try { await onResize(geometry); } catch (err) { setError((err as Error).message); }
   };
 
   if (editing) {
@@ -245,9 +277,14 @@ function NoteCard({
     }
   };
 
+  const r = live ?? note;
   return (
-    <div className="note" style={{ left: note.x, top: note.y, width: liveW ?? note.w }}>
-      {liveW !== null ? <span className="note-size">{liveW} wide</span> : null}
+    <div
+      ref={cardRef}
+      className="note"
+      style={{ left: r.x, top: r.y, width: r.w, minHeight: (live ? live.h : note.h) || undefined }}
+    >
+      {live ? <span className="note-size">{live.w} × {live.h}</span> : null}
       <div
         className="note-body"
         tabIndex={canWrite ? 0 : -1}
@@ -297,16 +334,20 @@ function NoteCard({
         </div>
       ) : null}
 
-      {canWrite ? (
-        <div
-          className="note-grip"
-          onPointerDown={onGripDown}
-          onPointerMove={onGripMove}
-          onPointerUp={onGripUp}
-          onPointerCancel={onGripUp}
-          aria-hidden
-        />
-      ) : null}
+      {canWrite
+        ? EDGES.map((edge) => (
+            <div
+              key={edge}
+              className="note-grip"
+              data-edge={edge}
+              onPointerDown={onGripDown(edge)}
+              onPointerMove={onGripMove}
+              onPointerUp={onGripUp}
+              onPointerCancel={onGripUp}
+              aria-hidden
+            />
+          ))
+        : null}
     </div>
   );
 }

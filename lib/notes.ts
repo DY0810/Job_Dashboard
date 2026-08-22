@@ -34,12 +34,16 @@ export const NoteInput = z.object({
   x: z.number().int().min(0).max(4000),
   y: z.number().int().min(0).max(4000),
   w: z.number().int().min(120).max(800),
-  h: z.number().int().min(80).max(600),
+  /** A MINIMUM height: text still grows the note past it. 0 means "fits the text". */
+  h: z.number().int().min(0).max(600),
 });
 export type NoteInput = z.infer<typeof NoteInput>;
 
-/** What may change after a note exists: its text, or its width (height follows the text). */
-export const NotePatch = NoteInput.pick({ body: true, w: true, h: true })
+/**
+ * What may change after a note exists: its text, or its geometry. A left or top grip moves
+ * the note as it shrinks, so position travels with size.
+ */
+export const NotePatch = NoteInput.pick({ body: true, x: true, y: true, w: true, h: true })
   .partial()
   .refine((patch) => Object.keys(patch).length > 0, { message: 'empty patch' });
 export type NotePatch = z.infer<typeof NotePatch>;
