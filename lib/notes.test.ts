@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Db } from './db/index.ts';
 import {
-  CommentInput, MAX_NOTES_PER_WEEK, NoteInput, addComment, countActivitySince, createNote,
+  CommentInput, MAX_NOTES_PER_WEEK, NoteInput, NotePatch, addComment, countActivitySince, createNote,
   deleteComment, deleteNote, listNotes, listWeeks, updateNote, weekKey, weekLabel, weekRange,
 } from './notes.ts';
 
@@ -95,10 +95,17 @@ describe('the board', () => {
   it('edits keep their position and bump updated_at; deletes are real', async () => {
     const db = memoryDb();
     const a = await createNote(db, NOTE, T('2026-08-20T10:00:00Z'));
-    const edited = await updateNote(db, a.id, 'ship it today', T('2026-08-20T11:00:00Z'));
-    expect(edited).toMatchObject({ body: 'ship it today', x: 40, y: 60 });
+    const edited = await updateNote(db, a.id, { body: 'ship it today' }, T('2026-08-20T11:00:00Z'));
+    expect(edited).toMatchObject({ body: 'ship it today', x: 40, y: 60, w: 240 });
     expect(edited!.updatedAt.getTime()).toBe(T('2026-08-20T11:00:00Z'));
-    expect(await updateNote(db, 999, 'ghost', T('2026-08-20T11:00:00Z'))).toBeNull();
+    expect(await updateNote(db, 999, { body: 'ghost' }, T('2026-08-20T11:00:00Z'))).toBeNull();
+
+    // A note can be resized after it is written: width changes, nothing else moves.
+    const wider = await updateNote(db, a.id, { w: 360 }, T('2026-08-20T12:00:00Z'));
+    expect(wider).toMatchObject({ body: 'ship it today', x: 40, y: 60, w: 360, h: 160 });
+    expect(NotePatch.safeParse({ w: 360 }).success).toBe(true);
+    expect(NotePatch.safeParse({}).success).toBe(false); // a patch must change something
+    expect(NotePatch.safeParse({ w: 20 }).success).toBe(false); // same bounds as creation
 
     expect(await deleteNote(db, a.id)).toBe(true);
     expect(await deleteNote(db, a.id)).toBe(false);

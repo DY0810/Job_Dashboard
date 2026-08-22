@@ -38,6 +38,12 @@ export const NoteInput = z.object({
 });
 export type NoteInput = z.infer<typeof NoteInput>;
 
+/** What may change after a note exists: its text, or its width (height follows the text). */
+export const NotePatch = NoteInput.pick({ body: true, w: true, h: true })
+  .partial()
+  .refine((patch) => Object.keys(patch).length > 0, { message: 'empty patch' });
+export type NotePatch = z.infer<typeof NotePatch>;
+
 export const CommentInput = z.object({
   body: z.string().trim().min(1).max(500),
   author: z.string().trim().max(40).optional(),
@@ -134,12 +140,12 @@ export async function createNote(db: ReadDb, input: NoteInput, now: number = Dat
 export async function updateNote(
   db: ReadDb,
   id: number,
-  body: string,
+  patch: NotePatch,
   now: number = Date.now(),
 ): Promise<Note | null> {
   const rows = await driver(db)
     .update(notes)
-    .set({ body, updatedAt: new Date(now) })
+    .set({ ...patch, updatedAt: new Date(now) })
     .where(eq(notes.id, id))
     .returning()
     .all();

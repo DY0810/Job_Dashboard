@@ -562,7 +562,23 @@ dialog.drawer[open]::backdrop {
   padding: 3px 0; font-size: 13px; line-height: 1.4;
 }
 .comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
-.comment-author { color: var(--fg-dim); }
+.comment-author { color: var(--fg-dim); margin-right: 7px; }
+/* The right edge is a grip: 14px wide for a fingertip, cursor says what it does, a small
+   double rule appears on hover so the edge reads as adjustable. */
+.note-grip {
+  position: absolute; top: 0; right: -1px; bottom: 0; width: 14px;
+  cursor: ew-resize; touch-action: none;
+}
+.note-grip::before {
+  content: ''; position: absolute; top: 50%; right: 4px; width: 3px; height: 14px; margin-top: -7px;
+  border-left: 1px solid var(--fg-faint); border-right: 1px solid var(--fg-faint);
+  opacity: 0; transition: opacity 120ms var(--ease-state);
+}
+.note:hover .note-grip::before, .note-grip:active::before { opacity: 1; }
+.note-size {
+  position: absolute; top: -18px; right: -1px; white-space: nowrap;
+  font-size: 10px; color: var(--accent); font-variant-numeric: tabular-nums;
+}
 .comment-meta {
   display: inline-flex; gap: 4px; align-items: center; flex: none;
   font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums;

@@ -85,6 +85,10 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
   // No confirmation, at the user's request: delete means delete. The control is quiet and
   // sits in the meta row rather than under the pointer's natural path, which is the only
   // guard against a stray click — there is no undo.
+  const resize = async (id: number, w: number) => {
+    await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ w }) }, 'could not resize');
+    patch(id, (n) => ({ ...n, w }));
+  };
   const remove = async (id: number) => {
     await call(`/api/notes/${id}`, { method: 'DELETE' }, 'could not delete').catch(() => {});
     setNotes((all) => all.filter((n) => n.id !== id));
@@ -144,6 +148,7 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
             mounted={mounted}
             canWrite={canWrite}
             onEdit={(body) => edit(note.id, body)}
+            onResize={(w) => resize(note.id, w)}
             onDelete={() => remove(note.id)}
             onReply={(body) => reply(note.id, body)}
             onUnreply={(cid) => unreply(note.id, cid)}
@@ -180,15 +185,42 @@ function When({ at, mounted }: { at: Date; mounted: boolean }) {
 }
 
 function NoteCard({
-  note, mounted, canWrite, onEdit, onDelete, onReply, onUnreply,
+  note, mounted, canWrite, onEdit, onResize, onDelete, onReply, onUnreply,
 }: {
   note: NoteWithComments; mounted: boolean; canWrite: boolean;
-  onEdit: (body: string) => Promise<void>; onDelete: () => void;
+  onEdit: (body: string) => Promise<void>; onResize: (w: number) => Promise<void>; onDelete: () => void;
   onReply: (body: string) => Promise<void>; onUnreply: (cid: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const replyRef = useRef<HTMLInputElement>(null);
+
+  // Resizing after the fact: the right edge is a grip. Width is the dimension that is
+  // yours to change — height follows the text. Live while dragging, saved on release,
+  // snapped back if the save fails.
+  const [liveW, setLiveW] = useState<number | null>(null);
+  const grip = useRef<{ startX: number; startW: number } | null>(null);
+  const onGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    grip.current = { startX: e.clientX, startW: note.w };
+    setLiveW(note.w);
+  };
+  const onGripMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!grip.current) return;
+    const w = grip.current.startW + (e.clientX - grip.current.startX);
+    setLiveW(Math.round(Math.min(MAX.w, Math.max(MIN.w, w))));
+  };
+  const onGripUp = async (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (!grip.current) return;
+    const w = liveW ?? note.w;
+    grip.current = null;
+    setLiveW(null);
+    if (w === note.w) return;
+    try { await onResize(w); } catch (err) { setError((err as Error).message); }
+  };
 
   if (editing) {
     return (
@@ -214,7 +246,8 @@ function NoteCard({
   };
 
   return (
-    <div className="note" style={{ left: note.x, top: note.y, width: note.w }}>
+    <div className="note" style={{ left: note.x, top: note.y, width: liveW ?? note.w }}>
+      {liveW !== null ? <span className="note-size">{liveW} wide</span> : null}
       <div
         className="note-body"
         tabIndex={canWrite ? 0 : -1}
@@ -238,7 +271,7 @@ function NoteCard({
           {note.comments.map((comment) => (
             <div key={comment.id} className="comment">
               <span className="comment-body">
-                {comment.author ? <span className="comment-author">{comment.author} </span> : null}
+                {comment.author ? <span className="comment-author">{comment.author}:</span> : null}
                 {comment.body}
               </span>
               <span className="comment-meta">
@@ -264,6 +297,16 @@ function NoteCard({
         </div>
       ) : null}
 
+      {canWrite ? (
+        <div
+          className="note-grip"
+          onPointerDown={onGripDown}
+          onPointerMove={onGripMove}
+          onPointerUp={onGripUp}
+          onPointerCancel={onGripUp}
+          aria-hidden
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,9 +1,8 @@
 import { z } from 'zod';
 import { getDb, needsTurso } from '@/lib/db';
-import { NoteInput, deleteNote, updateNote } from '@/lib/notes';
+import { NotePatch, deleteNote, updateNote } from '@/lib/notes';
 
 const Id = z.coerce.number().int().positive();
-const Body = z.object({ body: NoteInput.shape.body });
 type Context = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, context: Context) {
@@ -11,9 +10,9 @@ export async function PATCH(request: Request, context: Context) {
   if (!id.success) return Response.json({ error: 'not found' }, { status: 404 });
   try {
     if (needsTurso()) return Response.json({ error: 'database not configured' }, { status: 503 });
-    const input = Body.safeParse(await request.json().catch(() => null));
+    const input = NotePatch.safeParse(await request.json().catch(() => null));
     if (!input.success) return Response.json({ error: 'invalid note' }, { status: 400 });
-    const note = await updateNote(getDb(), id.data, input.data.body);
+    const note = await updateNote(getDb(), id.data, input.data);
     return note ? Response.json(note) : Response.json({ error: 'not found' }, { status: 404 });
   } catch (error) {
     console.error('PATCH /api/notes/[id]', error);
