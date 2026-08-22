@@ -12,6 +12,8 @@ const AUTHOR_KEY = 'talkie-author';
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+/** The same drag machinery moves a note; `move` is checked before any edge test. */
+type Grab = Edge | 'move';
 const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
 async function call<T>(url: string, init: RequestInit, fallback: string): Promise<T> {
@@ -172,7 +174,12 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
         ))}
 
         {pending ? (
-          <NoteEditor rect={pending} onSave={(body) => save(pending, body)} onCancel={() => setPending(null)} />
+          <NoteEditor
+            rect={pending}
+            onMove={(at) => setPending((cur) => (cur ? { ...cur, ...at } : cur))}
+            onSave={(body) => save(pending, body)}
+            onCancel={() => setPending(null)}
+          />
         ) : null}
 
         {draft ? (
@@ -217,8 +224,21 @@ function NoteCard({
   // saved on release, snapped back if the save fails.
   const cardRef = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState<Rect | null>(null);
-  const grip = useRef<{ edge: Edge; startX: number; startY: number; start: Rect } | null>(null);
+  const grip = useRef<{ edge: Grab; startX: number; startY: number; start: Rect } | null>(null);
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+  // Drag the note by its chrome: padding, the meta row's empty space, the reply strip. Not
+  // the body — that is selectable text now, and a drag to highlight would move the note
+  // instead. Not a control, an input, or a grip; each keeps what it already does.
+  const onCardDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!canWrite) return;
+    if ((e.target as HTMLElement).closest('.note-body, .comment, .note-grip, textarea, input, button, a')) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const h = note.h || Math.round(cardRef.current?.getBoundingClientRect().height ?? MIN.h);
+    grip.current = { edge: 'move', startX: e.clientX, startY: e.clientY, start: { x: note.x, y: note.y, w: note.w, h } };
+    setLive(grip.current.start);
+  };
 
   const onGripDown = (edge: Edge) => (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -234,6 +254,16 @@ function NoteCard({
     if (!g) return;
     const dx = e.clientX - g.startX;
     const dy = e.clientY - g.startY;
+    if (g.edge === 'move') {
+      // Before the edge tests: `'move'.includes('e')` is true and would resize instead.
+      setLive({
+        x: Math.max(0, Math.round(g.start.x + dx)),
+        y: Math.max(0, Math.round(g.start.y + dy)),
+        w: g.start.w,
+        h: g.start.h,
+      });
+      return;
+    }
     let { x, y, w, h } = g.start;
     if (g.edge.includes('e')) w = clamp(g.start.w + dx, MIN.w, MAX.w);
     if (g.edge.includes('w')) {
@@ -273,6 +303,7 @@ function NoteCard({
     return (
       <NoteEditor
         rect={{ ...note, h: 0 }}
+        onMove={(at) => { void onResize(at); }}
         initial={note.body}
         onSave={async (body) => { await onEdit(body); setEditing(false); }}
         onCancel={() => setEditing(false)}
@@ -296,8 +327,12 @@ function NoteCard({
   return (
     <div
       ref={cardRef}
-      className="note"
+      className={grip.current?.edge === 'move' ? 'note note-moving' : 'note'}
       style={{ left: r.x, top: r.y, width: r.w, minHeight: (live ? live.h : note.h) || undefined }}
+      onPointerDown={onCardDown}
+      onPointerMove={onGripMove}
+      onPointerUp={onGripUp}
+      onPointerCancel={onGripUp}
     >
       {live ? <span className="note-size">{live.w} × {live.h}</span> : null}
       {/* Plain text, nothing else. It used to open the editor on click — and a drag to
@@ -357,7 +392,7 @@ function NoteCard({
               className="note-grip"
               data-edge={edge}
               onPointerDown={onGripDown(edge)}
-              onPointerMove={onGripMove}
+              onPointerMove={(ev) => { ev.stopPropagation(); onGripMove(ev); }}
               onPointerUp={onGripUp}
               onPointerCancel={onGripUp}
               aria-hidden
@@ -369,13 +404,46 @@ function NoteCard({
 }
 
 function NoteEditor({
-  rect, initial = '', onSave, onCancel,
+  rect, initial = '', onSave, onCancel, onMove,
 }: {
   rect: Rect; initial?: string; onSave: (body: string) => Promise<void>; onCancel: () => void;
+  /** Where the note was let go. The parent decides whether that is a draft or a save. */
+  onMove?: (at: { x: number; y: number }) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+
+  // A note can be moved while it is still being written. Same rule as a saved note: the
+  // chrome drags, the textarea does not — it holds a cursor and a selection.
+  const [live, setLive] = useState<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ startX: number; startY: number; x: number; y: number } | null>(null);
+  const at = live ?? rect;
+
+  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!onMove) return;
+    if ((e.target as HTMLElement).closest('textarea, input, button, a')) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { startX: e.clientX, startY: e.clientY, x: at.x, y: at.y };
+    setLive({ x: at.x, y: at.y });
+  };
+  const onMoveDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    setLive({
+      x: Math.max(0, Math.round(d.x + e.clientX - d.startX)),
+      y: Math.max(0, Math.round(d.y + e.clientY - d.startY)),
+    });
+  };
+  const onUp = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    // Hand the parent the position and drop the live one in the same batched render, so
+    // there is no frame at the old spot — the same ordering the saved-note drag needs.
+    if (live) onMove?.(live);
+    setLive(null);
+  };
 
   // The box fits its text: the textarea grows with every keystroke and never scrolls.
   const fit = () => {
@@ -395,7 +463,14 @@ function NoteEditor({
   };
 
   return (
-    <div className="note note-editing" style={{ left: rect.x, top: rect.y, width: rect.w, minHeight: rect.h || undefined }}>
+    <div
+      className={drag.current ? 'note note-editing note-moving' : 'note note-editing'}
+      style={{ left: at.x, top: at.y, width: rect.w, minHeight: rect.h || undefined }}
+      onPointerDown={onDown}
+      onPointerMove={onMoveDrag}
+      onPointerUp={onUp}
+      onPointerCancel={onUp}
+    >
       {/* Enter commits; Shift+Enter is a new line; Esc discards. Clicking away does nothing —
           the draft stays open with its text, waiting. Saving on blur meant a stray click
           published a half-written note. */}

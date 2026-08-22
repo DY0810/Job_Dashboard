@@ -622,3 +622,11 @@ dialog.drawer[open]::backdrop {
 @media (prefers-reduced-motion: reduce) {
   .note, .note-action, .comment-close { transition: none; }
 }
+
+/* A note is grabbable by its chrome. The body says `text` because it is text — selecting it
+   is what the pointer does there — and every control keeps its own cursor. A note being
+   dragged rides above its neighbours and holds the closed hand. */
+.note { cursor: grab; }
+.note-body, .comment-body { cursor: text; }
+.note-moving { cursor: grabbing; z-index: 2; }
+.note-moving .note-body { cursor: grabbing; }
