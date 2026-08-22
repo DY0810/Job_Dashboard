@@ -82,8 +82,10 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
     await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ body }) }, 'could not save');
     patch(id, (n) => ({ ...n, body }));
   };
+  // No confirmation, at the user's request: delete means delete. The control is quiet and
+  // sits in the meta row rather than under the pointer's natural path, which is the only
+  // guard against a stray click — there is no undo.
   const remove = async (id: number) => {
-    if (!confirm('Delete this note and its replies?')) return;
     await call(`/api/notes/${id}`, { method: 'DELETE' }, 'could not delete').catch(() => {});
     setNotes((all) => all.filter((n) => n.id !== id));
   };
