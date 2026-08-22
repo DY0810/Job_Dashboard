@@ -90,8 +90,20 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
   // sits in the meta row rather than under the pointer's natural path, which is the only
   // guard against a stray click — there is no undo.
   const resize = async (id: number, geometry: Partial<Rect>) => {
-    await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(geometry) }, 'could not resize');
-    patch(id, (n) => ({ ...n, ...geometry }));
+    // Optimistic, in the same render that drops the live size: the note stays the size it
+    // was let go at. Waiting for the server first showed the old size for a round trip,
+    // then jumped. If the save fails the old geometry comes back, with the error.
+    let previous: Partial<Rect> = {};
+    patch(id, (n) => {
+      previous = { x: n.x, y: n.y, w: n.w, h: n.h };
+      return { ...n, ...geometry };
+    });
+    try {
+      await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(geometry) }, 'could not resize');
+    } catch (error) {
+      patch(id, (n) => ({ ...n, ...previous }));
+      throw error;
+    }
   };
   const remove = async (id: number) => {
     await call(`/api/notes/${id}`, { method: 'DELETE' }, 'could not delete').catch(() => {});
@@ -243,15 +255,18 @@ function NoteCard({
     if (!g) return;
     const r = live ?? g.start;
     grip.current = null;
-    setLive(null);
     const geometry: Partial<Rect> = {};
     if (r.x !== note.x) geometry.x = r.x;
     if (r.y !== note.y) geometry.y = r.y;
     if (r.w !== note.w) geometry.w = r.w;
     // Only a vertical grip turns the on-screen height into a stored minimum.
     if ((g.edge.includes('n') || g.edge.includes('s')) && r.h !== note.h) geometry.h = r.h;
-    if (Object.keys(geometry).length === 0) return;
-    try { await onResize(geometry); } catch (err) { setError((err as Error).message); }
+    if (Object.keys(geometry).length === 0) return setLive(null);
+    // The optimistic patch and the clearing of the live size land in one batched render,
+    // so there is no frame in which the note is its old size.
+    const saved = onResize(geometry);
+    setLive(null);
+    try { await saved; } catch (err) { setError((err as Error).message); }
   };
 
   if (editing) {
