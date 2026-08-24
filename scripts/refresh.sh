@@ -88,7 +88,10 @@ fi
 # TURSO_DATABASE_URL is a skip, not an error — same rule the keyed connectors follow, and it
 # keeps this cycle working unchanged on a machine that never deploys.
 if [ -f .env.local ] && grep -qE '^TURSO_DATABASE_URL=.+' .env.local; then
-  node --env-file-if-exists=.env.local scripts/push-remote.ts
+  # --in-cycle: THIS is the cycle that holds the lock, so the mirror must not refuse it.
+  # Without the flag push-remote sees a live pid in the lock and skips, which silently
+  # stopped every cycle from reaching the hosted site while still exiting 0.
+  node --env-file-if-exists=.env.local scripts/push-remote.ts --in-cycle
   say "push:remote exit=$?"
 else
   say "push:remote skipped (no TURSO_DATABASE_URL in .env.local)"

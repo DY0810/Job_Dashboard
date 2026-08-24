@@ -155,6 +155,12 @@ async function main(): Promise<void> {
  * A cycle already running will push when it finishes, so refusing here loses nothing.
  */
 function takeLock(): (() => void) | null {
+  // `refresh.sh` holds this lock for its whole cycle and calls this script at the end of it.
+  // Without this the cycle's own mirror refuses its own lock — exit 0, nothing pushed, the
+  // hosted site frozen at the previous cycle. Caught only by checking the remote's newest
+  // run against the local one after a cycle that reported success.
+  if (process.argv.includes('--in-cycle')) return () => {};
+
   const dir = join(process.cwd(), 'logs');
   const lock = join(dir, '.refresh.lock');
   mkdirSync(dir, { recursive: true });
