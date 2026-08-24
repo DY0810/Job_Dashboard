@@ -9,6 +9,7 @@ import { SEEN_KEY } from '../talkie-badge';
 const MIN = { w: 120, h: 80 };
 const MAX = { w: 800, h: 600 };
 const AUTHOR_KEY = 'talkie-author';
+const TOKEN_KEY = 'talkie-token';
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -16,8 +17,37 @@ type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type Grab = Edge | 'move';
 const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
+/**
+ * Every write goes through here, so the write token is attached in exactly one place.
+ *
+ * The token is what the server checks instead of an account. It is asked for once, on the
+ * first 401, and kept in this browser — the same shape as the author name beside it. A wrong
+ * or missing token is cleared so the next attempt asks again rather than failing silently.
+ */
 async function call<T>(url: string, init: RequestInit, fallback: string): Promise<T> {
-  const res = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...init.headers } });
+  const send = (token: string | null) =>
+    fetch(url, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { 'x-workie-token': token } : {}),
+        ...init.headers,
+      },
+    });
+
+  let res = await send(localStorage.getItem(TOKEN_KEY));
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    const entered = window.prompt('Write token for this board:')?.trim();
+    if (!entered) throw new Error('a write token is needed to change this board');
+    localStorage.setItem(TOKEN_KEY, entered);
+    res = await send(entered);
+    if (res.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      throw new Error('that token was not accepted');
+    }
+  }
+  if (res.status === 503) throw new Error('writes are not configured on this deployment');
   if (!res.ok) throw new Error(res.status === 429 ? 'this week is full' : fallback);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }

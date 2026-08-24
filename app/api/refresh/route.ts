@@ -27,6 +27,24 @@ function hosted(): boolean {
   return Boolean(process.env.VERCEL);
 }
 
+/**
+ * Whether THIS process may start a cycle on the machine it runs on.
+ *
+ * Deliberately opt-in, and not the same question as `hosted()`. Asking "am I on Vercel?" made
+ * the safe branch an accident of one provider's environment variable: anywhere `VERCEL` was
+ * unset — a laptop running `next dev`, or anyone self-hosting this repo — an unauthenticated
+ * POST spawned the pipeline. That POST carries no body and no custom header, so it is a CORS
+ * simple request: any page in the browser could fire it cross-origin without a preflight.
+ *
+ * The spawn is not the whole cost. `scripts/refresh.sh` sources `.env.local`, so the cycle it
+ * starts ends in `push-remote.ts`, whose `deleteStrays` removes every hosted row absent from
+ * the local database. With the GitHub Actions schedule as the writer lineage, letting a
+ * stranger choose that moment means letting them corrupt the hosted corpus.
+ */
+function mayRunLocally(): boolean {
+  return process.env.WORKIE_ALLOW_LOCAL_REFRESH === '1';
+}
+
 /** The lock is a directory with a pid; a dead pid is a crashed cycle, not a running one. */
 function running(): { running: boolean; sinceMs: number } {
   if (!existsSync(LOCK)) return { running: false, sinceMs: 0 };
@@ -108,6 +126,12 @@ export async function POST(request: Request) {
       console.error('POST /api/refresh (hosted)', error);
       return Response.json({ error: 'could not queue a refresh' }, { status: 500 });
     }
+  }
+  if (!mayRunLocally()) {
+    return Response.json(
+      { error: 'local refresh is disabled; set WORKIE_ALLOW_LOCAL_REFRESH=1 to enable it' },
+      { status: 403 },
+    );
   }
   const state = running();
   if (state.running) {

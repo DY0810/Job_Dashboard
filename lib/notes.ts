@@ -141,6 +141,18 @@ export async function createNote(db: ReadDb, input: NoteInput, now: number = Dat
   return rows[0]!;
 }
 
+/**
+ * The start of the week a mutation is allowed to touch.
+ *
+ * "An earlier week. Notes here are kept, not edited" is a promise the board makes in its own
+ * chrome, and `canWrite` in the React tree was the only thing keeping it. A prop is not a
+ * rule: every mutating function below re-states it against the row's own `created_at`, so the
+ * archive is immutable to anything that can reach the API, not merely to a rendered button.
+ */
+function currentWeekStart(now: number): Date {
+  return new Date(weekRange(weekKey(new Date(now)))!.start);
+}
+
 export async function updateNote(
   db: ReadDb,
   id: number,
@@ -150,19 +162,29 @@ export async function updateNote(
   const rows = await driver(db)
     .update(notes)
     .set({ ...patch, updatedAt: new Date(now) })
-    .where(eq(notes.id, id))
+    // The week guard rides in the WHERE clause rather than a read-then-write: one statement,
+    // so there is no window between checking the week and changing the row.
+    .where(and(eq(notes.id, id), gte(notes.createdAt, currentWeekStart(now))))
     .returning()
     .all();
   return rows[0] ?? null;
 }
 
-export async function deleteNote(db: ReadDb, id: number): Promise<boolean> {
+export async function deleteNote(db: ReadDb, id: number, now: number = Date.now()): Promise<boolean> {
+  // The note goes FIRST here, guarded by the week, because its deletion is what authorises
+  // the thread's. Deleting comments first would strip an archived note's replies before the
+  // guard below refused the note itself.
+  const rows = await driver(db)
+    .delete(notes)
+    .where(and(eq(notes.id, id), gte(notes.createdAt, currentWeekStart(now))))
+    .returning({ id: notes.id })
+    .all();
+  if (rows.length === 0) return false;
   // Explicit, not ON DELETE CASCADE: SQLite only enforces foreign keys when the connection
   // turns the pragma on, and neither driver here promises that. Orphans would still count
-  // as unread activity, so the thread goes first.
+  // as unread activity, so the thread follows immediately.
   await driver(db).delete(noteComments).where(eq(noteComments.noteId, id)).run();
-  const rows = await driver(db).delete(notes).where(eq(notes.id, id)).returning({ id: notes.id }).all();
-  return rows.length > 0;
+  return true;
 }
 
 /** The unread bubble: notes AND replies created strictly after the viewer's cursor. */
@@ -186,7 +208,13 @@ export async function addComment(
   input: CommentInput,
   now: number = Date.now(),
 ): Promise<Comment | null> {
-  const exists = await driver(db).select({ id: notes.id }).from(notes).where(eq(notes.id, noteId)).all();
+  // Existence and the week in one predicate: replying to an archived note is refused for the
+  // same reason editing one is.
+  const exists = await driver(db)
+    .select({ id: notes.id })
+    .from(notes)
+    .where(and(eq(notes.id, noteId), gte(notes.createdAt, currentWeekStart(now))))
+    .all();
   if (exists.length === 0) return null;
   const rows = await driver(db)
     .insert(noteComments)
@@ -196,10 +224,26 @@ export async function addComment(
   return rows[0]!;
 }
 
-export async function deleteComment(db: ReadDb, id: number): Promise<boolean> {
+/**
+ * `noteId` is part of the predicate, not decoration. The route is nested under a note, so a
+ * comment that does not belong to that note must not be deletable through it — otherwise the
+ * path segment is a lie, and the first feature to treat it as a boundary inherits a hole.
+ */
+export async function deleteComment(
+  db: ReadDb,
+  noteId: number,
+  id: number,
+  now: number = Date.now(),
+): Promise<boolean> {
+  const parent = await driver(db)
+    .select({ id: notes.id })
+    .from(notes)
+    .where(and(eq(notes.id, noteId), gte(notes.createdAt, currentWeekStart(now))))
+    .all();
+  if (parent.length === 0) return false;
   const rows = await driver(db)
     .delete(noteComments)
-    .where(eq(noteComments.id, id))
+    .where(and(eq(noteComments.id, id), eq(noteComments.noteId, noteId)))
     .returning({ id: noteComments.id })
     .all();
   return rows.length > 0;

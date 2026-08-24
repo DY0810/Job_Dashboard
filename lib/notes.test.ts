@@ -119,8 +119,8 @@ describe('the board', () => {
     expect(NotePatch.safeParse({}).success).toBe(false); // a patch must change something
     expect(NotePatch.safeParse({ w: 20 }).success).toBe(false); // same bounds as creation
 
-    expect(await deleteNote(db, a.id)).toBe(true);
-    expect(await deleteNote(db, a.id)).toBe(false);
+    expect(await deleteNote(db, a.id, T('2026-08-20T13:00:00Z'))).toBe(true);
+    expect(await deleteNote(db, a.id, T('2026-08-20T13:00:00Z'))).toBe(false);
     expect(await listNotes(db, '2026-W34')).toEqual([]);
   });
 
@@ -164,17 +164,47 @@ describe('comments', () => {
     expect(await addComment(db, 999, { body: 'ghost' }, T('2026-08-20T10:00:00Z'))).toBeNull();
   });
 
+  it('refuses every mutation of a note from an earlier week', async () => {
+    const db = memoryDb();
+    const old = await createNote(db, NOTE, T('2026-08-20T10:00:00Z')); // 2026-W34
+    const c = (await addComment(db, old.id, { body: 'reply' }, T('2026-08-20T11:00:00Z')))!;
+    const later = T('2026-08-27T10:00:00Z'); // 2026-W35, a week the board calls archived
+
+    // The board hides these controls on an archived week; the API must refuse them too,
+    // because a hidden button is not a rule.
+    expect(await updateNote(db, old.id, { body: 'rewritten history' }, later)).toBeNull();
+    expect(await addComment(db, old.id, { body: 'late reply' }, later)).toBeNull();
+    expect(await deleteComment(db, old.id, c.id, later)).toBe(false);
+    expect(await deleteNote(db, old.id, later)).toBe(false);
+
+    // Nothing was touched, the thread included.
+    const [surviving] = await listNotes(db, '2026-W34');
+    expect(surviving.body).toBe(NOTE.body);
+    expect(surviving.comments.map((x) => x.body)).toEqual(['reply']);
+  });
+
+  it('will not delete a comment through a note it does not belong to', async () => {
+    const db = memoryDb();
+    const a = await createNote(db, NOTE, T('2026-08-20T10:00:00Z'));
+    const b = await createNote(db, NOTE, T('2026-08-20T10:05:00Z'));
+    const mine = (await addComment(db, a.id, { body: 'mine' }, T('2026-08-20T11:00:00Z')))!;
+
+    // The note segment of the route scopes the delete; it is not decoration.
+    expect(await deleteComment(db, b.id, mine.id, T('2026-08-20T12:00:00Z'))).toBe(false);
+    expect(await deleteComment(db, a.id, mine.id, T('2026-08-20T12:00:00Z'))).toBe(true);
+  });
+
   it('deletes one, and deletes them all with their note', async () => {
     const db = memoryDb();
     const a = await createNote(db, NOTE, T('2026-08-20T10:00:00Z'));
     const c1 = (await addComment(db, a.id, { body: 'one' }, T('2026-08-20T11:00:00Z')))!;
     await addComment(db, a.id, { body: 'two' }, T('2026-08-20T12:00:00Z'));
 
-    expect(await deleteComment(db, c1.id)).toBe(true);
-    expect(await deleteComment(db, c1.id)).toBe(false);
+    expect(await deleteComment(db, a.id, c1.id, T('2026-08-20T13:00:00Z'))).toBe(true);
+    expect(await deleteComment(db, a.id, c1.id, T('2026-08-20T13:00:00Z'))).toBe(false);
     expect((await listNotes(db, '2026-W34'))[0].comments.map((c) => c.body)).toEqual(['two']);
 
-    await deleteNote(db, a.id);
+    await deleteNote(db, a.id, T('2026-08-20T13:00:00Z'));
     expect(await countActivitySince(db, 0)).toBe(0); // no orphaned replies counted as activity
   });
 });

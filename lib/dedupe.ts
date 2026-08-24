@@ -309,11 +309,25 @@ function materialize(group: Group, fallbackPostedAt: number): DedupedPosting {
   // the 60-day cutoff. Every source keeps its own date on its own row regardless.
   const postedAt = atsDates.length > 0 ? Math.max(minAll, Math.min(...atsDates)) : minAll;
 
+  /** A URL only if it is one a browser may navigate to: http(s), nothing else. */
+  function httpUrl(value: string | null | undefined): string | null {
+    if (!value) return null;
+    try {
+      const { protocol } = new URL(value);
+      return protocol === 'http:' || protocol === 'https:' ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
   const ats = sources.filter((source) => source.sourceKind === 'ats');
   // The winner's application-form URL beats its posting page: the apply button should land
   // the user on the form, not one click away from it.
   const winner = (ats.length > 0 ? ats : sources)[0];
-  const canonicalUrl = winner?.applyUrl ?? winner?.sourceUrl ?? '';
+  // Scheme-checked here, where feed data becomes the apply button's href. React 19 does
+  // rewrite `javascript:` in an href, but that is React's guarantee, not ours — it would not
+  // survive a downgrade or a move to `window.open`. Checked at the seam instead.
+  const canonicalUrl = httpUrl(winner?.applyUrl) ?? httpUrl(winner?.sourceUrl) ?? '';
 
   return { ...group, sources, postedAt, canonicalUrl };
 }

@@ -137,7 +137,10 @@ export const amazon: Connector = {
         postings.push({
           source: 'amazon',
           sourceKind: 'ats',
-          sourceUrl: `https://www.amazon.jobs${job.job_path}`,
+          // `new URL(path, base)`, not concatenation: with no terminating slash a `job_path`
+          // of `@evil.com/x` makes the ORIGIN evil.com, and this URL is the apply button's
+          // href. The sibling Workday builder is safe only because a `/${site}` sits between.
+          sourceUrl: new URL(job.job_path, 'https://www.amazon.jobs').toString(),
           postedAt: toEpochMs(job.posted_date),
           company: 'Amazon',
           title: job.title,

@@ -1,11 +1,14 @@
 import { z } from 'zod';
 import { getDb, needsTurso } from '@/lib/db';
+import { writeGate } from '@/lib/write-gate';
 import { NotePatch, deleteNote, updateNote } from '@/lib/notes';
 
 const Id = z.coerce.number().int().positive();
 type Context = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, context: Context) {
+  const denied = writeGate(request);
+  if (denied) return denied;
   const id = Id.safeParse((await context.params).id);
   if (!id.success) return Response.json({ error: 'not found' }, { status: 404 });
   try {
@@ -20,7 +23,9 @@ export async function PATCH(request: Request, context: Context) {
   }
 }
 
-export async function DELETE(_request: Request, context: Context) {
+export async function DELETE(request: Request, context: Context) {
+  const denied = writeGate(request);
+  if (denied) return denied;
   const id = Id.safeParse((await context.params).id);
   if (!id.success) return Response.json({ error: 'not found' }, { status: 404 });
   try {

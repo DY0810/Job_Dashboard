@@ -35,6 +35,28 @@ The hosted refresh button queues a request in `refresh_requests`; the next sched
 claims it. Set `WORKIE_GH_TOKEN` (a fine-grained PAT with Actions read/write on this repo)
 in the Vercel project to have a click start the workflow immediately instead.
 
+## Writing to Talkie
+
+Reading the board needs nothing. **Creating, editing and deleting notes require
+`WORKIE_WRITE_TOKEN`**, sent as an `x-workie-token` header — the board asks for it once and
+keeps it in the browser, alongside the author name. Share the token with whoever you share
+the link with; anyone without it can read but not change anything.
+
+Note ids are sequential integers, and `notes`/`note_comments` are deliberately excluded from
+`push:remote`'s mirror, so the hosted database is their only copy. An ungated `DELETE` loop
+would therefore destroy that copy with no way back — which is why the gate exists.
+
+> **Set this in Vercel before deploying.** A hosted deploy with `WORKIE_WRITE_TOKEN` unset
+> refuses every write with a 503 rather than serving them to the internet. That is deliberate
+> — forgetting the variable must not silently reopen the board — but it does mean the board
+> is read-only until you set it. Left unset locally there is no gate, so `next dev` is
+> unchanged.
+
+`POST /api/refresh` starts a cycle on the machine serving the request, so it is off unless
+`WORKIE_ALLOW_LOCAL_REFRESH=1`. That request carries no body or custom header, which makes it
+a CORS simple request any page could fire at a dev server — and the cycle it starts ends by
+mirroring to the hosted database, deleting rows the Actions lineage wrote.
+
 ### Running it on a laptop instead
 
 Install it as a launchd user agent (from the repo root) to have it run every 30 minutes:
