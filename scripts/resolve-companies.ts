@@ -456,6 +456,70 @@ const DESIGN_WAVE2_SEEDS: Seed[] = [
   { name: "Active Theory", website: "activetheory.net", tags: ["design-studio"] },
   { name: "Upstatement", website: "upstatement.com", tags: ["design-studio"] },
   { name: "Mother Design", website: "motherdesign.com", tags: ["design-studio"] },
+
+  // Wave 4 — added 2026-08-24. Design-heavy US employers, chosen for three things at once:
+  // a real in-house design org, a US presence, and a new-grad/internship pipeline. The Design
+  // tab's shortage is specifically ENTRY-LEVEL design, so household-name product companies
+  // with campus programmes are worth more here than another agency with four senior openings.
+  { name: "Spotify", website: "spotify.com", tags: ["design-led"] },
+  { name: "Atlassian", website: "atlassian.com", tags: ["design-led"] },
+  { name: "Shopify", website: "shopify.com", tags: ["design-led"] },
+  { name: "Etsy", website: "etsy.com", tags: ["design-led"] },
+  { name: "DoorDash", website: "doordash.com", tags: ["design-led"] },
+  { name: "Lyft", website: "lyft.com", tags: ["design-led"] },
+  { name: "Nextdoor", website: "nextdoor.com", tags: ["design-led"] },
+  { name: "Grammarly", website: "grammarly.com", tags: ["design-led"] },
+  { name: "Loom", website: "loom.com", tags: ["design-led"] },
+  { name: "Calm", website: "calm.com", tags: ["design-led"] },
+  { name: "Warby Parker", website: "warbyparker.com", tags: ["design-led"] },
+  { name: "Glossier", website: "glossier.com", tags: ["design-led"] },
+  { name: "Sonos", website: "sonos.com", tags: ["design-led"] },
+  { name: "Zendesk", website: "zendesk.com", tags: ["design-led"], tryWorkday: true },
+  { name: "HubSpot", website: "hubspot.com", tags: ["design-led"] },
+  { name: "Wix", website: "wix.com", tags: ["design-led"] },
+  { name: "Datadog", website: "datadoghq.com", tags: ["design-led"] },
+  { name: "MongoDB", website: "mongodb.com", tags: ["design-led"] },
+  { name: "Databricks", website: "databricks.com", tags: ["design-led"] },
+  { name: "GitLab", website: "gitlab.com", tags: ["design-led"] },
+  { name: "Cloudflare", website: "cloudflare.com", tags: ["design-led"] },
+  { name: "Twitch", website: "twitch.tv", tags: ["design-led"] },
+  { name: "Epic Games", website: "epicgames.com", tags: ["design-led", "game-studio"] },
+  { name: "Unity", website: "unity.com", tags: ["design-led", "game-studio"] },
+  { name: "Niantic", website: "nianticlabs.com", tags: ["design-led", "game-studio"] },
+  { name: "Eventbrite", website: "eventbrite.com", tags: ["design-led"] },
+  { name: "Yelp", website: "yelp.com", tags: ["design-led"] },
+  { name: "Zillow", website: "zillow.com", tags: ["design-led"], tryWorkday: true },
+  { name: "Wayfair", website: "wayfair.com", tags: ["design-led"] },
+  { name: "Compass", website: "compass.com", tags: ["design-led"] },
+  { name: "Betterment", website: "betterment.com", tags: ["design-led"] },
+  { name: "Wealthfront", website: "wealthfront.com", tags: ["design-led"] },
+  { name: "Marqeta", website: "marqeta.com", tags: ["design-led"] },
+  { name: "Flexport", website: "flexport.com", tags: ["design-led"] },
+  { name: "Rippling", website: "rippling.com", tags: ["design-led"] },
+  { name: "Airwallex", website: "airwallex.com", tags: ["design-led"] },
+
+  // Design-TOOL companies: the densest design orgs per head anywhere, and the likeliest to
+  // hire junior product designers rather than only staff-level ones.
+  { name: "Framer", website: "framer.com", tags: ["design-led"] },
+  { name: "Spline", website: "spline.design", tags: ["design-led"] },
+  { name: "Rive", website: "rive.app", tags: ["design-led"] },
+  { name: "Play", website: "createwithplay.com", tags: ["design-led"] },
+
+  // Workday shops — large design orgs with real campus programmes, but their boards are
+  // tenant-based, so they need the Workday attempt the other seeds skip. Zendesk and Zillow
+  // are tagged the same way above: both were unresolved until the careers-page detector
+  // showed a myworkdayjobs tenant, and Workday is only tried when a seed asks for it.
+  { name: "Adobe", website: "adobe.com", tags: ["design-led"], tryWorkday: true },
+  { name: "Intuit", website: "intuit.com", tags: ["design-led"], tryWorkday: true },
+  { name: "Autodesk", website: "autodesk.com", tags: ["design-led"], tryWorkday: true },
+  { name: "Salesforce", website: "salesforce.com", tags: ["design-led"], tryWorkday: true },
+
+  // Digital product agencies that plausibly run a real ATS — the wave-1 studio failures were
+  // small shops with a mailto: careers page, which is what separates these from those.
+  { name: "Work & Co", website: "work.co", tags: ["design-studio"] },
+  { name: "Big Human", website: "bighuman.com", tags: ["design-studio"] },
+  { name: "Ramotion", website: "ramotion.com", tags: ["design-studio"] },
+  { name: "Focus Lab", website: "focuslab.agency", tags: ["design-studio"] },
 ];
 
 interface YcSelection {

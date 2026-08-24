@@ -59,6 +59,16 @@
     "postings_at_probe": 16
   },
   {
+    "name": "Airwallex",
+    "ats": "ashby",
+    "token": "airwallex",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:38:39.131Z",
+    "postings_at_probe": 609
+  },
+  {
     "name": "AKQA",
     "ats": "greenhouse",
     "token": "akqa",
@@ -222,6 +232,16 @@
     "verified_at": "2026-08-18T04:01:21.295Z"
   },
   {
+    "name": "Betterment",
+    "ats": "greenhouse",
+    "token": "betterment",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:45.686Z",
+    "postings_at_probe": 32
+  },
+  {
     "name": "Bland",
     "ats": "ashby",
     "token": "bland",
@@ -259,6 +279,16 @@
     ],
     "verified_at": "2026-08-20T07:50:32.630Z",
     "postings_at_probe": 12
+  },
+  {
+    "name": "Calm",
+    "ats": "greenhouse",
+    "token": "calm",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:35.176Z",
+    "postings_at_probe": 1
   },
   {
     "name": "Canonical Ltd.",
@@ -348,6 +378,16 @@
     "postings_at_probe": 69
   },
   {
+    "name": "Cloudflare",
+    "ats": "greenhouse",
+    "token": "cloudflare",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:40.780Z",
+    "postings_at_probe": 304
+  },
+  {
     "name": "Code and Theory",
     "ats": "greenhouse",
     "token": "codeandtheory",
@@ -413,6 +453,26 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:20.429Z"
+  },
+  {
+    "name": "Databricks",
+    "ats": "greenhouse",
+    "token": "databricks",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:39.965Z",
+    "postings_at_probe": 825
+  },
+  {
+    "name": "Datadog",
+    "ats": "greenhouse",
+    "token": "datadog",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:38.842Z",
+    "postings_at_probe": 451
   },
   {
     "name": "Decagon",
@@ -580,6 +640,27 @@
     "verified_at": "2026-08-18T04:01:25.854Z"
   },
   {
+    "name": "Epic Games",
+    "ats": "greenhouse",
+    "token": "epicgames",
+    "tags": [
+      "design-led",
+      "game-studio"
+    ],
+    "verified_at": "2026-08-24T20:37:41.692Z",
+    "postings_at_probe": 162
+  },
+  {
+    "name": "Eventbrite",
+    "ats": "greenhouse",
+    "token": "eventbriteinc",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:38:05.725Z",
+    "postings_at_probe": 1
+  },
+  {
     "name": "Faire",
     "ats": "greenhouse",
     "token": "faire",
@@ -637,6 +718,16 @@
     "verified_at": "2026-08-18T04:01:26.776Z"
   },
   {
+    "name": "Flexport",
+    "ats": "greenhouse",
+    "token": "flexport",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:47.199Z",
+    "postings_at_probe": 163
+  },
+  {
     "name": "Fooji",
     "ats": "workable",
     "token": "fooji",
@@ -686,6 +777,16 @@
     "verified_at": "2026-08-18T04:01:21.306Z"
   },
   {
+    "name": "GitLab",
+    "ats": "greenhouse",
+    "token": "gitlab",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:40.216Z",
+    "postings_at_probe": 207
+  },
+  {
     "name": "Glean",
     "ats": "smartrecruiters",
     "token": "glean",
@@ -693,6 +794,16 @@
       "ai"
     ],
     "verified_at": "2026-08-18T04:01:19.383Z"
+  },
+  {
+    "name": "Glossier",
+    "ats": "greenhouse",
+    "token": "glossier",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:36.174Z",
+    "postings_at_probe": 21
   },
   {
     "name": "Gong",
@@ -780,6 +891,16 @@
     ],
     "verified_at": "2026-08-20T23:53:39.226Z",
     "postings_at_probe": 16
+  },
+  {
+    "name": "HubSpot",
+    "ats": "greenhouse",
+    "token": "hubspot",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:37.745Z",
+    "postings_at_probe": 0
   },
   {
     "name": "Huge",
@@ -1001,6 +1122,26 @@
     "verified_at": "2026-08-18T04:01:31.288Z"
   },
   {
+    "name": "Loom",
+    "ats": "ashby",
+    "token": "loom",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:38:28.348Z",
+    "postings_at_probe": 0
+  },
+  {
+    "name": "Lyft",
+    "ats": "greenhouse",
+    "token": "lyft",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:33.266Z",
+    "postings_at_probe": 161
+  },
+  {
     "name": "Mantis",
     "ats": "greenhouse",
     "token": "mantis",
@@ -1008,6 +1149,16 @@
       "yc"
     ],
     "verified_at": "2026-08-18T04:01:23.805Z"
+  },
+  {
+    "name": "Marqeta",
+    "ats": "greenhouse",
+    "token": "marqeta",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:46.660Z",
+    "postings_at_probe": 2
   },
   {
     "name": "Matera",
@@ -1127,6 +1278,16 @@
     "postings_at_probe": 8
   },
   {
+    "name": "MongoDB",
+    "ats": "greenhouse",
+    "token": "mongodb",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:39.245Z",
+    "postings_at_probe": 405
+  },
+  {
     "name": "Monzo",
     "ats": "greenhouse",
     "token": "monzo",
@@ -1174,6 +1335,27 @@
     ],
     "verified_at": "2026-08-20T07:50:36.417Z",
     "postings_at_probe": 2
+  },
+  {
+    "name": "Nextdoor",
+    "ats": "greenhouse",
+    "token": "nextdoor",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:33.820Z",
+    "postings_at_probe": 19
+  },
+  {
+    "name": "Niantic",
+    "ats": "ashby",
+    "token": "niantic",
+    "tags": [
+      "design-led",
+      "game-studio"
+    ],
+    "verified_at": "2026-08-24T20:38:50.292Z",
+    "postings_at_probe": 0
   },
   {
     "name": "Notion",
@@ -1716,6 +1898,16 @@
     "verified_at": "2026-08-18T04:01:28.593Z"
   },
   {
+    "name": "Spotify",
+    "ats": "lever",
+    "token": "spotify",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:38:34.767Z",
+    "postings_at_probe": 92
+  },
+  {
     "name": "Spreetail Inc.",
     "ats": "ashby",
     "token": "spreetail",
@@ -1881,6 +2073,16 @@
     "verified_at": "2026-08-18T04:01:29.960Z"
   },
   {
+    "name": "Twitch",
+    "ats": "greenhouse",
+    "token": "twitch",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:37:41.153Z",
+    "postings_at_probe": 59
+  },
+  {
     "name": "Typeform",
     "ats": "greenhouse",
     "token": "typeform",
@@ -1938,6 +2140,26 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:40.774Z"
+  },
+  {
+    "name": "Wayfair",
+    "ats": "smartrecruiters",
+    "token": "wayfair",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:39:08.468Z",
+    "postings_at_probe": 1
+  },
+  {
+    "name": "Wealthfront",
+    "ats": "lever",
+    "token": "wealthfront",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:39:04.046Z",
+    "postings_at_probe": 22
   },
   {
     "name": "Webflow",
@@ -2010,5 +2232,17 @@
     ],
     "verified_at": "2026-08-20T23:57:21.046Z",
     "postings_at_probe": 30
+  },
+  {
+    "name": "Zendesk",
+    "ats": "workday",
+    "token": "zendesk",
+    "wdN": "wd1",
+    "site": "zendesk",
+    "tags": [
+      "design-led"
+    ],
+    "verified_at": "2026-08-24T20:43:31.822Z",
+    "postings_at_probe": 20
   }
 ]

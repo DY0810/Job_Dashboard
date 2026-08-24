@@ -293,6 +293,17 @@ const ATS_SIGNATURES = [
   { ats: "recruitee", re: /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.recruitee\.com/i },
   { ats: "teamtailor", re: /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.teamtailor\.com/i },
   { ats: "pinpoint", re: /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.pinpointhq\.com/i },
+  // Workday last, and the only signature with more than a token to capture. A Workday board
+  // is addressed by THREE coordinates — tenant, data-centre (wdN) and a site slug — and the
+  // site is routinely a bespoke string no name-derived guess produces
+  // (zillow -> `Zillow_Group_External`). `workdaySiteGuesses` cannot reach those, so before
+  // this the careers page was read, the tenant sat right there in the HTML, and the company
+  // still landed in the unresolved report. Case-preserving: the site slug is case-sensitive.
+  {
+    ats: "workday",
+    re: /([a-z0-9][a-z0-9-]*)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([A-Za-z0-9_-]+)/,
+    extra: (m) => ({ wdN: m[2], site: m[3] }),
+  },
 ];
 
 // Tokens that appear in these patterns but are the platform's own marketing pages, not a
@@ -405,7 +416,13 @@ export async function detectAtsFromCareers(website) {
     if (!(await robotsAllows(url))) continue;
     const { status, text } = await fetchHtml(url);
     if (status !== 200 || !text) continue;
-    for (const { ats, token } of matchAtsSignatures(text)) found.set(`${ats}:${token}`, { ats, token });
+    // Spread the candidate whole. Destructuring `{ ats, token }` here dropped the `extra`
+    // that carries Workday's wdN/site, so a detected Workday board arrived at `probeAts`
+    // missing the two coordinates that make its URL — and could never confirm.
+    for (const candidate of matchAtsSignatures(text)) {
+      const { ats, token, extra } = candidate;
+      found.set(`${ats}:${token}${extra ? `:${extra.wdN}:${extra.site}` : ""}`, candidate);
+    }
     if (found.size > 0) break; // one page that names its ATS is enough
   }
   return [...found.values()];
@@ -424,8 +441,11 @@ export function matchAtsSignatures(text) {
     if (!m) continue;
     const token = m[1].toLowerCase();
     if (NOT_A_TOKEN.has(token) || token.length < 2) continue;
-    const key = `${sig.ats}:${token}`;
-    if (!found.has(key)) found.set(key, { ats: sig.ats, token });
+    // Workday carries wdN/site alongside the token; every other ATS needs the token alone.
+    const extra = sig.extra ? sig.extra(m) : undefined;
+    if (extra && (NOT_A_TOKEN.has(extra.site.toLowerCase()) || extra.site.length < 2)) continue;
+    const key = `${sig.ats}:${token}${extra ? `:${extra.wdN}:${extra.site}` : ""}`;
+    if (!found.has(key)) found.set(key, { ats: sig.ats, token, ...(extra ? { extra } : {}) });
   }
   return [...found.values()];
 }
@@ -482,7 +502,7 @@ export async function resolveCompany(
   // never trusted from the HTML.
   if (detect && website) {
     for (const candidate of await detectAtsFromCareers(website)) {
-      const result = await probeAts(candidate.ats, candidate.token, {});
+      const result = await probeAts(candidate.ats, candidate.token, candidate.extra ?? {});
       attempts.push(result);
       if (result.confirmed) return { confirmed: result, attempts };
     }
