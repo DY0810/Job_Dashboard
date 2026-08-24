@@ -2,7 +2,11 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { driver, getDb, needsTurso } from '@/lib/db';
+import { connectorRuns } from '@/lib/db/schema';
 import { phaseFromLog, type Phase } from '@/lib/refresh-status';
+import { pendingRequest, requestRefresh } from '@/lib/refresh-queue';
+import { desc } from 'drizzle-orm';
 
 /**
  * The refresh button. The pipeline — 18 connectors, enrich, ghost detection — runs on the
@@ -44,15 +48,42 @@ function phase(sinceMs: number): Phase {
   return phaseFromLog(readFileSync(join(LOG_DIR, newest), 'utf8'), sinceMs);
 }
 
+/** When the laptop last finished a cycle — how the hosted page knows a request landed. */
+async function lastRunAt(): Promise<number | null> {
+  if (needsTurso()) return null;
+  const row = await driver(getDb())
+    .select({ startedAt: connectorRuns.startedAt })
+    .from(connectorRuns)
+    .orderBy(desc(connectorRuns.startedAt))
+    .limit(1)
+    .get();
+  return row?.startedAt.getTime() ?? null;
+}
+
 export async function GET() {
-  if (hosted()) return Response.json({ hosted: true, running: false, phase: 'idle' });
+  if (hosted()) {
+    // Nothing runs here. Report whether a request is still waiting for the laptop, and when
+    // the laptop last finished — the page watches that number to know its ask landed.
+    if (needsTurso()) return Response.json({ hosted: true, queued: false, lastRunAt: null });
+    const waiting = await pendingRequest(getDb());
+    return Response.json({ hosted: true, queued: Boolean(waiting), lastRunAt: await lastRunAt() });
+  }
   const state = running();
   return Response.json({ hosted: false, running: state.running, phase: state.running ? phase(state.sinceMs) : 'idle' });
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   if (hosted()) {
-    return Response.json({ hosted: true, error: 'the pipeline runs on the laptop' }, { status: 501 });
+    // The pipeline is on the laptop; leave a request and let it claim one on its next poll.
+    if (needsTurso()) return Response.json({ error: 'database not configured' }, { status: 503 });
+    try {
+      const by = new URL(request.url).searchParams.get('by')?.slice(0, 40) || null;
+      const { queued } = await requestRefresh(getDb(), by);
+      return Response.json({ hosted: true, queued, lastRunAt: await lastRunAt() }, { status: 202 });
+    } catch (error) {
+      console.error('POST /api/refresh (hosted)', error);
+      return Response.json({ error: 'could not queue a refresh' }, { status: 500 });
+    }
   }
   const state = running();
   if (state.running) {

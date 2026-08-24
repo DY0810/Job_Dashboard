@@ -20,7 +20,8 @@
     "status": "node scripts/status.ts",
     "backfill:locations": "node scripts/backfill-locations.ts",
     "merge:duplicates": "node scripts/merge-duplicates.ts",
-    "refresh": "bash scripts/refresh.sh"
+    "refresh": "bash scripts/refresh.sh",
+    "claim:refresh": "node --env-file-if-exists=.env.local scripts/claim-refresh.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",

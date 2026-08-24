@@ -179,3 +179,23 @@ export const noteComments = sqliteTable(
   },
   (table) => [index('note_comments_note_idx').on(table.noteId), index('note_comments_created_idx').on(table.createdAt)],
 );
+
+/**
+ * A refresh asked for from the hosted site. The pipeline runs on the machine that holds
+ * `workie.db`, so a visitor cannot start one directly — they leave a request here and the
+ * laptop claims it on its next poll.
+ *
+ * Written by the Vercel function, so this table is deliberately absent from `push:remote`'s
+ * mirror list: the laptop reads it from Turso and must never overwrite it with its own copy.
+ * `claimed_at` null is the queue; one unclaimed row is enough, however many people ask.
+ */
+export const refreshRequests = sqliteTable(
+  'refresh_requests',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    requestedBy: text('requested_by'),
+    requestedAt: integer('requested_at', { mode: 'timestamp_ms' }).notNull(),
+    claimedAt: integer('claimed_at', { mode: 'timestamp_ms' }),
+  },
+  (table) => [index('refresh_requests_claimed_idx').on(table.claimedAt)],
+);

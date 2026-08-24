@@ -18,13 +18,18 @@ const LABEL: Record<Phase, string> = {
 /**
  * Runs the real refresh cycle on demand, and shows which step it is on. New jobs appear the
  * moment enrich finishes — the table re-renders then, while the push to the hosted copy
- * carries on behind it. On the hosted site there is no pipeline to run: the button re-pulls
- * the copy the laptop last pushed, and the label says that rather than pretending.
+ * carries on behind it.
+ *
+ * On the hosted site there is no pipeline to run, so the button ASKS: it records a request
+ * in the shared database and watches for the laptop's next cycle to land. That is what lets
+ * someone you shared the link with fetch new jobs without any access to your machine — and
+ * if the machine is asleep, the request waits, which the label says rather than spinning.
  */
 export function RefreshButton({ hosted }: { hosted: boolean }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>('idle');
   const [note, setNote] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState(false);
   const refreshedTable = useRef(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -55,14 +60,49 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
     }, 2000);
   };
 
+  /**
+   * On the hosted site there is no pipeline to start: it runs on the laptop that holds
+   * workie.db. The ask is recorded in the shared database and the laptop claims it on its
+   * next poll, so this watches for the laptop's cycle to land rather than pretending to run
+   * one. If the laptop is asleep the request simply waits — said plainly, not spun.
+   */
+  const askLaptop = async () => {
+    const by = (() => {
+      try { return localStorage.getItem('talkie-author'); } catch { return null; }
+    })();
+    const res = await fetch(`/api/refresh${by ? `?by=${encodeURIComponent(by)}` : ''}`, {
+      method: 'POST',
+    }).catch(() => null);
+    if (!res?.ok) return setNote('could not ask for a refresh');
+
+    const since = ((await res.json()) as { lastRunAt: number | null }).lastRunAt;
+    setWaiting(true);
+    setNote('asked — your laptop picks this up within a minute');
+    const askedAt = Date.now();
+    stop();
+    timer.current = setInterval(async () => {
+      const poll = await fetch('/api/refresh', { cache: 'no-store' }).catch(() => null);
+      if (!poll?.ok) return;
+      const state = (await poll.json()) as { lastRunAt: number | null };
+      if (state.lastRunAt && state.lastRunAt !== since) {
+        stop();
+        setWaiting(false);
+        setNote('new jobs in');
+        router.refresh();
+        setTimeout(() => setNote(null), 5000);
+        return;
+      }
+      if (Date.now() - askedAt > 6 * 60_000) {
+        stop();
+        setWaiting(false);
+        setNote('no answer yet — the laptop may be asleep; it will run when it wakes');
+      }
+    }, 5000);
+  };
+
   const start = async () => {
     setNote(null);
-    if (hosted) {
-      // No pipeline here. Re-render from the replica and say where the data comes from.
-      router.refresh();
-      setNote('latest copy pulled — the laptop pushes new jobs every 30 minutes');
-      return;
-    }
+    if (hosted) return askLaptop();
     const res = await fetch('/api/refresh', { method: 'POST' }).catch(() => null);
     if (!res) return setNote('could not reach the server');
     if (res.status === 409) {
@@ -75,7 +115,7 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
     poll();
   };
 
-  const busy = phase !== 'idle' && phase !== 'done';
+  const busy = waiting || (phase !== 'idle' && phase !== 'done');
   return (
     <span className="inline-flex items-baseline gap-3">
       <button
@@ -86,7 +126,7 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
         aria-busy={busy}
         aria-live="polite"
       >
-        {LABEL[phase]}
+        {waiting ? 'waiting for the laptop…' : LABEL[phase]}
       </button>
       {note ? <span className="text-[11px] text-fg-dim">{note}</span> : null}
     </span>

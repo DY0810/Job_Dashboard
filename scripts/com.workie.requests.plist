@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The laptop's side of the hosted refresh button. Install (from the repo root):
+
+    sed -e "s|__WORKIE_DIR__|$PWD|g" -e "s|__NODE_BIN__|$(dirname "$(command -v node)")|g" \
+      scripts/com.workie.requests.plist > ~/Library/LaunchAgents/com.workie.requests.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.workie.requests.plist
+
+  Same two substitutions, same reason as com.workie.refresh: launchd hands a job a bare PATH,
+  so an nvm node is not on it.
+
+  This is what makes the deployed site's refresh button real. Somebody there cannot run the
+  pipeline — it lives here — so they leave a row in `refresh_requests` on Turso and this
+  claims it. Almost every tick finds nothing and exits immediately.
+
+    launchctl kickstart -p gui/$(id -u)/com.workie.requests   check for a request now
+    launchctl bootout gui/$(id -u)/com.workie.requests        stop and uninstall
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.workie.requests</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__/node</string>
+    <string>--env-file-if-exists=.env.local</string>
+    <string>__WORKIE_DIR__/scripts/claim-refresh.ts</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__WORKIE_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__NODE_BIN__:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- A minute is the whole promise: "your laptop picks this up within a minute" is what the
+       hosted button says. Shorter would poll Turso 1,440+ times a day to save seconds on a
+       button nobody presses often. -->
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <!-- No RunAtLoad: a request made while the laptop was asleep is still claimed on the first
+       tick after waking, and starting a full cycle at every login is not what this is for. -->
+
+  <key>StandardOutPath</key>
+  <string>__WORKIE_DIR__/logs/requests.log</string>
+  <key>StandardErrorPath</key>
+  <string>__WORKIE_DIR__/logs/requests.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
