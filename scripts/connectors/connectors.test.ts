@@ -13,11 +13,11 @@ import type { Connector, ConnectorContext, ConnectorPosting, Runtime } from '../
 
 import { ashby, greenhouse, lever, recruitee, smartrecruiters, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
-import { braintrust, himalayas, hn, jobicy, remoteok, remotive, workingnomads } from './agg.ts';
+import { braintrust, himalayas, hn, jobicy, muse, remoteok, remotive, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
 import { adzuna, careerjet, jooble, usajobs } from './keyed.ts';
 import { parseReadmeTable, simplifyInternships } from './repo.ts';
-import { dribbble, jobspresso, weworkremotely, weworkremotelyDesign } from './rss.ts';
+import { designjobsCareers, dribbble, jobspresso, weworkremotely, weworkremotelyDesign } from './rss.ts';
 
 /** A runtime that answers every request with one canned body. */
 function stubRuntime(body: string): Runtime {
@@ -98,6 +98,8 @@ const RECORDED: Connector[] = [
   teamtailor,
   amazon,
   jobicy,
+  muse,
+  designjobsCareers,
 ];
 
 describe.each(RECORDED.map((connector) => [connector.name, connector] as const))(

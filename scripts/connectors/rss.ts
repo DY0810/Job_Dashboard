@@ -154,33 +154,77 @@ export const dribbble = rssConnector('dribbble', 'https://dribbble.com/jobs.rss'
   };
 });
 
-/** Jobspresso puts `"Company<br>⚲&nbsp;Location"` in `dc:creator` and the role in the title. */
-export const jobspresso: Connector = {
-  ...rssConnector('jobspresso', 'https://jobspresso.co/?feed=job_feed', (item) => {
-    const [company, place] = (item.creator ?? '').split(/<br\s*\/?>/i);
-    return {
-      company: (company ?? '').trim(),
-      title: (item.title ?? '').trim(),
-      location: (place ?? '').replace(/[⚲ ]/g, ' ').trim() || 'Remote',
-    };
-  }),
-  // jobspresso.co robots.txt carries `Disallow: /*?`, which matches its own published feed
-  // URL (`/?feed=job_feed`). That rule is plainly aimed at crawler query-string explosion
-  // rather than at the syndication feed the site publishes for exactly this purpose - but
-  // the project constraint is to respect robots.txt, and reading intent into a Disallow is
-  // negotiating with it rather than respecting it. So this feed is refused too.
-  //
-  // Declared as a SKIP rather than left to fail the robots check inside `fetch`, the way
-  // `remotive` is. Under a 30-minute scheduler that difference stops being cosmetic: an
-  // in-fetch refusal is an `error` run, so it retried every cycle — re-fetching this
-  // host's robots.txt 48 times a day to be told no 48 times, and sitting in
-  // `npm run status` as a red connector rather than as a decision someone made. A host
-  // that has refused us gets asked once, when we decide whether to run it.
-  //
-  // Worth trying before reversing this: a path-based feed URL (e.g. /feed/) that robots.txt
-  // permits outright would make the question moot. To reverse, delete this `skip` and pass
-  // `respectRobots: false` to `rssConnector`.
-  skip: () => 'jobspresso.co/robots.txt disallows /*? (its own feed URL) — left in place, not run',
+/**
+ * Jobspresso puts `"Company<br>⚲&nbsp;Location"` in `dc:creator` and the role in the title.
+ *
+ * The PATH feed, not `?feed=job_feed`. Jobspresso's robots.txt carries `Disallow: /*?`, so the
+ * query form is refused for every posting — this connector logged
+ * `robots.txt disallows https://jobspresso.co/` on every cycle and returned nothing at all.
+ * `/jobs/feed/` is the same WP Job Manager feed reached without a query string: allowed, and
+ * it serves 20 items where the query form served zero.
+ */
+export const jobspresso = rssConnector('jobspresso', 'https://jobspresso.co/jobs/feed/', (item) => {
+  const [company, place] = (item.creator ?? '').split(/<br\s*\/?>/i);
+  return {
+    company: (company ?? '').trim(),
+    title: (item.title ?? '').trim(),
+    location: (place ?? '').replace(/[⚲ ]/g, ' ').trim() || 'Remote',
+  };
+});
+
+/**
+ * DesignJobs.careers — a design-only board, and the only genuinely new one with a keyless feed.
+ *
+ * Fixed 50-item firehose: `?limit=`, `?page=`, `?category=` and `?level=` are all ACCEPTED and
+ * all IGNORED — page 2 returns a byte-identical body to page 1 — so there is exactly one URL
+ * worth asking for. robots.txt is `Allow: /` with `Crawl-delay: 5` and does not mention /rss.
+ *
+ * Nothing is structured except `<category>`. Location and level are bolded labels inside the
+ * CDATA description:
+ *
+ *   <p><strong>Location:</strong> Seattle, United States of America</p>
+ *   <p><strong>Level:</strong> Entry Level</p>
+ *
+ * Per-label regexes rather than one positional match, because presence is NOT uniform — Level
+ * appears on 43 of 50 items, Salary on 18, and there are six different label orders. A single
+ * ordered pattern missed 32 of 50.
+ *
+ * Worth having despite a thin US slice (~10 of 50, and the sampled entry-level rows were all
+ * outside the US): every item is design, the window is only ~7 hours wide, and a connector
+ * polling hourly accumulates what one fetch cannot show.
+ */
+const DJ_LABEL = (label: string) =>
+  new RegExp(`<strong>\\s*${label}\\s*:\\s*</strong>\\s*([^<]+)`, 'i');
+const DJ_LOCATION = DJ_LABEL('Location');
+const DJ_TYPE = DJ_LABEL('Type');
+
+const DJ_TYPE_MAP: Record<string, EmploymentType> = {
+  'full-time': 'full-time',
+  'part-time': 'part-time',
+  contract: 'contract',
+  freelance: 'freelance',
+  internship: 'internship',
 };
 
-export const rssConnectors: Connector[] = [weworkremotely, weworkremotelyDesign, dribbble, jobspresso];
+export const designjobsCareers = rssConnector(
+  'designjobs-careers',
+  'https://designjobs.careers/rss',
+  (item) => {
+    const body = item.content ?? item.contentSnippet ?? '';
+    return {
+      // `dc:creator` is the employer; the title is the role alone, already separated.
+      company: (item.creator ?? '').trim(),
+      title: (item.title ?? '').trim(),
+      location: DJ_LOCATION.exec(body)?.[1]?.trim() || null,
+      employmentType: DJ_TYPE_MAP[(DJ_TYPE.exec(body)?.[1] ?? '').trim().toLowerCase()],
+    };
+  },
+);
+
+export const rssConnectors: Connector[] = [
+  weworkremotely,
+  weworkremotelyDesign,
+  dribbble,
+  jobspresso,
+  designjobsCareers,
+];

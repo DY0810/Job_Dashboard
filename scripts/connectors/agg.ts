@@ -507,6 +507,83 @@ export const jobicy: Connector = {
   },
 };
 
+// ---------------------------------------------------------------------------------------
+// The Muse — the only board found where BOTH location and level are structured and filterable
+// ---------------------------------------------------------------------------------------
+
+interface MuseJob {
+  name?: string;
+  contents?: string;
+  publication_date?: string;
+  company?: { name?: string };
+  locations?: { name?: string }[];
+  levels?: { name?: string }[];
+  refs?: { landing_page?: string };
+}
+
+/**
+ * Asked per LEVEL, not once for the category, and that is the whole point of this source.
+ *
+ * `category=Design and UX` alone is 2,256 rows, ~1,800 of them senior — rows `enrich` would
+ * fetch, classify and then throw away. The API filters server-side on a real enumerated field,
+ * so asking only for the three levels this dashboard keeps turns a 113-page download into ~8
+ * pages. Measured 2026-08-24: Internship 35, Entry Level 2, Mid Level 410.
+ *
+ * `descending=true` matters as much. Unsorted, the first page is a mix reaching back over a
+ * year — The Muse leaves stale rows published; sorted, page 0 runs 13-14 of 20 inside the
+ * 60-day window with a median age under a month.
+ */
+const MUSE_LEVELS = ['Internship', 'Entry Level', 'Mid Level'] as const;
+/** Mid Level is 21 pages; the tail is progressively staler, so the newest few are the value. */
+const MUSE_PAGES = 3;
+
+export const muse: Connector = {
+  name: 'muse',
+  kind: 'aggregator',
+  minIntervalMs: 60 * 60 * 1000,
+  async fetch(context) {
+    const jobs: MuseJob[] = [];
+    for (const level of MUSE_LEVELS) {
+      for (let page = 0; page < MUSE_PAGES; page += 1) {
+        const query = new URLSearchParams({
+          category: 'Design and UX',
+          level,
+          page: String(page),
+          descending: 'true',
+        });
+        // A page that fails ends THIS level and keeps everything already collected, the way
+        // the ATS connectors isolate one dead board token from the rest of the registry.
+        // Nine requests per cycle is nine chances to throw away eight good pages otherwise.
+        let body: { results?: MuseJob[]; page_count?: number };
+        try {
+          body = await context.runtime.fetchJson(`https://www.themuse.com/api/public/jobs?${query}`);
+        } catch (error) {
+          context.degraded(`${level} page ${page}: ${(error as Error).message}`);
+          break;
+        }
+        if (!body.results?.length) break;
+        jobs.push(...body.results);
+        // `page` is zero-based and `page_count` is a count, so this is the last page.
+        if (page + 1 >= (body.page_count ?? 0)) break;
+      }
+    }
+    return jobs
+      .filter((job) => job.refs?.landing_page)
+      .map((job) =>
+        aggRow('muse', {
+          company: job.company?.name,
+          title: job.name,
+          // Several offices means several rows on one posting; the first is enough for the
+          // normalizer, and these are already "City, ST" rather than free text.
+          location: job.locations?.[0]?.name ?? 'Remote',
+          url: job.refs!.landing_page!,
+          postedAt: toEpochMs(job.publication_date),
+          description: job.contents ?? '',
+        }),
+      );
+  },
+};
+
 export const aggConnectors: Connector[] = [
   hn,
   remoteok,
@@ -515,4 +592,5 @@ export const aggConnectors: Connector[] = [
   braintrust,
   himalayas,
   jobicy,
+  muse,
 ];
