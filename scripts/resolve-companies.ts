@@ -420,6 +420,42 @@ const DESIGN_WAVE2_SEEDS: Seed[] = [
   { name: "Wieden+Kennedy", website: "wk.com", tags: ["design-studio"] },
   { name: "Droga5", website: "droga5.com", tags: ["design-studio"] },
   { name: "Koto", website: "koto.studio", tags: ["design-studio"] },
+
+  // Wave 3 — added 2026-08-24 with the careers-page ATS detection fallback, so companies
+  // whose board token is not their brand name (Maze -> ashby:mazedesign) now resolve.
+  { name: "Mercury", website: "mercury.com", tags: ["design-led"] },
+  { name: "1Password", website: "1password.com", tags: ["design-led"] },
+  { name: "Mixpanel", website: "mixpanel.com", tags: ["design-led"] },
+  { name: "Typeform", website: "typeform.com", tags: ["design-led"] },
+  { name: "Postman", website: "postman.com", tags: ["design-led"] },
+  { name: "Sourcegraph", website: "sourcegraph.com", tags: ["design-led"] },
+  { name: "ClickUp", website: "clickup.com", tags: ["design-led"] },
+  { name: "Gong", website: "gong.io", tags: ["design-led"] },
+  { name: "Faire", website: "faire.com", tags: ["design-led"] },
+  { name: "Persona", website: "withpersona.com", tags: ["design-led"] },
+  { name: "Modern Treasury", website: "moderntreasury.com", tags: ["design-led"] },
+  { name: "Hex", website: "hex.tech", tags: ["design-led"] },
+  { name: "Maze", website: "maze.co", tags: ["design-led"] },
+  { name: "Pitch", website: "pitch.com", tags: ["design-led"] },
+  { name: "Whimsical", website: "whimsical.com", tags: ["design-led"] },
+  { name: "Coda", website: "coda.io", tags: ["design-led"] },
+  { name: "Contentful", website: "contentful.com", tags: ["design-led"] },
+  { name: "Sanity", website: "sanity.io", tags: ["design-led"] },
+  { name: "Headspace", website: "headspace.com", tags: ["design-led"] },
+  { name: "Whoop", website: "whoop.com", tags: ["design-led"] },
+  { name: "Oura", website: "ouraring.com", tags: ["design-led"] },
+  { name: "Strava", website: "strava.com", tags: ["design-led"] },
+  { name: "Bumble", website: "bumble.com", tags: ["design-led"] },
+  { name: "Peloton", website: "onepeloton.com", tags: ["design-led"] },
+  { name: "Lattice", website: "lattice.com", tags: ["design-led"] },
+  { name: "Canva", website: "canva.com", tags: ["design-led"] },
+  { name: "Lemonade", website: "lemonade.com", tags: ["design-led"] },
+
+  // Studios large enough to run a real ATS
+  { name: "Buck", website: "buck.co", tags: ["design-studio"] },
+  { name: "Active Theory", website: "activetheory.net", tags: ["design-studio"] },
+  { name: "Upstatement", website: "upstatement.com", tags: ["design-studio"] },
+  { name: "Mother Design", website: "motherdesign.com", tags: ["design-studio"] },
 ];
 
 interface YcSelection {
@@ -516,9 +552,13 @@ async function resolveGroup(
     }
 
     const { confirmed, attempts } = (await resolveCompany(seed.name, seed.website, {
-      tryWorkday: !!seed.tryWorkday,
-      extraAts,
-    })) as ResolveResult;
+        tryWorkday: !!seed.tryWorkday,
+        extraAts,
+        // Design groups get the careers-page ATS detection fallback: these are the companies
+        // whose token is least likely to match the brand name (studios especially), and the
+        // ones we most want. Other groups skip it — no reason to add page fetches there.
+        detect: group === "design" || group === "design-wave2" || group === "studios",
+      })) as ResolveResult;
 
     if (confirmed) {
       const entry: RegistryEntry = {

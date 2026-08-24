@@ -265,6 +265,171 @@ function workdaySiteGuesses(token) {
   ];
 }
 
+// ---------------------------------------------------------------------------------------
+// ATS detection from a careers page — for companies whose token is NOT derivable from the name
+// ---------------------------------------------------------------------------------------
+//
+// A company like "The Browser Company" runs its board on Ashby under a token that no
+// name/website slug produces, so `candidateTokens` never finds it and it falls into the
+// unresolved report. The fix is not to scrape the postings out of the HTML — that is fragile,
+// often JS-rendered, and a ToS grey area. It is to read the page ONLY to learn which ATS it
+// delegates to and under what token: nearly every hosted career page links or embeds its ATS
+// with the token in the URL (`jobs.lever.co/TOKEN`, `boards.greenhouse.io/embed/job_board?for=TOKEN`).
+//
+// Detection just proposes a candidate. It is still confirmed the same way every other token is
+// — a real 200 from the ATS's own JSON API — so the "NEVER GUESS A TOKEN" rule holds: the HTML
+// is never trusted for job content, only for the pointer to the real API.
+
+// The token is captured group 1 in each. Ordered specific-before-generic so an API URL in the
+// page (which already carries the exact token) wins over a human-facing one.
+const ATS_SIGNATURES = [
+  { ats: "greenhouse", re: /boards-api\.greenhouse\.io\/v1\/boards\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)/i },
+  { ats: "greenhouse", re: /(?:boards|job-boards)\.greenhouse\.io\/(?:embed\/job_board\?(?:[^"'&]*&)?for=)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)/i },
+  { ats: "lever", re: /(?:api\.lever\.co\/v0\/postings|jobs\.lever\.co)\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)/i },
+  { ats: "ashby", re: /(?:api\.ashbyhq\.com\/posting-api\/job-board|jobs\.ashbyhq\.com)\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)/i },
+  { ats: "workable", re: /(?:apply\.workable\.com\/(?:api\/v1\/widget\/accounts\/)?|https?:\/\/)([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.workable\.com/i },
+  { ats: "workable", re: /apply\.workable\.com\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)/i },
+  { ats: "smartrecruiters", re: /(?:careers|jobs)\.smartrecruiters\.com\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)/i },
+  { ats: "recruitee", re: /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.recruitee\.com/i },
+  { ats: "teamtailor", re: /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.teamtailor\.com/i },
+  { ats: "pinpoint", re: /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.pinpointhq\.com/i },
+];
+
+// Tokens that appear in these patterns but are the platform's own marketing pages, not a
+// company board — never propose them.
+const NOT_A_TOKEN = new Set(["embed", "www", "job_board", "job-board", "postings", "jobs", "api", "v0", "v1", "boards", "account", "accounts", "widget", "support", "help", "about", "blog"]);
+
+const HTML_TIMEOUT_MS = 12000;
+const CAREERS_PATHS = ["/careers", "/careers/", "/jobs", "/careers/jobs", "/company/careers", "/"];
+const robotsCache = new Map();
+
+async function fetchHtml(url) {
+  const host = new URL(url).host;
+  await throttleHost(host);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HTML_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml" },
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    // Cap the read: the ATS pointer is in the <head>/early body, and a full marketing page can
+    // be megabytes. 512KB is plenty and bounds a hostile response.
+    const text = (await res.text()).slice(0, 512 * 1024);
+    return { status: res.status, text };
+  } catch {
+    return { status: 0, text: "" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// robots.txt Disallow → RegExp. Honors the two wildcards the spec defines: `*` is any run,
+// `$` anchors the URL end. This is why a `Disallow: /*?` (query URLs) correctly does NOT block
+// a plain `/careers` — the naive startsWith check that bit the jobspresso connector.
+function disallowToRegex(pattern) {
+  let re = "";
+  for (const ch of pattern) {
+    if (ch === "*") re += ".*";
+    else if (ch === "$") re += "$";
+    // Every other regex metachar is a literal in a robots pattern and must be escaped — `?`
+    // above all, since `/*?` (query-string rule) is common and an unescaped `?` becomes a lazy
+    // quantifier that wrongly matches a plain `/careers`.
+    else re += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp("^" + re);
+}
+
+/**
+ * Is `pathname` allowed for `User-agent: *` by this robots.txt body? Pure, so the wildcard
+ * handling that the naive startsWith check got wrong (a `Disallow: /*?` must NOT block a plain
+ * `/careers` — the exact bug that kept the jobspresso connector dead) is testable offline.
+ * @param {string} robotsText
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+export function robotsPathAllowed(robotsText, pathname) {
+  const rules = [];
+  let appliesToUs = false;
+  for (const raw of robotsText.split(/\r?\n/)) {
+    const line = raw.replace(/#.*/, "").trim();
+    const m = /^([a-z-]+)\s*:\s*(.*)$/i.exec(line);
+    if (!m) continue;
+    const field = m[1].toLowerCase();
+    const value = m[2].trim();
+    if (field === "user-agent") appliesToUs = value === "*";
+    else if (field === "disallow" && appliesToUs && value) rules.push(disallowToRegex(value));
+  }
+  return !rules.some((re) => re.test(pathname));
+}
+
+async function robotsAllows(url) {
+  const u = new URL(url);
+  let text = robotsCache.get(u.host);
+  if (text === undefined) {
+    text = "";
+    try {
+      const res = await fetch(`${u.protocol}//${u.host}/robots.txt`, {
+        headers: { "User-Agent": USER_AGENT },
+        signal: AbortSignal.timeout(HTML_TIMEOUT_MS),
+      });
+      if (res.status === 200) text = await res.text();
+    } catch {
+      text = ""; // no reachable robots.txt is treated as no restriction, the conventional default
+    }
+    robotsCache.set(u.host, text);
+  }
+  return robotsPathAllowed(text, u.pathname);
+}
+
+/**
+ * Read a company's careers page(s) to detect which ATS + token it uses. Returns candidate
+ * `{ ats, token }` pairs (deduped, never confirmed here) for `resolveCompany` to verify against
+ * the real API. Respects robots.txt; skips a path it disallows. Never throws.
+ *
+ * @param {string} website
+ * @returns {Promise<{ ats: string, token: string }[]>}
+ */
+export async function detectAtsFromCareers(website) {
+  let origin;
+  try {
+    const u = new URL(website.startsWith("http") ? website : `https://${website}`);
+    origin = `${u.protocol}//${u.host}`;
+  } catch {
+    return [];
+  }
+  const found = new Map(); // `${ats}:${token}` -> {ats, token}, first-seen wins
+  for (const path of CAREERS_PATHS) {
+    const url = `${origin}${path}`;
+    if (!(await robotsAllows(url))) continue;
+    const { status, text } = await fetchHtml(url);
+    if (status !== 200 || !text) continue;
+    for (const { ats, token } of matchAtsSignatures(text)) found.set(`${ats}:${token}`, { ats, token });
+    if (found.size > 0) break; // one page that names its ATS is enough
+  }
+  return [...found.values()];
+}
+
+/**
+ * The pure core of detection: pull `{ ats, token }` candidates out of one page's HTML. Split
+ * out so the signature set and the token filter are testable without the network.
+ * @param {string} text
+ * @returns {{ ats: string, token: string }[]}
+ */
+export function matchAtsSignatures(text) {
+  const found = new Map();
+  for (const sig of ATS_SIGNATURES) {
+    const m = sig.re.exec(text);
+    if (!m) continue;
+    const token = m[1].toLowerCase();
+    if (NOT_A_TOKEN.has(token) || token.length < 2) continue;
+    const key = `${sig.ats}:${token}`;
+    if (!found.has(key)) found.set(key, { ats: sig.ats, token });
+  }
+  return [...found.values()];
+}
+
 /**
  * Try every (ats, token) combination for one company, cheapest ATS families first,
  * stopping at the first confirmed hit. Always returns — never throws — so a single
@@ -282,9 +447,13 @@ function workdaySiteGuesses(token) {
 /**
  * @param {string} name
  * @param {string} [website]
- * @param {{ tryWorkday?: boolean, extraAts?: string[] }} [options]
+ * @param {{ tryWorkday?: boolean, extraAts?: string[], detect?: boolean }} [options]
  */
-export async function resolveCompany(name, website, { tryWorkday = false, extraAts = [] } = {}) {
+export async function resolveCompany(
+  name,
+  website,
+  { tryWorkday = false, extraAts = [], detect = false } = {},
+) {
   const tokens = candidateTokens(name, website);
   const attempts = [];
 
@@ -305,6 +474,17 @@ export async function resolveCompany(name, website, { tryWorkday = false, extraA
           if (result.confirmed) return { confirmed: result, attempts };
         }
       }
+    }
+  }
+
+  // Last resort, and only when asked: the name gave us nothing, so read the careers page to
+  // find the ATS it points at. The detected token is still confirmed against the API below,
+  // never trusted from the HTML.
+  if (detect && website) {
+    for (const candidate of await detectAtsFromCareers(website)) {
+      const result = await probeAts(candidate.ats, candidate.token, {});
+      attempts.push(result);
+      if (result.confirmed) return { confirmed: result, attempts };
     }
   }
 
