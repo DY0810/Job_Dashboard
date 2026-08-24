@@ -1,0 +1,77 @@
+# The refresh cycle, off the laptop. Same scripts/refresh.sh that launchd ran, on a machine
+# that is never asleep. The pipeline is stateful — workie.db carries dedupe keys, ghost
+# absence counts and delistings between cycles — so the file rides the Actions cache from
+# run to run, and a lost cache rebuilds it from Turso, which holds every mirrored column.
+#
+# One writer lineage, ever: the moment this schedule is live, the laptop's launchd agent
+# must be off. Two machines each ingesting into their own workie.db assign different ids to
+# new postings, and each push then deletes the other's rows as strays.
+name: refresh
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false # a running ingest finishes; the next tick waits behind it
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120 # a plain cycle is ~10 min; the weekly linkcheck budgets 90 inside refresh.sh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # refresh.sh reads its environment from .env.local, exactly as it does on a laptop —
+      # writing one here means the script runs verbatim, mirror step and all.
+      - name: Configure environment
+        run: |
+          printf 'TURSO_DATABASE_URL=%s\nTURSO_AUTH_TOKEN=%s\n' \
+            "$TURSO_DATABASE_URL" "$TURSO_AUTH_TOKEN" > .env.local
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      # A cache entry is immutable, so every run saves under its own id and restore takes
+      # the newest by prefix. The linkcheck stamp travels with the db so "weekly" survives
+      # the runner being stateless.
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            workie.db
+            logs/.linkcheck-stamp
+          key: workie-db-${{ github.run_id }}
+          restore-keys: workie-db-
+
+      - name: Bootstrap from Turso when the cache is cold
+        run: |
+          if [ ! -f workie.db ]; then
+            node --env-file-if-exists=.env.local scripts/pull-remote.ts
+            # A cold start should not also be a 90-minute linkcheck; let that wait a week.
+            mkdir -p logs && touch logs/.linkcheck-stamp
+          fi
+
+      # Claims a pending hosted-button request if one is waiting, then runs the ordinary
+      # cycle either way — ingest, enrich, weekly linkcheck, mirror to Turso.
+      - name: Run refresh cycle
+        run: node --env-file-if-exists=.env.local scripts/claim-refresh.ts --always
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            workie.db
+            logs/.linkcheck-stamp
+          key: workie-db-${{ github.run_id }}
+
+      - name: Cycle log
+        if: always()
+        run: cat logs/refresh-*.log 2>/dev/null | tail -40 || true

@@ -39,8 +39,8 @@ import { MIGRATIONS_DIR, openDb, type Db, type TursoDb } from '../lib/db/index.t
 import * as schema from '../lib/db/schema.ts';
 
 /** Parents before children: `posting_sources.posting_id` references `postings.id`. */
-const TABLES = [schema.postings, schema.postingSources, schema.connectorRuns] as const;
-type Mirrored = (typeof TABLES)[number];
+export const TABLES = [schema.postings, schema.postingSources, schema.connectorRuns] as const;
+export type Mirrored = (typeof TABLES)[number];
 
 /**
  * Rows per statement. Every column of every row is a bind parameter, and `postings` is ~30

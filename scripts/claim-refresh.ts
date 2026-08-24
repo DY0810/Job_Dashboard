@@ -13,7 +13,6 @@
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 
 import * as schema from '../lib/db/schema.ts';
@@ -46,8 +45,12 @@ export async function claimAndRun(run: () => number): Promise<'idle' | 'ran'> {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   // The ordinary cycle, lock and all: a request that lands mid-cycle waits for the next tick
   // rather than starting a second ingest.
-  const result = await claimAndRun(
-    () => spawnSync('bash', ['scripts/refresh.sh'], { stdio: 'inherit' }).status ?? 1,
-  );
-  if (result === 'idle') process.exit(0);
+  const cycle = () => spawnSync('bash', ['scripts/refresh.sh'], { stdio: 'inherit' }).status ?? 1;
+  const result = await claimAndRun(cycle);
+  if (result === 'idle') {
+    // --always: this IS a scheduled run (the GitHub Actions runner), so an empty queue is
+    // not a reason to skip the cycle — it just means nobody was waiting for this one.
+    if (process.argv.includes('--always')) process.exit(cycle());
+    process.exit(0);
+  }
 }

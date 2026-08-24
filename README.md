@@ -20,8 +20,24 @@ npm run refresh      # one full cycle, exactly as launchd runs it
 
 ## Unattended refresh
 
-`scripts/refresh.sh` runs ingest, then enrich, plus linkcheck once a week. Install it as a
-launchd user agent (from the repo root) to have it run every 30 minutes:
+`scripts/refresh.sh` runs ingest, then enrich, plus linkcheck once a week. The scheduled home
+for it is **GitHub Actions** (`.github/workflows/refresh.yml`): every 30 minutes a runner
+restores `workie.db` from the Actions cache (or rebuilds it from Turso via
+`npm run pull:remote` when the cache is cold), runs the same script, and mirrors the result
+back up. It needs two repository secrets — `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` — and
+no laptop.
+
+**Exactly one machine may run the cycle.** Two writers each ingesting into their own
+`workie.db` assign different ids to new postings, and each mirror then deletes the other's
+rows as strays. With the workflow live, keep the launchd agent below uninstalled.
+
+The hosted refresh button queues a request in `refresh_requests`; the next scheduled run
+claims it. Set `WORKIE_GH_TOKEN` (a fine-grained PAT with Actions read/write on this repo)
+in the Vercel project to have a click start the workflow immediately instead.
+
+### Running it on a laptop instead
+
+Install it as a launchd user agent (from the repo root) to have it run every 30 minutes:
 
 ```bash
 mkdir -p logs   # launchd opens StandardOutPath before the script runs; it will not create it

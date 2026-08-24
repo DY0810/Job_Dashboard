@@ -21,9 +21,9 @@ const LABEL: Record<Phase, string> = {
  * carries on behind it.
  *
  * On the hosted site there is no pipeline to run, so the button ASKS: it records a request
- * in the shared database and watches for the laptop's next cycle to land. That is what lets
- * someone you shared the link with fetch new jobs without any access to your machine — and
- * if the machine is asleep, the request waits, which the label says rather than spinning.
+ * in the shared database, nudges the GitHub Actions cycle to start, and watches for that
+ * cycle to land. That is what lets anyone with the link fetch new jobs — no laptop involved,
+ * so the wait is the cycle's real duration (about ten minutes), which the label says.
  */
 export function RefreshButton({ hosted }: { hosted: boolean }) {
   const router = useRouter();
@@ -61,12 +61,12 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
   };
 
   /**
-   * On the hosted site there is no pipeline to start: it runs on the laptop that holds
-   * workie.db. The ask is recorded in the shared database and the laptop claims it on its
-   * next poll, so this watches for the laptop's cycle to land rather than pretending to run
-   * one. If the laptop is asleep the request simply waits — said plainly, not spun.
+   * On the hosted site there is no pipeline to start: it runs in GitHub Actions, against
+   * the workie.db that rides the Actions cache. The ask is recorded in the shared database
+   * (and the workflow nudged directly, when the server holds a token), so this watches for
+   * that cycle's mirror to land rather than pretending to run one.
    */
-  const askLaptop = async () => {
+  const askRunner = async () => {
     const by = (() => {
       try { return localStorage.getItem('talkie-author'); } catch { return null; }
     })();
@@ -77,7 +77,7 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
 
     const since = ((await res.json()) as { lastRunAt: number | null }).lastRunAt;
     setWaiting(true);
-    setNote('asked — your laptop picks this up within a minute');
+    setNote('asked — a cloud refresh is on it; new jobs land in ~10 minutes');
     const askedAt = Date.now();
     stop();
     timer.current = setInterval(async () => {
@@ -92,17 +92,17 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
         setTimeout(() => setNote(null), 5000);
         return;
       }
-      if (Date.now() - askedAt > 6 * 60_000) {
+      if (Date.now() - askedAt > 15 * 60_000) {
         stop();
         setWaiting(false);
-        setNote('no answer yet — the laptop may be asleep; it will run when it wakes');
+        setNote('no answer yet — the next scheduled cycle (every 30 min) will pick it up');
       }
     }, 5000);
   };
 
   const start = async () => {
     setNote(null);
-    if (hosted) return askLaptop();
+    if (hosted) return askRunner();
     const res = await fetch('/api/refresh', { method: 'POST' }).catch(() => null);
     if (!res) return setNote('could not reach the server');
     if (res.status === 409) {
@@ -126,7 +126,7 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
         aria-busy={busy}
         aria-live="polite"
       >
-        {waiting ? 'waiting for the laptop…' : LABEL[phase]}
+        {waiting ? 'refreshing in the cloud…' : LABEL[phase]}
       </button>
       {note ? <span className="text-[11px] text-fg-dim">{note}</span> : null}
     </span>
