@@ -26,6 +26,8 @@
  * what makes the key available before anything claims it.
  */
 
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createClient } from '@libsql/client';
@@ -142,6 +144,45 @@ async function main(): Promise<void> {
   );
 }
 
+/**
+ * The same lock `scripts/refresh.sh` takes for a whole cycle, because a cycle ends with this
+ * script and a hand-run `npm run push:remote` would otherwise mirror alongside it. Two
+ * mirrors race: one deletes strays computed from its own snapshot while the other inserts
+ * children, and `posting_sources.posting_id` trips — Turso enforces foreign keys, local
+ * SQLite does not, so it only ever fails against the hosted database. Observed exactly that
+ * way: a scheduled cycle and a manual push overlapped and the run died mid-table.
+ *
+ * A cycle already running will push when it finishes, so refusing here loses nothing.
+ */
+function takeLock(): (() => void) | null {
+  const dir = join(process.cwd(), 'logs');
+  const lock = join(dir, '.refresh.lock');
+  mkdirSync(dir, { recursive: true });
+  try {
+    mkdirSync(lock);
+  } catch {
+    const holder = Number(readFileSync(join(lock, 'pid'), 'utf8').trim());
+    try {
+      process.kill(holder, 0);
+      return null; // A live cycle owns it; it will mirror at the end of its run.
+    } catch {
+      rmSync(lock, { recursive: true, force: true }); // Left by a cycle that died.
+      mkdirSync(lock);
+    }
+  }
+  writeFileSync(join(lock, 'pid'), String(process.pid));
+  return () => rmSync(lock, { recursive: true, force: true });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await main();
+  const release = takeLock();
+  if (!release) {
+    console.log('a refresh cycle is running; it will mirror when it finishes');
+    process.exit(0);
+  }
+  try {
+    await main();
+  } finally {
+    release();
+  }
 }
