@@ -13,8 +13,15 @@ export const TABS = ['design', 'engineering'] as const;
 export type Tab = (typeof TABS)[number];
 export const DEFAULT_TAB: Tab = 'design';
 
-/** Only these three are ever visible. `senior+` has no option and no row, on either tab. */
+/**
+ * The seniority ceiling — for ENGINEERING. Design is exempt: entry-level design roles are
+ * genuinely scarce, so Design stores and shows `senior+` too and offers it as its own filter
+ * option (see `DESIGN_LEVEL`). Engineering keeps the original rule.
+ */
 export const VISIBLE_SENIORITY = ['entry', 'junior', 'mid'] as const;
+
+/** Design's level vocabulary: the shared three, plus the one Engineering refuses. */
+export const DESIGN_LEVEL = ['entry', 'junior', 'mid', 'senior+'] as const;
 
 export const WINDOW_MS = {
   hour: 60 * 60 * 1000,
@@ -106,6 +113,7 @@ export type Filter = (typeof FILTERS)[number];
  */
 export function vocab(tab: Tab, filter: Filter, basis: Basis | null = null): readonly string[] {
   if (tab === 'design' && filter === 'type') return DESIGN_TYPE[basis ?? DEFAULT_BASIS];
+  if (tab === 'design' && filter === 'level') return DESIGN_LEVEL;
   return filter === 'posted' || filter === 'type' || filter === 'season'
     ? VOCAB[tab][filter]
     : SHARED_VOCAB[filter];

@@ -304,12 +304,26 @@ describe('rows that must never render', () => {
     return out;
   }
 
-  it.each(TABS)('%s: no senior+ row under any filter', async (tab) => {
-    const combos = everyFilter(tab);
+  /**
+   * The ceiling is ENGINEERING-only now. Design carries `senior+` deliberately: entry-level
+   * design is scarce enough that holding it to the same bar left the tab near-empty. The
+   * assertion is split rather than dropped — engineering must still never show one.
+   */
+  it('engineering: no senior+ row under any filter', async () => {
+    const combos = everyFilter('engineering');
     expect(combos.length).toBeGreaterThan(8);
     for (const p of combos) {
-      expect(await order(p), JSON.stringify(p)).not.toContain(`${tab[0]}-senior`);
+      expect(await order(p), JSON.stringify(p)).not.toContain('e-senior');
     }
+  });
+
+  it('design: senior+ IS listed, and is filterable on its own', async () => {
+    expect(await order(params('design'))).toContain('d-senior');
+    // Its own option, so it can be excluded in one click...
+    expect(vocab('design', 'level')).toContain('senior+');
+    expect(await order(params('design', { level: ['senior+'] }))).toContain('d-senior');
+    // ...and asking for entry-level must not smuggle it back in.
+    expect(await order(params('design', { level: ['entry'] }))).not.toContain('d-senior');
   });
 
   it.each(TABS)('%s: nothing older than 60 days', async (tab) => {
@@ -321,11 +335,20 @@ describe('rows that must never render', () => {
   });
 
   // The table is not the only way in: `?job=<id>` reaches a posting directly.
-  it.each(['senior', 'old', 'delisted'])('the %s posting is not reachable by deep link', async (kind) => {
+  it.each(['old', 'delisted'])('the %s posting is not reachable by deep link', async (kind) => {
     for (const tab of ['d', 'e'] as const) {
       const id = idOf(`${tab}-${kind}`);
       expect(await getPostingDetail(db, id, NOW), `${tab}-${kind}`).toBeNull();
     }
+  });
+
+  /**
+   * `structural()` writes the ceiling against the ROW's track rather than the requested tab,
+   * precisely so it still decides correctly here, where there is no tab at all.
+   */
+  it('senior+ deep-links on Design and stays blocked on Engineering', async () => {
+    expect(await getPostingDetail(db, idOf('e-senior'), NOW), 'e-senior').toBeNull();
+    expect(await getPostingDetail(db, idOf('d-senior'), NOW), 'd-senior').not.toBeNull();
   });
 
   it('a visible posting is reachable by deep link', async () => {
@@ -597,7 +620,6 @@ describe('the Design freelance split', () => {
   it('still obeys the location rule and the structural rules on both sides', async () => {
     for (const list of await both()) {
       expect(list).not.toContain('d-berlin-3d'); // elsewhere
-      expect(list).not.toContain('d-senior'); // senior+
       expect(list).not.toContain('d-delisted');
       expect(list).not.toContain('d-old'); // past the 60-day cutoff
     }

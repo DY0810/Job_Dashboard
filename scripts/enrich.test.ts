@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as schema from '../lib/db/schema.ts';
 import { POSTING_FIXTURES, SENIOR_FIXTURES } from '../lib/extract.fixtures.ts';
+import { extract } from '../lib/extract.ts';
 import type { SourceFields } from '../lib/extract.ts';
 import { formatStats, runEnrich, type WorkieDatabase } from './enrich.ts';
 
@@ -61,8 +62,11 @@ describe('runEnrich', () => {
   it('writes an extraction, and stores nothing for a dropped posting', () => {
     const db = testDatabase();
     const intern = POSTING_FIXTURES[0];
+    // An ENGINEERING senior: the ceiling is engineering-only now, so a senior DESIGN posting
+    // is stored rather than dropped and would not exercise the drop path at all.
+    const seniorEng = SENIOR_FIXTURES[1];
     insertPosting(db, intern);
-    insertPosting(db, SENIOR_FIXTURES[0]);
+    insertPosting(db, seniorEng);
 
     const stats = runEnrich(db);
     expect(stats.processed).toBe(2);
@@ -78,7 +82,7 @@ describe('runEnrich', () => {
 
     // The row survives — `posting_sources` and the ghost pass still need it — but a NULL
     // track is unselectable by either tab, so it is unreachable from the UI.
-    const dropped = db.select().from(postings).where(eq(postings.id, SENIOR_FIXTURES[0].id)).get()!;
+    const dropped = db.select().from(postings).where(eq(postings.id, seniorEng.id)).get()!;
     expect(dropped.track).toBeNull();
     expect(dropped.seniority).toBeNull();
     expect(dropped.enrichedAt).not.toBeNull();
@@ -142,9 +146,22 @@ describe('runEnrich', () => {
     const stored = db.select().from(postings).where(isNotNull(postings.track)).all();
     const storedIds = new Set(stored.map((row) => row.id));
 
-    // Zero leaks: this is the acceptance criterion, and there is no model behind it now.
-    for (const senior of SENIOR_FIXTURES) expect(storedIds.has(senior.id)).toBe(false);
-    for (const row of stored) expect(row.seniority).not.toBe('senior+');
+    // Zero ENGINEERING leaks: still the acceptance criterion on that side, and there is no
+    // model behind it. Design deliberately keeps its senior+ rows, so the claim is now split
+    // by track rather than dropped — a senior engineering posting slipping through would
+    // otherwise stop being caught by anything.
+    const trackOf = (f: (typeof SENIOR_FIXTURES)[number]) =>
+      extract({ title: f.title, description: f.description ?? '' }).track;
+    const seniorEng = SENIOR_FIXTURES.filter((f) => trackOf(f) === 'engineering');
+    const seniorDesign = SENIOR_FIXTURES.filter((f) => trackOf(f) === 'design');
+    expect(seniorEng.length).toBeGreaterThan(0);
+    expect(seniorDesign.length).toBeGreaterThan(0);
+
+    for (const senior of seniorEng) expect(storedIds.has(senior.id), senior.title).toBe(false);
+    for (const senior of seniorDesign) expect(storedIds.has(senior.id), senior.title).toBe(true);
+    for (const row of stored) {
+      if (row.seniority === 'senior+') expect(row.track).toBe('design');
+    }
   });
 
   it('formats a run summary', () => {

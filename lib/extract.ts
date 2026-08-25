@@ -91,10 +91,12 @@ export interface Extraction {
   badges: string[];
 }
 
-/** What actually reaches `postings`: the dropped values are gone from the type. */
-export interface StoredExtraction extends Omit<Extraction, 'track' | 'seniority'> {
+/**
+ * What actually reaches `postings`. `track` is narrowed — `other` is still dropped — but
+ * `seniority` is NOT, because Design now stores `senior+`. See `toStored`.
+ */
+export interface StoredExtraction extends Omit<Extraction, 'track'> {
   track: Track;
-  seniority: VisibleSeniority;
 }
 
 /** Badges are filter chips, not free text. */
@@ -895,7 +897,7 @@ export function extract({ title, description, sourceFields: source }: ExtractInp
  * The drop gate and the only place a row's stored shape is decided.
  *
  * - a `track` other than design/engineering is dropped, not stored;
- * - `senior+` is dropped — this is the acceptance criterion;
+ * - `senior+` is dropped on ENGINEERING only — Design keeps it (see below);
  * - `summary` is nulled for design: the Design tab has no summary column;
  * - the `voice-ai` badge is applied here rather than inside `extract`, so `lib/voice.ts`
  *   stays the single owner of that decision.
@@ -905,7 +907,13 @@ export function toStored(
   normalizedDescription: string | null | undefined,
 ): StoredExtraction | null {
   if (extraction.track === 'other') return null;
-  if (extraction.seniority === 'senior+') return null;
+  // Engineering keeps the ceiling; Design does not. The corpus simply does not contain
+  // entry-level design in the volume it contains entry-level engineering — 16,729 postings a
+  // cycle are dropped as senior, and holding Design to the same bar left it at 221 rows
+  // against Engineering's 2,271. Storing them is not the same as showing them at equal
+  // weight: `seniorityRank` still sorts senior+ last, and Design's `level` filter offers it
+  // as its own option, so it can be excluded in one click.
+  if (extraction.seniority === 'senior+' && extraction.track !== 'design') return null;
 
   const track = extraction.track;
   const badges = extraction.badges.filter((badge) => ALLOWED_BADGES.includes(badge));

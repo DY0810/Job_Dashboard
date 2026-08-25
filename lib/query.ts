@@ -122,7 +122,10 @@ function structural(now: number): SQL[] {
   return [
     gte(postings.postedAt, new Date(cutoffTimestamp(now))),
     isNull(postings.delistedAt),
-    inArray(postings.seniority, [...VISIBLE_SENIORITY]),
+    // Written against the ROW's own track, not the requested tab, so it holds identically on
+    // the `?job=<id>` deep-link path where there is no tab: a senior DESIGN posting opens, a
+    // senior engineering one still 404s.
+    sql`(${postings.seniority} in ${VISIBLE_SENIORITY} or ${postings.track} = 'design')`,
   ];
 }
 
