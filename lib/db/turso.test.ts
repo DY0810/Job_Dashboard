@@ -125,6 +125,21 @@ describe('push:remote', () => {
     expect(await listPostings(remote, params('design'), NOW)).toEqual(before);
   });
 
+  it('does NOT push a row whose only change is the enriched_at stamp', async () => {
+    const target = `file:${join(dir, 'remote.db')}`;
+    await pushRemote(target, undefined);
+    expect((await pushRemote(target, undefined))[0].rows).toBe(0);
+
+    // `enrich` stamps one timestamp per run onto EVERY row it processes, changed or not.
+    // Hashing the raw row therefore made all ~24,000 postings look new every cycle, and the
+    // "incremental" mirror still wrote the whole corpus — 35M writes a month against a 10M
+    // allowance. Bookkeeping is not content.
+    const local = openDb();
+    local.update(postings).set({ enrichedAt: new Date(NOW + 86_400_000) }).run();
+
+    expect((await pushRemote(target, undefined))[0].rows).toBe(0);
+  });
+
   it('still pushes a row after it changes locally', async () => {
     const target = `file:${join(dir, 'remote.db')}`;
     await pushRemote(target, undefined);

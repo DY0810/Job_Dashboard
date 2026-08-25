@@ -96,9 +96,29 @@ const MIRROR_STATE_DDL = `create table if not exists mirror_state (
   primary key (target, table_name, row_id)
 ) without rowid`;
 
+/**
+ * Columns that change on every run WITHOUT the row's meaning changing, and so must not count
+ * as a difference worth a write.
+ *
+ * `enriched_at` is the whole reason this exists. `enrich` stamps one timestamp per run onto
+ * every row it processes — all 24,544 of them, whether the extraction changed or not — so
+ * hashing the raw row made every posting look new on every cycle and the "incremental" mirror
+ * still wrote the entire corpus. That is 35M writes a month against a 10M allowance.
+ *
+ * Safe to ignore because nothing hosted reads it: `enrichedAt` is referenced only by
+ * `status.ts` and `merge-duplicates.ts`, both local-only, and never by `lib/query.ts` or any
+ * page. The remote's copy simply lags, and any row written for a REAL change carries the
+ * current value along with it.
+ */
+const VOLATILE: Record<string, readonly string[]> = { postings: ['enrichedAt'] };
+
 /** Stable because drizzle returns row objects in schema column order on every call. */
-function rowHash(row: unknown): string {
-  return createHash('sha1').update(JSON.stringify(row)).digest('hex');
+function rowHash(row: Record<string, unknown>, table: Mirrored): string {
+  const skip = VOLATILE[getTableName(table)];
+  const content = skip
+    ? Object.fromEntries(Object.entries(row).filter(([key]) => !skip.includes(key)))
+    : row;
+  return createHash('sha1').update(JSON.stringify(content)).digest('hex');
 }
 
 /**
@@ -133,7 +153,7 @@ export async function mirrorTable(
 
   const changed: { row: { id: number }; hash: string }[] = [];
   for (const row of rows) {
-    const hash = rowHash(row);
+    const hash = rowHash(row as Record<string, unknown>, table);
     if (seen.get(row.id) !== hash) changed.push({ row, hash });
   }
 
