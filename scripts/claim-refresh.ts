@@ -27,7 +27,19 @@ export async function claimAndRun(run: () => number): Promise<'idle' | 'ran'> {
     schema,
   }) as unknown as ReadDb;
 
-  const claimed = await claimRequest(remote);
+  // The queue is bookkeeping; the cycle is the point. A claim that cannot be written must not
+  // decide whether jobs get fetched — when Turso blocked writes on a quota, this line threw,
+  // `--always` below never ran, and five consecutive scheduled runs ingested NOTHING because a
+  // row could not be updated. Treated as "nobody was waiting", which is the honest reading.
+  let claimed: Awaited<ReturnType<typeof claimRequest>> = null;
+  try {
+    claimed = await claimRequest(remote);
+  } catch (error) {
+    console.log(
+      JSON.stringify({ event: 'refresh-claim-failed', reason: (error as Error).message.slice(0, 200) }),
+    );
+    return 'idle';
+  }
   if (!claimed) return 'idle';
   console.log(
     JSON.stringify({

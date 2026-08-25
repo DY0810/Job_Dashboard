@@ -26,6 +26,7 @@
  * what makes the key available before anything claims it.
  */
 
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -74,18 +75,93 @@ async function deleteStrays(remote: TursoDb, table: Mirrored, keep: Set<number>)
   return strays.length;
 }
 
-export async function mirrorTable(remote: TursoDb, local: Db, table: Mirrored): Promise<number> {
+/**
+ * What was last successfully pushed, by content hash. LOCAL ONLY — deliberately not in
+ * `TABLES`, created here with raw DDL rather than a migration, so it never reaches the remote
+ * schema and no migration has to run to introduce it.
+ *
+ * It rides inside `workie.db`, which means it travels with the Actions cache for free and a
+ * cold start (an empty file rebuilt by `pull-remote`) simply finds no hashes and mirrors
+ * everything once, exactly as before.
+ *
+ * Keyed by TARGET as well as row: `--to=file:/tmp/mirror.db` is a supported destination, and
+ * without the target in the key a mirror to a scratch file would convince the next Turso push
+ * that every row had already been sent.
+ */
+const MIRROR_STATE_DDL = `create table if not exists mirror_state (
+  target text not null,
+  table_name text not null,
+  row_id integer not null,
+  hash text not null,
+  primary key (target, table_name, row_id)
+) without rowid`;
+
+/** Stable because drizzle returns row objects in schema column order on every call. */
+function rowHash(row: unknown): string {
+  return createHash('sha1').update(JSON.stringify(row)).digest('hex');
+}
+
+/**
+ * Mirror only what CHANGED.
+ *
+ * This used to upsert every local row every cycle: ~53,000 writes for `postings` +
+ * `posting_sources` + `connector_runs`, 48 times a day, ~76M row writes a month. Turso counts
+ * an upsert that changes nothing as a write like any other, and eventually answered every
+ * statement with `BLOCKED: SQL write operations are forbidden`, which stopped the dashboard
+ * updating at all. Real churn is a few hundred rows a cycle — new postings, a delisting, that
+ * cycle's connector_runs — so hashing each row against what was last pushed cuts the write
+ * volume by one to two orders of magnitude and keeps the result byte-identical.
+ */
+export async function mirrorTable(
+  remote: TursoDb,
+  local: Db,
+  table: Mirrored,
+  target: string,
+): Promise<number> {
+  local.run(sql.raw(MIRROR_STATE_DDL));
+  const name = getTableName(table);
+
   // `select()` decodes (Date, boolean, parsed JSON) and `insert()` re-encodes, so the round
   // trip goes through the schema rather than around it.
-  const rows = local.select().from(table).all();
-  for (let start = 0; start < rows.length; start += BATCH) {
+  const rows = local.select().from(table).all() as { id: number }[];
+  const seen = new Map(
+    (local.all(sql`select row_id, hash from mirror_state where target = ${target} and table_name = ${name}`) as {
+      row_id: number;
+      hash: string;
+    }[]).map((r) => [r.row_id, r.hash]),
+  );
+
+  const changed: { row: { id: number }; hash: string }[] = [];
+  for (const row of rows) {
+    const hash = rowHash(row);
+    if (seen.get(row.id) !== hash) changed.push({ row, hash });
+  }
+
+  for (let start = 0; start < changed.length; start += BATCH) {
+    const slice = changed.slice(start, start + BATCH);
     await remote
       .insert(table)
       // The three row shapes differ; the loop is the same. One cast here beats three copies.
-      .values(rows.slice(start, start + BATCH) as never)
+      .values(slice.map((c) => c.row) as never)
       .onConflictDoUpdate({ target: table.id, set: overwrite(table) });
+    // Recorded only AFTER the remote accepted the batch, so a failure mid-mirror leaves those
+    // rows looking unpushed and the next run retries them rather than skipping them forever.
+    for (const c of slice) {
+      local.run(
+        sql`insert into mirror_state (target, table_name, row_id, hash)
+            values (${target}, ${name}, ${c.row.id}, ${c.hash})
+            on conflict (target, table_name, row_id) do update set hash = excluded.hash`,
+      );
+    }
   }
-  return rows.length;
+
+  // Forget rows that no longer exist locally; `deleteStrays` has already removed them remotely.
+  const live = new Set(rows.map((r) => r.id));
+  for (const id of seen.keys()) {
+    if (!live.has(id))
+      local.run(sql`delete from mirror_state where target = ${target} and table_name = ${name} and row_id = ${id}`);
+  }
+  return changed.length;
 }
 
 export async function pushRemote(
@@ -111,7 +187,7 @@ export async function pushRemote(
 
   const counts: { rows: number; deleted: number }[] = [];
   for (const table of TABLES) {
-    counts.push({ rows: await mirrorTable(remote, local, table), deleted: deleted.get(table) ?? 0 });
+    counts.push({ rows: await mirrorTable(remote, local, table, url), deleted: deleted.get(table) ?? 0 });
   }
   return counts;
 }

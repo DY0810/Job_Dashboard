@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createClient } from '@libsql/client';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/libsql';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -105,14 +106,37 @@ describe('the read path gives the same answers on either driver', () => {
 });
 
 describe('push:remote', () => {
-  it('is idempotent: a second run rewrites the same rows rather than duplicating them', async () => {
+  it('is idempotent, and a second run writes NOTHING rather than rewriting every row', async () => {
+    const target = `file:${join(dir, 'remote.db')}`;
     const before = await listPostings(remote, params('design'), NOW);
-    const counts = await pushRemote(`file:${join(dir, 'remote.db')}`, undefined);
 
-    expect(counts[0].rows).toBe(fixtures(NOW).length);
+    // Whatever the first pass has to do, the second must find nothing to say. The old
+    // behaviour re-upserted the entire corpus every time; against Turso that billed ~53,000
+    // row writes a cycle and eventually returned `BLOCKED: SQL write operations are
+    // forbidden`, which stopped the dashboard updating at all. Asserting ZERO here is what
+    // keeps that from creeping back.
+    await pushRemote(target, undefined);
+    const second = await pushRemote(target, undefined);
+
+    expect(second.map((count) => count.rows)).toEqual([0, 0, 0]);
     // Nothing was deleted: the local corpus is the same one already up there.
-    expect(counts.map((count) => count.deleted)).toEqual([0, 0, 0]);
+    expect(second.map((count) => count.deleted)).toEqual([0, 0, 0]);
+    // And writing nothing must not mean serving nothing.
     expect(await listPostings(remote, params('design'), NOW)).toEqual(before);
+  });
+
+  it('still pushes a row after it changes locally', async () => {
+    const target = `file:${join(dir, 'remote.db')}`;
+    await pushRemote(target, undefined);
+    expect((await pushRemote(target, undefined))[0].rows).toBe(0);
+
+    // Ids are assigned on insert, so ask the corpus rather than the fixture literals.
+    const local = openDb();
+    const id = local.select({ id: postings.id }).from(postings).limit(1).all()[0]!.id;
+    local.update(postings).set({ title: 'Retitled By Test' }).where(eq(postings.id, id)).run();
+
+    expect((await pushRemote(target, undefined))[0].rows).toBe(1);
+    expect((await getPostingDetail(remote, id, NOW))?.title).toBe('Retitled By Test');
   });
 
   /**
