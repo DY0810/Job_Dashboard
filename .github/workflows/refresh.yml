@@ -72,6 +72,17 @@ jobs:
             logs/.linkcheck-stamp
           key: workie-db-${{ github.run_id }}
 
+      # The summary lines FIRST, then the tail. A blind `tail -40` is worthless on the run
+      # that matters: when the mirror throws, its stack trace is longer than 40 lines and
+      # buries every connector result, the ingest count and the exit codes underneath it.
       - name: Cycle log
         if: always()
-        run: cat logs/refresh-*.log 2>/dev/null | tail -40 || true
+        run: |
+          f=$(ls -t logs/refresh-*.log 2>/dev/null | head -1) || true
+          if [ -z "$f" ]; then echo "no cycle log written"; exit 0; fi
+          echo "── cycle ──"
+          grep -aE '"event":"summary"|ingest exit=|enrich exit=|push:remote exit=|linkcheck exit=|refresh-claim-failed|cycle (start|end)' "$f" | tail -20 || true
+          echo "── connectors that did not succeed ──"
+          grep -aoE '"connector":"[a-z0-9-]+","status":"(error|skipped)"[^}]*' "$f" | tail -15 || true
+          echo "── tail ──"
+          tail -25 "$f" || true
