@@ -355,9 +355,9 @@ export function isSeniorByRegex(
  * Manager Intern" is an internship, and reading `manager` first drops it as senior.
  */
 const INTERNSHIP_TITLE =
-  /\b(?:intern|internship|interns|co-?op|apprentice(?:ship)?|trainee|werkstudent(?:in)?|praktikant(?:in)?|praktikum|working\s+student)\b/i;
+  /\b(?:intern(?:ship)?s?|co-?ops?|apprentice(?:ship)?s?|trainees?|werkstudent(?:in)?|praktikant(?:in)?|praktikum|working\s+student)\b/i;
 const ENTRY_TITLE = new RegExp(
-  `${INTERNSHIP_TITLE.source}|\\b(?:new[\\s-]?grad(?:uate)?|graduate\\s+(?:program|scheme|engineer|developer|designer|analyst)|entry[\\s-]level|university|campus|student|fellowship)\\b`,
+  `${INTERNSHIP_TITLE.source}|\\b(?:new[\\s-]?(?:college\\s+)?grad(?:uate)?|early[\\s-]career|graduate\\s+(?:program|scheme|engineer|developer|designer|analyst)|entry[\\s-]level|university|campus|student|fellowship)\\b`,
   'i',
 );
 /**
@@ -628,7 +628,7 @@ function extractWorkMode(
 
 /** "Summer 2027", "Fall internship", "Winter co-op term". */
 const SEASON =
-  /\b(summer|fall|autumn|winter|spring)\b(?=[^.]{0,40}?\b(?:intern|co-?op|20\d\d|term|cohort|program)\b)|\b(?:intern(?:ship)?|co-?op)\b[^.]{0,30}?\b(summer|fall|autumn|winter|spring)\b/i;
+  /\b(summer|fall|autumn|winter|spring)\b(?=[^.]{0,40}?\b(?:intern(?:ship)?s?|co-?ops?|20\d\d|term|cohort|program)\b)|\b(?:intern(?:ship)?s?|co-?ops?)\b[^.]{0,30}?\b(summer|fall|autumn|winter|spring)\b/i;
 
 function extractSeason(title: string, body: string): Season | null {
   for (const text of [title, body]) {

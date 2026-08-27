@@ -19,9 +19,9 @@ describe('writeGate', () => {
     expect(writeGate(req('s3cret'))).toBeNull();
   });
 
-  it('refuses a wrong token, a missing one, and a prefix of the real one', () => {
+  it('refuses a wrong token, a missing one, a prefix, and a same-length near-miss', () => {
     process.env.WORKIE_WRITE_TOKEN = 's3cret';
-    for (const token of ['nope', undefined, 's3cre', 's3crets', '']) {
+    for (const token of ['nope', undefined, 's3cre', 's3crets', '', 'S3CRET']) {
       expect(writeGate(req(token))?.status, `token ${JSON.stringify(token)}`).toBe(401);
     }
   });

@@ -325,6 +325,17 @@ describe('rows that must never render', () => {
     // ...and asking for entry-level must not smuggle it back in.
     expect(await order(params('design', { level: ['entry'] }))).not.toContain('d-senior');
   });
+  /**
+   * `first_seen_run` is a free-text RUN IDENTIFIER, not a timestamp — `seed.ts` writes the
+   * literal SEED_RUN. The cutoff floors `posted_at` at it, and SQLite's scalar `max()`
+   * returns NULL if any argument is NULL, so without the `coalesce` in `effectiveAt` every
+   * row whose run id does not parse as a date silently leaves the board. This pins that.
+   */
+  it.each(TABS)('%s: a non-timestamp first_seen_run does not hide the row', async (tab) => {
+    const rows = await order(params(tab));
+    expect(rows.length).toBeGreaterThan(5);
+  });
+
 
   it.each(TABS)('%s: nothing older than 60 days', async (tab) => {
     expect(await order(params(tab))).not.toContain(`${tab[0]}-old`);

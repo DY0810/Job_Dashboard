@@ -117,10 +117,27 @@ const isEmployed: SQL = sql`coalesce(${postings.employmentType}, '') not in (${f
 const seniorityRank = sql<number>`(case ${postings.seniority}
   when 'entry' then 0 when 'junior' then 1 when 'mid' then 2 else 3 end)`;
 
+/**
+ * The date a posting counts as, for the 60-day cutoff and for the sort.
+ *
+ * `posted_at` alone is the ATS requisition's creation date, which for an internship is
+ * routinely months before anyone can apply — a Summer 2027 role opened in Aug 2026 ages out
+ * of a 60-day window while the employer is still advertising it. Flooring it at the run that
+ * first SAW the posting keeps those listed: 1,204 rows, 49 of them internships.
+ *
+ * `coalesce(..., 0)` is load-bearing and not defensive noise. `first_seen_run` is a free-text
+ * RUN IDENTIFIER (`text().notNull()`), not a timestamp by contract — `scripts/seed.ts` writes
+ * the literal `SEED_RUN`. SQLite's scalar `max()` returns NULL if ANY argument is NULL, and
+ * `NULL >= cutoff` is false, so without the coalesce every row whose run id does not happen to
+ * parse as a date DISAPPEARS from the board. That is fail-closed on a column nothing guarantees
+ * the format of; this degrades to plain `posted_at` instead.
+ */
+const effectiveAt: SQL<number> = sql<number>`max(${postings.postedAt}, coalesce(unixepoch(${postings.firstSeenRun}) * 1000, 0))`;
+
 /** The rules that hold whatever the tab and whatever the filters. */
 function structural(now: number): SQL[] {
   return [
-    gte(postings.postedAt, new Date(cutoffTimestamp(now))),
+    gte(effectiveAt, cutoffTimestamp(now)),
     isNull(postings.delistedAt),
     // Written against the ROW's own track, not the requested tab, so it holds identically on
     // the `?job=<id>` deep-link path where there is no tab: a senior DESIGN posting opens, a
@@ -206,7 +223,7 @@ export async function listPostings(db: ReadDb, p: Params, now: number = Date.now
     .select(ROW)
     .from(postings)
     .where(where(p, now))
-    .orderBy(desc(postings.postedAt), asc(seniorityRank))
+    .orderBy(desc(effectiveAt), asc(seniorityRank))
     // ROW_CAP + 1: the extra row is not rendered, it is the answer to "is there more?".
     .limit(ROW_CAP + 1)
     .all();
