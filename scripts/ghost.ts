@@ -68,7 +68,12 @@ export function runGhostPass(db: Db, options: GhostOptions): GhostStats {
     // sources eligible this run — the load-bearing clause in this file.
     tx.update(postingSources)
       .set({
-        absenceCount: sql`case when ${postingSources.lastSeenRun} = ${options.runId} then 0 else ${postingSources.absenceCount} + 1 end`,
+        // Clamped at the threshold. The ONLY consumer is `min(absence_count) >= threshold`
+        // (below, and `isGhost` in lib/dedupe.ts), so counting past it changes no decision —
+        // but it did change the ROW, which made 6,142 already-delisted sources a guaranteed
+        // remote write every cycle, forever. Counts had reached 129. A reappearance still
+        // resets to 0, so restore behaviour is untouched.
+        absenceCount: sql`case when ${postingSources.lastSeenRun} = ${options.runId} then 0 else min(${postingSources.absenceCount} + 1, ${GHOST_ABSENCE_THRESHOLD}) end`,
       })
       .where(mine)
       .run();

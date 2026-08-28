@@ -79,6 +79,17 @@
     "postings_at_probe": 49
   },
   {
+    "name": "Akuna Capital",
+    "ats": "greenhouse",
+    "token": "akunacapital",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 34
+  },
+  {
     "name": "ALTEN",
     "ats": "smartrecruiters",
     "token": "alten",
@@ -611,6 +622,17 @@
     "postings_at_probe": 64
   },
   {
+    "name": "DV Trading",
+    "ats": "greenhouse",
+    "token": "dvtrading",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 62
+  },
+  {
     "name": "Elanco",
     "ats": "recruitee",
     "token": "elan",
@@ -726,6 +748,17 @@
     ],
     "verified_at": "2026-08-24T20:37:47.199Z",
     "postings_at_probe": 163
+  },
+  {
+    "name": "Flow Traders",
+    "ats": "greenhouse",
+    "token": "flowtraders",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 42
   },
   {
     "name": "Fooji",
@@ -949,6 +982,17 @@
     "verified_at": "2026-08-18T04:01:22.314Z"
   },
   {
+    "name": "IMC Trading",
+    "ats": "greenhouse",
+    "token": "imc",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 173
+  },
+  {
     "name": "Infinitus",
     "ats": "ashby",
     "token": "infinitus",
@@ -1006,6 +1050,17 @@
     ],
     "verified_at": "2026-08-19T05:36:02.961Z",
     "postings_at_probe": 122
+  },
+  {
+    "name": "Jump Trading",
+    "ats": "greenhouse",
+    "token": "jumptrading",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 110
   },
   {
     "name": "Juno",
@@ -1377,6 +1432,17 @@
     "verified_at": "2026-08-18T04:01:24.851Z"
   },
   {
+    "name": "Nuro",
+    "ats": "greenhouse",
+    "token": "nuro",
+    "tags": [
+      "av",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 100
+  },
+  {
     "name": "NVIDIA",
     "ats": "workday",
     "token": "nvidia",
@@ -1406,6 +1472,17 @@
     ],
     "verified_at": "2026-08-20T23:53:57.781Z",
     "postings_at_probe": 319
+  },
+  {
+    "name": "Old Mission Capital",
+    "ats": "greenhouse",
+    "token": "oldmissioncapital",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 35
   },
   {
     "name": "One Robot",
@@ -1482,6 +1559,17 @@
     ],
     "verified_at": "2026-08-19T05:36:34.462Z",
     "postings_at_probe": 7
+  },
+  {
+    "name": "PDT Partners",
+    "ats": "greenhouse",
+    "token": "pdtpartners",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 10
   },
   {
     "name": "Peerspace",
@@ -1918,6 +2006,17 @@
     "postings_at_probe": 0
   },
   {
+    "name": "Squarepoint Capital",
+    "ats": "greenhouse",
+    "token": "squarepointcapital",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 92
+  },
+  {
     "name": "Squarespace",
     "ats": "greenhouse",
     "token": "squarespace",
@@ -2133,6 +2232,17 @@
     "postings_at_probe": 85
   },
   {
+    "name": "Virtu Financial",
+    "ats": "greenhouse",
+    "token": "virtu",
+    "tags": [
+      "quant",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 47
+  },
+  {
     "name": "Vooma",
     "ats": "ashby",
     "token": "vooma",
@@ -2150,6 +2260,17 @@
     ],
     "verified_at": "2026-08-24T20:39:08.468Z",
     "postings_at_probe": 1
+  },
+  {
+    "name": "Waymo",
+    "ats": "greenhouse",
+    "token": "waymo",
+    "tags": [
+      "av",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-08-28T01:16:23.233457Z",
+    "postings_at_probe": 354
   },
   {
     "name": "Wealthfront",

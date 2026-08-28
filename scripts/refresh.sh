@@ -92,10 +92,23 @@ if [ -f .env.local ] && grep -qE '^TURSO_DATABASE_URL=.+' .env.local; then
   # Without the flag push-remote sees a live pid in the lock and skips, which silently
   # stopped every cycle from reaching the hosted site while still exiting 0.
   node --env-file-if-exists=.env.local scripts/push-remote.ts --in-cycle
-  say "push:remote exit=$?"
+  PUSH=$?
+  say "push:remote exit=$PUSH"
 else
+  PUSH=0
   say "push:remote skipped (no TURSO_DATABASE_URL in .env.local)"
 fi
 
 say "cycle end"
+
+# A failed mirror is a FAILED CYCLE, even when ingest was perfect. The hosted site is the
+# product; a cycle that fetched 16,000 postings and could not deliver one of them has not
+# succeeded. This exited $INGEST alone, so when Turso started refusing writes on a quota the
+# dashboard froze for a day while GitHub reported five green runs in a row and the only
+# evidence was one line inside a log step nobody reads. Failing loudly is what makes the
+# Actions failure email the alarm.
+if [ "$PUSH" -ne 0 ]; then
+  say "cycle FAILED: ingest exit=$INGEST but the mirror did not land"
+  exit 1
+fi
 exit $INGEST

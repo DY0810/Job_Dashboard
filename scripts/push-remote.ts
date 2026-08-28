@@ -110,7 +110,16 @@ const MIRROR_STATE_DDL = `create table if not exists mirror_state (
  * page. The remote's copy simply lags, and any row written for a REAL change carries the
  * current value along with it.
  */
-const VOLATILE: Record<string, readonly string[]> = { postings: ['enrichedAt'] };
+const VOLATILE: Record<string, readonly string[]> = {
+  postings: ['enrichedAt'],
+  // `last_seen_run` is stamped with the current run id on EVERY source the cycle polled, so
+  // every one of ~26,000 source rows differed every cycle and the "incremental" mirror wrote
+  // all of them — ~18.7M row writes a month against a 10M allowance. Same argument as
+  // `enrichedAt`: it records when we last looked, not what we found, and nothing hosted reads
+  // it. `lib/query.ts` never selects from posting_sources at all; only dedupe/ghost/ingest do,
+  // and those run locally against workie.db.
+  posting_sources: ['lastSeenRun'],
+};
 
 /** Stable because drizzle returns row objects in schema column order on every call. */
 function rowHash(row: Record<string, unknown>, table: Mirrored): string {

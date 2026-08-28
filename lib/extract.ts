@@ -677,6 +677,12 @@ function extractPayRate(body: string): PayRate | null {
     if (!Number.isFinite(min) || min <= 0) continue;
 
     const trailing = body.slice(match.index + match[0].length, match.index + match[0].length + 24);
+    // A magnitude suffix means this is a COMPANY number, not a wage — "$11B valuation",
+    // "$150M Series C", "raised $1.5B". Nobody's salary is quoted in billions, but the
+    // magnitude fallback below reads a bare "11" as $11 AN HOUR, so ElevenLabs advertised
+    // $11/hr and Baseten $1.5/hr on the board. `k` is deliberately NOT here: "$120-160k" is
+    // exactly how a real salary band is written.
+    if (/^\s*(?:[bm]\b|bn\b|billion|million|trillion)/i.test(trailing)) continue;
     let period: PayPeriod | null = null;
     for (const [candidate, pattern] of PERIOD_WORDS) {
       if (pattern.test(trailing)) {
@@ -692,6 +698,10 @@ function extractPayRate(body: string): PayRate | null {
     if (period === null) continue;
     // Sanity: an hourly rate over $500 or a salary under $10k is a parse, not a wage.
     if (period === 'hour' && min > 500) continue;
+    // The missing lower bound, symmetric with the annual one above. No US role pays under the
+    // federal minimum, so a sub-$7.25 "hourly rate" is always a company figure the magnitude
+    // fallback misread — "$1.0" from Stripe's payment volume, "$2.7" from a funding round.
+    if (period === 'hour' && min < 7.25) continue;
     if (period === 'year' && min < 10_000) continue;
     return { min, max: max !== null && max >= min ? max : null, period };
   }

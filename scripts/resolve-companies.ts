@@ -250,6 +250,22 @@ const INTERNSHIP_SEEDS: Seed[] = [
   { name: "Fooji", website: "fooji.com", tags: ["ai"] },
   { name: "MeeBoss", website: "meeboss.com", tags: ["ai"] },
   { name: "FetchJobs", website: "fetchjobs.co", tags: ["ai"] },
+
+  // Quant/HFT and autonomous-vehicle firms, added 2026-08-25. These are the most
+  // internship-dense employers in the market — Jump alone lists 47 intern-ish roles against
+  // 161 from the entire previous registry — and every one runs a plain keyless Greenhouse
+  // board, so they cost one registry line each and no new code.
+  { name: "Jump Trading", website: "jumptrading.com", tags: ["quant", "internship-heavy"] },
+  { name: "IMC Trading", website: "imc.com", tags: ["quant", "internship-heavy"] },
+  { name: "Virtu Financial", website: "virtu.com", tags: ["quant", "internship-heavy"] },
+  { name: "Akuna Capital", website: "akunacapital.com", tags: ["quant", "internship-heavy"] },
+  { name: "DV Trading", website: "dvtrading.co", tags: ["quant", "internship-heavy"] },
+  { name: "Squarepoint Capital", website: "squarepoint-capital.com", tags: ["quant", "internship-heavy"] },
+  { name: "Old Mission Capital", website: "oldmissioncapital.com", tags: ["quant", "internship-heavy"] },
+  { name: "PDT Partners", website: "pdtpartners.com", tags: ["quant", "internship-heavy"] },
+  { name: "Flow Traders", website: "flowtraders.com", tags: ["quant", "internship-heavy"] },
+  { name: "Nuro", website: "nuro.ai", tags: ["av", "internship-heavy"] },
+  { name: "Waymo", website: "waymo.com", tags: ["av", "internship-heavy"] },
 ];
 
 // ---------------------------------------------------------------------------------------
