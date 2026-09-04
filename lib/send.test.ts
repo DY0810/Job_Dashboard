@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { MAX_BATCH, SMTP, sendConfigured, sendGate } from './send.ts';
+import { MAX_BATCH, SMTP, accountFor, sendAddresses, sendConfigured, sendGate } from './send.ts';
 
 const env = { ...process.env };
 afterEach(() => {
@@ -57,6 +57,61 @@ describe('sendConfigured', () => {
     expect(sendConfigured()).toBe(true);
 
     delete process.env.WORKIE_SEND_TOKEN;
+    expect(sendConfigured()).toBe(false);
+  });
+});
+
+/** Nothing inherited from the developer's shell: these tests are about which pairs exist. */
+function onlyAccounts(pairs: Record<string, string>) {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('WORKIE_GMAIL_')) delete process.env[key];
+  }
+  Object.assign(process.env, pairs);
+}
+
+describe('choosing which mailbox sends', () => {
+  const BOTH = {
+    WORKIE_GMAIL_USER: 'me@gmail.com',
+    WORKIE_GMAIL_APP_PASSWORD: 'aaaa aaaa aaaa aaaa',
+    WORKIE_GMAIL_USER_2: 'them@gmail.com',
+    WORKIE_GMAIL_APP_PASSWORD_2: 'bbbb bbbb bbbb bbbb',
+  };
+
+  it('defaults to the unsuffixed account, whatever order the env lists them in', () => {
+    onlyAccounts(BOTH);
+    expect(accountFor()?.user).toBe('me@gmail.com');
+    expect(accountFor('')?.user).toBe('me@gmail.com');
+    expect(sendAddresses()).toEqual(['me@gmail.com', 'them@gmail.com']);
+  });
+
+  it('sends from the second account when a draft asks for it', () => {
+    onlyAccounts(BOTH);
+    expect(accountFor('them@gmail.com')?.pass).toBe('bbbbbbbbbbbbbbbb'); // spaces stripped
+    expect(accountFor('  Them@Gmail.com ')?.user).toBe('them@gmail.com');
+  });
+
+  /**
+   * The property this whole change exists to hold. Gmail rewrites `From` to whoever
+   * authenticated, so falling back to the default on an unrecognised address would not fail —
+   * it would send one person's cold email out of the OTHER person's mailbox, put the reply in
+   * their inbox and the copy in their Sent folder. Refusing is the only safe answer.
+   */
+  it('REFUSES an unknown address rather than falling back to the default', () => {
+    onlyAccounts(BOTH);
+    for (const from of ['stranger@gmail.com', 'me@gmail.com.evil.test', 'me@googlemail.com']) {
+      expect(accountFor(from), from).toBeNull();
+    }
+  });
+
+  it('drops a half-configured account instead of half-sending as it', () => {
+    onlyAccounts({ ...BOTH, WORKIE_GMAIL_APP_PASSWORD_2: '' });
+    expect(accountFor('them@gmail.com')).toBeNull();
+    expect(sendAddresses()).toEqual(['me@gmail.com']);
+  });
+
+  it('has nothing to send from when no account is configured', () => {
+    onlyAccounts({});
+    expect(accountFor()).toBeNull();
     expect(sendConfigured()).toBe(false);
   });
 });

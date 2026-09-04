@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { MAX_BATCH, sendAll, sendConfigured, sendGate } from '@/lib/send';
+import { MAX_BATCH, accountFor, sendAll, sendConfigured, sendGate } from '@/lib/send';
 
 /**
  * Send the drafts the compose panel built.
@@ -21,7 +21,13 @@ const Message = z.object({
   body: z.string().trim().min(1).max(20_000),
 });
 
-const Payload = z.object({ messages: z.array(Message).min(1).max(MAX_BATCH) });
+const Payload = z.object({
+  // Which mailbox this leaves from. Optional, and an absent value means the default account —
+  // but an address that is not configured is a 400 rather than a fallback, because the
+  // fallback would send somebody else's email out of the default person's Gmail.
+  from: z.string().trim().max(320).optional(),
+  messages: z.array(Message).min(1).max(MAX_BATCH),
+});
 
 /** Whether the button should offer to send at all, so the UI can say why rather than fail. */
 export async function GET() {
@@ -37,8 +43,16 @@ export async function POST(request: Request) {
     return Response.json({ error: 'invalid messages' }, { status: 400 });
   }
 
+  const account = accountFor(input.data.from);
+  if (!account) {
+    return Response.json(
+      { error: `${input.data.from ?? 'this deployment'} is not configured to send` },
+      { status: 400 },
+    );
+  }
+
   try {
-    const result = await sendAll(input.data.messages);
+    const result = await sendAll(account, input.data.messages);
     // 207: some sent, some did not. A flat 200 would let a partial failure read as success,
     // and the whole point of sending one envelope per recipient is knowing which one missed.
     return Response.json(result, { status: result.failed.length > 0 ? 207 : 200 });

@@ -23,16 +23,55 @@ import nodemailer from 'nodemailer';
 
 export type Outgoing = { to: string; subject: string; body: string };
 
-/** Both halves of the credential, or nothing. A half-configured deploy must not half-send. */
-function credentials(): { user: string; pass: string } | null {
-  const user = process.env.WORKIE_GMAIL_USER?.trim();
-  // Google prints the app password in four groups of four; the spaces are presentation.
-  const pass = process.env.WORKIE_GMAIL_APP_PASSWORD?.replace(/\s+/g, '');
-  return user && pass ? { user, pass } : null;
+export type Account = { user: string; pass: string };
+
+/**
+ * Every configured account, in env order, the first being the default.
+ *
+ * Two people share this board and each sends AS THEMSELVES, so this is a list rather than a
+ * pair: `WORKIE_GMAIL_USER` with `WORKIE_GMAIL_APP_PASSWORD`, then `_2`-suffixed pairs for
+ * everyone else. Adding a third person is an env var, not an edit.
+ *
+ * A pair with only one half is DROPPED rather than half-configured. That address then reports
+ * as unable to send, which is the honest answer; the alternative is a deploy that looks ready
+ * and fails at the moment someone presses send.
+ */
+function accounts(): Account[] {
+  return Object.keys(process.env)
+    .filter((key) => /^WORKIE_GMAIL_USER(_\d)?$/.test(key))
+    .sort() // '' sorts before '_2', so the unsuffixed pair stays the default
+    .map((key) => {
+      const user = process.env[key]?.trim();
+      const suffix = key.slice('WORKIE_GMAIL_USER'.length);
+      // Google prints the app password in four groups of four; the spaces are presentation.
+      const pass = process.env[`WORKIE_GMAIL_APP_PASSWORD${suffix}`]?.replace(/\s+/g, '');
+      return user && pass ? { user, pass } : null;
+    })
+    .filter((account): account is Account => account !== null);
+}
+
+/**
+ * The account a draft claims to be from, or the default when it claims nothing.
+ *
+ * An unrecognised address resolves to NOTHING, never to the default. Gmail authenticates per
+ * account and rewrites `From` to whoever logged in, so a fallback would not fail — it would
+ * quietly send one person's cold email out of the other person's mailbox, land the reply in
+ * their inbox, and file the copy in their Sent folder. Refusing is the only safe answer.
+ */
+export function accountFor(from?: string): Account | null {
+  const all = accounts();
+  const wanted = from?.trim().toLowerCase();
+  if (!wanted) return all[0] ?? null;
+  return all.find((account) => account.user.toLowerCase() === wanted) ?? null;
+}
+
+/** The addresses that can send, for a caller that has already proved it may know them. */
+export function sendAddresses(): string[] {
+  return accounts().map((account) => account.user);
 }
 
 export function sendConfigured(): boolean {
-  return credentials() !== null && Boolean(process.env.WORKIE_SEND_TOKEN?.trim());
+  return accounts().length > 0 && Boolean(process.env.WORKIE_SEND_TOKEN?.trim());
 }
 
 /**
@@ -103,12 +142,13 @@ export const MAX_BATCH = 10;
  * below that on purpose: it bounds a stuck loop, and it is a reminder that the bottleneck
  * here was never typing speed.
  */
-export async function sendAll(messages: Outgoing[]): Promise<{ sent: number; failed: { to: string; reason: string }[] }> {
-  const creds = credentials();
-  if (!creds) throw new Error('gmail credentials are not configured');
+export async function sendAll(
+  account: Account,
+  messages: Outgoing[],
+): Promise<{ sent: number; failed: { to: string; reason: string }[] }> {
   if (messages.length > MAX_BATCH) throw new Error(`at most ${MAX_BATCH} messages at a time`);
 
-  const transport = nodemailer.createTransport({ ...SMTP, auth: { user: creds.user, pass: creds.pass } });
+  const transport = nodemailer.createTransport({ ...SMTP, auth: { user: account.user, pass: account.pass } });
 
   const failed: { to: string; reason: string }[] = [];
   let sent = 0;
@@ -117,7 +157,7 @@ export async function sendAll(messages: Outgoing[]): Promise<{ sent: number; fai
   for (const message of messages) {
     try {
       await transport.sendMail({
-        from: creds.user,
+        from: account.user,
         to: message.to,
         subject: message.subject,
         text: message.body,

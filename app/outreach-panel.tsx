@@ -85,13 +85,18 @@ export function OutreachPanel({
       const response = await fetch('/api/send', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-workie-send-token': token },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({ from: sender.from, messages }),
       });
       if (response.status === 401) {
         localStorage.removeItem('workie-send-token');
         setResult('that send token was not accepted');
       } else if (response.status === 503) {
         setResult('this deployment has no Gmail credentials configured');
+      } else if (response.status === 400) {
+        // Almost always the sending address: the server holds the list and this bundle does
+        // not, so its wording is the only thing that can say which address it rejected.
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        setResult(data?.error ?? 'that draft was rejected');
       } else if (!response.ok && response.status !== 207) {
         setResult('could not send');
       } else {
@@ -155,7 +160,7 @@ export function OutreachPanel({
             className="chip"
             aria-disabled={sending || (queue.length === 0 && !ready)}
             onClick={sendQueue}
-            title="Sends each queued draft as its own message, from your Gmail"
+            title={`Sends each queued draft as its own message, from ${sender.from}`}
           >
             {sending ? 'sending…' : `send ${queue.length + (ready ? 1 : 0)}`}
           </button>

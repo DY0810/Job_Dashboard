@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { compose, composeUrl, type Outline, type Posting, type Recipient, type Sender } from './outreach.ts';
 
-const SENDER: Sender = { name: 'A Person', intro: 'I study X and build Y.' };
+const SENDER: Sender = { name: 'A Person', intro: 'I study X and build Y.', from: 'a@person.test' };
 const TO: Recipient = { name: 'Sarah Okafor', email: 'sarah@northline.com' };
 const POSTING: Posting = {
   company: 'Northline',
@@ -119,7 +119,7 @@ describe('compose', () => {
   });
 
   it('carries the sender through, so two people sharing one board sign as themselves', () => {
-    const other = { name: 'Someone Else', intro: 'Different background entirely.' };
+    const other = { name: 'Someone Else', intro: 'Different background entirely.', from: 'else@person.test' };
     expect(compose('coffee', POSTING, other, TO).body).toContain(other.intro);
     expect(compose('coffee', POSTING, other, TO).body).not.toContain(SENDER.intro);
   });

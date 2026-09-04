@@ -36,7 +36,13 @@
  * That also makes the board honest when two people share it: each signs as themselves.
  */
 
-export type Sender = { name: string; intro: string };
+/**
+ * The half of the email that is the same whoever you write to, plus the mailbox it leaves
+ * from. `compose` ignores `from` — only `/api/send` uses it — but it is stored here because
+ * it is part of the same per-device identity: two people share this board, and each one signs
+ * as themselves AND sends from their own Gmail.
+ */
+export type Sender = { name: string; intro: string; from: string };
 /** Typed once per posting: you are writing to a different person at every company. */
 export type Recipient = { name: string; email: string };
 export type Posting = { company: string; title: string; canonicalUrl: string };

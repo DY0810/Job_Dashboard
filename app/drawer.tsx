@@ -32,7 +32,7 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
    * inside the panel, per posting, because it is a different person at every company.
    */
   const pickKind = (kind: OutreachKind) => {
-    const current = readSender() ?? promptForSender(null);
+    const current = readSender() ?? promptForSender(stored());
     if (!current) return;
     setSender(current);
     setDrafting(kind);
@@ -188,14 +188,21 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
  */
 const SENDER_KEY = 'workie-outreach-sender';
 
-function readSender(): Sender | null {
+/** Whatever is on this device, however incomplete — the defaults the prompts start from. */
+function stored(): Partial<Sender> {
   try {
-    const raw = JSON.parse(localStorage.getItem(SENDER_KEY) ?? 'null') as Sender | null;
-    return raw && raw.name?.trim() && raw.intro?.trim() ? raw : null;
+    return (JSON.parse(localStorage.getItem(SENDER_KEY) ?? '{}') as Partial<Sender>) ?? {};
   } catch {
     // Corrupt or absent: treated as unset, which routes the next click into first-run setup.
-    return null;
+    return {};
   }
+}
+
+function readSender(): Sender | null {
+  const raw = stored();
+  // All three required. A device that predates the address field re-runs setup once, with
+  // its existing answers pre-filled, rather than defaulting to whoever the server lists first.
+  return raw.name?.trim() && raw.intro?.trim() && raw.from?.trim() ? (raw as Sender) : null;
 }
 
 /**
@@ -204,17 +211,27 @@ function readSender(): Sender | null {
  * deployment with no auth, so a paragraph of someone's résumé in the source would be public,
  * and two people share this board and must sign as themselves.
  */
-function promptForSender(current: Sender | null): Sender | null {
-  const name = window.prompt('Your name, as you sign an email:', current?.name ?? '')?.trim();
+function promptForSender(current: Partial<Sender>): Sender | null {
+  const name = window.prompt('Your name, as you sign an email:', current.name ?? '')?.trim();
   if (!name) return null;
   const intro = window
     .prompt(
       'One paragraph about you — school, where you work, what you build. Keep out any number you have not reconciled across résumé versions.',
-      current?.intro ?? '',
+      current.intro ?? '',
     )
     ?.trim();
   if (!intro) return null;
-  const next = { name, intro };
+  /**
+   * Which mailbox this device sends from. Asked rather than offered as a list: the addresses
+   * are not on any page this bundle can read, because an unauthenticated deployment that
+   * enumerated its own owners' Gmail addresses would be handing them to whoever has the link.
+   * The server checks it against the accounts it actually holds and refuses anything else.
+   */
+  const from = window
+    .prompt('The Gmail address this device sends from:', current.from ?? '')
+    ?.trim();
+  if (!from) return null;
+  const next = { name, intro, from };
   localStorage.setItem(SENDER_KEY, JSON.stringify(next));
   return next;
 }
@@ -232,7 +249,7 @@ function Outreach({ kind, onPick }: { kind: OutreachKind; onPick: (kind: Outreac
       className="chip"
       onClick={(event) => {
         if (event.altKey) {
-          promptForSender(readSender());
+          promptForSender(stored());
           return;
         }
         onPick(kind);
