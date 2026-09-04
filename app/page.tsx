@@ -256,7 +256,7 @@ function Empty({ outside }: { outside: number }) {
  *  site is asked to render is often this. Name the two variables rather than throwing. */
 function NotConfigured() {
   return (
-    <main className="min-h-dvh w-max min-w-full px-4 pb-16">
+    <main className="min-h-dvh px-4 pb-16">
       <header className="flex items-baseline gap-6 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <span className="w-wide text-[11px] text-fg-dim">not configured</span>
@@ -349,7 +349,7 @@ export default async function Page({
   const columns = COLUMNS[p.tab];
 
   return (
-    <main className="min-h-dvh w-max min-w-full px-4 pb-16">
+    <main className="min-h-dvh px-4 pb-16">
       <header className="flex items-baseline gap-6 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <nav className="flex gap-4" aria-label="Track">
