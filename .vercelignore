@@ -1,0 +1,24 @@
+# What `vercel deploy` must not upload.
+#
+# `.gitignore` does NOT reliably cover this — the Vercel CLI uploads the working directory
+# and wants its own list, so a 225MB `workie.db` sitting untracked beside the source is still
+# offered to the platform and trips the 100MB limit with `File size limit exceeded`.
+#
+# None of this belongs in a deployment anyway. The hosted app reads Turso, never a local
+# SQLite file; the corpus lives on the GitHub Actions runner and is mirrored up from there.
+
+# The corpus and its WAL sidecars — hundreds of megabytes, and the wrong data source for
+# the deployed app besides.
+*.db
+*.db-wal
+*.db-shm
+
+# Cycle logs, rotated daily by scripts/refresh.sh. Local-only diagnostics.
+/logs
+
+# Recorded connector responses, replayed by the offline test suite. Not runtime data.
+/fixtures/live
+
+# Build output and dependencies: Vercel produces its own.
+/.next
+/node_modules
