@@ -72,8 +72,14 @@ async function order(p: Params): Promise<string[]> {
   return (await listPostings(db, p, NOW)).map((row) => refOf.get(row.id)!);
 }
 
+/**
+ * `effectiveAt`, not `postedAt` — the clock the query actually orders by. Reading `postedAt`
+ * here asserted an invariant the board does not hold: the fixtures happen to keep the two
+ * dates equal, so the test stayed green while production ordered by one and rendered the
+ * other, and the accent band ended up labelling rows whose cell read `668d`.
+ */
 async function times(p: Params): Promise<number[]> {
-  return (await listPostings(db, p, NOW)).map((row) => row.postedAt.getTime());
+  return (await listPostings(db, p, NOW)).map((row) => row.effectiveAt);
 }
 
 function idOf(ref: string): number {
@@ -812,7 +818,7 @@ describe('row cap', () => {
   it('caps the NEWEST rows, so the cap never hides something recent', async () => {
     flood(ROW_CAP + 50);
     const rows = await listPostings(db, params('engineering'), NOW);
-    const times = rows.map((row) => row.postedAt.getTime());
+    const times = rows.map((row) => row.effectiveAt);
 
     expect(times).toEqual([...times].sort((a, b) => b - a));
     // The oldest row in the corpus must be the one dropped, not one of these.

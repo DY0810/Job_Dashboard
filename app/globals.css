@@ -16,7 +16,11 @@
   --light-rule: oklch(0.9 0.008 75);
   --light-fg: oklch(0.25 0.01 75);
   --light-fg-dim: oklch(0.48 0.012 75);
-  --light-fg-faint: oklch(0.66 0.012 75);
+  /* 0.615, not 0.66. This token draws the 1px border that is the only thing saying a chip is
+     pressable, and at 0.66 it measured 2.90:1 on canvas — below WCAG 1.4.11's 3:1 for a
+     control boundary, so the control was effectively invisible until it was already active.
+     0.615 is the lowest lightness clearing 3:1 on both grounds. Dark's 0.52 already clears. */
+  --light-fg-faint: oklch(0.615 0.012 75);
   --light-accent: oklch(0.52 0.14 75);
   --light-scrim: oklch(0.25 0.01 75 / 0.45);
 
@@ -213,14 +217,17 @@
   text-overflow: ellipsis;
 }
 
-.rows td:last-child,
-.rows th:last-child {
+/* `:not([colspan])` excludes the two cells that span the table — the band label and the
+   row-cap notice. Without it this rule (0,2,1) outranked `.band th { text-align: left }`
+   (0,1,1), and because the band's single spanning cell IS its row's last child, the one
+   element the contract calls the page's memorable thing rendered right-aligned. */
+.rows td:last-child:not([colspan]),
+.rows th:last-child:not([colspan]) {
   padding-right: 0;
   text-align: right;
 }
 
-/* The band label: the one place the accent is spent. It spans every column, so it also has
-   to opt out of the last-column right alignment. */
+/* The band label: the one place the accent is spent. */
 .band th {
   text-align: left;
   padding-top: 14px;
@@ -252,7 +259,9 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid var(--rule);
+  /* `--fg-faint`, not `--rule`: `--rule` is for hairline separators between rows, which are
+     not controls and are exempt. A chip is a control and its boundary must be perceivable. */
+  border: 1px solid var(--fg-faint);
   padding: 1px 6px 0;
   font-size: 11px;
   line-height: 16px;
@@ -340,6 +349,15 @@
   .select {
     font-size: 16px;
     line-height: 20px;
+  }
+
+  /* WCAG 2.2 SC 2.5.8 wants 24x24; a resting chip is 19px tall and the 4px gap between them
+     forecloses the spacing exception. 44px (SC 2.5.5) would roughly double row height, which
+     the design contract forbids outright — so 24 on touch only, and desktop density is
+     untouched. */
+  .chip,
+  .chip-check {
+    min-height: 24px;
   }
 }
 
@@ -586,7 +604,7 @@ dialog.drawer[open]::backdrop {
 .note-grip[data-edge="se"] { bottom: -5px; right: -5px; width: 14px; height: 14px; cursor: nwse-resize; }
 .note-size {
   position: absolute; top: -18px; right: -1px; white-space: nowrap;
-  font-size: 10px; color: var(--accent); font-variant-numeric: tabular-nums;
+  font-size: 10px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
 }
 .comment-meta {
   display: inline-flex; gap: 4px; align-items: center; flex: none;
@@ -599,17 +617,19 @@ dialog.drawer[open]::backdrop {
 }
 .reply::placeholder { color: var(--fg-faint); }
 .reply:focus { border-bottom-color: var(--fg-dim); }
-.draft { position: absolute; border: 1px dashed var(--accent); pointer-events: none; }
+.draft { position: absolute; border: 1px dashed var(--fg-dim); pointer-events: none; }
 .draft-small { border-color: var(--fg-faint); }
 .draft-size {
   position: absolute; top: -18px; left: -1px; white-space: nowrap;
-  font-size: 10px; color: var(--accent); font-variant-numeric: tabular-nums;
+  font-size: 10px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
 }
 .draft-small .draft-size { color: var(--fg-dim); }
 .badge {
   display: inline-flex; justify-content: center; align-items: center;
   min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
-  background: var(--accent); color: var(--canvas);
+  /* Not the accent. This pill sits in the top nav and was the loudest object on the
+     page, competing directly with the band the contract says nothing may compete with. */
+  background: var(--surface); border: 1px solid var(--fg-dim); color: var(--fg);
   font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums;
 }
 .weeks {

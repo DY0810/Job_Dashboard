@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 
+import { Chevron } from './icons';
+
 const KEY = 'workie-theme';
 
 /**
@@ -33,15 +35,23 @@ export function ThemeToggle() {
   }
 
   return (
-    <select
-      aria-label="Theme"
-      className="cursor-pointer bg-transparent text-fg-dim hover:text-fg"
-      value={theme}
-      onChange={(event) => apply(event.target.value)}
-    >
-      <option value="system">system</option>
-      <option value="light">light</option>
-      <option value="dark">dark</option>
-    </select>
+    /* Wrapped exactly like the filter selects. globals.css writes the two select treatments
+       once "because two controls that mean the same thing should not be able to drift apart
+       visually" — and this third select had drifted: no border, no chevron, and 11px under a
+       coarse pointer, which is the iOS Safari zoom trap the other two are explicitly fixed
+       for. */
+    <span className="select-box">
+      <select
+        aria-label="Theme"
+        className="select cursor-pointer"
+        value={theme}
+        onChange={(event) => apply(event.target.value)}
+      >
+        <option value="system">system</option>
+        <option value="light">light</option>
+        <option value="dark">dark</option>
+      </select>
+      <Chevron />
+    </span>
   );
 }

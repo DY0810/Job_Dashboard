@@ -411,7 +411,7 @@ function NoteCard({
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submitReply(); } }}
             />
           ) : null}
-          {error ? <div className="note-meta text-accent">{error}</div> : null}
+          {error ? <div className="note-meta">{error}</div> : null}
         </div>
       ) : null}
 
@@ -516,7 +516,7 @@ function NoteEditor({
           if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commit(); }
         }}
       />
-      {error ? <div className="note-meta text-accent">{error}</div> : null}
+      {error ? <div className="note-meta">{error}</div> : null}
     </div>
   );
 }

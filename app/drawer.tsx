@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { PostingDetail } from '@/lib/query';
+import { compose, composeUrl, type Sender } from '@/lib/outreach';
 import { Close, ExternalLink } from './icons';
 
 type State =
@@ -90,6 +91,10 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
                   {' · '}
                   {/* Location shows on both tabs, even though only Engineering has the column. */}
                   {state.posting.location ?? (state.posting.isRemote ? 'Remote' : 'Location not stated')}
+                  {/* Present on 84 of 2,511 engineering rows — far too rare for a column,
+                      but the rows that state it are exactly the ones where it decides
+                      eligibility. */}
+                  {state.posting.expectedGrad ? ` · grad ${state.posting.expectedGrad}` : ''}
                 </p>
               </>
             ) : (
@@ -129,9 +134,10 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
         </div>
 
         {state.status === 'ready' ? (
-          <div className="border-t border-rule px-5 py-3">
+          <div className="flex items-center gap-2 border-t border-rule px-5 py-3">
+            {/* `mr-auto` keeps the terminal action first and visually apart from the drafts. */}
             <a
-              className="chip"
+              className="chip mr-auto"
               href={state.posting.canonicalUrl}
               target="_blank"
               rel="noreferrer noopener"
@@ -139,10 +145,82 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
               apply
               <ExternalLink />
             </a>
+            <Outreach kind="coffee" posting={state.posting} />
+            <Outreach kind="referral" posting={state.posting} />
           </div>
         ) : null}
       </div>
     </dialog>
+  );
+}
+
+/**
+ * The outreach drafts live HERE, in the drawer, and not in a table row.
+ *
+ * The row is the wrong home for them twice over. `.impeccable.md` allows a row exactly three
+ * affordances — its badges, the company cell, and Apply — and a fourth control repeated
+ * across ~200 rows would add ~200 tab stops to a table that already has 784. More to the
+ * point, nobody cold-emails a stranger about a job they have not read: the drawer is where
+ * the posting is read, so it is where the draft belongs. Apply sits in this same footer, so
+ * the two actions are still side by side.
+ */
+const SENDER_KEY = 'workie-outreach-sender';
+
+function readSender(): Sender | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SENDER_KEY) ?? 'null') as Sender | null;
+    return raw && raw.name?.trim() && raw.intro?.trim() ? raw : null;
+  } catch {
+    // Corrupt or absent: treated as unset, which routes the next click into first-run setup.
+    return null;
+  }
+}
+
+/**
+ * A <button>, not an <a>, for two reasons that come from the same click:
+ *  1. the first click on a new device has to set the sender up, and an anchor would navigate
+ *     to a Gmail draft signed by nobody;
+ *  2. alt-click has no default behaviour on a button, while option-click on an anchor
+ *     downloads the href on macOS — so "edit what you wrote about yourself" is free here and
+ *     impossible there.
+ *
+ * `window.open` runs synchronously inside the handler, the only shape a popup blocker
+ * allows. The setup path deliberately opens nothing: a `prompt()` can sit open longer than
+ * the browser's transient-activation window, and the open would then be swallowed.
+ */
+function Outreach({ kind, posting }: { kind: 'coffee' | 'referral'; posting: PostingDetail }) {
+  const [saved, setSaved] = useState(false);
+
+  const click = (event: { altKey: boolean }) => {
+    const current = readSender();
+    if (!current || event.altKey) {
+      const name = window.prompt('Your name, as you sign an email:', current?.name ?? '')?.trim();
+      if (!name) return;
+      const intro = window
+        .prompt(
+          'One paragraph about you — school, where you work, what you build. Keep out any number you have not reconciled across résumé versions.',
+          current?.intro ?? '',
+        )
+        ?.trim();
+      if (!intro) return;
+      localStorage.setItem(SENDER_KEY, JSON.stringify({ name, intro }));
+      setSaved(true);
+      return;
+    }
+    const { subject, body } = compose(kind, posting, current);
+    window.open(composeUrl(subject, body), '_blank', 'noopener');
+  };
+
+  return (
+    <button
+      type="button"
+      className="chip"
+      onClick={click}
+      aria-live="polite"
+      title="Opens a Gmail draft with the recipient blank. Alt-click to edit the paragraph about you, which is stored only on this device."
+    >
+      {saved ? 'saved — click again' : kind === 'coffee' ? 'coffee chat' : 'referral'}
+    </button>
   );
 }
 

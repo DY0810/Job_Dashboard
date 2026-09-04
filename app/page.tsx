@@ -40,7 +40,7 @@ interface Column {
 
 const COLUMNS: Record<Tab, Column[]> = {
   design: [
-    { label: "posted" },
+    { label: "seen" },
     { label: "badges" },
     { label: "title", className: "grow" },
     { label: "pay rate" },
@@ -48,13 +48,16 @@ const COLUMNS: Record<Tab, Column[]> = {
     { label: "apply" },
   ],
   engineering: [
-    { label: "posted" },
+    { label: "seen" },
     { label: "badges" },
     { label: "title", className: "clip" },
     { label: "summary", className: "grow" },
     { label: "pay rate" },
     { label: "level" },
-    { label: "grad" },
+    // `grad` was here and was empty on 2,427 of 2,511 rows (96.7%) — ~94px of em dashes
+    // on a board whose first principle is density. `location` is null on 2. The 84 real
+    // grad dates are not lost; they moved to the drawer, where a rare field belongs.
+    { label: "location", className: "clip" },
     { label: "company" },
     { label: "apply" },
   ],
@@ -119,15 +122,19 @@ function Badges({ row, p }: { row: Row; p: Params }) {
 
 function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
   const pay = payRate(row);
-  const fresh = now - row.postedAt.getTime() < WINDOW_MS.day;
+  // The clock the table SORTS by. Showing `postedAt` here while ordering by `effectiveAt`
+  // put "LAST 24 HOURS" above rows whose own cell read `668d`. The requisition date is not
+  // lost — it stays in the tooltip, which is where a date you rarely need belongs.
+  const seen = new Date(row.effectiveAt);
+  const fresh = now - row.effectiveAt < WINDOW_MS.day;
   return (
     <tr>
       <td className={`nums ${fresh ? "text-accent" : "text-fg-dim"}`}>
         <time
-          dateTime={row.postedAt.toISOString()}
-          title={row.postedAt.toLocaleString()}
+          dateTime={seen.toISOString()}
+          title={`first seen ${seen.toLocaleString()} · listed ${row.postedAt.toLocaleString()}`}
         >
-          {ago(row.postedAt, now)}
+          {ago(seen, now)}
         </time>
       </td>
       <td>
@@ -147,8 +154,10 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
       {p.tab === "engineering" ? (
         <>
           <td className="text-fg-dim">{row.seniority ?? <Nothing />}</td>
-          <td className="nums text-fg-dim">
-            {row.expectedGrad ?? <Nothing />}
+          {/* Not `nums`: a place is not a number, and these are raw ATS strings that run
+              long, so `.clip` caps and ellipsises them. */}
+          <td className={`text-fg-dim ${width(p.tab, "location") ?? ""}`}>
+            {row.location ?? <Nothing />}
           </td>
         </>
       ) : null}
@@ -247,7 +256,7 @@ function Empty({ outside }: { outside: number }) {
  *  site is asked to render is often this. Name the two variables rather than throwing. */
 function NotConfigured() {
   return (
-    <main className="min-h-dvh px-4 pb-16">
+    <main className="min-h-dvh w-max min-w-full px-4 pb-16">
       <header className="flex items-baseline gap-6 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <span className="w-wide text-[11px] text-fg-dim">not configured</span>
@@ -335,12 +344,12 @@ export default async function Page({
   // Recency is the first sort key, so the fresh rows are a prefix, not a partition. Asserted
   // in query.test.ts against this same constant, because nothing in SQL guarantees it now.
   const freshCount = rows.filter(
-    (row) => now - row.postedAt.getTime() < WINDOW_MS.day,
+    (row) => now - row.effectiveAt < WINDOW_MS.day,
   ).length;
   const columns = COLUMNS[p.tab];
 
   return (
-    <main className="min-h-dvh px-4 pb-16">
+    <main className="min-h-dvh w-max min-w-full px-4 pb-16">
       <header className="flex items-baseline gap-6 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <nav className="flex gap-4" aria-label="Track">
@@ -437,7 +446,7 @@ export default async function Page({
               ))}
               {capped ? (
                 <tr>
-                  <td colSpan={columns.length} className="py-3 text-center text-[11px] text-muted">
+                  <td colSpan={columns.length} className="py-3 text-center text-[11px] text-fg-dim">
                     Showing the {ROW_CAP} newest. Narrow with the filters above to reach the rest.
                   </td>
                 </tr>

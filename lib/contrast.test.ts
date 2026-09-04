@@ -91,6 +91,11 @@ const PAIRS: [text: string, surface: string, min: number, what: string][] = [
   ['fg-dim', 'surface', 4.5, 'chip label'],
   ['accent', 'canvas', 4.5, 'the last-24-hours band label'],
   ['accent', 'surface', 3, 'band rule against an adjacent chip'],
+  // Not text: this token draws the 1px border that makes a chip read as pressable, so WCAG
+  // 1.4.11 (non-text contrast, 3:1) applies rather than 4.5:1. It sat at 1.25:1 on canvas —
+  // the control was invisible until it was already active.
+  ['fg-faint', 'canvas', 3, 'the 1px border that makes a chip read as a control'],
+  ['fg-faint', 'surface', 3, 'the same border on an active chip'],
 ];
 
 describe('contrast', () => {
