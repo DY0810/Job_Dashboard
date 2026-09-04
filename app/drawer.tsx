@@ -207,8 +207,15 @@ function Outreach({ kind, posting }: { kind: 'coffee' | 'referral'; posting: Pos
       setSaved(true);
       return;
     }
-    const { subject, body } = compose(kind, posting, current);
-    window.open(composeUrl(subject, body), '_blank', 'noopener');
+    // Asked per POSTING, never stored: it is a different person at every company, and a
+    // remembered address is the one most likely to be sent to the wrong one.
+    const to = window.prompt(`Their email address at ${posting.company}:`, '')?.trim();
+    if (!to) return;
+    const who = window.prompt('Their name (the greeting uses the first name):', '')?.trim();
+    if (!who) return;
+
+    const { subject, body } = compose(kind, posting, current, { name: who, email: to });
+    window.open(composeUrl(to, subject, body), '_blank', 'noopener');
   };
 
   return (
@@ -217,7 +224,7 @@ function Outreach({ kind, posting }: { kind: 'coffee' | 'referral'; posting: Pos
       className="chip"
       onClick={click}
       aria-live="polite"
-      title="Opens a Gmail draft with the recipient blank. Alt-click to edit the paragraph about you, which is stored only on this device."
+      title="Asks who you are writing to, then opens an addressed Gmail draft. Alt-click to edit the paragraph about you, which is stored only on this device."
     >
       {saved ? 'saved — click again' : kind === 'coffee' ? 'coffee chat' : 'referral'}
     </button>
