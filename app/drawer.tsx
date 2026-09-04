@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { PostingDetail } from '@/lib/query';
-import { compose, composeUrl, type Sender } from '@/lib/outreach';
+import { type OutreachKind, type Sender } from '@/lib/outreach';
+import { OutreachPanel } from './outreach-panel';
 import { Close, ExternalLink } from './icons';
 
 type State =
@@ -23,6 +24,19 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
   const ref = useRef<HTMLDialogElement>(null);
   const router = useRouter();
   const [state, setState] = useState<State>({ status: 'loading' });
+  const [drafting, setDrafting] = useState<OutreachKind | null>(null);
+  const [sender, setSender] = useState<Sender | null>(null);
+
+  /**
+   * The sender is asked for once per device and then never again; the RECIPIENT is asked for
+   * inside the panel, per posting, because it is a different person at every company.
+   */
+  const pickKind = (kind: OutreachKind) => {
+    const current = readSender() ?? promptForSender(null);
+    if (!current) return;
+    setSender(current);
+    setDrafting(kind);
+  };
 
   useEffect(() => {
     const dialog = ref.current;
@@ -32,6 +46,8 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
       if (dialog.open) dialog.close();
       return;
     }
+    // A draft belongs to the posting it was started from; opening another must not inherit it.
+    setDrafting(null);
     if (!dialog.open) dialog.showModal();
 
     const controller = new AbortController();
@@ -133,7 +149,14 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
           )}
         </div>
 
-        {state.status === 'ready' ? (
+        {state.status === 'ready' && drafting ? (
+          <OutreachPanel
+            kind={drafting}
+            posting={state.posting}
+            sender={sender!}
+            onClose={() => setDrafting(null)}
+          />
+        ) : state.status === 'ready' ? (
           <div className="flex items-center gap-2 border-t border-rule px-5 py-3">
             {/* `mr-auto` keeps the terminal action first and visually apart from the drafts. */}
             <a
@@ -145,8 +168,8 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
               apply
               <ExternalLink />
             </a>
-            <Outreach kind="coffee" posting={state.posting} />
-            <Outreach kind="referral" posting={state.posting} />
+            <Outreach kind="coffee" onPick={pickKind} />
+            <Outreach kind="referral" onPick={pickKind} />
           </div>
         ) : null}
       </div>
@@ -161,8 +184,7 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
  * affordances — its badges, the company cell, and Apply — and a fourth control repeated
  * across ~200 rows would add ~200 tab stops to a table that already has 784. More to the
  * point, nobody cold-emails a stranger about a job they have not read: the drawer is where
- * the posting is read, so it is where the draft belongs. Apply sits in this same footer, so
- * the two actions are still side by side.
+ * the posting is read, so it is where the draft belongs. Apply sits in this same footer.
  */
 const SENDER_KEY = 'workie-outreach-sender';
 
@@ -177,56 +199,47 @@ function readSender(): Sender | null {
 }
 
 /**
- * A <button>, not an <a>, for two reasons that come from the same click:
- *  1. the first click on a new device has to set the sender up, and an anchor would navigate
- *     to a Gmail draft signed by nobody;
- *  2. alt-click has no default behaviour on a button, while option-click on an anchor
- *     downloads the href on macOS — so "edit what you wrote about yourself" is free here and
- *     impossible there.
- *
- * `window.open` runs synchronously inside the handler, the only shape a popup blocker
- * allows. The setup path deliberately opens nothing: a `prompt()` can sit open longer than
- * the browser's transient-activation window, and the open would then be swallowed.
+ * Asked once per device, then never again — this is the half of the email that is the same
+ * whoever you write to. It is NOT hardcoded and never will be: this bundle ships to a
+ * deployment with no auth, so a paragraph of someone's résumé in the source would be public,
+ * and two people share this board and must sign as themselves.
  */
-function Outreach({ kind, posting }: { kind: 'coffee' | 'referral'; posting: PostingDetail }) {
-  const [saved, setSaved] = useState(false);
+function promptForSender(current: Sender | null): Sender | null {
+  const name = window.prompt('Your name, as you sign an email:', current?.name ?? '')?.trim();
+  if (!name) return null;
+  const intro = window
+    .prompt(
+      'One paragraph about you — school, where you work, what you build. Keep out any number you have not reconciled across résumé versions.',
+      current?.intro ?? '',
+    )
+    ?.trim();
+  if (!intro) return null;
+  const next = { name, intro };
+  localStorage.setItem(SENDER_KEY, JSON.stringify(next));
+  return next;
+}
 
-  const click = (event: { altKey: boolean }) => {
-    const current = readSender();
-    if (!current || event.altKey) {
-      const name = window.prompt('Your name, as you sign an email:', current?.name ?? '')?.trim();
-      if (!name) return;
-      const intro = window
-        .prompt(
-          'One paragraph about you — school, where you work, what you build. Keep out any number you have not reconciled across résumé versions.',
-          current?.intro ?? '',
-        )
-        ?.trim();
-      if (!intro) return;
-      localStorage.setItem(SENDER_KEY, JSON.stringify({ name, intro }));
-      setSaved(true);
-      return;
-    }
-    // Asked per POSTING, never stored: it is a different person at every company, and a
-    // remembered address is the one most likely to be sent to the wrong one.
-    const to = window.prompt(`Their email address at ${posting.company}:`, '')?.trim();
-    if (!to) return;
-    const who = window.prompt('Their name (the greeting uses the first name):', '')?.trim();
-    if (!who) return;
-
-    const { subject, body } = compose(kind, posting, current, { name: who, email: to });
-    window.open(composeUrl(to, subject, body), '_blank', 'noopener');
-  };
-
+/**
+ * Two buttons rather than one with a dropdown: there are exactly two kinds, and a popover to
+ * choose between two things costs a click and some JS to save nothing. Alt-click re-edits the
+ * paragraph about you — free on a button, and impossible on an anchor, where option-click
+ * downloads the href on macOS.
+ */
+function Outreach({ kind, onPick }: { kind: OutreachKind; onPick: (kind: OutreachKind) => void }) {
   return (
     <button
       type="button"
       className="chip"
-      onClick={click}
-      aria-live="polite"
-      title="Asks who you are writing to, then opens an addressed Gmail draft. Alt-click to edit the paragraph about you, which is stored only on this device."
+      onClick={(event) => {
+        if (event.altKey) {
+          promptForSender(readSender());
+          return;
+        }
+        onPick(kind);
+      }}
+      title="Opens a compose panel: your outline on one side, the finished email on the other. Alt-click to edit the paragraph about you, stored only on this device."
     >
-      {saved ? 'saved — click again' : kind === 'coffee' ? 'coffee chat' : 'referral'}
+      {kind === 'coffee' ? 'coffee chat' : 'referral'}
     </button>
   );
 }

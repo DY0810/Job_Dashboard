@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { compose, composeUrl, type Posting, type Recipient, type Sender } from './outreach.ts';
+import { compose, composeUrl, type Outline, type Posting, type Recipient, type Sender } from './outreach.ts';
 
 const SENDER: Sender = { name: 'A Person', intro: 'I study X and build Y.' };
 const TO: Recipient = { name: 'Sarah Okafor', email: 'sarah@northline.com' };
@@ -122,5 +122,49 @@ describe('compose', () => {
     const other = { name: 'Someone Else', intro: 'Different background entirely.' };
     expect(compose('coffee', POSTING, other, TO).body).toContain(other.intro);
     expect(compose('coffee', POSTING, other, TO).body).not.toContain(SENDER.intro);
+  });
+
+  describe('the outline', () => {
+    const OUTLINE: Outline = {
+      hook: 'Your post on deterministic replay for order books is the reason I rewrote my own backtester.',
+      met: 'the USC alumni panel in October',
+      said: 'the bit about latency budgets being a product decision',
+      didWith: 'rebuilding my agent loop around a fixed frame time',
+      fit: ['Shipped a Chrome extension on the Web Store', 'Hybrid FAISS + BM25 retrieval in production', 'I want the execution side, not research'],
+    };
+
+    it('substitutes what you wrote and keeps your words verbatim', () => {
+      const body = compose('coffee', POSTING, SENDER, TO, OUTLINE).body;
+      expect(body).toContain(OUTLINE.hook);
+      // The point of the form is that it STRUCTURES rather than rewrites.
+      expect(body).not.toMatch(/\[One sentence on something specific/);
+    });
+
+    it('fills every referral slot, including the three fit lines', () => {
+      const body = compose('referral', POSTING, SENDER, TO, OUTLINE).body;
+      for (const line of OUTLINE.fit!) expect(body).toContain(`- ${line}`);
+      expect(body).toContain(OUTLINE.met);
+      expect(body).toContain(OUTLINE.said);
+      expect(body).not.toMatch(/\[the call\]/);
+    });
+
+    /**
+     * The bracket is the mechanism that stops a half-finished draft looking finished, so a
+     * partially filled outline must still read as unfinished rather than quietly sendable.
+     */
+    it('a half-filled outline still leaves the rest bracketed', () => {
+      const body = compose('referral', POSTING, SENDER, TO, { met: 'the call', fit: ['only this one'] }).body;
+      expect(body).toContain('- only this one');
+      expect(body).toMatch(/\[the closest thing you have/);
+      expect(body).toMatch(/\[the specific thing they said\]/);
+    });
+
+    it('whitespace is not a filled slot', () => {
+      expect(compose('coffee', POSTING, SENDER, TO, { hook: '   ' }).body).toMatch(/\[One sentence/);
+    });
+
+    it('no outline at all behaves exactly as before', () => {
+      expect(compose('coffee', POSTING, SENDER, TO, {}).body).toEqual(compose('coffee', POSTING, SENDER, TO).body);
+    });
   });
 });

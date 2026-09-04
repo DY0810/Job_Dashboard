@@ -43,6 +43,37 @@ export type Posting = { company: string; title: string; canonicalUrl: string };
 export type OutreachKind = 'coffee' | 'referral';
 
 /**
+ * Your outline. Every field is optional, and an empty one leaves its bracket in the draft
+ * rather than closing over silently — which is the property that keeps a half-filled draft
+ * obviously unfinished instead of quietly sendable.
+ *
+ * These are the slots the templates cannot fill for you: what you actually noticed about the
+ * company, how you met, and the concrete evidence a referrer would be staking their name on.
+ */
+export type Outline = {
+  /** coffee: the one specific thing about this company you can point at. */
+  hook?: string;
+  /** referral: how you and this person actually met. */
+  met?: string;
+  /** referral: the thing they said that stuck. */
+  said?: string;
+  /** referral: what you did about it afterwards. */
+  didWith?: string;
+  /** referral: up to three concrete reasons the referrer would be right about you. */
+  fit?: string[];
+};
+
+/**
+ * A filled slot, or its bracket. The bracket is not a placeholder to be tidied away later —
+ * it is the mechanism that stops an unfinished draft looking finished, so it must survive an
+ * empty value rather than collapsing to nothing.
+ */
+function slot(value: string | undefined, placeholder: string): string {
+  const filled = value?.trim();
+  return filled && filled.length > 0 ? filled : `[${placeholder}]`;
+}
+
+/**
  * `to=` is filled from the address you type while looking at the person. Workie still does
  * not FIND anyone — 62% of canonical URLs are ATS hosts so no employer domain is derivable,
  * there is no company-domain column, and 85% of the addresses in descriptions are
@@ -79,6 +110,7 @@ export function compose(
   posting: Posting,
   sender: Sender,
   recipient: Recipient,
+  outline: Outline = {},
 ): { subject: string; body: string } {
   const { company, title, canonicalUrl } = posting;
   // A name in the greeting is the one personalisation this tool can guarantee is real,
@@ -91,7 +123,7 @@ export function compose(
       subject: short ? `Coffee chat — 15 minutes on ${short}?` : 'Coffee chat — 15 minutes?',
       body: `${greeting}
 
-[One sentence on something specific at ${company} you read, used, or noticed. If it survives a find-and-replace of the company name, it is not a hook — delete this draft and send nothing.]
+${slot(outline.hook, `One sentence on something specific at ${company} you read, used, or noticed. If it survives a find-and-replace of the company name, it is not a hook — delete this draft and send nothing.`)}
 
 ${sender.intro}
 
@@ -124,13 +156,17 @@ ${sender.name}`,
     subject: `Referral for ${company} — ${shortTitle(title) ?? 'summer internship'}?`,
     body: `${greeting}
 
-Thanks again for [the call] — [the specific thing they said], and I ended up [what you did with it].
+Thanks again for ${slot(outline.met, 'the call')} — ${slot(outline.said, 'the specific thing they said')}, and I ended up ${slot(outline.didWith, 'what you did with it')}.
 
 ${company} has ${title} open, and I am applying either way. If you are willing to put your name on it, the three things that would make you right about me:
 
-- [something you built that maps onto what this team owns]
-- [the closest thing you have to their stack or problem]
-- [why this specific team, in one line — not why the company]
+${[
+  slot(outline.fit?.[0], 'something you built that maps onto what this team owns'),
+  slot(outline.fit?.[1], 'the closest thing you have to their stack or problem'),
+  slot(outline.fit?.[2], 'why this specific team, in one line — not why the company'),
+]
+  .map((line) => `- ${line}`)
+  .join('\n')}
 
 If that is not enough to go on off one conversation, a one-word no is a fine answer and I will not ask again.
 
