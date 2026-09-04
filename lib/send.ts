@@ -66,6 +66,35 @@ export function sendGate(request: Request): Response | null {
  * each body is the one composed for that person. The tool has no way to express a
  * merge-field blast, which is the shape the evidence says gets deleted.
  */
+/**
+ * Port 587 with STARTTLS rather than 465 with implicit TLS.
+ *
+ * Both reach Gmail. 587 is chosen because this runs in a Vercel serverless function, where
+ * 465 is the likelier of the two to stall: implicit TLS opens the handshake immediately on
+ * connect, and a cold Lambda with a slow first packet has nothing to fall back on. 587
+ * completes a plaintext greeting first and upgrades after, which fails faster and more
+ * legibly when the network is the problem.
+ *
+ * `requireTLS` is the load-bearing line and not a default. With `secure: false`, nodemailer
+ * ATTEMPTS STARTTLS but will proceed unencrypted if the server does not advertise it — which
+ * on a hostile or misconfigured path would put the app password on the wire in the clear.
+ * `requireTLS: true` turns that fallback into a failure. Never send this credential
+ * unencrypted; a bounced email is recoverable and a leaked password is not.
+ *
+ * The timeouts exist for the same serverless reason: without them a stalled connection hangs
+ * until the platform kills the function, which surfaces to the user as nothing at all rather
+ * than as an error they can act on.
+ */
+export const SMTP = {
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  requireTLS: true,
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 20_000,
+} as const;
+
 export const MAX_BATCH = 10;
 
 /**
@@ -79,12 +108,7 @@ export async function sendAll(messages: Outgoing[]): Promise<{ sent: number; fai
   if (!creds) throw new Error('gmail credentials are not configured');
   if (messages.length > MAX_BATCH) throw new Error(`at most ${MAX_BATCH} messages at a time`);
 
-  const transport = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: { user: creds.user, pass: creds.pass },
-  });
+  const transport = nodemailer.createTransport({ ...SMTP, auth: { user: creds.user, pass: creds.pass } });
 
   const failed: { to: string; reason: string }[] = [];
   let sent = 0;

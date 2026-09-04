@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { MAX_BATCH, sendConfigured, sendGate } from './send.ts';
+import { MAX_BATCH, SMTP, sendConfigured, sendGate } from './send.ts';
 
 const env = { ...process.env };
 afterEach(() => {
@@ -71,5 +71,34 @@ describe('the batch shape', () => {
   it('is capped well below anything that would look like bulk', () => {
     expect(MAX_BATCH).toBeGreaterThan(1);
     expect(MAX_BATCH).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('the SMTP transport', () => {
+  /**
+   * The security property, pinned because it is one boolean away from being wrong. With
+   * `secure: false` on port 587, nodemailer ATTEMPTS STARTTLS but proceeds in the clear if
+   * the server does not advertise it — which would put the Gmail app password on the wire
+   * unencrypted. `requireTLS` turns that silent fallback into a failure.
+   */
+  it('never sends the app password unencrypted', () => {
+    expect(SMTP.secure).toBe(false); // 587 upgrades rather than opening in TLS
+    expect(SMTP.requireTLS).toBe(true); // ...and refuses to continue if it cannot upgrade
+  });
+
+  it('uses the submission port', () => {
+    expect(SMTP.port).toBe(587);
+    expect(SMTP.host).toBe('smtp.gmail.com');
+  });
+
+  /**
+   * Serverless: without these a stalled connection hangs until the platform kills the
+   * function, which reaches the user as silence rather than an error they can act on.
+   */
+  it('bounds every stage so a stall surfaces as an error', () => {
+    for (const ms of [SMTP.connectionTimeout, SMTP.greetingTimeout, SMTP.socketTimeout]) {
+      expect(ms).toBeGreaterThan(0);
+      expect(ms).toBeLessThanOrEqual(30_000);
+    }
   });
 });
