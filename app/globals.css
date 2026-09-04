@@ -291,11 +291,22 @@
   color: var(--fg);
 }
 
+/* Every chip that carries this also guards its own onClick, so the styling does not need to
+   block the pointer — and must not. `pointer-events: none` suppressed the `title` too, which
+   is the only place the UI says WHY the button is inert ("Needs a name and an email address").
+   The explanation was unreachable exactly when it was needed. */
 .chip[aria-disabled="true"] {
   color: var(--fg-faint);
   border-color: var(--rule);
   background: none;
-  pointer-events: none;
+  cursor: default;
+}
+
+/* ...and it must not look pressable while it is not. */
+.chip[aria-disabled="true"]:active,
+.chip[aria-disabled="true"]:hover {
+  background: none;
+  transform: none;
 }
 
 /* Feedback, not animation — every pressable in the app gets it, and a dropdown is one. */

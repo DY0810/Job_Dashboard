@@ -49,3 +49,6 @@ next-env.d.ts
 *.db-wal
 *.db-shm
 /fixtures/live
+
+# Playwright MCP scratch: page snapshots and console logs from browser verification.
+.playwright-mcp/

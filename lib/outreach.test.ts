@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { compose, composeUrl, type Outline, type Posting, type Recipient, type Sender } from './outreach.ts';
+import { compose, composeUrl, stillQueued, type Outline, type Posting, type Recipient, type Sender } from './outreach.ts';
 
 const SENDER: Sender = { name: 'A Person', intro: 'I study X and build Y.', from: 'a@person.test' };
 const TO: Recipient = { name: 'Sarah Okafor', email: 'sarah@northline.com' };
@@ -166,5 +166,34 @@ describe('compose', () => {
     it('no outline at all behaves exactly as before', () => {
       expect(compose('coffee', POSTING, SENDER, TO, {}).body).toEqual(compose('coffee', POSTING, SENDER, TO).body);
     });
+  });
+});
+
+describe('stillQueued', () => {
+  const q = (...tos: string[]) => tos.map((to) => ({ to, subject: 's', body: `body for ${to}` }));
+
+  /**
+   * The regression this exists for: the panel emptied the queue on any 2xx, so a 207 — the
+   * status that exists precisely to name the recipients who missed out — destroyed the drafts
+   * for exactly those people. Every hand-typed line, gone, leaving an address and a reason.
+   */
+  it('keeps the drafts that failed and drops the ones that went', () => {
+    const sent = q('a@x.com', 'b@x.com', 'c@x.com');
+    const kept = stillQueued(sent, [{ to: 'b@x.com' }]);
+    expect(kept.map((m) => m.to)).toEqual(['b@x.com']);
+    expect(kept[0].body).toBe('body for b@x.com'); // the body survives, not just the address
+  });
+
+  it('empties the queue when everything went', () => {
+    expect(stillQueued(q('a@x.com', 'b@x.com'), [])).toEqual([]);
+  });
+
+  it('keeps everything when nothing went', () => {
+    const sent = q('a@x.com', 'b@x.com');
+    expect(stillQueued(sent, [{ to: 'a@x.com' }, { to: 'b@x.com' }])).toEqual(sent);
+  });
+
+  it('ignores a failure for an address that was never in this batch', () => {
+    expect(stillQueued(q('a@x.com'), [{ to: 'ghost@x.com' }])).toEqual([]);
   });
 });

@@ -93,7 +93,12 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
       onCancel={close}
       onClick={(event) => {
         // The dialog element itself is the backdrop area; its child fills the panel.
-        if (event.target === ref.current) close();
+        //
+        // Not while a draft is open. The panel is 544px pinned right, so the backdrop is most
+        // of the screen — and a leftward drag-select of the preview text that overshoots
+        // releases there, which counts as a backdrop click and used to discard the outline and
+        // the whole queue with it. `back` and `close` are both still one press away.
+        if (event.target === ref.current && !drafting) close();
       }}
     >
       <div className="flex h-full flex-col">

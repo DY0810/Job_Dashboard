@@ -111,6 +111,23 @@ function shortTitle(title: string): string | null {
   return title.length <= 45 ? title : null;
 }
 
+/**
+ * What survives a partial send.
+ *
+ * `/api/send` answers 207 when some envelopes went and some did not, and names the ones that
+ * did not — the whole reason it sends one envelope per recipient instead of one message with
+ * many addresses. The queue must then keep exactly those, because their bodies are the part a
+ * person typed by hand: the outline, the three underwriting lines, the thing they noticed.
+ * Dropping them leaves an address and a reason and nothing to retry with.
+ */
+export function stillQueued<T extends { to: string }>(
+  sent: T[],
+  failed: { to: string }[],
+): T[] {
+  const missed = new Set(failed.map((f) => f.to));
+  return sent.filter((message) => missed.has(message.to));
+}
+
 export function compose(
   kind: OutreachKind,
   posting: Posting,

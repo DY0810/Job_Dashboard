@@ -9,6 +9,7 @@ import {
   type OutreachKind,
   type Posting,
   type Sender,
+  stillQueued,
 } from '@/lib/outreach';
 
 /**
@@ -41,13 +42,19 @@ export function OutreachPanel({
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [canSend, setCanSend] = useState(false);
+  // The server's own cap, asked for rather than duplicated: a queue the route will reject is
+  // a queue with no exit, since nothing in this panel could shrink it again.
+  const [maxBatch, setMaxBatch] = useState(10);
 
   // Asked once: whether this deployment has Gmail credentials at all. The button says why it
   // cannot send rather than failing when pressed.
   useEffect(() => {
     fetch('/api/send')
       .then((r) => r.json())
-      .then((d: { configured: boolean }) => setCanSend(Boolean(d.configured)))
+      .then((d: { configured: boolean; maxBatch?: number }) => {
+        setCanSend(Boolean(d.configured));
+        if (typeof d.maxBatch === 'number' && d.maxBatch > 0) setMaxBatch(d.maxBatch);
+      })
       .catch(() => setCanSend(false));
   }, []);
 
@@ -67,11 +74,20 @@ export function OutreachPanel({
    */
   const queueThis = () => {
     if (!ready) return;
+    // Stop AT the cap rather than letting the route reject the batch later. Past the cap the
+    // queue could not be sent and could not be shrunk, so the only exit was discarding it.
+    if (queue.length >= maxBatch) {
+      setResult(`the queue holds ${maxBatch}; send it or drop someone before adding another`);
+      return;
+    }
     setQueue((q) => [...q, { to: to.email, subject: draft.subject, body: draft.body }]);
     setTo({ name: '', email: '' });
     setOutline({ fit: ['', '', ''] });
     setResult(null);
   };
+
+  /** The way back out of a full queue, and out of a name typed wrong three drafts ago. */
+  const unqueue = (index: number) => setQueue((q) => q.filter((_, i) => i !== index));
 
   const sendQueue = async () => {
     const messages = ready ? [...queue, { to: to.email, subject: draft.subject, body: draft.body }] : queue;
@@ -101,13 +117,21 @@ export function OutreachPanel({
         setResult('could not send');
       } else {
         const data = (await response.json()) as { sent: number; failed: { to: string; reason: string }[] };
-        setQueue([]);
+        /**
+         * KEEP WHAT FAILED. 207 exists so a partial send can say which recipients missed out;
+         * emptying the queue here threw away exactly those drafts — every hand-typed line of
+         * them — leaving an address and no way to retry. What sent is dropped, what failed
+         * stays queued and can go again once the address is fixed.
+         */
+        setQueue(stillQueued(messages, data.failed));
         setTo({ name: '', email: '' });
         setOutline({ fit: ['', '', ''] });
         setResult(
           data.failed.length === 0
             ? `sent ${data.sent}`
-            : `sent ${data.sent}, failed ${data.failed.length}: ${data.failed.map((f) => f.to).join(', ')}`,
+            : `sent ${data.sent}, still queued ${data.failed.length}: ${data.failed
+                .map((f) => `${f.to} (${f.reason})`)
+                .join('; ')}`,
         );
       }
     } catch {
@@ -169,8 +193,21 @@ export function OutreachPanel({
 
       {result ? <p className="text-[11px] text-fg-dim">{result}</p> : null}
       {queue.length > 0 ? (
-        <p className="text-[11px] text-fg-dim">
-          queued: {queue.map((m) => m.to).join(', ')}
+        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11px] text-fg-dim">
+          <span>
+            queued {queue.length}/{maxBatch}:
+          </span>
+          {queue.map((m, i) => (
+            <button
+              key={`${m.to}-${i}`}
+              type="button"
+              className="chip"
+              onClick={() => unqueue(i)}
+              title={`Remove ${m.to} from the queue`}
+            >
+              {m.to} ×
+            </button>
+          ))}
         </p>
       ) : null}
 
