@@ -2,8 +2,8 @@
  * Read-only production audit for the links the Workie UI currently renders.
  *
  * This is deliberately separate from `linkcheck`: it does not open a database and cannot
- * write `delisted_at`. It audits the three visible board slices from production, capped at
- * the same 200 rows per view as `lib/query.ts`.
+ * write `delisted_at`. The historical board rendered 200 rows per page; the follow-up paginator
+ * now traverses pages under an explicit page cap and total scheduling budget.
  *
  *   node scripts/audit-links.ts
  *   node scripts/audit-links.ts --base=https://job-dashboard-one-sigma.vercel.app
@@ -19,8 +19,10 @@ import { createRuntime, safeUrl } from '../lib/runtime.ts';
 
 const DEFAULT_BASE = 'https://job-dashboard-one-sigma.vercel.app';
 const PAGE_SIZE = 200;
-const MAX_PAGES_PER_VIEW = 2;
-const VIEW_CAP = PAGE_SIZE * MAX_PAGES_PER_VIEW;
+export const DEFAULT_MAX_PAGES = 20;
+export const DEFAULT_TIME_BUDGET_SECONDS = 20 * 60;
+const MAX_MAX_PAGES = 100;
+const MAX_TIME_BUDGET_SECONDS = 2 * 60 * 60;
 const CONCURRENCY = 6;
 
 const VIEWS = [
@@ -39,16 +41,25 @@ const PROHIBITED_HOSTS = new Set([
 ]);
 
 type Outcome = 'live' | 'dead' | 'blocked' | 'unknown';
+export type ApiCheck = 'match' | 'mismatch' | 'unavailable' | 'not-checked';
 
 interface RenderedLink {
   id: number;
   url: string;
 }
 
+export interface RenderedLinkDiscovery {
+  links: RenderedLink[];
+  expectedApplyCells: number;
+  pairedApplyCells: number;
+  unpairedApplyCells: number;
+}
+
 interface AuditResult {
   view: string;
   id: number;
   url: string;
+  api: ApiCheck;
   outcome: Outcome;
   status: number | null;
   reason: string;
@@ -58,18 +69,25 @@ interface ViewSummary {
   view: string;
   pagesFetched: number;
   paginationState: 'complete' | 'next-link-absent' | 'partial';
+  uniqueLinks: number;
   rendered: number;
   duplicateIds: number;
+  duplicateIdValues: number[];
+  expectedApplyCells: number;
+  pairedApplyCells: number;
+  unpairedApplyCells: number;
   partial: boolean;
   partialReason: string | null;
   apiMatches: number;
   apiMismatches: number;
   apiUnavailable: number;
+  apiNotChecked: number;
   live: number;
   dead: number;
   blocked: number;
   unknown: number;
   samples: AuditResult[];
+  results: AuditResult[];
 }
 
 function flag(argv: string[], name: string): string | undefined {
@@ -78,26 +96,131 @@ function flag(argv: string[], name: string): string | undefined {
   return match.includes('=') ? match.slice(match.indexOf('=') + 1) : '';
 }
 
+export function parseBoundedPositiveInt(raw: string | undefined, name: string, fallback: number, max: number): number {
+  if (raw === undefined) return fallback;
+  if (!/^[1-9]\d*$/.test(raw)) throw new Error(`bad --${name}: ${raw}`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value > max) throw new Error(`bad --${name}: ${raw}`);
+  return value;
+}
+
 function htmlDecode(value: string): string {
   return value.replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"');
 }
 
-/**
- * A row's detail link is stable markup and sits before its apply link. Parsing only these two
- * anchors avoids retaining descriptions or arbitrary page HTML in the report.
- */
-export function renderedLinks(html: string): RenderedLink[] {
-  const links: RenderedLink[] = [];
-  const rows = html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g) ?? [];
+function combineReasons(...reasons: (string | null)[]): string | null {
+  const present = reasons.filter((reason): reason is string => reason !== null);
+  return present.length > 0 ? present.join('; ') : null;
+}
 
-  for (const row of rows) {
-    const id = /href="\/\?(?:job=|[^"]*&amp;job=)(\d+)/.exec(row)?.[1];
-    const apply = /<a class="chip" href="(https?:\/\/[^"]+)"[^>]*>apply</.exec(row)?.[1];
-    if (!id || !apply) continue;
-    links.push({ id: Number(id), url: htmlDecode(apply) });
+function attr(openingTag: string, name: string): string | null {
+  const match = new RegExp(`\\b${name}=(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(openingTag);
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+}
+
+function anchorLink(anchor: string): RenderedLink | null {
+  const opening = /^<a\b[^>]*>/i.exec(anchor)?.[0];
+  if (!opening) return null;
+  const id = attr(opening, 'data-posting-id');
+  const href = attr(opening, 'href');
+  if (!id || !/^[1-9]\d*$/.test(id) || !href || !/^https?:\/\//i.test(href)) return null;
+  return { id: Number(id), url: htmlDecode(href) };
+}
+
+function legacyRowLink(row: string): RenderedLink | null {
+  if (/\bdata-posting-id=/i.test(row)) return null;
+  const id = /href="\/\?(?:job=|[^"]*&amp;job=)(\d+)/.exec(row)?.[1];
+  const anchors = row.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? [];
+  const apply = anchors.find((anchor) => {
+    const opening = /^<a\b[^>]*>/i.exec(anchor)?.[0] ?? '';
+    const classes = attr(opening, 'class')?.split(/\s+/) ?? [];
+    return classes.includes('chip') && /^<a\b[^>]*>\s*apply\b/i.test(anchor);
+  });
+  const href = apply ? attr(/^<a\b[^>]*>/i.exec(apply)?.[0] ?? '', 'href') : null;
+  if (!id || !href || !/^https?:\/\//i.test(href)) return null;
+  return { id: Number(id), url: htmlDecode(href) };
+}
+
+/**
+ * Prefer the explicit marker added to Apply anchors. React may stream that cell after the
+ * table row that held the job ID, so sibling traversal is not reliable. The legacy row parser
+ * remains only for older, unmarked markup.
+ */
+export function renderedLinkDiscovery(html: string): RenderedLinkDiscovery {
+  const links: RenderedLink[] = [];
+  const applyCells = html.match(/<td\b[^>]*\bdata-field=(?:"apply"|'apply')[^>]*>[\s\S]*?<\/td>/gi) ?? [];
+  let pairedApplyCells = 0;
+
+  for (const cell of applyCells) {
+    const anchors = cell.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? [];
+    const marked = anchors.map(anchorLink).filter((link): link is RenderedLink => link !== null);
+    if (marked.length === 1) {
+      links.push(marked[0]);
+      pairedApplyCells += 1;
+    }
   }
 
-  return links;
+  const rows = html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g) ?? [];
+  for (const row of rows) {
+    const link = legacyRowLink(row);
+    if (link) {
+      links.push(link);
+      if (/\bdata-field=(?:"apply"|'apply')/i.test(row)) pairedApplyCells += 1;
+    }
+  }
+  return {
+    links,
+    expectedApplyCells: applyCells.length,
+    pairedApplyCells,
+    unpairedApplyCells: Math.max(0, applyCells.length - pairedApplyCells),
+  };
+}
+
+export function renderedLinks(html: string): RenderedLink[] {
+  return renderedLinkDiscovery(html).links;
+}
+
+export function duplicateIds(links: readonly RenderedLink[]): number[] {
+  const counts = new Map<number, number>();
+  for (const link of links) counts.set(link.id, (counts.get(link.id) ?? 0) + 1);
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([id]) => id)
+    .sort((a, b) => a - b);
+}
+
+export function duplicateCoverage(links: readonly RenderedLink[]): {
+  duplicateIdValues: number[];
+  partial: boolean;
+  partialReason: string | null;
+} {
+  const duplicateIdValues = duplicateIds(links);
+  return {
+    duplicateIdValues,
+    partial: duplicateIdValues.length > 0,
+    partialReason:
+      duplicateIdValues.length > 0
+        ? `duplicate posting IDs across rendered pages: ${duplicateIdValues.join(',')}`
+        : null,
+  };
+}
+
+export function countApiChecks(results: readonly { api: ApiCheck }[]): {
+  apiMatches: number;
+  apiMismatches: number;
+  apiUnavailable: number;
+  apiNotChecked: number;
+} {
+  return results.reduce(
+    (counts, result) => {
+      if (result.api === 'match') counts.apiMatches += 1;
+      else if (result.api === 'mismatch') counts.apiMismatches += 1;
+      else if (result.api === 'unavailable') counts.apiUnavailable += 1;
+      else counts.apiNotChecked += 1;
+      return counts;
+    },
+    { apiMatches: 0, apiMismatches: 0, apiUnavailable: 0, apiNotChecked: 0 },
+  );
 }
 
 /** The deployed board may expose `rel=next` or an ordinary visible Next link. */
@@ -140,20 +263,34 @@ function outcome(result: LinkResult): Outcome {
   return 'unknown';
 }
 
-async function each<T>(items: readonly T[], fn: (item: T) => Promise<void>): Promise<void> {
+async function each<T>(
+  items: readonly T[],
+  deadline: number,
+  fn: (item: T, expired: boolean) => Promise<void>,
+): Promise<void> {
+  // This is a scheduling cutoff, not an abort-all deadline: work already started is bounded
+  // by its own request timeout and is allowed to settle so its verdict is retained.
   const queue = [...items];
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
-      for (let item = queue.shift(); item !== undefined; item = queue.shift()) await fn(item);
+      for (let item = queue.shift(); item !== undefined; item = queue.shift()) {
+        await fn(item, Date.now() >= deadline);
+      }
     }),
   );
 }
 
-async function apiMatches(base: string, link: RenderedLink): Promise<'match' | 'mismatch' | 'unavailable'> {
+async function apiMatches(
+  base: string,
+  link: RenderedLink,
+  deadline: number,
+): Promise<ApiCheck> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return 'not-checked';
   try {
     const response = await fetch(new URL(`/api/postings/${link.id}`, base), {
       headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(Math.min(15_000, remaining)),
     });
     if (!response.ok) return 'unavailable';
     const body = (await response.json()) as { canonicalUrl?: unknown };
@@ -167,8 +304,13 @@ async function renderedViewLinks(
   base: string,
   name: string,
   path: string,
+  maxPages: number,
+  deadline: number,
 ): Promise<{
   links: RenderedLink[];
+  expectedApplyCells: number;
+  pairedApplyCells: number;
+  unpairedApplyCells: number;
   pagesFetched: number;
   paginationState: ViewSummary['paginationState'];
   partial: boolean;
@@ -176,42 +318,59 @@ async function renderedViewLinks(
 }> {
   const origin = new URL(base);
   const seenPages = new Set<string>();
-  const byId = new Map<number, RenderedLink>();
+  const links: RenderedLink[] = [];
+  let expectedApplyCells = 0;
+  let pairedApplyCells = 0;
+  let unpairedApplyCells = 0;
   let next: string | null = path;
   let pagesFetched = 0;
   let partialReason: string | null = null;
   let sawNext = false;
 
-  while (next !== null && pagesFetched < MAX_PAGES_PER_VIEW && byId.size < VIEW_CAP) {
+  while (next !== null && pagesFetched < maxPages) {
+    if (Date.now() >= deadline) {
+      partialReason = 'time budget exhausted during page discovery';
+      break;
+    }
     const pageUrl = new URL(next, origin);
     if (seenPages.has(pageUrl.toString())) {
       partialReason = 'pagination loop detected';
       break;
     }
     seenPages.add(pageUrl.toString());
-    const response = await fetch(pageUrl, {
-      headers: { Accept: 'text/html' },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) throw new Error(`${name} board returned HTTP ${response.status}`);
-
-    const html = await response.text();
-    for (const link of renderedLinks(html)) {
-      if (byId.size >= VIEW_CAP) break;
-      byId.set(link.id, link);
+    let html: string;
+    try {
+      const response = await fetch(pageUrl, {
+        headers: { Accept: 'text/html' },
+        signal: AbortSignal.timeout(Math.min(20_000, deadline - Date.now())),
+      });
+      if (!response.ok) {
+        partialReason = `page fetch returned HTTP ${response.status}`;
+        break;
+      }
+      html = await response.text();
+    } catch (error) {
+      partialReason = `page fetch failed: ${error instanceof Error ? error.message : String(error)}`;
+      break;
     }
+    const discovered = renderedLinkDiscovery(html);
+    links.push(...discovered.links);
+    expectedApplyCells += discovered.expectedApplyCells;
+    pairedApplyCells += discovered.pairedApplyCells;
+    unpairedApplyCells += discovered.unpairedApplyCells;
     pagesFetched += 1;
     next = nextBoardPath(html, pageUrl, origin);
     sawNext ||= next !== null;
   }
 
   if (next !== null && partialReason === null) {
-    partialReason = pagesFetched >= MAX_PAGES_PER_VIEW
-      ? `page cap reached (${MAX_PAGES_PER_VIEW})`
-      : `row cap reached (${VIEW_CAP})`;
+    partialReason = `page cap reached (${maxPages})`;
   }
   return {
-    links: [...byId.values()],
+    links,
+    expectedApplyCells,
+    pairedApplyCells,
+    unpairedApplyCells,
     pagesFetched,
     paginationState: partialReason !== null ? 'partial' : sawNext ? 'complete' : 'next-link-absent',
     partial: partialReason !== null,
@@ -219,40 +378,71 @@ async function renderedViewLinks(
   };
 }
 
-async function auditView(base: string, name: string, path: string): Promise<ViewSummary> {
-  const rendered = await renderedViewLinks(base, name, path);
+async function auditView(
+  base: string,
+  name: string,
+  path: string,
+  maxPages: number,
+  deadline: number,
+): Promise<ViewSummary> {
+  const rendered = await renderedViewLinks(base, name, path, maxPages, deadline);
   const links = rendered.links;
+  const duplicate = duplicateCoverage(links);
+  const unpairedReason =
+    rendered.unpairedApplyCells > 0
+      ? `unpaired Apply cells: ${rendered.unpairedApplyCells}/${rendered.expectedApplyCells}`
+      : null;
+  const unique = new Map<string, RenderedLink>();
+  for (const link of links) unique.set(`${link.id}\u0000${link.url}`, link);
   const summary: ViewSummary = {
     view: name,
     pagesFetched: rendered.pagesFetched,
     paginationState: rendered.paginationState,
+    uniqueLinks: unique.size,
     rendered: links.length,
     duplicateIds: links.length - new Set(links.map((link) => link.id)).size,
-    partial: rendered.partial,
-    partialReason: rendered.partialReason,
+    duplicateIdValues: duplicate.duplicateIdValues,
+    expectedApplyCells: rendered.expectedApplyCells,
+    pairedApplyCells: rendered.pairedApplyCells,
+    unpairedApplyCells: rendered.unpairedApplyCells,
+    partial: rendered.partial || duplicate.partial || unpairedReason !== null,
+    partialReason: combineReasons(rendered.partialReason, duplicate.partialReason, unpairedReason),
     apiMatches: 0,
     apiMismatches: 0,
     apiUnavailable: 0,
+    apiNotChecked: 0,
     live: 0,
     dead: 0,
     blocked: 0,
     unknown: 0,
     samples: [],
+    results: [],
   };
   const runtime = createRuntime({ minGapMs: 500, burst: 1, timeoutMs: 15_000, retries: 1 });
-  const results: AuditResult[] = [];
+  const uniqueResults = new Map<string, AuditResult>();
 
-  await each(links, async (link) => {
-    const api = await apiMatches(base, link);
-    if (api === 'match') summary.apiMatches += 1;
-    else if (api === 'mismatch') summary.apiMismatches += 1;
-    else summary.apiUnavailable += 1;
-
-    if (prohibited(link.url)) {
-      results.push({
+  await each([...unique.values()], deadline, async (link, expired) => {
+    const key = `${link.id}\u0000${link.url}`;
+    if (expired) {
+      uniqueResults.set(key, {
         view: name,
         id: link.id,
         url: safeUrl(link.url),
+        api: 'not-checked',
+        outcome: 'unknown',
+        status: null,
+        reason: 'audit time budget exhausted before verification',
+      });
+      return;
+    }
+
+    const api = await apiMatches(base, link, deadline);
+    if (prohibited(link.url)) {
+      uniqueResults.set(key, {
+        view: name,
+        id: link.id,
+        url: safeUrl(link.url),
+        api,
         outcome: 'blocked',
         status: null,
         reason: 'prohibited host; not requested',
@@ -260,22 +450,46 @@ async function auditView(base: string, name: string, path: string): Promise<View
       return;
     }
 
+    if (api === 'not-checked' || Date.now() >= deadline) {
+      uniqueResults.set(key, {
+        view: name,
+        id: link.id,
+        url: safeUrl(link.url),
+        api,
+        outcome: 'unknown',
+        status: null,
+        reason: 'audit time budget exhausted before link verification',
+      });
+      return;
+    }
+
     const checked = await checkLink(runtime, link);
-    results.push({
+    uniqueResults.set(key, {
       view: name,
       id: link.id,
       url: safeUrl(link.url),
+      api,
       outcome: outcome(checked),
       status: checked.status,
       reason: checked.reason,
     });
   });
 
+  const results = links.map((link) => uniqueResults.get(`${link.id}\u0000${link.url}`)!);
+  Object.assign(summary, countApiChecks([...uniqueResults.values()]));
   for (const result of results) summary[result.outcome] += 1;
   summary.samples = [
     ...results.filter((result) => result.outcome === 'dead'),
     ...results.filter((result) => result.outcome !== 'live' && result.outcome !== 'dead'),
   ].slice(0, 12);
+  summary.results = results;
+  if (Date.now() >= deadline) {
+    summary.partial = true;
+    summary.partialReason = combineReasons(summary.partialReason, 'time budget exhausted during link verification');
+  }
+  if (summary.partial) {
+    summary.paginationState = 'partial';
+  }
   return summary;
 }
 
@@ -294,18 +508,66 @@ function outputPath(raw: string | undefined): string {
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const base = flag(argv, 'base') || DEFAULT_BASE;
   const requestedView = flag(argv, 'view');
+  const maxPages = parseBoundedPositiveInt(
+    flag(argv, 'max-pages'),
+    'max-pages',
+    DEFAULT_MAX_PAGES,
+    MAX_MAX_PAGES,
+  );
+  const timeBudgetSeconds = parseBoundedPositiveInt(
+    flag(argv, 'time-budget-seconds'),
+    'time-budget-seconds',
+    DEFAULT_TIME_BUDGET_SECONDS,
+    MAX_TIME_BUDGET_SECONDS,
+  );
   const views = requestedView ? VIEWS.filter((view) => view.name === requestedView) : VIEWS;
   if (views.length === 0) throw new Error(`unknown --view: ${requestedView}`);
+  const startedAt = Date.now();
+  const deadline = startedAt + timeBudgetSeconds * 1000;
   const summaries: ViewSummary[] = [];
-  for (const view of views) summaries.push(await auditView(base, view.name, view.path));
+  for (const view of views) {
+    if (Date.now() >= deadline) {
+      summaries.push({
+        view: view.name,
+        pagesFetched: 0,
+        paginationState: 'partial',
+        uniqueLinks: 0,
+        rendered: 0,
+        duplicateIds: 0,
+        duplicateIdValues: [],
+        expectedApplyCells: 0,
+        pairedApplyCells: 0,
+        unpairedApplyCells: 0,
+        partial: true,
+        partialReason: 'time budget exhausted before view discovery',
+        apiMatches: 0,
+        apiMismatches: 0,
+        apiUnavailable: 0,
+        apiNotChecked: 0,
+        live: 0,
+        dead: 0,
+        blocked: 0,
+        unknown: 0,
+        samples: [],
+        results: [],
+      });
+      continue;
+    }
+    summaries.push(await auditView(base, view.name, view.path, maxPages, deadline));
+  }
 
   const total = summaries.reduce(
     (all, view) => ({
       pagesFetched: all.pagesFetched + view.pagesFetched,
+      uniqueLinks: all.uniqueLinks + view.uniqueLinks,
       rendered: all.rendered + view.rendered,
+      expectedApplyCells: all.expectedApplyCells + view.expectedApplyCells,
+      pairedApplyCells: all.pairedApplyCells + view.pairedApplyCells,
+      unpairedApplyCells: all.unpairedApplyCells + view.unpairedApplyCells,
       apiMatches: all.apiMatches + view.apiMatches,
       apiMismatches: all.apiMismatches + view.apiMismatches,
       apiUnavailable: all.apiUnavailable + view.apiUnavailable,
+      apiNotChecked: all.apiNotChecked + view.apiNotChecked,
       live: all.live + view.live,
       dead: all.dead + view.dead,
       blocked: all.blocked + view.blocked,
@@ -314,10 +576,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }),
     {
       pagesFetched: 0,
+      uniqueLinks: 0,
       rendered: 0,
+      expectedApplyCells: 0,
+      pairedApplyCells: 0,
+      unpairedApplyCells: 0,
       apiMatches: 0,
       apiMismatches: 0,
       apiUnavailable: 0,
+      apiNotChecked: 0,
       live: 0,
       dead: 0,
       blocked: 0,
@@ -330,8 +597,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     event: 'production-link-audit',
     base,
     pageSize: PAGE_SIZE,
-    maxPagesPerView: MAX_PAGES_PER_VIEW,
-    capPerView: VIEW_CAP,
+    maxPagesPerView: maxPages,
+    timeBudgetSeconds,
+    elapsedMs: Date.now() - startedAt,
     total,
     views: summaries,
   };

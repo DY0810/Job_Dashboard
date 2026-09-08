@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { PostingDetail } from '@/lib/query';
 import { type OutreachKind, type Sender } from '@/lib/outreach';
 import { OutreachPanel } from './outreach-panel';
+import { readSenderDraft, readSenderProfile, saveSenderProfile, validSender } from './outreach-storage';
 import { Close, ExternalLink } from './icons';
 
 type State =
@@ -26,16 +27,46 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
   const [state, setState] = useState<State>({ status: 'loading' });
   const [drafting, setDrafting] = useState<OutreachKind | null>(null);
   const [sender, setSender] = useState<Sender | null>(null);
+  const [senderForm, setSenderForm] = useState<Partial<Sender> | null>(null);
+  const [pendingKind, setPendingKind] = useState<OutreachKind | null>(null);
+  const [senderError, setSenderError] = useState<string | null>(null);
+  const [senderNotice, setSenderNotice] = useState<string | null>(null);
 
   /**
    * The sender is asked for once per device and then never again; the RECIPIENT is asked for
    * inside the panel, per posting, because it is a different person at every company.
    */
   const pickKind = (kind: OutreachKind) => {
-    const current = readSender() ?? promptForSender(stored());
-    if (!current) return;
+    const current = readSenderProfile();
+    if (!current) {
+      setSenderForm(readSenderDraft());
+      setPendingKind(kind);
+      setSenderError(null);
+      return;
+    }
     setSender(current);
     setDrafting(kind);
+  };
+
+  const editSender = () => {
+    setSenderForm(readSenderDraft());
+    setPendingKind(null);
+    setSenderError(null);
+  };
+
+  const saveSender = () => {
+    if (!senderForm) return;
+    const next = validSender(senderForm);
+    if (!next) {
+      setSenderError('Complete each field before saving.');
+      return;
+    }
+    const saved = saveSenderProfile(next);
+    setSender(next);
+    setSenderForm(null);
+    setSenderNotice(saved ? null : 'Browser storage is unavailable; this sender is only available in this drawer.');
+    if (pendingKind) setDrafting(pendingKind);
+    setPendingKind(null);
   };
 
   useEffect(() => {
@@ -48,6 +79,8 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
     }
     // A draft belongs to the posting it was started from; opening another must not inherit it.
     setDrafting(null);
+    setSenderForm(null);
+    setPendingKind(null);
     if (!dialog.open) dialog.showModal();
 
     const controller = new AbortController();
@@ -81,6 +114,9 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
    * to a listener under automation, and this way the behaviour does not depend on it.
    */
   const close = useCallback(() => {
+    setSenderForm(null);
+    setPendingKind(null);
+    setSenderError(null);
     ref.current?.close();
     if (jobId !== null) router.replace(closeHref, { scroll: false });
   }, [jobId, closeHref, router]);
@@ -154,7 +190,24 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
           )}
         </div>
 
-        {state.status === 'ready' && drafting ? (
+        {senderNotice ? <p className="border-t border-rule px-5 py-2 text-[11px] text-fg-dim">{senderNotice}</p> : null}
+
+        {state.status === 'ready' && senderForm ? (
+          <SenderProfileForm
+            sender={senderForm}
+            error={senderError}
+            onChange={(field, value) => {
+              setSenderForm((current) => ({ ...current, [field]: value }));
+              setSenderError(null);
+            }}
+            onCancel={() => {
+              setSenderForm(null);
+              setPendingKind(null);
+              setSenderError(null);
+            }}
+            onSave={saveSender}
+          />
+        ) : state.status === 'ready' && drafting ? (
           <OutreachPanel
             kind={drafting}
             posting={state.posting}
@@ -175,6 +228,14 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
             </a>
             <Outreach kind="coffee" onPick={pickKind} />
             <Outreach kind="referral" onPick={pickKind} />
+            <button
+              type="button"
+              className="chip"
+              onClick={editSender}
+              title="Edit the sender profile stored only on this device"
+            >
+              sender
+            </button>
           </div>
         ) : null}
       </div>
@@ -191,78 +252,87 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
  * point, nobody cold-emails a stranger about a job they have not read: the drawer is where
  * the posting is read, so it is where the draft belongs. Apply sits in this same footer.
  */
-const SENDER_KEY = 'workie-outreach-sender';
-
-/** Whatever is on this device, however incomplete — the defaults the prompts start from. */
-function stored(): Partial<Sender> {
-  try {
-    return (JSON.parse(localStorage.getItem(SENDER_KEY) ?? '{}') as Partial<Sender>) ?? {};
-  } catch {
-    // Corrupt or absent: treated as unset, which routes the next click into first-run setup.
-    return {};
-  }
-}
-
-function readSender(): Sender | null {
-  const raw = stored();
-  // All three required. A device that predates the address field re-runs setup once, with
-  // its existing answers pre-filled, rather than defaulting to whoever the server lists first.
-  return raw.name?.trim() && raw.intro?.trim() && raw.from?.trim() ? (raw as Sender) : null;
-}
-
 /**
- * Asked once per device, then never again — this is the half of the email that is the same
- * whoever you write to. It is NOT hardcoded and never will be: this bundle ships to a
- * deployment with no auth, so a paragraph of someone's résumé in the source would be public,
- * and two people share this board and must sign as themselves.
- */
-function promptForSender(current: Partial<Sender>): Sender | null {
-  const name = window.prompt('Your name, as you sign an email:', current.name ?? '')?.trim();
-  if (!name) return null;
-  const intro = window
-    .prompt(
-      'One paragraph about you — school, where you work, what you build. Keep out any number you have not reconciled across résumé versions.',
-      current.intro ?? '',
-    )
-    ?.trim();
-  if (!intro) return null;
-  /**
-   * Which mailbox this device sends from. Asked rather than offered as a list: the addresses
-   * are not on any page this bundle can read, because an unauthenticated deployment that
-   * enumerated its own owners' Gmail addresses would be handing them to whoever has the link.
-   * The server checks it against the accounts it actually holds and refuses anything else.
-   */
-  const from = window
-    .prompt('The Gmail address this device sends from:', current.from ?? '')
-    ?.trim();
-  if (!from) return null;
-  const next = { name, intro, from };
-  localStorage.setItem(SENDER_KEY, JSON.stringify(next));
-  return next;
-}
-
-/**
- * Two buttons rather than one with a dropdown: there are exactly two kinds, and a popover to
- * choose between two things costs a click and some JS to save nothing. Alt-click re-edits the
- * paragraph about you — free on a button, and impossible on an anchor, where option-click
- * downloads the href on macOS.
+ * This stays a form rather than a prompt because the embedded browser does not implement
+ * `window.prompt`. It remains per-device browser state: this bundle never knows the configured
+ * Gmail addresses and the server still rejects anything it does not hold.
  */
 function Outreach({ kind, onPick }: { kind: OutreachKind; onPick: (kind: OutreachKind) => void }) {
   return (
     <button
       type="button"
       className="chip"
-      onClick={(event) => {
-        if (event.altKey) {
-          promptForSender(stored());
-          return;
-        }
-        onPick(kind);
-      }}
-      title="Opens a compose panel: your outline on one side, the finished email on the other. Alt-click to edit the paragraph about you, stored only on this device."
+      onClick={() => onPick(kind)}
+      title="Opens a compose panel: your outline on one side, the finished email on the other."
     >
       {kind === 'coffee' ? 'coffee chat' : 'referral'}
     </button>
+  );
+}
+
+function SenderProfileForm({
+  sender,
+  error,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  sender: Partial<Sender>;
+  error: string | null;
+  onChange: (field: keyof Sender, value: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <form
+      aria-label="Sender profile"
+      className="flex flex-col gap-3 border-t border-rule px-5 py-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">sender</span>
+        <span className="text-[11px] text-fg-dim">Stored only on this device.</span>
+      </div>
+      <label className="flex flex-col gap-1">
+        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">your name</span>
+        <input
+          autoFocus
+          className="note-input"
+          required
+          value={sender.name ?? ''}
+          onChange={(event) => onChange('name', event.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">about you</span>
+        <textarea
+          className="note-input"
+          required
+          rows={3}
+          value={sender.intro ?? ''}
+          onChange={(event) => onChange('intro', event.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">Gmail address</span>
+        <input
+          className="note-input"
+          required
+          type="email"
+          autoComplete="email"
+          value={sender.from ?? ''}
+          onChange={(event) => onChange('from', event.target.value)}
+        />
+      </label>
+      {error ? <p className="text-[11px] text-fg-dim">{error}</p> : null}
+      <div className="flex gap-2">
+        <button type="submit" className="chip">save</button>
+        <button type="button" className="chip" onClick={onCancel}>cancel</button>
+      </div>
+    </form>
   );
 }
 

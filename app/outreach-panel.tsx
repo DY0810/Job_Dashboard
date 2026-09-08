@@ -11,6 +11,7 @@ import {
   type Sender,
   stillQueued,
 } from '@/lib/outreach';
+import { clearSendToken, readSendToken, saveSendToken } from './outreach-storage';
 
 /**
  * The compose panel: your outline on the left of the seam, the finished email on the right.
@@ -41,6 +42,9 @@ export function OutreachPanel({
   const [queue, setQueue] = useState<{ to: string; subject: string; body: string }[]>([]);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [tokenForm, setTokenForm] = useState(false);
+  const [token, setToken] = useState('');
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [canSend, setCanSend] = useState(false);
   // The server's own cap, asked for rather than duplicated: a queue the route will reject is
   // a queue with no exit, since nothing in this panel could shrink it again.
@@ -95,19 +99,25 @@ export function OutreachPanel({
   const sendQueue = async () => {
     const messages = includeCurrent ? [...queue, { to: to.email, subject: draft.subject, body: draft.body }] : queue;
     if (messages.length === 0 || sending) return;
+    const sendToken = sessionToken ?? readSendToken();
+    if (!sendToken) {
+      setToken('');
+      setTokenForm(true);
+      return;
+    }
     setSending(true);
     setResult(null);
     try {
-      const token = localStorage.getItem('workie-send-token') ?? window.prompt('Send token:')?.trim();
-      if (!token) { setSending(false); return; }
-      localStorage.setItem('workie-send-token', token);
       const response = await fetch('/api/send', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-workie-send-token': token },
+        headers: { 'content-type': 'application/json', 'x-workie-send-token': sendToken },
         body: JSON.stringify({ from: sender.from, messages }),
       });
       if (response.status === 401) {
-        localStorage.removeItem('workie-send-token');
+        clearSendToken();
+        setSessionToken(null);
+        setToken('');
+        setTokenForm(true);
         setResult('that send token was not accepted');
       } else if (response.status === 503) {
         setResult('this deployment has no Gmail credentials configured');
@@ -195,6 +205,39 @@ export function OutreachPanel({
           </button>
         ) : null}
       </div>
+
+      {tokenForm ? (
+        <form
+          aria-label="Send token"
+          className="flex flex-wrap items-end gap-2 border-b border-rule pb-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const next = token.trim();
+            if (!next) return;
+            setSessionToken(next);
+            const saved = saveSendToken(next);
+            setTokenForm(false);
+            setResult(saved ? null : 'Browser storage is unavailable; the token will remain until this panel closes.');
+          }}
+        >
+          <fieldset disabled={sending} className="contents border-0 p-0">
+            <label className="flex min-w-48 flex-1 flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">send token</span>
+              <input
+                autoFocus
+                className="note-input"
+                required
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+              />
+            </label>
+            <button type="submit" className="chip">save token</button>
+            <button type="button" className="chip" onClick={() => setTokenForm(false)}>cancel</button>
+          </fieldset>
+        </form>
+      ) : null}
 
       {result ? <p className="text-[11px] text-fg-dim">{result}</p> : null}
       {queue.length > 0 ? (

@@ -4,7 +4,10 @@
 
 - Production target: `https://job-dashboard-one-sigma.vercel.app`
 - Rendered views: Design employed, Design freelance, Engineering.
-- Coverage limit: 200 rendered rows per view, matching `ROW_CAP` in `lib/query.ts`.
+- Historical baseline: the pre-pagination board rendered up to 200 rows per view, matching
+  `ROW_CAP` in `lib/query.ts`.
+- Expanded follow-up: page traversal is controlled by `--max-pages` and the total scheduling
+  budget; it is not a fixed 200-row evidence ceiling.
 - Read-only: no local or production database writes and no `linkcheck` mutation mode.
 
 ## Method
@@ -27,7 +30,9 @@
 - `app/api/postings/[id]` returns the same field from `lib/query.ts`.
 
 The production audit compared every rendered Apply href with its matching detail API result;
-all 435 row IDs matched their `canonicalUrl`.
+all 435 row IDs matched their `canonicalUrl`. This was a bounded legacy-parser pass, not a
+complete census: the old parser missed streamed Apply cells that were separated from their
+posting-ID row.
 
 ## Results
 
@@ -72,14 +77,26 @@ is justified for this change; generic or opaque 200 responses remain unknown.
 
 ## Pagination and Outreach Audit
 
-`scripts/audit-links.ts` now follows same-origin `rel=next`, visible `Next`, or
-`aria-label=next` board links. It is bounded to two pages and 400 rows per view and reports
-`partial` with the reason when either cap is reached. It also emits `paginationState`:
-`complete`, `partial`, or `next-link-absent`. The last state is intentionally not a claim that
-the full corpus was covered. It writes the full JSON report to an explicit `--output` path
-outside the repository, or `/tmp/workie-link-audit.json` by default. The current production
-deployment has no next link yet, so this behavior is regression-tested against markup rather
-than claimed as live pagination coverage.
+`scripts/audit-links.ts` follows same-origin `rel=next`, visible `Next`, or `aria-label=next`
+board links. It defaults to at most 20 pages per view and a 20-minute total budget; callers
+may supply validated `--max-pages=<1..100>` and
+`--time-budget-seconds=<1..7200>` overrides. The time budget stops scheduling new page/link
+work; already-started checks retain their request-level timeouts and are allowed to finish so
+their verdicts are not discarded. A page cap, budget exhaustion, fetch error, pagination loop,
+or duplicate posting ID produces an explicit partial result while preserving rows already
+discovered.
+
+The report preserves raw rendered rows, reports duplicate ID values before any deduplication,
+and stores every per-link API/link verdict in the ignored JSON output. Duplicate IDs force
+partial/incomplete coverage because offset pages may have overlapped while the source changed.
+Discovery also counts `td[data-field="apply"]` cells and pairs marked Apply anchors via
+`data-posting-id`; any unpaired cell forces partial coverage rather than claiming a complete
+199-of-200 page.
+Network work is deduplicated only by the exact `id + URL` pair, so repeated rendered rows retain
+evidence without repeatedly checking the same destination. It emits `paginationState`:
+`complete`, `partial`, or `next-link-absent`; the last state is intentionally not a claim that
+the full corpus was covered. It writes to an explicit `--output` path outside the repository,
+or `/tmp/workie-link-audit.json` by default.
 
 Read-only outreach audit findings:
 

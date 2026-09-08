@@ -175,6 +175,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
       <td data-field="apply">
         <a
           className="chip"
+          data-posting-id={row.id}
           href={row.canonicalUrl}
           target="_blank"
           rel="noreferrer noopener"

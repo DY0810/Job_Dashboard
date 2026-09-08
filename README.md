@@ -67,7 +67,9 @@ gh workflow run refresh.yml --repo DY0810/Job_Dashboard -f catch_up=true
 ```
 
 The runner refreshes normally, then advances only pending catalogs, enriching and mirroring
-after each batch. It stops on error, no progress, or its 75-minute catch-up budget. Exit 75
+after each batch. Manual catch-up uses up to 1,000 source pages per batch; ordinary cycles
+use 100. Both retain the same per-host rate limits. It stops on error, no progress, or
+its 75-minute catch-up budget. Exit 75
 means more catch-up remains; a later dispatch resumes from the saved cursor. This mode
 defers the lengthy weekly link check to an ordinary run.
 

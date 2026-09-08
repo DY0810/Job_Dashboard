@@ -43,6 +43,9 @@ jobs:
       USAJOBS_KEY: ${{ secrets.USAJOBS_KEY }}
       USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
       MUSE_API_KEY: ${{ secrets.MUSE_API_KEY }}
+      # Larger manual batches avoid re-enriching and mirroring after every 2,000 feed rows.
+      # This does not change per-host rate limits or the resumable checkpoint contract.
+      WORKIE_CATCH_UP_PAGES: ${{ inputs.catch_up && '1000' || '100' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 
+it('only increases source batch size for an explicit manual catch-up run', () => {
+  const workflow = readFileSync('.github/workflows/refresh.yml', 'utf8');
+  expect(workflow).toContain("WORKIE_CATCH_UP_PAGES: ${{ inputs.catch_up && '1000' || '100' }}");
+});
+
 it.each([
   { ingest: 0, enrich: 0, push: 0, expected: 0, mirrored: true },
   { ingest: 0, enrich: 2, push: 0, expected: 2, mirrored: false },
