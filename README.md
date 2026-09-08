@@ -73,6 +73,16 @@ its 75-minute catch-up budget. Exit 75
 means more catch-up remains; a later dispatch resumes from the saved cursor. This mode
 defers the lengthy weekly link check to an ordinary run.
 
+To verify particular connectors before their next scheduled poll:
+
+```bash
+gh workflow run refresh.yml --repo DY0810/Job_Dashboard -f refresh_sources=amazon,workday
+```
+
+This bypasses only the polling interval for those names. Credential requirements,
+robots rules and request rate limits still apply; the ordinary cycle then enriches
+and mirrors their results.
+
 ### Browsing Jobs
 
 Each page contains at most 200 jobs; Previous/Next reaches the remaining matching results.

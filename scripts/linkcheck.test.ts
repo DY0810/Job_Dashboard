@@ -80,10 +80,13 @@ function runtimeWith(respond: (url: string, method: string) => { status: number;
 }
 
 describe('classifyBody', () => {
-  it('reads a 200 gone-page as dead on every platform that serves one', () => {
+  it('reads a 200 gone-page as dead when the body identifies a closed destination', () => {
     expect(classifyBody(URL_FOR.greenhouse, BODY.greenhouseGone).verdict).toBe('dead');
-    expect(classifyBody(URL_FOR.ashby, BODY.ashbyGone).verdict).toBe('dead');
     expect(classifyBody(URL_FOR.workable, BODY.workableGone).verdict).toBe('dead');
+  });
+
+  it('does not mistake an Ashby client-rendered shell for a closed job', () => {
+    expect(classifyBody(URL_FOR.ashby, BODY.ashbyGone).verdict).toBe('unverifiable');
   });
 
   it('reads a real job page as live', () => {
@@ -115,6 +118,68 @@ describe('classifyBody', () => {
 });
 
 describe('checkLink', () => {
+  const ashbyId = '723239cc-f90f-409d-86ec-3b02df603239';
+  const ashbyUrl = `https://jobs.ashbyhq.com/cursor/${ashbyId}/application`;
+  const anotherAshbyId = '123239cc-f90f-409d-86ec-3b02df603239';
+  const listed = (id: string) => ({
+    isListed: true,
+    jobUrl: `https://jobs.ashbyhq.com/cursor/${id}`,
+  });
+
+  it('recognizes an open Ashby listing even when its HTML is an empty app shell', async () => {
+    const runtime = runtimeWith((url) => ({
+      status: 200,
+      body: url.includes('posting-api/job-board')
+        ? JSON.stringify({ jobs: [listed(ashbyId)] })
+        : BODY.ashbyGone,
+    }));
+    expect(await checkLink(runtime, { id: 1, url: ashbyUrl })).toMatchObject({
+      verdict: 'live',
+      reason: 'ashby: listed by official API',
+    });
+  });
+
+  it('requires absence from a valid Ashby board before marking its empty shell dead', async () => {
+    const runtime = runtimeWith((url) => ({
+      status: 200,
+      body: url.includes('posting-api/job-board')
+        ? JSON.stringify({ jobs: [listed(anotherAshbyId)] })
+        : BODY.ashbyGone,
+    }));
+    expect(await checkLink(runtime, { id: 1, url: ashbyUrl })).toMatchObject({
+      verdict: 'dead',
+      reason: 'ashby: absent from official API',
+    });
+  });
+
+  it.each([
+    { status: 503, body: '{}' },
+    { status: 200, body: '{}' },
+    { status: 200, body: '{"jobs":[]}' },
+    { status: 200, body: '{"jobs":[{}]}' },
+    { status: 200, body: JSON.stringify({ jobs: [{ ...listed(ashbyId), isListed: false }] }) },
+  ])('does not infer an Ashby closure from an unavailable or malformed board: %j', async (api) => {
+    const runtime = runtimeWith((url) => url.includes('posting-api/job-board')
+      ? api
+      : { status: 200, body: BODY.ashbyGone });
+    expect((await checkLink(runtime, { id: 1, url: ashbyUrl })).verdict).toBe('unverifiable');
+  });
+
+  it('fetches each Ashby board only once for concurrent link checks', async () => {
+    let apiCalls = 0;
+    const runtime = runtimeWith((url) => {
+      if (url.includes('posting-api/job-board')) {
+        apiCalls += 1;
+        return { status: 200, body: JSON.stringify({ jobs: [listed(ashbyId), listed(anotherAshbyId)] }) };
+      }
+      return { status: 200, body: BODY.ashbyGone };
+    });
+    const results = await Promise.all([ashbyId, anotherAshbyId].map((id, index) =>
+      checkLink(runtime, { id: index, url: `https://jobs.ashbyhq.com/cursor/${id}/application` })));
+    expect(results.map((result) => result.verdict)).toEqual(['live', 'live']);
+    expect(apiCalls).toBe(1);
+  });
+
   it('reports a 404 as dead without downloading the body', async () => {
     let gets = 0;
     const runtime = runtimeWith((_url, method) => {

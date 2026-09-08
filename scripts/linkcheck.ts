@@ -7,7 +7,8 @@
  *
  *   greenhouse  a withdrawn job 302s to the board index and answers **200**
  *               (`/twilio/jobs/1` -> `/twilio?error=true`, `<title>Jobs at Twilio</title>`)
- *   ashby       an unknown job id answers **200** with the bare SPA shell, `<title>Jobs</title>`
+ *   ashby       both live and unknown jobs can answer **200** with a bare SPA shell;
+ *               the official posting API must resolve that ambiguity
  *   workable    an unknown job answers **200** with `og:title` = "Current Openings"
  *   lever       404 — honest
  *   recruitee   404 — honest
@@ -96,8 +97,6 @@ const PLATFORMS: Platform[] = [
   {
     name: 'ashby',
     host: /(^|\.)ashbyhq\.com$/i,
-    // A live Ashby page titles itself "<Role> @ <Company>"; the gone shell is bare "Jobs".
-    gone: [{ pattern: /<title>\s*Jobs\s*<\/title>/i, label: 'ashby: empty app shell' }],
   },
   {
     name: 'workable',
@@ -183,6 +182,54 @@ function failure(error: unknown): { status: number | null; reason: string } {
  */
 const NO_SIGNAL_HOSTS = new Set(['news.ycombinator.com']);
 
+const ashbyBoards = new WeakMap<Runtime, Map<string, Promise<Map<string, boolean> | null>>>();
+
+function ashbyIdentity(raw: string): { board: string; id: string } | null {
+  try {
+    const url = new URL(raw);
+    const match = /^\/([^/]+)\/([a-f0-9-]{36})(?:\/application)?\/?$/i.exec(url.pathname);
+    return url.hostname === 'jobs.ashbyhq.com' && match
+      ? { board: match[1], id: match[2].toLowerCase() }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function ashbyPresence(runtime: Runtime, url: string, options: FetchOptions): Promise<boolean | null> {
+  const identity = ashbyIdentity(url);
+  if (!identity) return null;
+  let boards = ashbyBoards.get(runtime);
+  if (!boards) ashbyBoards.set(runtime, boards = new Map());
+  if (!boards.has(identity.board)) {
+    boards.set(identity.board, (async () => {
+      try {
+        const body = await runtime.fetchJson<{ jobs?: unknown[] }>(
+          `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(identity.board)}`,
+          options,
+        );
+        // An empty or malformed board can be an outage, not hundreds of closed jobs.
+        if (!Array.isArray(body.jobs) || body.jobs.length === 0) return null;
+        const listed = new Map<string, boolean>();
+        for (const value of body.jobs) {
+          if (!value || typeof value !== 'object') return null;
+          const job = value as { jobUrl?: unknown; isListed?: unknown };
+          const parsed = typeof job.jobUrl === 'string' ? ashbyIdentity(job.jobUrl) : null;
+          if (!parsed || parsed.board !== identity.board || typeof job.isListed !== 'boolean') return null;
+          listed.set(parsed.id, job.isListed);
+        }
+        return listed;
+      } catch {
+        return null;
+      }
+    })());
+  }
+  const listed = await boards.get(identity.board)!;
+  if (!listed) return null;
+  // Unlisted roles may still accept direct applications; that is not a closed-job signal.
+  return listed.has(identity.id) ? (listed.get(identity.id) ? true : null) : false;
+}
+
 export async function checkLink(
   runtime: Runtime,
   posting: { id: number; url: string },
@@ -222,6 +269,16 @@ export async function checkLink(
   try {
     const body = await runtime.fetchText(url, { ...options, method: 'GET' });
     const { verdict, reason } = classifyBody(url, body);
+    if (verdict === 'unverifiable' && /<title>\s*Jobs\s*<\/title>/i.test(body)) {
+      const listed = await ashbyPresence(runtime, url, options);
+      if (listed !== null) {
+        return {
+          id, url, status: 200,
+          verdict: listed ? 'live' : 'dead',
+          reason: listed ? 'ashby: listed by official API' : 'ashby: absent from official API',
+        };
+      }
+    }
     return { id, url, verdict, status: 200, reason };
   } catch (error) {
     const { status, reason } = failure(error);

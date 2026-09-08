@@ -53,19 +53,34 @@ Post-runtime-fix validation on September 8, 2026:
 `blocked` means robots or an access response such as 403; `unknown` includes generic 200
 responses with no job-page evidence and timeouts. Neither category is a delisting candidate.
 
-Posting `26295` in Design employed is confirmed dead. Its application URL,
-`jobs.ashbyhq.com/ashby/07201b7e-a581-46a6-bbd3-432824bd761f/application`, returned a
-client shell with `posting:null` and `jobBoard:null`. More importantly, Ashby's official
-`posting-api/job-board/ashby` response returned 71 currently listed jobs (`isListed:true`) and
-none had that UUID in its ID, job URL, or application URL. This is a valid targeted
-`linkcheck --ids=26295` candidate for the cloud writer; this read-only audit did not update
-any database.
+The earlier dead classification for posting `26295` is withdrawn. A later September 8
+check of the official 71-job Ashby board found this exact UUID with `isListed:true`, and
+its application page served JobPosting metadata. Cursor posting `43661` provided a
+concurrent counterexample: its official API listed the role while its HTML was the
+generic `Jobs` shell. An empty Ashby shell alone is not evidence of closure.
+
+`linkcheck` now consults the official board for an ambiguous Ashby shell, caching one
+response per board per runtime. A matching listed job is live; absence from a valid,
+nonempty board supports closure. Missing, empty or malformed API data remains
+unverifiable. The fresh live check confirmed `26295` and `43661` as live, and `24333`
+as absent from Airwallex's official board.
 
 No displayed link matched a prohibited LinkedIn, Indeed, Glassdoor, ZipRecruiter, or Handshake
 host, so none was requested. The post-fix test gate was 64 passing tests across
 `lib/runtime.test.ts`, `scripts/linkcheck.test.ts`, and `scripts/audit-links.test.ts`.
 
 ## Follow-up
+
+The expanded pass on `ca21fe8` paired 3,447 rendered links across 18 pages. It is not
+a complete census: one streamed anchor was still outside its original cell,
+Engineering pagination overlapped during publication, and local DNS failures made
+2,171 detail-API checks unavailable. Its six provisional dead results include the
+two Ashby false positives discussed above. No database changes came from that pass.
+
+The parser now reads marked anchors independently of their original cells. After
+an origin returns 403 or 429, later URLs on that origin are recorded as unrequested
+and blocked, not falsely described as having returned that status. This avoids
+repeated requests to a provider that has already refused the audit.
 
 `linkcheck` currently classifies response bodies using the stored pre-redirect URL. Final URL
 exposure from the runtime is not required for fail-closed behavior, but would let callers

@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+
+import * as linkcheck from './linkcheck.ts';
 
 import {
   DEFAULT_MAX_PAGES,
@@ -6,17 +11,56 @@ import {
   countApiChecks,
   duplicateCoverage,
   duplicateIds,
+  main,
   nextBoardPath,
   parseBoundedPositiveInt,
   renderedLinkDiscovery,
   renderedLinks,
 } from './audit-links.ts';
 
+it('stops requesting an origin after a refusal without claiming later URLs returned 403', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'workie-audit-test-'));
+  const output = join(dir, 'report.json');
+  const html = Array.from({ length: 7 }, (_, index) =>
+    `<tr><td data-field="apply"><a data-posting-id="${index + 1}" href="https://refused.test/${index + 1}">apply</a></td></tr>`).join('');
+  const checked = vi.spyOn(linkcheck, 'checkLink').mockImplementation(async (_runtime, posting) => ({
+    ...posting, verdict: 'unverifiable', status: 403, reason: 'HTTP 403',
+  }));
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = new URL(String(input));
+    const id = url.pathname.match(/^\/api\/postings\/(\d+)$/)?.[1];
+    return id ? Response.json({ canonicalUrl: `https://refused.test/${id}` }) : new Response(html);
+  });
+  try {
+    await main(['--base=https://workie.test', '--view=design-employed', `--output=${output}`]);
+    const report = JSON.parse(readFileSync(output, 'utf8'));
+    expect(checked.mock.calls.length).toBeGreaterThan(0);
+    expect(checked.mock.calls.length).toBeLessThan(7);
+    expect(report.total).toMatchObject({ apiMatches: 7, blocked: 7 });
+    expect(report.views[0].results.some((result: { status: number | null; reason: string }) =>
+      result.status === null && result.reason.includes('this URL was not requested'))).toBe(true);
+  } finally {
+    vi.restoreAllMocks();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function row(jobHref: string, applyHref: string): string {
   return `<tr><td><a href="${jobHref}">Acme</a></td><td><a class="chip" href="${applyHref}">apply</a></td></tr>`;
 }
 
 describe('renderedLinks', () => {
+  it('finds a streamed Apply anchor outside its original placeholder cell', () => {
+    const html = '<tr><td data-field="apply"><template id="P:1"></template></td></tr>'
+      + '<div hidden id="S:1"><a data-posting-id="42" class="chip" href="https://example.com/job">apply</a></div>';
+    expect(renderedLinkDiscovery(html)).toMatchObject({
+      links: [{ id: 42, url: 'https://example.com/job' }],
+      expectedApplyCells: 1,
+      pairedApplyCells: 1,
+      unpairedApplyCells: 0,
+    });
+  });
+
   it('extracts the default and non-default board query shapes', () => {
     const links = renderedLinks(
       [

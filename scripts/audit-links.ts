@@ -147,18 +147,10 @@ function legacyRowLink(row: string): RenderedLink | null {
  * remains only for older, unmarked markup.
  */
 export function renderedLinkDiscovery(html: string): RenderedLinkDiscovery {
-  const links: RenderedLink[] = [];
+  const anchors = html.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? [];
+  const links = anchors.map(anchorLink).filter((link): link is RenderedLink => link !== null);
   const applyCells = html.match(/<td\b[^>]*\bdata-field=(?:"apply"|'apply')[^>]*>[\s\S]*?<\/td>/gi) ?? [];
-  let pairedApplyCells = 0;
-
-  for (const cell of applyCells) {
-    const anchors = cell.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? [];
-    const marked = anchors.map(anchorLink).filter((link): link is RenderedLink => link !== null);
-    if (marked.length === 1) {
-      links.push(marked[0]);
-      pairedApplyCells += 1;
-    }
-  }
+  let pairedApplyCells = Math.min(links.length, applyCells.length);
 
   const rows = html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g) ?? [];
   for (const row of rows) {
@@ -420,6 +412,7 @@ async function auditView(
   };
   const runtime = createRuntime({ minGapMs: 500, burst: 1, timeoutMs: 15_000, retries: 1 });
   const uniqueResults = new Map<string, AuditResult>();
+  const refusedOrigins = new Set<string>();
 
   await each([...unique.values()], deadline, async (link, expired) => {
     const key = `${link.id}\u0000${link.url}`;
@@ -463,7 +456,17 @@ async function auditView(
       return;
     }
 
+    const origin = new URL(link.url).origin;
+    if (refusedOrigins.has(origin)) {
+      uniqueResults.set(key, {
+        view: name, id: link.id, url: safeUrl(link.url), api,
+        outcome: 'blocked', status: null,
+        reason: 'origin refused automated checks; this URL was not requested',
+      });
+      return;
+    }
     const checked = await checkLink(runtime, link);
+    if (checked.status === 403 || checked.status === 429) refusedOrigins.add(origin);
     uniqueResults.set(key, {
       view: name,
       id: link.id,
@@ -599,6 +602,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     pageSize: PAGE_SIZE,
     maxPagesPerView: maxPages,
     timeBudgetSeconds,
+    startedAt: new Date(startedAt).toISOString(),
     elapsedMs: Date.now() - startedAt,
     total,
     views: summaries,

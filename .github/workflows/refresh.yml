@@ -21,6 +21,10 @@ on:
         description: Optional comma-separated posting IDs to verify before publishing
         type: string
         default: ''
+      refresh_sources:
+        description: Optional connector names to poll now, for example amazon,workday
+        type: string
+        default: ''
 
 concurrency:
   group: refresh
@@ -102,6 +106,31 @@ jobs:
           } else {
             console.log('Selected postings are already excluded from the board');
           }
+          JS
+
+      - name: Refresh selected sources
+        if: inputs.refresh_sources != ''
+        env:
+          REFRESH_SOURCES: ${{ inputs.refresh_sources }}
+        run: |
+          node --input-type=module <<'JS'
+          import { openDb } from './lib/db/index.ts';
+          import { createRuntime } from './lib/runtime.ts';
+          import { connectors } from './scripts/connectors/index.ts';
+          import { runIngest } from './scripts/ingest.ts';
+          const names = [...new Set(process.env.REFRESH_SOURCES.split(',').map(name => name.trim()).filter(Boolean))];
+          const selected = connectors.filter(connector => names.includes(connector.name));
+          if (!names.length || selected.length !== names.length) {
+            throw new Error('refresh_sources must contain known connector names');
+          }
+          // A named manual poll bypasses cadence only, never credentials or robots rules.
+          const result = await runIngest({
+            connectors: selected.map(connector => ({ ...connector, minIntervalMs: undefined })),
+            db: openDb(undefined, { migrate: true }),
+            runtime: createRuntime(),
+            runId: new Date().toISOString(),
+          });
+          process.exitCode = result.exitCode;
           JS
 
       - name: Run refresh cycle
