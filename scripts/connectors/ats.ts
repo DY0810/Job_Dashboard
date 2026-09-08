@@ -40,6 +40,8 @@ export interface RegistryEntry {
   token: string;
   wdN?: string;
   site?: string;
+  /** Employer-published job index used to override a stale ATS-hosted application URL. */
+  careersUrl?: string;
   tags: string[];
   verified_at: string;
   flagged_at?: string;
@@ -360,20 +362,49 @@ interface AshbyJob {
   };
 }
 
+function officialAshbyCareerUrls(markup: string, careersUrl: string): Map<string, string> {
+  const urls = new Map<string, string>();
+  for (const match of markup.matchAll(
+    /\\?"id\\?":\\?"([0-9a-f-]{36})\\?"[^]{0,3000}?\\?"urlSlug\\?":\\?"([^"\\]+)\\?"/gi,
+  )) {
+    urls.set(match[1], `${careersUrl.replace(/\/+$/, '')}/${match[2]}`);
+  }
+  return urls;
+}
+
 export const ashby = atsConnector('ashby', async (entry, context) => {
   const body = await context.runtime.fetchJson<{ jobs?: AshbyJob[] }>(
     endpoint('ashby', entry.token),
   );
-  return sourceList(body.jobs, 'jobs')
+  let employerUrls = new Map<string, string>();
+  if (entry.careersUrl) {
+    try {
+      employerUrls = officialAshbyCareerUrls(
+        await context.runtime.fetchText(entry.careersUrl),
+        entry.careersUrl,
+      );
+    } catch (error) {
+      context.degraded(`${entry.name}: official careers index failed`);
+      context.log({
+        connector: 'ashby',
+        company: entry.name,
+        status: 'error',
+        error: redact(error instanceof Error ? error.message : String(error)),
+      });
+    }
+  }
+
+  const jobs = sourceList(body.jobs, 'jobs')
     .filter((job) => job.jobUrl && job.isListed !== false)
-    .map((job) =>
-      row('ashby', entry, {
+    .map((job) => {
+      const employerUrl = job.id ? employerUrls.get(job.id) : undefined;
+      return row('ashby', entry, {
         publisherId: job.id,
         title: job.title,
         location: job.location,
-        url: job.jobUrl!,
+        url: employerUrl ?? job.jobUrl!,
         // jobUrl is the description page; applyUrl is the form (jobUrl + "/application").
-        applyUrl: job.applyUrl,
+        applyUrl: employerUrl ?? job.applyUrl,
         postedAt: toEpochMs(job.publishedAt),
         // Ashby's "plain" text is really markdown; normalizeDescription strips the markers.
         description: job.descriptionPlain ?? job.descriptionHtml ?? '',
@@ -390,8 +421,21 @@ export const ashby = atsConnector('ashby', async (entry, context) => {
           // The HTML keeps the list structure the markdown body also has; prefer the markup.
           sections: parseSections(job.descriptionHtml ?? job.descriptionPlain),
         },
-      }),
-    );
+      });
+    });
+  if (entry.careersUrl) {
+    const matched = jobs.filter((job) => job.sourceUrl.startsWith(entry.careersUrl!)).length;
+    if (matched < jobs.length) {
+      context.degraded(`${entry.name}: ${jobs.length - matched} official application URLs could not be matched`);
+    }
+    context.log({
+      connector: 'ashby',
+      company: entry.name,
+      officialCareerUrls: employerUrls.size,
+      matchedOfficialCareerUrls: matched,
+    });
+  }
+  return jobs;
 });
 
 interface SmartRecruitersPosting {

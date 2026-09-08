@@ -56,14 +56,16 @@ const PAGE = 100;
 
 /** Read the whole accessible search window, not just its first 1,500 jobs. */
 const MAX_PAGES = 100;
+const AWS_BUSINESS_CATEGORY = 'amazon-web-services';
 
-function searchUrl(offset: number): string {
+function searchUrl(offset: number, businessCategory?: string): string {
   const params = new URLSearchParams({
     base_query: '',
     result_limit: String(PAGE),
     offset: String(offset),
     sort: 'recent',
   });
+  if (businessCategory) params.append('business_category[]', businessCategory);
   return `https://www.amazon.jobs/en/search.json?${params.toString()}`;
 }
 
@@ -99,71 +101,139 @@ function body(job: AmazonJob): string {
     .join('\n\n');
 }
 
+interface AmazonPartition {
+  label: string;
+  businessCategory?: string;
+}
+
+interface AmazonPartitionResult {
+  jobs: AmazonJob[];
+  pages: number;
+  hits: number | null;
+  truncated: boolean;
+}
+
+async function collectPartition(
+  context: Parameters<Connector['fetch']>[0],
+  partition: AmazonPartition,
+): Promise<AmazonPartitionResult> {
+  const jobs: AmazonJob[] = [];
+  let pages = 0;
+  let hits: number | undefined;
+
+  for (; pages < MAX_PAGES;) {
+    let response: { hits?: number; jobs?: AmazonJob[] };
+    try {
+      response = await context.runtime.fetchJson(searchUrl(pages * PAGE, partition.businessCategory));
+      if (!Array.isArray(response.jobs)) throw new Error('Amazon response is missing its jobs array');
+    } catch (error) {
+      if (pages === 0) throw error;
+      context.degraded(`Amazon ${partition.label} page ${pages} failed`);
+      break;
+    }
+    pages += 1;
+    hits ??= response.hits;
+    jobs.push(...response.jobs);
+    if (response.jobs.length < PAGE || (hits !== undefined && jobs.length >= hits)) break;
+  }
+
+  const truncated =
+    (hits ?? 0) >= MAX_PAGES * PAGE || (pages >= MAX_PAGES && (hits ?? 0) > jobs.length);
+  if (truncated) {
+    context.degraded(
+      `Amazon ${partition.label}: read ${jobs.length} of ${hits} reported hits; search window may be capped`,
+    );
+  }
+  return { jobs, pages, hits: hits ?? null, truncated };
+}
+
+function publisherKey(job: AmazonJob): string | null {
+  if (typeof job.id_icims === 'string' && job.id_icims) return `id:${job.id_icims}`;
+  return typeof job.job_path === 'string' && job.job_path ? `url:${job.job_path}` : null;
+}
+
 export const amazon: Connector = {
   name: 'amazon',
   kind: 'ats',
   /** A larger employer search stays on its existing six-hour cadence. */
   minIntervalMs: 6 * 60 * 60 * 1000,
   async fetch(context) {
+    const unfiltered = await collectPartition(context, { label: 'unfiltered' });
+    let aws: AmazonPartitionResult | null = null;
+    try {
+      aws = await collectPartition(context, {
+        label: AWS_BUSINESS_CATEGORY,
+        businessCategory: AWS_BUSINESS_CATEGORY,
+      });
+    } catch (error) {
+      context.degraded(`Amazon ${AWS_BUSINESS_CATEGORY} partition failed`);
+      context.log({
+        connector: 'amazon',
+        partition: AWS_BUSINESS_CATEGORY,
+        status: 'error',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const unique = new Map<string, AmazonJob>();
+    for (const job of [...unfiltered.jobs, ...(aws?.jobs ?? [])]) {
+      const key = publisherKey(job);
+      if (key && !unique.has(key)) unique.set(key, job);
+    }
+
     const postings: ConnectorPosting[] = [];
-    let pages = 0;
-    let hits: number | undefined;
-
-    for (; pages < MAX_PAGES;) {
-      let page: { hits?: number; jobs?: AmazonJob[] };
-      try {
-        page = await context.runtime.fetchJson(searchUrl(pages * PAGE));
-        if (!Array.isArray(page.jobs)) throw new Error('Amazon response is missing its jobs array');
-      } catch (error) {
-        if (pages === 0) throw error;
-        context.degraded(`Amazon page ${pages} failed`);
-        break;
-      }
-      pages += 1;
-      hits ??= page.hits;
-      const jobs = page.jobs ?? [];
-
-      for (const job of jobs) {
-        if (!job.job_path || !job.title) continue;
-        const text = body(job);
-        postings.push({
-          source: 'amazon',
-          sourceKind: 'ats',
-          publisherId: job.id_icims,
-          // `new URL(path, base)`, not concatenation: with no terminating slash a `job_path`
-          // of `@evil.com/x` makes the ORIGIN evil.com, and this URL is the apply button's
-          // href. The sibling Workday builder is safe only because a `/${site}` sits between.
-          sourceUrl: new URL(job.job_path, 'https://www.amazon.jobs').toString(),
-          postedAt: toEpochMs(job.posted_date),
-          company: 'Amazon',
-          title: job.title,
-          // The normalized form ("Denver, Colorado, USA") parses; the display form leads with a
-          // bare country code ("US, CO, Denver") which reads as a city segment.
-          location: job.normalized_location ?? job.location ?? null,
-          description: normalizeDescription(text),
-          sourceFields: {
-            employmentType: employmentType(job),
-            location: job.normalized_location ?? job.location,
-            department: typeof job.team === 'string' ? job.team : job.team?.business_category,
-            team: job.job_category,
-            sections: parseSections(text),
-          },
-        });
-      }
-      if (jobs.length < PAGE || (hits !== undefined && postings.length >= hits)) break;
+    for (const job of unique.values()) {
+      if (!job.job_path || !job.title) continue;
+      const text = body(job);
+      postings.push({
+        source: 'amazon',
+        sourceKind: 'ats',
+        publisherId: job.id_icims,
+        // `new URL(path, base)`, not concatenation: with no terminating slash a `job_path`
+        // of `@evil.com/x` makes the ORIGIN evil.com, and this URL is the apply button's
+        // href. The sibling Workday builder is safe only because a `/${site}` sits between.
+        sourceUrl: new URL(job.job_path, 'https://www.amazon.jobs').toString(),
+        postedAt: toEpochMs(job.posted_date),
+        company: 'Amazon',
+        title: job.title,
+        // The normalized form ("Denver, Colorado, USA") parses; the display form leads with a
+        // bare country code ("US, CO, Denver") which reads as a city segment.
+        location: job.normalized_location ?? job.location ?? null,
+        description: normalizeDescription(text),
+        sourceFields: {
+          employmentType: employmentType(job),
+          location: job.normalized_location ?? job.location,
+          department: typeof job.team === 'string' ? job.team : job.team?.business_category,
+          team: job.job_category,
+          sections: parseSections(text),
+        },
+      });
     }
 
-    const truncated = (hits ?? 0) >= MAX_PAGES * PAGE || (pages >= MAX_PAGES && (hits ?? 0) > postings.length);
-    if (truncated) {
-      context.degraded(`Amazon: read ${postings.length} of ${hits} reported hits; search window may be capped`);
-    }
     context.log({
       connector: 'amazon',
-      pages,
+      partitions: [
+        {
+          label: 'unfiltered',
+          pages: unfiltered.pages,
+          fetched: unfiltered.jobs.length,
+          reportedHits: unfiltered.hits,
+          truncated: unfiltered.truncated,
+        },
+        ...(aws
+          ? [
+              {
+                label: AWS_BUSINESS_CATEGORY,
+                pages: aws.pages,
+                fetched: aws.jobs.length,
+                reportedHits: aws.hits,
+                truncated: aws.truncated,
+              },
+            ]
+          : []),
+      ],
       fetched: postings.length,
-      reportedHits: hits ?? null,
-      // Said out loud rather than left implicit: this is the newest slice, not the board.
-      truncated,
+      dedupedWithinSource: unfiltered.jobs.length + (aws?.jobs.length ?? 0) - unique.size,
     });
     return postings;
   },

@@ -479,6 +479,7 @@
     "name": "Cursor",
     "ats": "ashby",
     "token": "cursor",
+    "careersUrl": "https://cursor.com/careers",
     "tags": [
       "ai"
     ],
@@ -1227,13 +1228,13 @@
   },
   {
     "name": "Marqeta",
-    "ats": "greenhouse",
-    "token": "marqeta",
+    "ats": "ashby",
+    "token": "marqeta-inc",
     "tags": [
       "design-led"
     ],
-    "verified_at": "2026-08-24T20:37:46.660Z",
-    "postings_at_probe": 2
+    "verified_at": "2026-09-08T19:56:44.000Z",
+    "postings_at_probe": 42
   },
   {
     "name": "Matera",
@@ -2097,12 +2098,12 @@
   {
     "name": "Superhuman",
     "ats": "ashby",
-    "token": "superhuman",
+    "token": "superhuman platform inc",
     "tags": [
       "design-led"
     ],
-    "verified_at": "2026-08-20T07:50:58.051Z",
-    "postings_at_probe": 0
+    "verified_at": "2026-09-08T19:56:44.000Z",
+    "postings_at_probe": 65
   },
   {
     "name": "Superset",

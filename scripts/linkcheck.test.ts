@@ -126,7 +126,7 @@ describe('checkLink', () => {
     jobUrl: `https://jobs.ashbyhq.com/cursor/${id}`,
   });
 
-  it('recognizes an open Ashby listing even when its HTML is an empty app shell', async () => {
+  it('does not equate an API-listed Ashby role with a usable application page', async () => {
     const runtime = runtimeWith((url) => ({
       status: 200,
       body: url.includes('posting-api/job-board')
@@ -134,8 +134,8 @@ describe('checkLink', () => {
         : BODY.ashbyGone,
     }));
     expect(await checkLink(runtime, { id: 1, url: ashbyUrl })).toMatchObject({
-      verdict: 'live',
-      reason: 'ashby: listed by official API',
+      verdict: 'unverifiable',
+      reason: 'ashby: API lists role, application page unverified',
     });
   });
 
@@ -176,7 +176,7 @@ describe('checkLink', () => {
     });
     const results = await Promise.all([ashbyId, anotherAshbyId].map((id, index) =>
       checkLink(runtime, { id: index, url: `https://jobs.ashbyhq.com/cursor/${id}/application` })));
-    expect(results.map((result) => result.verdict)).toEqual(['live', 'live']);
+    expect(results.map((result) => result.verdict)).toEqual(['unverifiable', 'unverifiable']);
     expect(apiCalls).toBe(1);
   });
 

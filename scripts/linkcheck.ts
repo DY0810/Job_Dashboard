@@ -274,8 +274,8 @@ export async function checkLink(
       if (listed !== null) {
         return {
           id, url, status: 200,
-          verdict: listed ? 'live' : 'dead',
-          reason: listed ? 'ashby: listed by official API' : 'ashby: absent from official API',
+          verdict: listed ? 'unverifiable' : 'dead',
+          reason: listed ? 'ashby: API lists role, application page unverified' : 'ashby: absent from official API',
         };
       }
     }

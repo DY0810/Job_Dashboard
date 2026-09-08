@@ -10,8 +10,8 @@ Registry counts reconciled against `scripts/companies.json` on 2026-09-08; indiv
 
 | ATS | Count |
 | --- | --- |
-| greenhouse | 116 |
-| ashby | 89 |
+| greenhouse | 115 |
+| ashby | 90 |
 | recruitee | 12 |
 | lever | 10 |
 | smartrecruiters | 10 |
@@ -28,6 +28,17 @@ Registry counts reconciled against `scripts/companies.json` on 2026-09-08; indiv
 - All 10 SmartRecruiters entries remain in the registry but are currently unreachable: the
   shared runtime refused the API host's `robots.txt` rules in GitHub Actions run `34190831847`.
   They are retained rather than guessed at or bypassed.
+- On September 8, 2026, Marqeta's official careers detail page linked to
+  `jobs.ashbyhq.com/marqeta-inc/.../application`; the public board returned 42 listed jobs.
+  Superhuman's official careers embed resolved to `superhuman platform inc`, with 65 listed
+  jobs. Both registry entries were updated to those verified Ashby board names.
+- Intercom's official Fin careers page still describes Greenhouse-hosted jobs, but its exact
+  current public Greenhouse URL and `boards-api` endpoint returned 404 in this audit. The
+  Intercom entry remains unchanged rather than being removed or assigned an unsupported token.
+- Cursor's Ashby board returned 124 listed jobs, but its default Ashby application URL for the
+  audited Brand Paid Media Manager UUID rendered a real Page not found. Cursor's official careers
+  index supplied a one-to-one UUID-to-slug map for all 124 jobs, so the registry now records
+  `https://cursor.com/careers` as an employer-published URL override.
 
 
 ## Run summary

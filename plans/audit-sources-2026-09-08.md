@@ -26,6 +26,16 @@ ingest, workflow, runtime, secrets, or robot-policy override was changed.
 - Jobicy's live industry taxonomy includes `engineering`; its 200-row Engineering response is
   at the provider cap. SimplifyJobs' canonical `New-Grad-Positions` repository is on `dev`;
   the existing HTML-table parser returned 420 rows from its current README.
+- Registry repair on September 8, 2026: Marqeta's official job detail linked to Ashby board
+  `marqeta-inc` (42 listed jobs), and Superhuman's official careers embed resolved to Ashby
+  board `superhuman platform inc` (65 listed jobs). Intercom's official Fin careers surface
+  still points to a Greenhouse-hosted job path whose current page and public API both return
+  404, so the entry remains intact pending a verifiable replacement.
+- Cursor's official careers index exposed a UUID-to-slug map for all 124 live Ashby jobs. The
+  audited `723239cc-f90f-409d-86ec-3b02df603239` Ashby application URL rendered Page not found,
+  while Cursor's matching employer page served an embedded application form. Cursor now maps
+  matching publisher IDs to those employer-published career URLs; unmatched IDs retain their
+  normal Ashby URLs rather than being discarded.
 
 ## Changes
 
@@ -45,10 +55,15 @@ ingest, workflow, runtime, secrets, or robot-policy override was changed.
 - Added direct, robot-permitted employer boards for Anduril, Cursor, and xAI after live
   structured API probes. Their APIs returned the counts recorded above without pagination
   metadata, so the configured Greenhouse/Ashby connectors read their complete returned boards.
-- Amazon reports 10,000 hits while its source connector deliberately reads its newest 1,500.
-  It now marks that response partial. Workday already reports its 100-row-per-company page cap;
+- Amazon reports 10,000 hits and now reads that full accessible unfiltered window. It remains
+  partial at the provider ceiling. Workday already reports its 100-row-per-company page cap;
   SmartRecruiters is robot-refused. Braintrust returned 8 of 8 with no next page, Working
   Nomads returned 47 rows, and RemoteOK returned 100 jobs plus its non-job metadata row.
+- Amazon's official UI exposes `business_category[]=amazon-web-services`; its observed
+  `search.json` response mapped this to `businessCategory=aws` and returned 8,027 hits with no
+  geography filter. The connector now adds that finite AWS partition after the 10,000-hit
+  unfiltered window and deduplicates by native publisher ID or job URL. This extends coverage
+  but does not prove a complete Amazon category taxonomy, so the unfiltered cap remains explicit.
 
 ## Checkpointed Catch-Up
 
@@ -61,13 +76,13 @@ than freezing the source at its first pages. An HTTP 400 cursor rejection or a r
 resets safely to the head. The crawl never stops on `posted_at`, because `effectiveAt` floors a
 newly discovered, still-listed requisition at `firstSeenRun`.
 
-Muse now stores a versioned category/page checkpoint for `Design and UX` and `Science and
-Engineering`. Each cloud run reads the same bounded default or override budget, applies existing
-deterministic track/seniority extraction after ingest, and resumes the same category/page next
-cycle. A completed checkpoint fetches page zero of both categories before staging its next sweep.
-Unexpected empty pages before the advertised end do not advance the checkpoint. Both connectors
-stay ghost-degraded for every chunk, including the final chunk, because whole-scan reconciliation
-is intentionally out of scope.
+The integrated Muse importer uses a version-2 company-directory checkpoint and five categories:
+Design and UX, Software Engineering, Data and Analytics, Computer and IT, and Science and
+Engineering. Oversized company/category partitions split by the four supported seniority levels.
+Unexpected empty pages before the advertised end do not advance the checkpoint. Production
+registration and a live registered sweep remain unverified because `MUSE_API_KEY` is absent.
+Both resumable connectors stay ghost-degraded for every chunk, including the final chunk,
+because whole-scan reconciliation is intentionally out of scope.
 
 ## Hard Limits
 
@@ -77,7 +92,7 @@ keyed sources require their configured credentials, and the explicit exclusions 
 LinkedIn, Indeed, Glassdoor, ZipRecruiter, and Handshake. All live reads in this audit used the
 shared runtime's robots, timeout, retry, and per-host rate-limit policy.
 
-## Parent Integration
+## Integration
 
 The final integration adds publisher IDs from native ATS fields, indexed source
 lookups, and repair of historically merged requisitions. The registry now has
@@ -89,4 +104,7 @@ explicitly partial at that observed ceiling.
 Himalayas and Muse now use the local `connector_checkpoints` contract: cursor
 advancement commits after postings, pending scans bypass the completed-scan
 cadence, and the cloud `catch_up` workflow advances only pending catalogs between
-enrichment and mirror steps. These integrated cloud counts are not yet measured.
+enrichment and mirror steps. Cloud run `34257909517` completed the Himalayas traversal and
+reported no enabled pending imports. The later targeted run `34269480932` verified 2,498
+Workday records and the full 10,000-result Amazon window. Registry repairs and the AWS
+supplement still require their own post-change cloud verification.

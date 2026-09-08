@@ -127,6 +127,39 @@ describe.each(RECORDED.map((connector) => [connector.name, connector] as const))
 );
 
 describe('ATS per-target isolation (Phase 3 gate)', () => {
+  it.each([false, true])('matches employer application URLs by UUID (escaped=%s)', async (escaped) => {
+    const id = '723239cc-f90f-409d-86ec-3b02df603239';
+    const missingId = '123239cc-f90f-409d-86ec-3b02df603239';
+    const index = JSON.stringify([{ id, urlSlug: 'brand-paid-media-manager' }]);
+    const runtime: Runtime = {
+      fetchJson: async <T,>(url: string) => ({
+        jobs: url.endsWith('/cursor') ? [id, missingId].map((jobId) => ({
+          id: jobId,
+          title: 'Brand Paid Media Manager',
+          isListed: true,
+          publishedAt: '2026-09-08T00:00:00Z',
+          jobUrl: `https://jobs.ashbyhq.com/cursor/${jobId}`,
+          applyUrl: `https://jobs.ashbyhq.com/cursor/${jobId}/application`,
+        })) : [],
+      }) as unknown as T,
+      fetchText: async () => escaped ? JSON.stringify(index) : index,
+      isAllowed: async () => true,
+    };
+    const { context, degraded, logs } = replay('ashby');
+    const results = await ashby.fetch({ ...context, runtime });
+
+    expect(results.find((posting) => posting.publisherId === id)).toMatchObject({
+      sourceUrl: 'https://cursor.com/careers/brand-paid-media-manager',
+      applyUrl: 'https://cursor.com/careers/brand-paid-media-manager',
+    });
+    expect(results.find((posting) => posting.publisherId === missingId)?.applyUrl)
+      .toBe(`https://jobs.ashbyhq.com/cursor/${missingId}/application`);
+    expect(degraded).toContain('Cursor: 1 official application URLs could not be matched');
+    expect(logs).toContainEqual(expect.objectContaining({
+      company: 'Cursor', officialCareerUrls: 1, matchedOfficialCareerUrls: 1,
+    }));
+  });
+
   it('a target that fails logs ONE failure and does not abort the connector', async () => {
     // Only the first boards are recorded, so every other registry token behaves exactly like
     // a dead one: the connector logs each and still returns the boards that answered.
@@ -1103,25 +1136,72 @@ describe('employer boards', () => {
       }
     });
 
-    it('marks a capped newest-window response partial', async () => {
-      const jobs = Array.from({ length: 100 }, (_, index) => ({
-        title: `Software Development Engineer ${index}`,
-        job_path: `/en/jobs/${index}/role`,
+    it('adds the observed AWS partition, dedupes publisher IDs, and labels the capped base window', async () => {
+      const job = (id: string) => ({
+        id_icims: id,
+        title: `Software Development Engineer ${id}`,
+        job_path: `/en/jobs/${id}/role`,
         posted_date: 'September 8, 2026',
         normalized_location: 'Seattle, Washington, USA',
         description: 'Build things.',
-      }));
+      });
+      const urls: string[] = [];
       const runtime: Runtime = {
-        fetchText: async () => JSON.stringify({ hits: 10_000, jobs }),
-        fetchJson: async <T,>() => ({ hits: 10_000, jobs }) as unknown as T,
+        fetchText: async () => '',
+        fetchJson: async <T,>(url: string) => {
+          urls.push(url);
+          const parsed = new URL(url);
+          const aws = parsed.searchParams.get('business_category[]') === 'amazon-web-services';
+          if (aws) return { hits: 2, jobs: [job('0'), job('aws-only')] } as unknown as T;
+          const offset = Number(parsed.searchParams.get('offset'));
+          return {
+            hits: 10_000,
+            jobs: Array.from({ length: 100 }, (_, index) => job(String(offset + index))),
+          } as unknown as T;
+        },
         isAllowed: async () => true,
       };
       const { context, degraded } = replay('amazon');
 
       const results = await amazon.fetch({ ...context, runtime });
 
-      expect(results).toHaveLength(10000);
-      expect(degraded).toEqual(['Amazon: read 10000 of 10000 reported hits; search window may be capped']);
+      expect(results).toHaveLength(10001);
+      const awsUrl = urls.find((url) => new URL(url).searchParams.has('business_category[]'));
+      expect(awsUrl).toBeDefined();
+      expect(new URL(awsUrl!).searchParams.get('business_category[]')).toBe('amazon-web-services');
+      expect(new URL(awsUrl!).searchParams.has('country')).toBe(false);
+      expect(degraded).toContain(
+        'Amazon unfiltered: read 10000 of 10000 reported hits; search window may be capped',
+      );
+    });
+
+    it('keeps the unfiltered window when the AWS partition fails', async () => {
+      const runtime: Runtime = {
+        fetchText: async () => '',
+        fetchJson: async <T,>(url: string) => {
+          if (new URL(url).searchParams.has('business_category[]')) throw new Error('AWS unavailable');
+          return {
+            hits: 1,
+            jobs: [
+              {
+                id_icims: '1',
+                title: 'Software Development Engineer',
+                job_path: '/en/jobs/1/role',
+                posted_date: 'September 8, 2026',
+                normalized_location: 'Seattle, Washington, USA',
+                description: 'Build things.',
+              },
+            ],
+          } as unknown as T;
+        },
+        isAllowed: async () => true,
+      };
+      const { context, degraded } = replay('amazon');
+
+      const results = await amazon.fetch({ ...context, runtime });
+
+      expect(results).toHaveLength(1);
+      expect(degraded).toContain('Amazon amazon-web-services partition failed');
     });
   });
 });

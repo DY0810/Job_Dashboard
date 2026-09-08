@@ -60,9 +60,12 @@ concurrent counterexample: its official API listed the role while its HTML was t
 generic `Jobs` shell. An empty Ashby shell alone is not evidence of closure.
 
 `linkcheck` now consults the official board for an ambiguous Ashby shell, caching one
-response per board per runtime. A matching listed job is live; absence from a valid,
+response per board per runtime. A matching listed job prevents a closure inference,
+but does not prove its application URL works. A real-browser check of Cursor `43661`
+displayed "Page not found" despite `isListed:true`. It remains unverified pending
+a usable employer application URL. Absence from a valid,
 nonempty board supports closure. Missing, empty or malformed API data remains
-unverifiable. The fresh live check confirmed `26295` and `43661` as live, and `24333`
+unverifiable. The fresh page check confirmed `26295` as live, and `24333`
 as absent from Airwallex's official board.
 
 No displayed link matched a prohibited LinkedIn, Indeed, Glassdoor, ZipRecruiter, or Handshake
