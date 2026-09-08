@@ -1,7 +1,8 @@
 # Workie
 
-Local job dashboard. Next.js 15 (App Router) + TypeScript + Tailwind v4 + Drizzle ORM
-over SQLite.
+Job dashboard. Next.js 15 (App Router) + TypeScript + Tailwind v4 + Drizzle ORM.
+GitHub Actions owns the collection database; the hosted site reads its Turso mirror.
+Local development uses a separate SQLite snapshot.
 
 ## Commands
 
@@ -21,19 +22,60 @@ npm run refresh      # one full cycle, exactly as launchd runs it
 ## Unattended refresh
 
 `scripts/refresh.sh` runs ingest, then enrich, plus linkcheck once a week. The scheduled home
-for it is **GitHub Actions** (`.github/workflows/refresh.yml`): every 30 minutes a runner
+for it is **GitHub Actions** (`.github/workflows/refresh.yml`): at minutes 17 and 47 a runner
 restores `workie.db` from the Actions cache (or rebuilds it from Turso via
 `npm run pull:remote` when the cache is cold), runs the same script, and mirrors the result
 back up. It needs two repository secrets — `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` — and
-no laptop.
+no laptop. GitHub can delay scheduled runs; the cron expression is not a freshness guarantee.
+The cache key includes the run attempt, so rerunning an old workflow restores the newest
+writer state instead of that workflow's historical snapshot. A cold bootstrap publishes its
+database atomically and is never cached if bootstrap fails.
 
 **Exactly one machine may run the cycle.** Two writers each ingesting into their own
 `workie.db` assign different ids to new postings, and each mirror then deletes the other's
 rows as strays. With the workflow live, keep the launchd agent below uninstalled.
 
-The hosted refresh button queues a request in `refresh_requests`; the next scheduled run
-claims it. Set `WORKIE_GH_TOKEN` (a fine-grained PAT with Actions read/write on this repo)
-in the Vercel project to have a click start the workflow immediately instead.
+The hosted refresh button queues one active request in `refresh_requests`; simultaneous
+clicks share it. Set `WORKIE_GH_TOKEN` (a fine-grained PAT restricted to this repository,
+Actions read/write) in the Vercel project for immediate dispatch. Without that token the UI
+reports that it is waiting for the next scheduled run, rather than promising a start time.
+The runner records success only after the mirror completes; failures retain their outcome,
+and completed requests are never claimed again. A lost claim is recoverable after the
+workflow's maximum runtime.
+
+### Source Configuration And Catch-up
+
+Collection keys belong in **GitHub repository Actions secrets**, not only in Vercel.
+The workflow forwards `JOOBLE_KEY`, `CAREERJET_AFFID`, `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`,
+`USAJOBS_KEY`, and `USAJOBS_EMAIL` when present. A configured key does not override a source's
+robots policy.
+
+Large paginated feeds keep `connector_checkpoints` inside the Actions database cache.
+A checkpoint advances only after its returned postings commit. Pending imports bypass the
+normal completed-scan cadence, but retain the per-host rate limit and robots checks.
+Incremental chunks do not ghost-delist jobs from other chunks.
+
+For a bounded initial catch-up **on the cloud writer**, use:
+
+```bash
+gh workflow run refresh.yml --repo DY0810/Job_Dashboard -f catch_up=true
+```
+
+The runner refreshes normally, then advances only pending catalogs, enriching and mirroring
+after each batch. It stops on error, no progress, or its 75-minute catch-up budget. Exit 75
+means more catch-up remains; a later dispatch resumes from the saved cursor. This mode
+defers the lengthy weekly link check to an ordinary run.
+
+### Browsing Jobs
+
+Each page contains at most 200 jobs; Previous/Next reaches the remaining matching results.
+Filters reset pagination, while opening and closing a job preserves it. The Seen filter,
+fresh band and ordering use the same effective first-seen clock; the source's original
+posting date remains in the timestamp tooltip.
+
+The desktop view remains a table. On phones the same rows arrange title, company, Apply,
+pay and badges vertically without hiding the other fields. Salary symbols are preserved;
+wellness budgets and other benefits are not treated as the salary.
 
 ## Writing to Talkie
 
@@ -52,7 +94,7 @@ would therefore destroy that copy with no way back — which is why the gate exi
 > is read-only until you set it. Left unset locally there is no gate, so `next dev` is
 > unchanged.
 
-`POST /api/refresh` starts a cycle on the machine serving the request, so it is off unless
+On local development servers, `POST /api/refresh` starts a cycle on that machine, so it is off unless
 `WORKIE_ALLOW_LOCAL_REFRESH=1`. That request carries no body or custom header, which makes it
 a CORS simple request any page could fire at a dev server — and the cycle it starts ends by
 mirroring to the hosted database, deleting rows the Actions lineage wrote.
@@ -91,7 +133,9 @@ cannot have changed are not asked.
 | ATS boards — Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee | every cycle | Where a new posting appears first. This is the point of the tool. |
 | `hn` | 6h | "Who is Hiring" is one thread a month. |
 | `simplify-internships` | 3h | A hand-maintained GitHub README; a few commits a day. |
-| RSS + feed-shaped aggregators — WeWorkRemotely (all + design), Dribbble, Jobspresso, Working Nomads, RemoteOK, Arbeitnow, Braintrust, Himalayas | 1h | Whole board in one response; feeds publish hourly at best. |
+| RSS + smaller aggregators — WeWorkRemotely, Dribbble, Jobspresso, Working Nomads, RemoteOK, Arbeitnow, Braintrust, Jobicy | 1h | Provider feeds may expose a bounded window rather than the full catalog. |
+| Himalayas | 24h after a completed sweep | Daily provider cache; pending cursor imports advance on intervening runs. |
+| Muse | 1h after a completed sweep | Design and Science-and-Engineering scopes, with resumable category pagination. |
 | Keyed aggregators — Adzuna, Careerjet, Jooble, USAJobs | 6h | Metered free tiers, measured in calls per month. |
 
 A cadence skip and a missing-key skip are logged apart (`kind: cadence` / `kind: config`) and

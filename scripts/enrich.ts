@@ -112,6 +112,7 @@ export function runEnrich(db: WorkieDatabase): EnrichStats {
           payRateMin: found?.pay_rate?.min ?? null,
           payRateMax: found?.pay_rate?.max ?? null,
           payRatePeriod: found?.pay_rate?.period ?? null,
+          payCurrencySymbol: found?.pay_rate?.currencySymbol ?? (found?.pay_rate ? '$' : null),
           expectedGrad: found?.expected_grad ?? null,
           summary: found?.summary ?? null,
           responsibilities: found?.responsibilities ?? null,

@@ -21,7 +21,7 @@ import { cutoffTimestamp } from '../lib/dedupe.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { connectorRuns, postings, postingSources } from '../lib/db/schema.ts';
 import { connectors as allConnectors } from './connectors/index.ts';
-import { dueIn, lastSuccessByConnector } from './ingest.ts';
+import { dueIn, lastSuccessByConnector, readCheckpoints } from './ingest.ts';
 import type { Connector } from '../lib/runtime.ts';
 
 export interface ConnectorStatus {
@@ -68,6 +68,7 @@ export function collectStatus(
   const env = options.env ?? process.env;
   const now = options.now ?? Date.now();
   const lastOk = lastSuccessByConnector(db);
+  const checkpoints = readCheckpoints(db);
   const cutoff = new Date(cutoffTimestamp(now));
 
   // Live postings per connector, in one grouped query rather than one query per connector.
@@ -102,7 +103,8 @@ export function collectStatus(
       newPostings: last?.newPostings ?? 0,
       merged: last?.merged ?? 0,
       live: liveBySource.get(connector.name) ?? 0,
-      dueInMs: connector.minIntervalMs === undefined ? null : dueIn(connector, ok, now),
+      dueInMs: checkpoints.get(connector.name)?.pending
+        ? 0 : connector.minIntervalMs === undefined ? null : dueIn(connector, ok, now),
       minIntervalMs: connector.minIntervalMs ?? null,
     };
   });
@@ -172,7 +174,7 @@ export function formatStatus(status: Status): string {
       : connector.lastStatus === null
         ? '-'
         : connector.lastStatus === 'ok'
-          ? 'ok'
+          ? (connector.error?.startsWith('partial:') ? 'partial' : 'ok')
           : // Only robots refusals ever put "robots.txt" in an error — the aggregate
             // "refused by robots.txt" and the runtime's raw "robots.txt disallows <url>".
             // Policy, not fault; `refused` keeps ERROR meaning "something is broken".
@@ -210,7 +212,7 @@ export function formatStatus(status: Status): string {
   // A connector that is now disabled keeps whatever error it last ran with, which is history
   // rather than something to act on — it is already explained under "not running" below.
   const errors = status.connectors
-    .filter((connector) => !connector.disabled && connector.lastStatus === 'error' && connector.error)
+    .filter((connector) => !connector.disabled && connector.error)
     .map((connector) => `  ${connector.connector}: ${connector.error}`);
 
   const disabled = status.connectors

@@ -7,8 +7,10 @@ import {
   isGhost,
   isWithinCutoff,
   locationKey,
+  NEAR_DUPE_THRESHOLD,
   nextAbsenceCount,
   POSTING_MAX_AGE_DAYS,
+  publisherIdOf,
   SOURCE_PRIORITY,
   tokenSetRatio,
   type RawPosting,
@@ -85,6 +87,120 @@ describe('dedupeKey', () => {
     expect(dedupeKey('Figma', 'Product Designer', 'Remote')).not.toBe(
       dedupeKey('Figma', 'Product Designer', null),
     );
+  });
+});
+
+describe('publisher identity', () => {
+  it('scopes a native publisher id to the normalized employer', () => {
+    const merged = dedupePostings([
+      posting({
+        publisherId: '12345',
+        company: 'Alpha Labs',
+        sourceUrl: 'https://boards.example.test/alpha/jobs/12345',
+      }),
+      posting({
+        publisherId: '12345',
+        company: 'Beta Labs',
+        sourceUrl: 'https://boards.example.test/beta/jobs/12345',
+      }),
+    ]);
+
+    expect(merged).toHaveLength(2);
+  });
+
+  it('keeps distinct Greenhouse requisitions with the same normalized title and location', () => {
+    const merged = dedupePostings([
+      posting({
+        publisherId: '5215627007',
+        sourceUrl: 'https://job-boards.greenhouse.io/andurilindustries/jobs/5215627007',
+        company: 'Anduril',
+        title: 'Software Engineer, Battlespace Awareness',
+        location: 'Broomfield / Fort Collins, Colorado, United States',
+      }),
+      posting({
+        publisherId: '5178105007',
+        sourceUrl: 'https://job-boards.greenhouse.io/andurilindustries/jobs/5178105007?gh_src=tracking',
+        company: 'Anduril',
+        title: 'Software Engineer, Battlespace Awareness ',
+        location: 'Broomfield / Fort Collins, Colorado, United States',
+      }),
+    ]);
+
+    expect(merged).toHaveLength(2);
+    expect(new Set(merged.map((post) => post.dedupeKey))).toHaveLength(2);
+  });
+
+  it('keeps distinct Anduril specializations even before publisher identity is considered', () => {
+    const merged = dedupePostings([
+      posting({
+        publisherId: '5186581007',
+        sourceUrl: 'https://job-boards.greenhouse.io/andurilindustries/jobs/5186581007',
+        company: 'Anduril',
+        title: 'Electrical Engineer (Actuators)',
+        location: 'Costa Mesa, CA',
+      }),
+      posting({
+        publisherId: '5186566007',
+        sourceUrl: 'https://job-boards.greenhouse.io/andurilindustries/jobs/5186566007',
+        company: 'Anduril',
+        title: 'Electrical Engineer (Motor Controls)',
+        location: 'Costa Mesa, CA',
+      }),
+    ]);
+
+    expect(merged).toHaveLength(2);
+    expect(new Set(merged.map((post) => post.titleNorm))).toEqual(
+      new Set(['electrical engineer actuators', 'electrical engineer motor controls']),
+    );
+  });
+
+  it('collapses tracking and hostname aliases for the same Greenhouse job id', () => {
+    const [merged] = dedupePostings([
+      posting({
+        sourceUrl: 'https://boards.greenhouse.io/andurilindustries/jobs/5186581007?gh_src=one',
+      }),
+      posting({
+        sourceUrl: 'https://job-boards.greenhouse.io/andurilindustries/jobs/5186581007?utm_source=two',
+      }),
+    ]);
+
+    expect(merged.sources).toHaveLength(1);
+    expect(merged.sources[0].publisherId).toBe('5186581007');
+  });
+
+  it('keeps functional query identity while dropping known tracking parameters', () => {
+    const first = posting({
+      source: 'workable',
+      sourceUrl: 'https://jobs.example.test/opening?jobId=A&utm_source=board',
+    });
+    const alias = posting({
+      source: 'workable',
+      sourceUrl: 'https://jobs.example.test/opening?utm_medium=feed&jobId=A',
+    });
+    const other = posting({
+      source: 'workable',
+      sourceUrl: 'https://jobs.example.test/opening?jobId=B&utm_source=board',
+    });
+
+    expect(publisherIdOf(first)).toBe(publisherIdOf(alias));
+    expect(publisherIdOf(first)).not.toBe(publisherIdOf(other));
+    expect(dedupePostings([first, alias])).toHaveLength(1);
+    expect(dedupePostings([first, other])).toHaveLength(2);
+  });
+
+  it('still merges equivalent jobs reported by different publishers', () => {
+    const merged = dedupePostings([
+      posting({ publisherId: '5186581007' }),
+      posting({
+        source: 'lever',
+        sourceKind: 'ats',
+        publisherId: 'anduril-electrical-engineer',
+        sourceUrl: 'https://jobs.lever.co/anduril/anduril-electrical-engineer',
+      }),
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].sources).toHaveLength(2);
   });
 });
 
@@ -274,6 +390,26 @@ describe('near-dupe pass (same company + location, title ratio >= 0.90)', () => 
     expect(merged).toHaveLength(1);
   });
 
+  it('does not fuzzy-merge distinct requisitions from the same ATS', () => {
+    const merged = dedupePostings([
+      posting({
+        publisherId: '1001',
+        sourceUrl: 'https://job-boards.greenhouse.io/anduril/jobs/1001',
+        title: 'Software Engineer Battlespace Awareness Platform',
+      }),
+      posting({
+        publisherId: '1002',
+        sourceUrl: 'https://job-boards.greenhouse.io/anduril/jobs/1002',
+        title: 'Software Engineer Battlespace Awareness Platform Systems',
+      }),
+    ]);
+
+    expect(tokenSetRatio(merged[0]?.titleNorm ?? '', merged[1]?.titleNorm ?? '')).toBeGreaterThanOrEqual(
+      NEAR_DUPE_THRESHOLD,
+    );
+    expect(merged).toHaveLength(2);
+  });
+
   it('merges a work-mode-prefixed location on the exact key', () => {
     const merged = dedupePostings([
       posting({ location: 'San Francisco, CA', sourceUrl: 'https://gh/1' }),
@@ -360,6 +496,23 @@ describe('remote-vs-city merge pass', () => {
         sourceUrl: 'https://remotive/1',
       }),
     ]);
+    expect(merged).toHaveLength(2);
+  });
+
+  it('does not remote-merge distinct requisitions from the same ATS', () => {
+    const merged = dedupePostings([
+      posting({
+        publisherId: '2001',
+        sourceUrl: 'https://job-boards.greenhouse.io/anduril/jobs/2001',
+        location: 'Costa Mesa, CA',
+      }),
+      posting({
+        publisherId: '2002',
+        sourceUrl: 'https://job-boards.greenhouse.io/anduril/jobs/2002',
+        location: 'Remote',
+      }),
+    ]);
+
     expect(merged).toHaveLength(2);
   });
 

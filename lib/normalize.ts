@@ -250,6 +250,14 @@ const REMOTE_MARKERS = [
   'telecommute',
 ];
 
+const NEGATED_REMOTE =
+  /\bnot\s+(?:a\s+)?remote\s+or\s+hybrid(?:[\s-]anywhere)?\s+(?:role|position)\b|\bnot\s+(?:a\s+)?remote(?:[\s-]from[\s-]anywhere)?(?:\s+(?:role|position|option))?\b|\bno\s+remote\s+(?:option|work)\b|\bremote\s+(?:work\s+)?(?:is\s+)?not\s+(?:available|allowed|offered|possible)\b/gi;
+
+/** Removes explicit remote denials before either location or prose work-mode matching. */
+export function withoutNegatedRemote(input: string): string {
+  return input.replace(NEGATED_REMOTE, ' ');
+}
+
 /**
  * Work-mode words are not places. Without this, "Hybrid - San Francisco, CA" yields
  * `city_norm: 'hybrid'` and never merges with the same job listed as "San Francisco, CA".
@@ -334,16 +342,19 @@ const FOREIGN_CITY_LOOKUP = new Map(Object.entries(FOREIGN_CITIES));
 const CALIFORNIA_SET = new Set(CALIFORNIA_CITIES);
 
 /**
- * A city is disambiguated by the state written *next to it* and by nothing else. "Manhattan,
- * KS" is not New York and "Pasadena, TX" is not Los Angeles; but
+ * A city is disambiguated by the state or country written *next to it* and by nothing else.
+ * "Manhattan, KS" is not New York, "Pasadena, TX" is not Los Angeles, and "San Jose, Costa
+ * Rica" is not California; but
  * "New York, New York, United States, San Francisco, CA | New York City, NY | Seattle, WA"
  * genuinely is New York, and its trailing WA belongs to Seattle. Comparing a city against the
  * record's accumulated state instead of its own neighbour reads that string as a
  * contradiction and strips metro status from ~281 real multi-location postings.
  */
-function contradicts(next: string | undefined, state: string): boolean {
-  const adjacent = next === undefined ? undefined : STATE_LOOKUP.get(next);
-  return adjacent !== undefined && adjacent !== state;
+function contradicts(next: string | undefined, state: string, country = 'US'): boolean {
+  const adjacentState = next === undefined ? undefined : STATE_LOOKUP.get(next);
+  if (adjacentState !== undefined) return adjacentState !== state;
+  const adjacentCountry = next === undefined ? undefined : COUNTRY_LOOKUP.get(next);
+  return adjacentCountry !== undefined && adjacentCountry !== country;
 }
 
 interface CityHit {
@@ -420,24 +431,34 @@ const REQ_ID_PATTERNS: RegExp[] = [
 const TITLE_SEGMENT = /\s*[,‐-―|@]\s*|\s+-\s+|\s-\s*$/;
 
 /**
- * Lowercase · strip trailing bracketed and parenthesized suffixes · strip req IDs · strip a
+ * Lowercase · strip trailing bracketed/parenthesized metadata · strip req IDs · strip a
  * trailing location · punctuation to spaces · collapse whitespace.
  *
  *   "Senior Product Designer (Remote) [REQ-1042]"     -> "senior product designer"
  *   "Software Engineer, Backend - San Francisco, CA"  -> "software engineer backend"
  *   "Software Engineering Intern - Summer 2026"       -> "software engineering intern summer 2026"
  *
- * ponytail: a trailing parenthesis is always noise here, so "Engineer (Backend)" and
- * "Engineer (Frontend)" collapse to the same title. That is the spec'd behavior; if it ever
- * produces a bad merge, keep the group when its contents are not location/req/mode words.
+ * A parenthetical specialization is identity, not decoration: "Engineer (Backend)" and
+ * "Engineer (Frontend)" are different roles. Only source metadata, demographic markers and
+ * recognized location/work-mode suffixes are removed.
  */
+const TRAILING_GROUP = /\s*[([{]([^)\]}]*)[)\]}]\s*$/;
+const TITLE_SUFFIX_NOISE =
+  /^(?:req(?:uisition)?(?:\s+(?:id|no|number))?\s*[a-z]*\s*\d+|job\s+id\s*[a-z]*\s*\d+|[a-z]{1,3}\s*\d{4,}|m\s*[fw]\s*[dx]|f\s*m\s*d|all\s+genders?)$/i;
+
+function isTitleSuffixNoise(value: string): boolean {
+  const text = placeSlug(value);
+  return !text || TITLE_SUFFIX_NOISE.test(text) || isRecognizedLocation(value);
+}
+
 export function normalizeTitle(input: string | null | undefined): string {
   let title = (input ?? '').toLowerCase().trim();
   if (!title) return '';
 
   for (let previous = ''; title !== previous; ) {
     previous = title;
-    title = title.replace(/[([{][^)\]}]*[)\]}]\s*$/, '').trim();
+    const suffix = TRAILING_GROUP.exec(title);
+    if (suffix && isTitleSuffixNoise(suffix[1])) title = title.slice(0, suffix.index).trim();
   }
 
   for (const pattern of REQ_ID_PATTERNS) title = title.replace(pattern, ' ');
@@ -468,6 +489,53 @@ function placeSlug(input: string): string {
   return slug(input).replace(QUALIFIER, '').trim();
 }
 
+const REMOTE_REGIONS = new Set([
+  'amer',
+  'americas',
+  'apac',
+  'emea',
+  'eu',
+  'europe',
+  'global',
+  'latam',
+  'nam',
+  'uk',
+  'us',
+  'usa',
+  'worldwide',
+]);
+
+function isKnownPlace(text: string): boolean {
+  return (
+    citySpellings(text).some((spelling) => ALIAS_LOOKUP.has(spelling) || CALIFORNIA_SET.has(spelling)) ||
+    STATE_LOOKUP.has(text) ||
+    COUNTRY_LOOKUP.has(text) ||
+    FOREIGN_CITY_LOOKUP.has(text) ||
+    REMOTE_REGIONS.has(text)
+  );
+}
+
+function isRemoteLocationLabel(text: string): boolean {
+  if (/^(?:remote|work\s+from\s+home|wfh|anywhere(?:\s+in\s+(?:the\s+)?world)?|distributed(?:\s+team)?)$/.test(text)) {
+    return true;
+  }
+  if (/^remote\s+(?:only|friendly|first|based|work|job|role|position|eligible|available|opportunity)$/.test(text)) {
+    return true;
+  }
+
+  const beforeRemote = /^(.+?)\s+(?:or|oder|and|\/)?\s*remote$/.exec(text);
+  if (beforeRemote && isKnownPlace(beforeRemote[1])) return true;
+
+  const qualifiedRemote =
+    /^(?:fully?|100|open\s+to|eligible\s+for|flexible|flexibel)\s+remote(?:\s+(?:in|within|from))?\s*(.*)$/.exec(text);
+  if (qualifiedRemote) return !qualifiedRemote[1] || isKnownPlace(qualifiedRemote[1]);
+
+  const afterRemote = /^remote\s+(?:in|within|from)?\s*(.+?)(?:\s+(?:job|role|position|eligible|available))?$/.exec(text);
+  if (afterRemote && isKnownPlace(afterRemote[1])) return true;
+
+  return false;
+}
+
 /**
  * True only for strings this module actually recognizes as a place or a work mode — never
  * for a slug guess. Work modes count because "Product Designer - Hybrid" and "Product
@@ -476,7 +544,7 @@ function placeSlug(input: string): string {
 function isRecognizedLocation(input: string): boolean {
   const text = placeSlug(input);
   if (!text) return false;
-  if (REMOTE_MARKERS.some((marker) => text.includes(marker))) return true;
+  if (isRemoteLocationLabel(text)) return true;
   if (hasWorkMode(text)) return true;
   return (
     // Same tolerance as `normalizeLocation`, for the same reason: aggregators append the
@@ -499,7 +567,7 @@ function isRecognizedLocation(input: string): boolean {
 export function normalizeLocation(input: string | null | undefined): NormalizedLocation {
   // Before anything else, because a group name has to be gone by the time the country lookup
   // runs — "Ireland Locations" only reads as Ireland once the noun is off it.
-  const cleaned = (input ?? '').replace(LOCATION_GROUP, ' ');
+  const cleaned = withoutNegatedRemote(input ?? '').replace(LOCATION_GROUP, ' ');
   const text = placeSlug(cleaned);
   const empty: NormalizedLocation = {
     city_norm: null,
@@ -545,8 +613,14 @@ export function normalizeLocation(input: string | null | undefined): NormalizedL
   let recognized = false;
 
   for (let index = 0; index < segments.length; index += 1) {
-    const segment = segments[index];
-    if (REMOTE_MARKERS.some((marker) => segment.includes(marker))) continue;
+    let segment = segments[index];
+    if (REMOTE_MARKERS.some((marker) => segment.includes(marker))) {
+      // Some remote boards concatenate the eligibility country without punctuation:
+      // "Remote India". Keep the place while discarding the work-mode prefix.
+      const place = segment.replace(/^remote(?:\s+(?:only|friendly|first|based|work))?\s+/, '');
+      if (place === segment || !place || (place.length === 2 && place !== 'us' && place !== 'uk')) continue;
+      segment = place;
+    }
     if (hasWorkMode(segment)) continue;
 
     // A two-letter code following a city is a state code, not a metro alias: "New Orleans,
@@ -592,6 +666,10 @@ export function normalizeLocation(input: string | null | undefined): NormalizedL
     // read from this string wins, and a recognized metro earlier in it keeps `city_norm`.
     const abroad = FOREIGN_CITY_LOOKUP.get(segment);
     if (abroad) {
+      if (contradicts(segments[index + 1], '', abroad)) {
+        result.city_norm ??= segment;
+        continue;
+      }
       result.country ??= abroad;
       result.city_norm ??= segment;
       continue;

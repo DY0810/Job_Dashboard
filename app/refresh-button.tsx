@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
-import type { Phase } from '@/lib/refresh-status';
+import type { HostedRefreshStatus, Phase } from '@/lib/refresh-status';
 
 type Status = { hosted: boolean; running: boolean; phase: Phase };
 
@@ -67,35 +67,53 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
    * that cycle's mirror to land rather than pretending to run one.
    */
   const askRunner = async () => {
+    setWaiting(true);
     const by = (() => {
       try { return localStorage.getItem('talkie-author'); } catch { return null; }
     })();
     const res = await fetch(`/api/refresh${by ? `?by=${encodeURIComponent(by)}` : ''}`, {
       method: 'POST',
     }).catch(() => null);
-    if (!res?.ok) return setNote('could not ask for a refresh');
-
-    const since = ((await res.json()) as { lastRunAt: number | null }).lastRunAt;
-    setWaiting(true);
-    setNote('asked — a cloud refresh is on it; new jobs land in ~10 minutes');
+    if (!res?.ok) {
+      setWaiting(false);
+      return setNote('could not ask for a refresh');
+    }
+    const initial = await res.json() as HostedRefreshStatus;
+    if (!initial.request) {
+      setWaiting(false);
+      return setNote('refresh request was not recorded');
+    }
+    const requestId = initial.request.id;
+    setNote(initial.dispatch === 'started'
+      ? 'cloud run requested'
+      : initial.request.status === 'running'
+        ? 'cloud refresh is running'
+        : 'queued for the next cloud run; the schedule can be delayed');
     const askedAt = Date.now();
     stop();
     timer.current = setInterval(async () => {
-      const poll = await fetch('/api/refresh', { cache: 'no-store' }).catch(() => null);
+      const poll = await fetch(`/api/refresh?request=${requestId}`, { cache: 'no-store' }).catch(() => null);
       if (!poll?.ok) return;
-      const state = (await poll.json()) as { lastRunAt: number | null };
-      if (state.lastRunAt && state.lastRunAt !== since) {
+      const state = await poll.json() as HostedRefreshStatus;
+      if (state.request?.status === 'succeeded') {
         stop();
         setWaiting(false);
-        setNote('new jobs in');
+        setNote('cloud refresh complete');
         router.refresh();
         setTimeout(() => setNote(null), 5000);
         return;
       }
-      if (Date.now() - askedAt > 15 * 60_000) {
+      if (state.request?.status === 'failed') {
         stop();
         setWaiting(false);
-        setNote('no answer yet — the next scheduled cycle (every 30 min) will pick it up');
+        setNote('cloud refresh failed; please retry');
+        return;
+      }
+      if (state.request?.status === 'running') setNote('cloud refresh is running');
+      if (Date.now() - askedAt > 130 * 60_000) {
+        stop();
+        setWaiting(false);
+        setNote('no completion reported; the request remains queued for recovery');
       }
     }, 5000);
   };
@@ -117,7 +135,7 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
 
   const busy = waiting || (phase !== 'idle' && phase !== 'done');
   return (
-    <span className="inline-flex items-baseline gap-3">
+    <span className="inline-flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
       <button
         type="button"
         className="chip"

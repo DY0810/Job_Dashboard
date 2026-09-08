@@ -29,6 +29,7 @@ import { getPostingDetail, listPostings, outsideTargetLocations, tabIsEmpty } fr
 import { needsTurso, openDb, prefersTurso, type Db, type ReadDb, type TursoDb } from './index.ts';
 import * as schema from './schema.ts';
 import { postings } from './schema.ts';
+import { claimRequest, finishRequest, getRefreshRequest, pendingRequest, requestRefresh } from '../refresh-queue.ts';
 
 const NOW = Date.UTC(2026, 2, 17, 12, 0, 0);
 
@@ -50,6 +51,7 @@ function params(tab: Tab, over: Partial<Params> = {}): Params {
     level: [],
     badge: null,
     job: null,
+    page: 1,
     ...over,
   };
 }
@@ -73,6 +75,18 @@ afterAll(() => {
 });
 
 describe('the read path gives the same answers on either driver', () => {
+  it('coalesces and completes hosted refresh requests through the async driver', async () => {
+    const attempts = await Promise.all(Array.from({ length: 8 }, () => requestRefresh(remote, null, NOW)));
+    expect(new Set(attempts.map(({ request }) => request.id)).size).toBe(1);
+    expect(attempts.filter(({ queued }) => queued)).toHaveLength(1);
+    const claim = await claimRequest(remote, NOW + 1000);
+    expect(claim).not.toBeNull();
+    await finishRequest(remote, claim!, null, NOW + 2000);
+    expect(await getRefreshRequest(remote, claim!.id)).toMatchObject({
+      completedAt: new Date(NOW + 2000), error: null,
+    });
+    expect(await pendingRequest(remote, NOW + 24 * 60 * 60 * 1000)).toBeNull();
+  });
   it.each(['design', 'engineering'] as const)('%s: the same rows in the same order', async (tab) => {
     const rows = await listPostings(remote, params(tab), NOW);
     expect(rows.length).toBeGreaterThan(5);

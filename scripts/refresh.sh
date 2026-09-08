@@ -12,6 +12,18 @@
 #   scripts/refresh.sh --linkcheck  force the weekly link check to run now
 set -uo pipefail
 
+PENDING=0
+SKIP_LINKCHECK=0
+FORCE_LINKCHECK=0
+for arg in "$@"; do
+  case "$arg" in
+    --pending) PENDING=1 ;;
+    --skip-linkcheck) SKIP_LINKCHECK=1 ;;
+    --linkcheck) FORCE_LINKCHECK=1 ;;
+    *) echo "unknown refresh argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
@@ -51,7 +63,11 @@ echo $$ > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
 
 say "cycle start"
-node scripts/ingest.ts
+if [ "$PENDING" -eq 1 ]; then
+  node scripts/ingest.ts --pending
+else
+  node scripts/ingest.ts
+fi
 INGEST=$?
 say "ingest exit=$INGEST"
 
@@ -59,12 +75,17 @@ say "ingest exit=$INGEST"
 # cycle regardless of what ingest managed — a rule change in lib/extract.ts reaches the rows
 # it was written for on the next cycle rather than whenever someone remembers.
 node scripts/enrich.ts
-say "enrich exit=$?"
+ENRICH=$?
+say "enrich exit=$ENRICH"
+if [ "$ENRICH" -ne 0 ]; then
+  say "cycle FAILED: enrichment failed; not publishing an incomplete classification"
+  exit "$ENRICH"
+fi
 
 # Weekly, by stamp file rather than by a second calendar job: a laptop that was asleep at
 # 04:00 on Sunday still gets its link check on the next cycle after it wakes.
 STAMP="$LOG_DIR/.linkcheck-stamp"
-if [ "${1:-}" = "--linkcheck" ] || [ -z "$(find "$STAMP" -mtime -7 2>/dev/null)" ]; then
+if [ "$SKIP_LINKCHECK" -eq 0 ] && { [ "$FORCE_LINKCHECK" -eq 1 ] || [ -z "$(find "$STAMP" -mtime -7 2>/dev/null)" ]; }; then
   # Stamped BEFORE the run, not after. Sleep, reboot or `launchctl bootout` mid-check would
   # otherwise leave no stamp, so every following cycle restarts the whole thing — each one
   # overrunning the interval and halving ingest's real cadence for as long as it lasts. A
@@ -87,16 +108,16 @@ fi
 # Mirror the corpus up to the hosted read replica, when one is configured. A missing
 # TURSO_DATABASE_URL is a skip, not an error — same rule the keyed connectors follow, and it
 # keeps this cycle working unchanged on a machine that never deploys.
-if [ -f .env.local ] && grep -qE '^TURSO_DATABASE_URL=.+' .env.local; then
+if [ -n "${TURSO_DATABASE_URL:-}" ]; then
   # --in-cycle: THIS is the cycle that holds the lock, so the mirror must not refuse it.
   # Without the flag push-remote sees a live pid in the lock and skips, which silently
   # stopped every cycle from reaching the hosted site while still exiting 0.
-  node --env-file-if-exists=.env.local scripts/push-remote.ts --in-cycle
+  node scripts/push-remote.ts --in-cycle
   PUSH=$?
   say "push:remote exit=$PUSH"
 else
   PUSH=0
-  say "push:remote skipped (no TURSO_DATABASE_URL in .env.local)"
+  say "push:remote skipped (no TURSO_DATABASE_URL)"
 fi
 
 say "cycle end"

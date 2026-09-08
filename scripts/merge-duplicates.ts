@@ -1,11 +1,8 @@
 /**
  * `npm run merge:duplicates` — collapse posting rows that are the same job.
  *
- * WHAT COUNTS AS THE SAME JOB, and why it is this and not something fuzzier: `dedupe_key` is
- * `sha256(company_norm ␟ title_norm ␟ location_key)`, so two rows agreeing on all three
- * columns ARE one job by the corpus's own definition. That is the whole rule. It needs no
- * threshold, no title-similarity ratio and no judgement, which is what makes a destructive
- * pass defensible.
+ * Matching normalized company, title and location are candidates, not proof. A group with
+ * conflicting publisher IDs is never merged: two requisitions can have identical labels.
  *
  * They can exist at all because `dedupe_key` is computed from RAW strings at ingest, under
  * whichever normalizers were current that day. Two rows written weeks apart can therefore
@@ -33,6 +30,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { openDb, type Db } from '../lib/db/index.ts';
 import { postings, postingSources } from '../lib/db/schema.ts';
+import { publisherIdOf } from '../lib/dedupe.ts';
 
 interface Row {
   id: number;
@@ -116,7 +114,24 @@ export function findDuplicateGroups(db: Db): Row[][] {
     else groups.set(key, [row]);
   }
 
-  return [...groups.values()].filter((group) => group.length > 1);
+  const sourceRows = db.select().from(postingSources).all();
+  const identities = new Map<number, { source: string; id: string }[]>();
+  for (const source of sourceRows) {
+    const id = publisherIdOf({
+      source: source.source, sourceUrl: source.sourceUrl, publisherId: source.publisherId ?? undefined,
+      sourceKind: source.sourcePriority === 1 ? 'ats' : 'aggregator',
+    });
+    if (id) identities.set(source.postingId, [...(identities.get(source.postingId) ?? []), { source: source.source, id }]);
+  }
+  return [...groups.values()].filter((group) => {
+    if (group.length < 2) return false;
+    const seen = new Map<string, string>();
+    for (const row of group) for (const identity of identities.get(row.id) ?? []) {
+      if (seen.has(identity.source) && seen.get(identity.source) !== identity.id) return false;
+      seen.set(identity.source, identity.id);
+    }
+    return true;
+  });
 }
 
 export function runMerge(db: Db, options: { dryRun?: boolean } = {}): MergeStats {

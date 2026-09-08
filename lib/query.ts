@@ -56,6 +56,7 @@ const ROW = {
   payRateMin: postings.payRateMin,
   payRateMax: postings.payRateMax,
   payRatePeriod: postings.payRatePeriod,
+  payCurrencySymbol: postings.payCurrencySymbol,
   expectedGrad: postings.expectedGrad,
   canonicalUrl: postings.canonicalUrl,
 } as const;
@@ -75,7 +76,8 @@ const ROW = {
  * and the foreign-onsite exclusion further down. `coalesce` rather than a bare `=`: SQL
  * three-valued logic would turn a NULL `work_mode` into a NULL condition, which is not "no".
  */
-const isRemoteSql: SQL = sql`(${postings.isRemote} = 1 or coalesce(${postings.workMode}, '') = 'remote')`;
+const isRemoteSql: SQL = sql`(coalesce(${postings.workMode}, '') = 'remote'
+  or (${postings.workMode} is null and ${postings.isRemote} = 1))`;
 
 export const geoTierSql: SQL<number> = sql<number>`(case
   when ${postings.cityNorm} in (${sql.join(
@@ -172,7 +174,7 @@ function visible(now: number): SQL[] {
 function userFilters(p: Params, now: number): SQL[] {
   const parts: (SQL | undefined)[] = [];
 
-  if (p.posted) parts.push(gte(postings.postedAt, new Date(now - WINDOW_MS[p.posted])));
+  if (p.posted) parts.push(gte(effectiveAt, now - WINDOW_MS[p.posted]));
 
   // Every group filter is a SET, so each is an `in`. An empty set is "any" and adds nothing —
   // which is what makes the union semantics right: selecting `entry` and `junior` widens the
@@ -214,12 +216,8 @@ function where(p: Params, now: number): SQL {
  * asserts that the fresh rows come back as a prefix.
  */
 /**
- * The most rows a table will render. The Engineering tab had 920 and the cost of a tab switch
- * was linear in every one of them at once: 4,175 bytes of HTML per row, so 3.7 MB of markup
- * (886 KB gzipped), ~14,000 DOM nodes for the browser to build, and 978 KB pulled out of Turso
- * — a 591ms query where the same query capped is 77ms. The table is sorted newest-first and
- * banded at 24 hours, so the rows past this point are the ones nobody scrolls to; the filters,
- * not the scrollbar, are how the rest is reached.
+ * Keep each page's database payload and DOM bounded without making older matches
+ * unreachable. Page links preserve filters and expose the rest of the result set.
  *
  * `listPostings` asks for one MORE than this, which is how the page knows to say so without
  * paying for a second `count(*)` round trip.
@@ -231,9 +229,10 @@ export async function listPostings(db: ReadDb, p: Params, now: number = Date.now
     .select(ROW)
     .from(postings)
     .where(where(p, now))
-    .orderBy(desc(effectiveAt), asc(seniorityRank))
+    .orderBy(desc(effectiveAt), asc(seniorityRank), asc(postings.id))
     // ROW_CAP + 1: the extra row is not rendered, it is the answer to "is there more?".
     .limit(ROW_CAP + 1)
+    .offset((p.page - 1) * ROW_CAP)
     .all();
 }
 

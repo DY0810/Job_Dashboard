@@ -138,6 +138,7 @@ function row(
     title: unknown;
     location: unknown;
     url: string;
+    publisherId?: string | number;
     /** The application form, when the vendor publishes one distinct from the posting page. */
     applyUrl?: string;
     postedAt: number;
@@ -150,6 +151,8 @@ function row(
     source,
     sourceKind: 'ats',
     sourceUrl: fields.url,
+    publisherId: typeof fields.publisherId === 'string' || typeof fields.publisherId === 'number'
+      ? fields.publisherId : undefined,
     applyUrl: fields.applyUrl,
     postedAt: fields.postedAt,
     company: entry.name,
@@ -162,6 +165,11 @@ function row(
 }
 
 type Mapper = (entry: RegistryEntry, context: ConnectorContext) => Promise<ConnectorPosting[]>;
+
+function sourceList<T>(items: T[] | undefined, field: string): T[] {
+  if (!Array.isArray(items)) throw new Error(`ATS response is missing its ${field} array`);
+  return items;
+}
 
 /**
  * One target failing is normal — a company changes its token, a board 500s. One target
@@ -220,6 +228,7 @@ function atsConnector(name: string, map: Mapper): Connector {
 }
 
 interface GreenhouseJob {
+  id?: string | number;
   absolute_url?: string;
   title?: string;
   content?: string;
@@ -241,10 +250,11 @@ export const greenhouse = atsConnector('greenhouse', async (entry, context) => {
   const body = await context.runtime.fetchJson<{ jobs?: GreenhouseJob[] }>(
     endpoint('greenhouse', entry.token),
   );
-  return (body.jobs ?? [])
+  return sourceList(body.jobs, 'jobs')
     .filter((job) => job.absolute_url)
     .map((job) =>
       row('greenhouse', entry, {
+        publisherId: job.id,
         title: job.title,
         location: job.location?.name,
         url: job.absolute_url!,
@@ -269,6 +279,7 @@ export const greenhouse = atsConnector('greenhouse', async (entry, context) => {
 });
 
 interface LeverJob {
+  id?: string;
   text?: string;
   hostedUrl?: string;
   createdAt?: number;
@@ -298,10 +309,11 @@ function leverSections(job: LeverJob): Section[] {
 
 export const lever = atsConnector('lever', async (entry, context) => {
   const jobs = await context.runtime.fetchJson<LeverJob[]>(endpoint('lever', entry.token));
-  return (Array.isArray(jobs) ? jobs : [])
+  return sourceList(jobs, 'postings')
     .filter((job) => job.hostedUrl)
     .map((job) =>
       row('lever', entry, {
+        publisherId: job.id,
         title: job.text,
         location: job.categories?.location ?? job.categories?.allLocations?.join(', '),
         url: job.hostedUrl!,
@@ -329,6 +341,7 @@ export const lever = atsConnector('lever', async (entry, context) => {
 });
 
 interface AshbyJob {
+  id?: string;
   title?: string;
   location?: string;
   publishedAt?: string;
@@ -351,10 +364,11 @@ export const ashby = atsConnector('ashby', async (entry, context) => {
   const body = await context.runtime.fetchJson<{ jobs?: AshbyJob[] }>(
     endpoint('ashby', entry.token),
   );
-  return (body.jobs ?? [])
+  return sourceList(body.jobs, 'jobs')
     .filter((job) => job.jobUrl && job.isListed !== false)
     .map((job) =>
       row('ashby', entry, {
+        publisherId: job.id,
         title: job.title,
         location: job.location,
         url: job.jobUrl!,
@@ -427,7 +441,7 @@ export const smartrecruiters = atsConnector('smartrecruiters', async (entry, con
   // ponytail: the list endpoint carries no description, so the body costs one extra request
   // per posting. Fine at the registry's current SmartRecruiters volume (one company); if
   // that grows past a few dozen openings, cache detail bodies on `id` between runs.
-  for (const posting of body.content ?? []) {
+  for (const posting of sourceList(body.content, 'content')) {
     if (!posting.id) continue;
     const detail = await context.runtime.fetchJson<SmartRecruitersDetail>(
       `${endpoint('smartrecruiters', entry.token)}/${posting.id}`,
@@ -437,6 +451,7 @@ export const smartrecruiters = atsConnector('smartrecruiters', async (entry, con
     if (!url) continue;
     postings.push(
       row('smartrecruiters', entry, {
+        publisherId: posting.id,
         title: posting.name,
         location: posting.location?.fullLocation,
         url,
@@ -469,6 +484,7 @@ export const smartrecruiters = atsConnector('smartrecruiters', async (entry, con
 });
 
 interface WorkableJob {
+  shortcode?: string;
   title?: string;
   department?: string;
   employment_type?: string;
@@ -486,10 +502,11 @@ export const workable = atsConnector('workable', async (entry, context) => {
   const body = await context.runtime.fetchJson<{ jobs?: WorkableJob[] }>(
     endpoint('workable', entry.token, { details: 'true' }),
   );
-  return (body.jobs ?? [])
+  return sourceList(body.jobs, 'jobs')
     .filter((job) => job.url)
     .map((job) =>
       row('workable', entry, {
+        publisherId: job.shortcode,
         title: job.title,
         location: job.telecommuting
           ? 'Remote'
@@ -509,6 +526,7 @@ export const workable = atsConnector('workable', async (entry, context) => {
 });
 
 interface RecruiteeOffer {
+  id?: string | number;
   title?: string;
   department?: string;
   employment_type_code?: string;
@@ -530,10 +548,11 @@ export const recruitee = atsConnector('recruitee', async (entry, context) => {
   const body = await context.runtime.fetchJson<{ offers?: RecruiteeOffer[] }>(
     endpoint('recruitee', entry.token),
   );
-  return (body.offers ?? [])
+  return sourceList(body.offers, 'offers')
     .filter((offer) => offer.careers_url ?? offer.careers_apply_url)
     .map((offer) =>
       row('recruitee', entry, {
+        publisherId: offer.id,
         title: offer.title,
         location: offer.location ?? [offer.city, offer.country].filter(Boolean).join(', '),
         url: (offer.careers_url ?? offer.careers_apply_url)!,
@@ -620,7 +639,7 @@ export function workdayPostedAt(postedOn: string | undefined, now: number): numb
  * reads a slice of a board while reporting `ok` is how ghost detection starts delisting.
  */
 const WORKDAY_PAGE = 20;
-const WORKDAY_MAX_PAGES = 5;
+const WORKDAY_MAX_PAGES = 500;
 /** Their throttle answers slowly on purpose; 20s (the default) reads that as death. */
 const WORKDAY_TIMEOUT_MS = 45_000;
 
@@ -659,30 +678,36 @@ export const workday = {
     let pages = 0;
     let total: number | undefined;
 
-    for (; pages < WORKDAY_MAX_PAGES; pages += 1) {
+    for (; pages < WORKDAY_MAX_PAGES;) {
       const request = buildRequest('workday', entry.token, {
         wdN: entry.wdN,
         site: entry.site,
         offset: pages * WORKDAY_PAGE,
       }) as { url: string; init: { method: string; headers: Record<string, string>; body: string } };
 
-      const body = await context.runtime.fetchJson<{ total?: number; jobPostings?: WorkdayPosting[] }>(
-        request.url,
-        {
-          method: request.init.method,
-          headers: request.init.headers,
-          body: request.init.body,
-          timeoutMs: WORKDAY_TIMEOUT_MS,
-        },
-      );
+      let body: { total?: number; jobPostings?: WorkdayPosting[] };
+      try {
+        body = await context.runtime.fetchJson(request.url, {
+          method: request.init.method, headers: request.init.headers,
+          body: request.init.body, timeoutMs: WORKDAY_TIMEOUT_MS,
+        });
+        sourceList(body.jobPostings, 'jobPostings');
+      } catch (error) {
+        if (pages === 0) throw error;
+        context.degraded(`${entry.name}: Workday page ${pages} failed`);
+        break;
+      }
+      pages += 1;
       // Only the first page reports it; later pages answer 0.
       total ??= body.total;
 
-      const page = body.jobPostings ?? [];
+      const page = body.jobPostings!;
       for (const job of page) {
         if (!job.externalPath) continue;
         postings.push(
           row('workday', entry, {
+            publisherId: job.bulletFields?.[0] && /^[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*$/.test(job.bulletFields[0])
+              ? job.bulletFields[0] : undefined,
             title: job.title,
             location: workdayLocation(job),
             url: `https://${entry.token}.${entry.wdN}.myworkdayjobs.com/${entry.site}${job.externalPath}`,
@@ -695,7 +720,7 @@ export const workday = {
           }),
         );
       }
-      if (page.length < WORKDAY_PAGE) break;
+      if (page.length < WORKDAY_PAGE || (total !== undefined && postings.length >= total)) break;
     }
 
     if (pages >= WORKDAY_MAX_PAGES && total !== undefined && total > postings.length) {

@@ -184,6 +184,14 @@ describe('stillQueued', () => {
     expect(kept[0].body).toBe('body for b@x.com'); // the body survives, not just the address
   });
 
+  it('keeps only the failed message when two drafts share a recipient', () => {
+    const messages = [
+      { to: 'a@x.com', body: 'already sent' },
+      { to: 'a@x.com', body: 'failed draft' },
+    ];
+    expect(stillQueued(messages, [{ to: 'a@x.com', index: 1 }])).toEqual([messages[1]]);
+  });
+
   it('empties the queue when everything went', () => {
     expect(stillQueued(q('a@x.com', 'b@x.com'), [])).toEqual([]);
   });

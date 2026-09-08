@@ -59,6 +59,14 @@ function insertPosting(
 }
 
 describe('runEnrich', () => {
+  it('preserves the salary currency symbol in the stored row', () => {
+    const db = testDatabase();
+    insertPosting(db, { id: 1, title: 'Product Designer', company: 'Acme', description: 'Salary: €50,000 per year.' });
+    runEnrich(db);
+    expect(db.select().from(postings).get()).toMatchObject({
+      payRateMin: 50_000, payRatePeriod: 'year', payCurrencySymbol: '€',
+    });
+  });
   it('writes an extraction, and stores nothing for a dropped posting', () => {
     const db = testDatabase();
     const intern = POSTING_FIXTURES[0];

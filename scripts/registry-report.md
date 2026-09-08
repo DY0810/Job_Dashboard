@@ -1,21 +1,33 @@
 # Company Registry Report
 
-Generated 2026-08-24T20:58:03.270Z by `scripts/resolve-companies.ts`.
+Originally generated 2026-08-24T20:58:03.270Z by `scripts/resolve-companies.ts`.
+Registry counts reconciled against `scripts/companies.json` on 2026-09-08; individual
+`verified_at` values below remain the dates of their recorded probes.
 
 ## Registry — resolved count by ATS
 
-`scripts/companies.json` holds **231** entries total (across every phase this script has been run for).
+`scripts/companies.json` holds **245** entries total (across every phase this script has been run for).
 
 | ATS | Count |
 | --- | --- |
-| greenhouse | 103 |
-| ashby | 88 |
+| greenhouse | 116 |
+| ashby | 89 |
 | recruitee | 12 |
 | lever | 10 |
 | smartrecruiters | 10 |
 | workable | 4 |
 | workday | 3 |
 | teamtailor | 1 |
+
+## 2026-09-08 source audit
+
+- Live, robot-permitted ATS probes added **Anduril** (`greenhouse:andurilindustries`, 2,212
+  openings), **Cursor** (`ashby:cursor`, 124), and **xAI** (`greenhouse:xai`, 257). Of those,
+  1,042 Anduril, 47 Cursor, and 140 xAI postings were published in the dashboard's current
+  60-day window.
+- All 10 SmartRecruiters entries remain in the registry but are currently unreachable: the
+  shared runtime refused the API host's `robots.txt` rules in GitHub Actions run `34190831847`.
+  They are retained rather than guessed at or bypassed.
 
 
 ## Run summary

@@ -7,11 +7,12 @@
  * Re-running the whole corpus is the correct behaviour and takes seconds.
  */
 
+import { sql } from 'drizzle-orm';
 import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 import type { SourceFields } from '../extract.ts';
 
-/** One row per DEDUPED job. `dedupe_key` = sha256(company_norm ␟ title_norm ␟ location_key). */
+/** One row per job. Known publisher identities keep distinct requisitions separate. */
 export const postings = sqliteTable(
   'postings',
   {
@@ -72,6 +73,7 @@ export const postings = sqliteTable(
     payRateMin: real('pay_rate_min'),
     payRateMax: real('pay_rate_max'),
     payRatePeriod: text('pay_rate_period', { enum: ['hour', 'week', 'month', 'year'] }),
+    payCurrencySymbol: text('pay_currency_symbol', { enum: ['$', '€', '£'] }),
     expectedGrad: text('expected_grad'),
     /** Engineering only — the Design tab has no summary column, so none is generated. */
     summary: text('summary'),
@@ -105,6 +107,7 @@ export const postingSources = sqliteTable(
     /** Connector name, e.g. `greenhouse`, `remoteok`. */
     source: text('source').notNull(),
     sourceUrl: text('source_url').notNull(),
+    publisherId: text('publisher_id'),
     /** This source's own date, never the merged one. */
     postedAt: integer('posted_at', { mode: 'timestamp_ms' }).notNull(),
     /** 1 ATS · 2 aggregator · 3 RSS · 4 scraped · 5 GitHub repo. See SOURCE_PRIORITY. */
@@ -113,7 +116,11 @@ export const postingSources = sqliteTable(
     /** Consecutive absences from SUCCESSFUL polls of this source only (finding C). */
     absenceCount: integer('absence_count').notNull().default(0),
   },
-  (table) => [uniqueIndex('posting_sources_posting_url_idx').on(table.postingId, table.sourceUrl)],
+  (table) => [
+    uniqueIndex('posting_sources_posting_url_idx').on(table.postingId, table.sourceUrl),
+    index('posting_sources_url_idx').on(table.sourceUrl),
+    index('posting_sources_publisher_idx').on(table.source, table.publisherId),
+  ],
 );
 
 /**
@@ -196,6 +203,11 @@ export const refreshRequests = sqliteTable(
     requestedBy: text('requested_by'),
     requestedAt: integer('requested_at', { mode: 'timestamp_ms' }).notNull(),
     claimedAt: integer('claimed_at', { mode: 'timestamp_ms' }),
+    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+    error: text('error'),
   },
-  (table) => [index('refresh_requests_claimed_idx').on(table.claimedAt)],
+  (table) => [
+    index('refresh_requests_claimed_idx').on(table.claimedAt),
+    uniqueIndex('refresh_requests_active_idx').on(sql`(1)`).where(sql`${table.completedAt} is null`),
+  ],
 );

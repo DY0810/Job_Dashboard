@@ -40,6 +40,7 @@ import {
   type Tab,
   vocab,
   withBasis,
+  withPage,
   toggleFilter,
   withFilter,
 } from './params.ts';
@@ -64,6 +65,7 @@ function params(tab: Tab, over: Partial<Params> = {}): Params {
     level: [],
     badge: null,
     job: null,
+    page: 1,
     ...over,
   };
 }
@@ -169,8 +171,8 @@ describe('design shows the target locations, engineering shows every location', 
    * disqualifying, so the same row flips to visible on both tabs the moment it is remote.
    */
   it('keeps the same Berlin posting once it is remote, on both tabs', async () => {
-    db.update(postings).set(BERLIN_REMOTE).where(eq(postings.id, idOf('e-berlin-3d'))).run();
-    db.update(postings).set(BERLIN_REMOTE).where(eq(postings.id, idOf('d-berlin-3d'))).run();
+    db.update(postings).set({ ...BERLIN_REMOTE, workMode: null }).where(eq(postings.id, idOf('e-berlin-3d'))).run();
+    db.update(postings).set({ ...BERLIN_REMOTE, workMode: null }).where(eq(postings.id, idOf('d-berlin-3d'))).run();
 
     expect(await order(params('engineering'))).toContain('e-berlin-3d');
     expect(await order(params('design'))).toContain('d-berlin-3d');
@@ -204,6 +206,14 @@ describe('design shows the target locations, engineering shows every location', 
   it('keeps a role whose only remote signal is work_mode', async () => {
     // Location says London, is_remote is 0, the body says remote. Remote is a target tier.
     expect(await order(params('design'))).toContain('d-london-remote');
+  });
+
+  it('does not treat explicit onsite or hybrid work abroad as remotely eligible', async () => {
+    const id = idOf('e-berlin-3d');
+    for (const workMode of ['onsite', 'hybrid'] as const) {
+      db.update(postings).set({ ...BERLIN, isRemote: true, workMode }).where(eq(postings.id, id)).run();
+      expect(await getPostingDetail(db, id, NOW)).toBeNull();
+    }
   });
 
   it('keeps a posting whose location never normalized, rather than dropping it silently', async () => {
@@ -823,5 +833,35 @@ describe('row cap', () => {
     expect(times).toEqual([...times].sort((a, b) => b - a));
     // The oldest row in the corpus must be the one dropped, not one of these.
     expect(Math.min(...times)).toBeGreaterThan(NOW - (ROW_CAP + 50) * 1000);
+  });
+
+  it('reaches jobs beyond the first page without repeating its displayed rows', async () => {
+    flood(ROW_CAP + 50);
+    const first = (await listPostings(db, params('engineering'), NOW)).slice(0, ROW_CAP);
+    const second = await listPostings(db, params('engineering', { page: 2 }), NOW);
+    const firstIds = new Set(first.map((row) => row.id));
+    expect(second.length).toBeGreaterThan(0);
+    expect(second.some((row) => firstIds.has(row.id))).toBe(false);
+    expect(second[0].id).toBe(50_000 + ROW_CAP);
+  });
+
+  it('validates page numbers and resets pagination when filters change', () => {
+    for (const page of ['0', '-1', '1.2', 'Infinity', '10001', 'bad']) {
+      expect(parseParams({ page }).page).toBe(1);
+    }
+    const second = parseParams({ tab: 'engineering', level: 'entry', page: '2' });
+    expect(fromUrl(withPage(second, 3))).toMatchObject({ page: 3, level: ['entry'], tab: 'engineering' });
+    expect(fromUrl(withFilter(second, 'level', 'junior')).page).toBe(1);
+    expect(fromUrl(cleared(second)).page).toBe(1);
+  });
+
+  it('filters on the same seen date as the fresh band, not an old ATS creation date', async () => {
+    const id = idOf('e-sf-3d');
+    db.update(postings).set({
+      postedAt: new Date(NOW - 90 * WINDOW_MS.day),
+      firstSeenRun: new Date(NOW - WINDOW_MS.hour / 2).toISOString(),
+    }).where(eq(postings.id, id)).run();
+    expect((await listPostings(db, params('engineering', { posted: 'hour' }), NOW))
+      .map((row) => row.id)).toContain(id);
   });
 });

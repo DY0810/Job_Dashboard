@@ -25,7 +25,7 @@
 
 import { pathToFileURL } from 'node:url';
 
-import { and, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 
 import { openDb, type Db } from '../lib/db/index.ts';
 import { postings } from '../lib/db/schema.ts';
@@ -231,6 +231,8 @@ export async function checkLink(
 
 export interface LinkcheckOptions {
   limit?: number;
+  /** Explicit posting IDs, for a small audited run. Mutually exclusive with `limit`. */
+  ids?: readonly number[];
   /** Report only — do not write `delisted_at`. */
   dryRun?: boolean;
   concurrency?: number;
@@ -243,6 +245,7 @@ export interface LinkcheckSummary {
   dead: number;
   unverifiable: number;
   marked: number;
+  restored: number;
   results: LinkResult[];
 }
 
@@ -253,18 +256,53 @@ export async function runLinkcheck(
 ): Promise<LinkcheckSummary> {
   const log = options.log ?? ((record) => console.log(JSON.stringify(record)));
   const concurrency = options.concurrency ?? 8;
+  if (!Number.isInteger(concurrency) || concurrency <= 0) {
+    throw new Error(`concurrency must be a positive integer, received ${concurrency}`);
+  }
+  if (options.ids !== undefined && options.limit !== undefined) {
+    throw new Error('ids and limit cannot be used together');
+  }
 
-  // Already-delisted postings are not re-checked, and neither are rows extraction dropped
-  // (`track` null): the point of the run is the links a user can still click, and only
-  // visible rows render an apply button. This is also what keeps the run inside its 90-minute
-  // alarm — the corpus tripled, but the clickable slice is ~2,000 rows, not ~14,000.
+  // A linkcheck mark is provisional: a board outage or a corrected canonical URL can make a
+  // previously dead link live again. Recheck only rows this checker marked itself; ghost
+  // delistings remain the ghost pass's ownership. Rows extraction dropped (`track` null) are
+  // still out of scope because they have no apply control to validate.
+  const recheckable = and(
+    isNotNull(postings.track),
+    or(isNull(postings.delistedAt), eq(postings.delistedReason, 'linkcheck')),
+  );
   const base = db
-    .select({ id: postings.id, url: postings.canonicalUrl })
-    .from(postings)
-    .where(and(isNull(postings.delistedAt), isNotNull(postings.track)));
-  const queue = (options.limit === undefined ? base : base.limit(options.limit)).all();
+    .select({ id: postings.id, url: postings.canonicalUrl, delistedReason: postings.delistedReason })
+    .from(postings);
+  let queue: { id: number; url: string; delistedReason: 'ghost' | 'linkcheck' | null }[];
+
+  if (options.ids !== undefined) {
+    const ids = [...options.ids];
+    if (ids.length === 0 || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+      throw new Error('ids must contain positive safe integers');
+    }
+    if (new Set(ids).size !== ids.length) throw new Error('ids must not contain duplicates');
+
+    // Validate the whole requested set before checking or writing any one row. A cloud writer
+    // must not delist a prefix and only then discover that an operator mistyped another ID.
+    const known = new Set(db.select({ id: postings.id }).from(postings).where(inArray(postings.id, ids)).all().map((r) => r.id));
+    const unknown = ids.filter((id) => !known.has(id));
+    if (unknown.length > 0) throw new Error(`unknown posting ids: ${unknown.join(',')}`);
+
+    queue = base
+      .where(and(recheckable, inArray(postings.id, ids)))
+      .all();
+    const eligible = new Set(queue.map((row) => row.id));
+    const unavailable = ids.filter((id) => !eligible.has(id));
+    if (unavailable.length > 0) {
+      throw new Error(`posting ids are not currently checkable: ${unavailable.join(',')}`);
+    }
+  } else {
+    queue = (options.limit === undefined ? base.where(recheckable) : base.where(recheckable).limit(options.limit)).all();
+  }
 
   const total = queue.length;
+  const priorReason = new Map(queue.map((row) => [row.id, row.delistedReason]));
   const results: LinkResult[] = [];
 
   await Promise.all(
@@ -289,21 +327,33 @@ export async function runLinkcheck(
 
   const dead = results.filter((result) => result.verdict === 'dead');
   let marked = 0;
-  if (!options.dryRun && dead.length > 0) {
-    // ...and MARKED. `delisted_at` is the schema's existing "not live any more" flag, and
-    // lib/query.ts already hides a delisted posting from both tabs and from `?job=<id>`.
+  let restored = 0;
+  if (!options.dryRun && (dead.length > 0 || results.some((result) => result.verdict === 'live'))) {
     const now = new Date();
     db.transaction((tx) => {
       for (const result of dead) {
-        // `delisted_reason` is what stops the ghost pass undoing this. A posting whose apply
-        // URL is dead is usually still IN its source's listing, so its absence counts sit at
-        // zero and the ghost pass would otherwise read "not a ghost" as "bring it back" —
-        // within half an hour, every week.
-        tx.update(postings)
+        // Existing linkcheck delistings retain their original timestamp. Only an active row
+        // gets a new mark, and ghost-owned rows were excluded before this point.
+        if (priorReason.get(result.id) === 'linkcheck') continue;
+        const update = tx.update(postings)
           .set({ delistedAt: now, delistedReason: 'linkcheck' })
-          .where(eq(postings.id, result.id))
+          .where(and(eq(postings.id, result.id), isNull(postings.delistedAt)))
           .run();
-        marked += 1;
+        marked += update.changes;
+      }
+      for (const result of results) {
+        if (result.verdict !== 'live' || priorReason.get(result.id) !== 'linkcheck') continue;
+        const update = tx.update(postings)
+          .set({ delistedAt: null, delistedReason: null })
+          .where(
+            and(
+              eq(postings.id, result.id),
+              eq(postings.delistedReason, 'linkcheck'),
+              isNotNull(postings.delistedAt),
+            ),
+          )
+          .run();
+        restored += update.changes;
       }
     });
   }
@@ -314,6 +364,7 @@ export async function runLinkcheck(
     dead: dead.length,
     unverifiable: results.filter((result) => result.verdict === 'unverifiable').length,
     marked,
+    restored,
     results,
   };
 }
@@ -323,6 +374,7 @@ export function formatSummary(summary: LinkcheckSummary, dryRun: boolean): strin
     `linkcheck: ${summary.checked} checked`,
     `${summary.live} live`,
     `${summary.dead} dead${dryRun ? ' (not marked, --dry-run)' : ` (marked delisted: ${summary.marked})`}`,
+    `${summary.restored} restored`,
     `${summary.unverifiable} unverifiable`,
   ].join(', ');
 }
@@ -337,14 +389,26 @@ function flag(argv: string[], name: string): string | undefined {
   return match.includes('=') ? match.slice(match.indexOf('=') + 1) : '';
 }
 
+/** Strict CLI grammar: positive decimal SQLite IDs, comma-separated, no whitespace or dupes. */
+export function parseAuditedIds(raw: string): number[] {
+  if (!/^[1-9]\d*(?:,[1-9]\d*)*$/.test(raw)) throw new Error(`bad --ids: ${raw}`);
+  const ids = raw.split(',').map(Number);
+  if (ids.some((id) => !Number.isSafeInteger(id) || id > 2_147_483_647)) throw new Error(`bad --ids: ${raw}`);
+  if (new Set(ids).size !== ids.length) throw new Error(`bad --ids: duplicate id`);
+  return ids;
+}
+
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const dryRun = flag(argv, 'dry-run') !== undefined;
   const rawLimit = flag(argv, 'limit');
   const limit = rawLimit === undefined || rawLimit === '' ? undefined : Number.parseInt(rawLimit, 10);
   if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) throw new Error(`bad --limit: ${rawLimit}`);
+  const rawIds = flag(argv, 'ids');
+  const ids = rawIds === undefined ? undefined : parseAuditedIds(rawIds);
+  if (ids !== undefined && rawLimit !== undefined) throw new Error('--ids cannot be combined with --limit');
 
   const db = openDb();
-  const summary = await runLinkcheck(db, createRuntime(), { limit, dryRun });
+  const summary = await runLinkcheck(db, createRuntime(), { limit, ids, dryRun });
   console.log(formatSummary(summary, dryRun));
 
   // A dead link is a real finding, not a crash: exit 1 so a cron wrapper can notice.

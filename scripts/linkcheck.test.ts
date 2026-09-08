@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 
 import { openDb, type Db } from '../lib/db/index.ts';
 import { postings } from '../lib/db/schema.ts';
 import { createRuntime, type FetchLike } from '../lib/runtime.ts';
-import { checkLink, classifyBody, platformFor, runLinkcheck, type Verdict } from './linkcheck.ts';
+import {
+  checkLink,
+  classifyBody,
+  formatSummary,
+  parseAuditedIds,
+  platformFor,
+  runLinkcheck,
+  type Verdict,
+} from './linkcheck.ts';
 
 function memoryDb(): Db {
   return openDb(':memory:', { migrate: true });
@@ -145,6 +154,29 @@ describe('checkLink', () => {
     expect(result.verdict).toBe('unverifiable');
     expect(result.status).toBeNull();
   });
+
+  it('reports an explicit robots denial as unverifiable without requesting the posting', async () => {
+    let targetRequests = 0;
+    const runtime = createRuntime({
+      fetchImpl: async (url) => {
+        if (url.endsWith('/robots.txt')) return new Response('User-agent: *\nDisallow: /\n', { status: 200 });
+        targetRequests += 1;
+        return new Response(BODY.ashbyLive, { status: 200 });
+      },
+      minGapMs: 0,
+      sleep: async () => {},
+      resolveHost: PUBLIC_DNS,
+    });
+
+    const result = await checkLink(runtime, { id: 1, url: URL_FOR.ashby });
+
+    expect(result).toMatchObject({
+      verdict: 'unverifiable',
+      status: null,
+      reason: 'robots.txt disallows checking it',
+    });
+    expect(targetRequests).toBe(0);
+  });
 });
 
 describe('runLinkcheck', () => {
@@ -198,6 +230,114 @@ describe('runLinkcheck', () => {
     await runLinkcheck(db, runtime, { log: (record) => logged.push(record) });
 
     expect(JSON.stringify(logged)).not.toContain('supersecret');
+  });
+
+  it('rejects invalid concurrency instead of silently reporting an empty run', async () => {
+    const db = memoryDb();
+    seed(db, URL_FOR.lever);
+
+    await expect(runLinkcheck(db, runtimeWith(() => ({ status: 404, body: '' })), { concurrency: 0 })).rejects.toThrow(
+      'concurrency must be a positive integer',
+    );
+  });
+
+  it('checks only selected IDs and validates unknown IDs before any write', async () => {
+    const db = memoryDb();
+    const checked = seed(db, URL_FOR.lever);
+    const untouched = seed(db, URL_FOR.ashby);
+    const dropped = seed(db, URL_FOR.workable, null);
+    const runtime = runtimeWith((url) =>
+      url === URL_FOR.lever ? { status: 404, body: '' } : { status: 200, body: BODY.ashbyLive },
+    );
+
+    const summary = await runLinkcheck(db, runtime, { ids: [checked], log: () => {} });
+    expect(summary).toMatchObject({ checked: 1, dead: 1, marked: 1 });
+    expect(db.select().from(postings).where(eq(postings.id, checked)).get()!.delistedAt).not.toBeNull();
+    expect(db.select().from(postings).where(eq(postings.id, untouched)).get()!.delistedAt).toBeNull();
+
+    await expect(runLinkcheck(db, runtime, { ids: [untouched, 9_999_999], log: () => {} })).rejects.toThrow(
+      'unknown posting ids: 9999999',
+    );
+    await expect(runLinkcheck(db, runtime, { ids: [dropped], log: () => {} })).rejects.toThrow(
+      `posting ids are not currently checkable: ${dropped}`,
+    );
+    expect(db.select().from(postings).where(eq(postings.id, untouched)).get()!.delistedAt).toBeNull();
+  });
+
+  it('rechecks and restores only a linkcheck-delisted selected ID after a verified-live result', async () => {
+    const db = memoryDb();
+    const linkcheckId = seed(db, URL_FOR.ashby);
+    const ghostId = seed(db, URL_FOR.lever);
+    const markedAt = new Date('2026-08-20T00:00:00Z');
+    db.update(postings)
+      .set({ delistedAt: markedAt, delistedReason: 'linkcheck' })
+      .where(eq(postings.id, linkcheckId))
+      .run();
+    db.update(postings)
+      .set({ delistedAt: markedAt, delistedReason: 'ghost' })
+      .where(eq(postings.id, ghostId))
+      .run();
+
+    const summary = await runLinkcheck(db, runtimeWith(() => ({ status: 200, body: BODY.ashbyLive })), {
+      ids: [linkcheckId],
+      log: () => {},
+    });
+
+    expect(summary).toMatchObject({ checked: 1, live: 1, marked: 0, restored: 1 });
+    expect(db.select().from(postings).where(eq(postings.id, linkcheckId)).get()).toMatchObject({
+      delistedAt: null,
+      delistedReason: null,
+    });
+    expect(db.select().from(postings).where(eq(postings.id, ghostId)).get()).toMatchObject({
+      delistedAt: markedAt,
+      delistedReason: 'ghost',
+    });
+    await expect(runLinkcheck(db, runtimeWith(() => ({ status: 200, body: BODY.leverLive })), {
+      ids: [ghostId],
+      log: () => {},
+    })).rejects.toThrow(`posting ids are not currently checkable: ${ghostId}`);
+  });
+
+  it('does not rewrite an existing linkcheck-delisted timestamp when it remains dead', async () => {
+    const db = memoryDb();
+    const id = seed(db, URL_FOR.lever);
+    const markedAt = new Date('2026-08-20T00:00:00Z');
+    db.update(postings)
+      .set({ delistedAt: markedAt, delistedReason: 'linkcheck' })
+      .where(eq(postings.id, id))
+      .run();
+
+    const summary = await runLinkcheck(db, runtimeWith(() => ({ status: 404, body: '' })), {
+      ids: [id],
+      log: () => {},
+    });
+
+    expect(summary).toMatchObject({ checked: 1, dead: 1, marked: 0, restored: 0 });
+    expect(db.select().from(postings).where(eq(postings.id, id)).get()).toMatchObject({
+      delistedAt: markedAt,
+      delistedReason: 'linkcheck',
+    });
+  });
+});
+
+describe('parseAuditedIds', () => {
+  it('accepts positive, unique decimal IDs only', () => {
+    expect(parseAuditedIds('1,42,2147483647')).toEqual([1, 42, 2_147_483_647]);
+  });
+
+  it.each(['', '0', '01', '1,', ',1', '1, 2', '1,1', '2147483648', 'x'])('rejects %j', (raw) => {
+    expect(() => parseAuditedIds(raw)).toThrow('bad --ids');
+  });
+});
+
+describe('formatSummary', () => {
+  it('reports restored rows', () => {
+    expect(
+      formatSummary(
+        { checked: 1, live: 1, dead: 0, unverifiable: 0, marked: 0, restored: 1, results: [] },
+        false,
+      ),
+    ).toContain('1 restored');
   });
 });
 

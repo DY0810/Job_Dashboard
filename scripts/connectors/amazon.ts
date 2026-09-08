@@ -29,6 +29,7 @@ import {
 } from '../../lib/runtime.ts';
 
 interface AmazonJob {
+  id_icims?: string;
   title?: string;
   /** "US, CO, Denver" — the display form. */
   location?: string;
@@ -53,24 +54,8 @@ interface AmazonJob {
 /** 100 is honoured; the endpoint reports `hits: 10000` for an unfiltered query. */
 const PAGE = 100;
 
-/**
- * Fifteen pages, so 1,500 of the newest per run. The cut is defensible because this endpoint
- * sorts by recency, so it falls at "older than the newest 1,500" rather than on an arbitrary
- * slice — but the number had to be measured, because Amazon's volume is the whole problem:
- *
- *   offset    0 → August 20-19        offset  900 → August 14-13
- *   offset  400 → August 19-18        offset 1900 → August 10
- *
- * 500 covered barely a day and a half. 1,500 reaches roughly a week, which matters because
- * postings arrive here in bursts and a run that lands after a busy afternoon would otherwise
- * miss everything published before it. Amazon does not throttle this endpoint — 500 postings
- * came back in 4.7s — so the cost is 15 cheap requests every six hours.
- *
- * Deeper is not better: past ~2,000 the ordering stops agreeing with `posted_date` (offset 3900
- * returned August 14 alongside August 3), so the endpoint is evidently sorting on something
- * adjacent to it. Paging further buys jumble, not history.
- */
-const MAX_PAGES = 15;
+/** Read the whole accessible search window, not just its first 1,500 jobs. */
+const MAX_PAGES = 100;
 
 function searchUrl(offset: number): string {
   const params = new URLSearchParams({
@@ -117,17 +102,24 @@ function body(job: AmazonJob): string {
 export const amazon: Connector = {
   name: 'amazon',
   kind: 'ats',
-  /** One employer, 1,500 postings a run, and its board does not turn over in half an hour. */
+  /** A larger employer search stays on its existing six-hour cadence. */
   minIntervalMs: 6 * 60 * 60 * 1000,
   async fetch(context) {
     const postings: ConnectorPosting[] = [];
     let pages = 0;
     let hits: number | undefined;
 
-    for (; pages < MAX_PAGES; pages += 1) {
-      const page = await context.runtime.fetchJson<{ hits?: number; jobs?: AmazonJob[] }>(
-        searchUrl(pages * PAGE),
-      );
+    for (; pages < MAX_PAGES;) {
+      let page: { hits?: number; jobs?: AmazonJob[] };
+      try {
+        page = await context.runtime.fetchJson(searchUrl(pages * PAGE));
+        if (!Array.isArray(page.jobs)) throw new Error('Amazon response is missing its jobs array');
+      } catch (error) {
+        if (pages === 0) throw error;
+        context.degraded(`Amazon page ${pages} failed`);
+        break;
+      }
+      pages += 1;
       hits ??= page.hits;
       const jobs = page.jobs ?? [];
 
@@ -137,6 +129,7 @@ export const amazon: Connector = {
         postings.push({
           source: 'amazon',
           sourceKind: 'ats',
+          publisherId: job.id_icims,
           // `new URL(path, base)`, not concatenation: with no terminating slash a `job_path`
           // of `@evil.com/x` makes the ORIGIN evil.com, and this URL is the apply button's
           // href. The sibling Workday builder is safe only because a `/${site}` sits between.
@@ -157,16 +150,20 @@ export const amazon: Connector = {
           },
         });
       }
-      if (jobs.length < PAGE) break;
+      if (jobs.length < PAGE || (hits !== undefined && postings.length >= hits)) break;
     }
 
+    const truncated = (hits ?? 0) >= MAX_PAGES * PAGE || (pages >= MAX_PAGES && (hits ?? 0) > postings.length);
+    if (truncated) {
+      context.degraded(`Amazon: read ${postings.length} of ${hits} reported hits; search window may be capped`);
+    }
     context.log({
       connector: 'amazon',
       pages,
       fetched: postings.length,
       reportedHits: hits ?? null,
       // Said out loud rather than left implicit: this is the newest slice, not the board.
-      truncated: pages >= MAX_PAGES && (hits ?? 0) > postings.length,
+      truncated,
     });
     return postings;
   },

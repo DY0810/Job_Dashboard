@@ -15,9 +15,9 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
-import { dedupePostings, SOURCE_PRIORITY } from '../lib/dedupe.ts';
+import { dedupePostings, publisherIdOf, SOURCE_PRIORITY } from '../lib/dedupe.ts';
 import { normalizeLocation } from '../lib/normalize.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { connectorRuns, postingSources, postings } from '../lib/db/schema.ts';
@@ -52,6 +52,7 @@ export interface IngestOptions {
   runId: string;
   env?: Record<string, string | undefined>;
   only?: string;
+  pendingOnly?: boolean;
   dryRun?: boolean;
   /** Drop postings older than this (epoch ms). Ingest never filters on anything else. */
   since?: number;
@@ -84,6 +85,28 @@ export interface IngestResult {
 const jsonLog = (record: Record<string, unknown>): void => {
   console.log(JSON.stringify(record));
 };
+
+type Checkpoint = { value: unknown; pending: boolean };
+const CHECKPOINT_DDL = `create table if not exists connector_checkpoints (
+  source text primary key, value text not null, pending integer not null
+)`;
+
+/** Local-only state rides the existing Actions database cache, like mirror_state. */
+export function readCheckpoints(db: Db): Map<string, Checkpoint> {
+  if (!db.get(sql`select name from sqlite_master where type = 'table' and name = 'connector_checkpoints'`)) {
+    return new Map();
+  }
+  const rows = db.all(sql`select source, value, pending from connector_checkpoints`) as {
+    source: string; value: string; pending: number;
+  }[];
+  return new Map(rows.map((row) => {
+    try {
+      return [row.source, { value: JSON.parse(row.value), pending: Boolean(row.pending) }];
+    } catch {
+      return [row.source, { value: null, pending: true }];
+    }
+  }));
+}
 
 function message(error: unknown): string {
   return redact(error instanceof Error ? error.message : String(error));
@@ -152,10 +175,11 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
   const log = options.log ?? jsonLog;
   const now = options.now ?? Date.now;
   const startedAt = new Date(now());
+  const checkpoints = readCheckpoints(db);
 
   const selected =
     options.only === undefined
-      ? options.connectors
+      ? options.connectors.filter((connector) => !options.pendingOnly || checkpoints.get(connector.name)?.pending)
       : options.connectors.filter((connector) => connector.name === options.only);
 
   if (options.only !== undefined && selected.length === 0) {
@@ -170,11 +194,12 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
   // `--only` bypasses the cadence gate. Asking for one connector by name is an explicit
   // instruction, and `npm run ingest -- --only=hn` silently doing nothing looks like a bug.
   const lastOk = options.only === undefined ? lastSuccessByConnector(db) : new Map<string, number>();
+  const checkpointUpdates = new Map<string, { value: string; pending: boolean }>();
   const skipped: Skip[] = [];
   const active: Connector[] = [];
   for (const connector of selected) {
     const configReason = connector.skip?.(env) ?? null;
-    const wait = dueIn(connector, lastOk.get(connector.name), now());
+    const wait = checkpoints.get(connector.name)?.pending ? 0 : dueIn(connector, lastOk.get(connector.name), now());
     const skip: Skip | null = configReason
       ? { connector: connector.name, kind: 'config', reason: configReason }
       : wait > 0
@@ -208,9 +233,34 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
         env,
         log: (record: Record<string, unknown>) => log({ run: runId, ...record }),
         degraded: (reason: string) => degraded.push(reason),
+        checkpoint: {
+          value: checkpoints.get(connector.name)?.value ?? null,
+          save: (value: unknown, pending: boolean) => {
+            const serialized = JSON.stringify(value ?? null);
+            if (serialized.length > 65_536) throw new Error('connector checkpoint exceeds 64 KiB');
+            checkpointUpdates.set(connector.name, { value: serialized, pending });
+          },
+        },
       };
       try {
-        const fetched = await connector.fetch(context);
+        const received = await connector.fetch(context);
+        const fetched = received.filter((posting) => {
+          if (!posting || typeof posting.sourceUrl !== 'string'
+            || typeof posting.company !== 'string' || !posting.company.trim()
+            || typeof posting.title !== 'string' || !posting.title.trim()
+            || typeof posting.description !== 'string'
+            || typeof posting.postedAt !== 'number'
+            || !Object.hasOwn(SOURCE_PRIORITY, posting.sourceKind)) return false;
+          try {
+            return ['http:', 'https:'].includes(new URL(posting.sourceUrl).protocol);
+          } catch {
+            return false;
+          }
+        }).map((posting) => Number.isFinite(new Date(posting.postedAt).getTime())
+          ? posting : { ...posting, postedAt: Number.NaN });
+        if (fetched.length !== received.length) {
+          context.degraded(`discarded ${received.length - fetched.length} malformed postings`);
+        }
         const fresh =
           options.since === undefined
             ? fetched
@@ -221,7 +271,7 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
           record: {
             connector: connector.name,
             status: 'ok',
-            fetched: fetched.length,
+            fetched: received.length,
             newPostings: 0,
             merged: 0,
             durationMs: Date.now() - began,
@@ -289,6 +339,21 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
         harvested.flatMap((outcome) => outcome.postings),
         runId,
       );
+
+  // A cursor must never advance past rows that failed to commit. Failed connectors and
+  // dry runs cannot move it; repeating a committed batch after a crash is idempotent.
+  if (!options.dryRun && harvested.some(({ connector }) => checkpointUpdates.has(connector.name))) {
+    db.transaction((tx) => {
+      tx.run(sql.raw(CHECKPOINT_DDL));
+      for (const { connector } of harvested) {
+        const update = checkpointUpdates.get(connector.name);
+        if (!update) continue;
+        tx.run(sql`insert into connector_checkpoints (source, value, pending)
+          values (${connector.name}, ${update.value}, ${Number(update.pending)})
+          on conflict(source) do update set value = excluded.value, pending = excluded.pending`);
+      }
+    });
+  }
 
   for (const outcome of outcomes) {
     const count = counts.get(outcome.record.connector);
@@ -378,36 +443,87 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
   }
 
   const deduped = dedupePostings(batch);
+  const sourceKinds = new Map(allConnectors.map((source) => [source.name, source.kind]));
 
   db.transaction((tx) => {
-    for (const post of deduped) {
-      const urls = post.sources.map((source) => source.sourceUrl);
-      // The dedupe contract (lib/dedupe.ts): match on a known source URL FIRST, because a run
-      // where the ATS connector failed hands us the same job keyed on its aggregator identity.
-      // Going straight to `dedupe_key` would insert a second row for a job we already have.
-      const bySource = tx
-        .select({ postingId: postingSources.postingId })
-        .from(postingSources)
-        .where(inArray(postingSources.sourceUrl, urls))
-        .all();
+    const oldPosts = tx.select({
+      id: postings.id, dedupeKey: postings.dedupeKey, canonicalUrl: postings.canonicalUrl,
+      companyNorm: postings.companyNorm, titleNorm: postings.titleNorm, locationKey: postings.locationKey,
+    }).from(postings).all();
+    const oldById = new Map(oldPosts.map((post) => [post.id, post]));
+    const oldByKey = new Map(oldPosts.map((post) => [post.dedupeKey, post]));
+    const oldSources = tx.select().from(postingSources).all();
+    type SourceRow = (typeof oldSources)[number];
+    const byUrl = new Map<string, SourceRow[]>();
+    const byPublisher = new Map<string, SourceRow[]>();
+    const byPost = new Map<number, SourceRow[]>();
+    const nativeIds = new Map<number, string | null>();
+    const nativeKey = (company: string, source: string, id: string) => JSON.stringify([company, source, id]);
+    const normalKey = (post: { companyNorm: string; titleNorm: string; locationKey: string }) =>
+      JSON.stringify([post.companyNorm, post.titleNorm, post.locationKey]);
+    const byNormal = new Map<string, typeof oldPosts>();
+    for (const post of oldPosts) {
+      const key = normalKey(post);
+      byNormal.set(key, [...(byNormal.get(key) ?? []), post]);
+    }
+    for (const source of oldSources) {
+      byUrl.set(source.sourceUrl, [...(byUrl.get(source.sourceUrl) ?? []), source]);
+      byPost.set(source.postingId, [...(byPost.get(source.postingId) ?? []), source]);
+      const fresh = display.get(source.sourceUrl);
+      const id = source.publisherId
+        ?? (fresh ? publisherIdOf(fresh) : null)
+        ?? publisherIdOf({
+          source: source.source, sourceUrl: source.sourceUrl,
+          sourceKind: sourceKinds.get(source.source) ?? (source.sourcePriority === SOURCE_PRIORITY.ats ? 'ats' : 'aggregator'),
+        });
+      nativeIds.set(source.id, id);
+      if (id) {
+        const key = nativeKey(oldById.get(source.postingId)!.companyNorm, source.source, id);
+        byPublisher.set(key, [...(byPublisher.get(key) ?? []), source]);
+      }
+    }
+    const claimed = new Map<number, string>();
+    const movedFrom = new Set<number>();
+    const applicationPage = (url: string) => url.replace(/\/(?:apply|application)(?=[?#]|$)/, '');
 
-      // ponytail: when this batch bridges two rows that used to be separate, we attach to the
-      // first and leave the other for the ghost pass. Rewriting foreign keys to fold them is
-      // a phase-10 concern and needs its own gate.
-      let postingId: number | undefined = bySource[0]?.postingId;
+    for (const post of deduped) {
+      const references = new Map<number, SourceRow>();
+      for (const source of post.sources) {
+        const matches = [
+          ...(byUrl.get(source.sourceUrl) ?? []),
+          ...(source.publisherId ? byPublisher.get(nativeKey(post.companyNorm, source.source, source.publisherId)) ?? [] : []),
+        ];
+        for (const match of matches) {
+          const id = nativeIds.get(match.id);
+          if (source.publisherId && match.source === source.source && id && id !== source.publisherId) continue;
+          references.set(match.id, match);
+        }
+      }
+      const compatible = (id: number) => {
+        if (claimed.has(id) && claimed.get(id) !== post.dedupeKey) return false;
+        const previous = oldById.get(id);
+        const sources = [...(byPost.get(id) ?? [])].sort((a, b) =>
+          a.sourcePriority - b.sourcePriority || a.postedAt.getTime() - b.postedAt.getTime() || a.sourceUrl.localeCompare(b.sourceUrl));
+        const primary = sources.find((source) =>
+          applicationPage(source.sourceUrl) === applicationPage(previous?.canonicalUrl ?? '')
+          || display.get(source.sourceUrl)?.applyUrl === previous?.canonicalUrl) ?? sources[0];
+        if (!primary || (primary.sourcePriority !== SOURCE_PRIORITY.ats && sourceKinds.get(primary.source) !== 'ats')) return true;
+        const priorId = nativeIds.get(primary.id);
+        return !priorId || !post.sources.some((source) =>
+          source.source === primary.source && source.publisherId && source.publisherId !== priorId);
+      };
+      const exact = oldByKey.get(post.dedupeKey);
+      let postingId = exact && compatible(exact.id) ? exact.id
+        : [...references.values()].map((source) => source.postingId).find(compatible);
       if (postingId === undefined) {
-        postingId = tx
-          .select({ id: postings.id })
-          .from(postings)
-          .where(eq(postings.dedupeKey, post.dedupeKey))
-          .get()?.id;
+        const candidates = (byNormal.get(normalKey(post)) ?? []).filter((candidate) => compatible(candidate.id));
+        if (candidates.length === 1) postingId = candidates[0].id;
       }
 
       const inserted = postingId === undefined;
       const best = display.get(post.sources[0].sourceUrl);
       const description =
         post.sources.map((source) => display.get(source.sourceUrl)?.description ?? '').find(Boolean) ?? '';
-      const hasAts = post.sources.some((source) => source.sourceKind === 'ats');
       // Highest-priority source that actually answered with structured fields — an ATS, in
       // practice. `location` falls back to whatever the best source called the place, so a
       // row always has a display string even when no source structured anything.
@@ -461,6 +577,9 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
           .get().id;
       } else {
         const current = tx.select().from(postings).where(eq(postings.id, postingId)).get()!;
+        const storedPriority = tx.select({ priority: sql<number>`min(${postingSources.sourcePriority})` })
+          .from(postingSources).where(eq(postingSources.postingId, postingId)).get()?.priority;
+        const promote = storedPriority == null || post.sources[0].sourcePriority <= storedPriority;
         // FINDING D, across runs. `dedupePostings` floors `posted_at` at the ATS date within
         // one batch, but on a run where the ATS connector was down the batch has no ATS
         // source and an aggregator's older (or fabricated) date would drag the stored value
@@ -486,32 +605,42 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
 
         tx.update(postings)
           .set({
-            ...shared,
-            dedupeKey: keyTaken ? current.dedupeKey : post.dedupeKey,
-            // Only ever promote toward an ATS URL. If the ATS connector failed this run, the
-            // batch's best source is an aggregator and the stored canonical must not regress.
-            canonicalUrl: hasAts ? post.canonicalUrl : current.canonicalUrl,
+            ...(promote ? shared : {}),
+            dedupeKey: keyTaken || !promote ? current.dedupeKey : post.dedupeKey,
+            canonicalUrl: promote ? post.canonicalUrl : current.canonicalUrl,
             postedAt: new Date(
               Math.max(Math.min(current.postedAt.getTime(), post.postedAt), floor),
             ),
-            description: description || current.description,
+            description: promote ? (description || current.description) : (current.description || description),
             // Only a run that ACTUALLY carried structured fields may replace them. Without
             // this, a run where the ATS connector was down but an aggregator reported the
             // same job writes `{location}` alone — non-null, so `??` would not fall back —
             // and silently drops the department, work mode and sections the ATS gave us.
             // Same hazard, and same shape of guard, as `posted_at` and `canonical_url` above.
-            sourceFields: structured ? sourceFields : (current.sourceFields ?? sourceFields),
+            sourceFields: promote && structured ? sourceFields : (current.sourceFields ?? sourceFields),
           })
           .where(eq(postings.id, postingId))
           .run();
       }
 
+      claimed.set(postingId, post.dedupeKey);
+      // Split historical over-merges using the actual current source rows, never invented
+      // bodies. The original application keeps its id; each distinct requisition gets its own.
+      for (const source of references.values()) {
+        if (source.postingId === postingId) continue;
+        const duplicate = tx.select({ id: postingSources.id }).from(postingSources)
+          .where(and(eq(postingSources.postingId, postingId), eq(postingSources.sourceUrl, source.sourceUrl))).get();
+        if (duplicate) tx.delete(postingSources).where(eq(postingSources.id, source.id)).run();
+        else tx.update(postingSources).set({ postingId }).where(eq(postingSources.id, source.id)).run();
+        movedFrom.add(source.postingId);
+      }
       for (const source of post.sources) {
         tx.insert(postingSources)
           .values({
             postingId,
             source: source.source,
             sourceUrl: source.sourceUrl,
+            publisherId: source.publisherId ?? null,
             // HIGH: `toEpochMs` returns NaN for a date this source did not supply or that
             // did not parse, and `new Date(NaN)` fails `posted_at NOT NULL` — which would
             // roll back the whole batch and take every other connector's rows with it.
@@ -527,10 +656,23 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
             // column and does the reset itself, from `last_seen_run`, so that one file holds
             // the whole delisting rule — and so the pre-run state is still readable when it
             // takes its snapshot. Resetting here too would erase the evidence it needs.
-            set: { lastSeenRun: runId, sourcePriority: source.sourcePriority },
+            set: {
+              lastSeenRun: runId,
+              source: sql`case when excluded.source_priority < ${postingSources.sourcePriority}
+                then excluded.source else ${postingSources.source} end`,
+              sourcePriority: sql`min(${postingSources.sourcePriority}, excluded.source_priority)`,
+              publisherId: sql`case when excluded.source_priority <= ${postingSources.sourcePriority}
+                then coalesce(excluded.publisher_id, ${postingSources.publisherId}) else ${postingSources.publisherId} end`,
+            },
           })
           .run();
         bump(counts, source.source, inserted ? 'newPostings' : 'merged');
+      }
+    }
+    for (const id of movedFrom) {
+      if (!tx.select({ id: postingSources.id }).from(postingSources).where(eq(postingSources.postingId, id)).get()) {
+        tx.update(postings).set({ delistedAt: new Date(), delistedReason: 'ghost' })
+          .where(eq(postings.id, id)).run();
       }
     }
   });
@@ -567,6 +709,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     runtime,
     runId,
     only,
+    pendingOnly: flag(argv, 'pending') !== undefined,
     dryRun,
     since,
     runtimeFor: record

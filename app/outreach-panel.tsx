@@ -66,6 +66,7 @@ export function OutreachPanel({
   // An address is the one field with no sensible default: everything else degrades to a
   // bracket, but a draft with no recipient cannot open addressed.
   const ready = to.email.includes('@') && to.name.trim().length > 0;
+  const includeCurrent = ready && queue.length < maxBatch;
   /**
    * Queueing clears the form for the next person. That is the whole batch design: N drafts
    * each written for one recipient, not one draft addressed to N people. Nothing here can
@@ -73,7 +74,7 @@ export function OutreachPanel({
    * learns who else was contacted.
    */
   const queueThis = () => {
-    if (!ready) return;
+    if (!ready || sending) return;
     // Stop AT the cap rather than letting the route reject the batch later. Past the cap the
     // queue could not be sent and could not be shrunk, so the only exit was discarding it.
     if (queue.length >= maxBatch) {
@@ -87,10 +88,12 @@ export function OutreachPanel({
   };
 
   /** The way back out of a full queue, and out of a name typed wrong three drafts ago. */
-  const unqueue = (index: number) => setQueue((q) => q.filter((_, i) => i !== index));
+  const unqueue = (index: number) => {
+    if (!sending) setQueue((q) => q.filter((_, i) => i !== index));
+  };
 
   const sendQueue = async () => {
-    const messages = ready ? [...queue, { to: to.email, subject: draft.subject, body: draft.body }] : queue;
+    const messages = includeCurrent ? [...queue, { to: to.email, subject: draft.subject, body: draft.body }] : queue;
     if (messages.length === 0 || sending) return;
     setSending(true);
     setResult(null);
@@ -116,7 +119,7 @@ export function OutreachPanel({
       } else if (!response.ok && response.status !== 207) {
         setResult('could not send');
       } else {
-        const data = (await response.json()) as { sent: number; failed: { to: string; reason: string }[] };
+        const data = (await response.json()) as { sent: number; failed: { index?: number; to: string; reason: string }[] };
         /**
          * KEEP WHAT FAILED. 207 exists so a partial send can say which recipients missed out;
          * emptying the queue here threw away exactly those drafts — every hand-typed line of
@@ -124,8 +127,10 @@ export function OutreachPanel({
          * stays queued and can go again once the address is fixed.
          */
         setQueue(stillQueued(messages, data.failed));
-        setTo({ name: '', email: '' });
-        setOutline({ fit: ['', '', ''] });
+        if (includeCurrent) {
+          setTo({ name: '', email: '' });
+          setOutline({ fit: ['', '', ''] });
+        }
         setResult(
           data.failed.length === 0
             ? `sent ${data.sent}`
@@ -135,7 +140,7 @@ export function OutreachPanel({
         );
       }
     } catch {
-      setResult('could not reach the server');
+      setResult('send status unknown; check your Sent folder before retrying');
     } finally {
       setSending(false);
     }
@@ -150,19 +155,19 @@ export function OutreachPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 border-t border-rule px-5 py-3">
-      <div className="flex items-baseline gap-2">
+      <div className="flex flex-wrap items-baseline gap-2">
         <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">
           {kind === 'coffee' ? 'coffee chat' : 'referral'}
         </span>
-        <button type="button" className="chip ml-auto" onClick={onClose}>
+        <button type="button" className="chip ml-auto" onClick={onClose} disabled={sending}>
           back
         </button>
         <button
           type="button"
           className="chip"
-          aria-disabled={!ready}
+          aria-disabled={!ready || sending}
           onClick={() => {
-            if (!ready) return;
+            if (!ready || sending) return;
             window.open(composeUrl(to.email, draft.subject, draft.body), '_blank', 'noopener');
           }}
           title={ready ? 'Opens this exact text in Gmail, unsent' : 'Needs a name and an email address'}
@@ -172,7 +177,7 @@ export function OutreachPanel({
         <button
           type="button"
           className="chip"
-          aria-disabled={!ready}
+          aria-disabled={!ready || sending}
           onClick={queueThis}
           title="Adds this draft to the queue and clears the form for the next person"
         >
@@ -186,7 +191,7 @@ export function OutreachPanel({
             onClick={sendQueue}
             title={`Sends each queued draft as its own message, from ${sender.from}`}
           >
-            {sending ? 'sending…' : `send ${queue.length + (ready ? 1 : 0)}`}
+            {sending ? 'sending…' : `send ${queue.length + (includeCurrent ? 1 : 0)}`}
           </button>
         ) : null}
       </div>
@@ -203,6 +208,7 @@ export function OutreachPanel({
               type="button"
               className="chip"
               onClick={() => unqueue(i)}
+              disabled={sending}
               title={`Remove ${m.to} from the queue`}
             >
               {m.to} ×
@@ -211,7 +217,7 @@ export function OutreachPanel({
         </p>
       ) : null}
 
-      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto md:grid-cols-2">
+      <fieldset disabled={sending} aria-label="Outreach draft" className="grid min-h-0 min-w-0 flex-1 gap-4 overflow-y-auto border-0 p-0 md:grid-cols-2">
         <div className="flex flex-col gap-2">
           <Field label="their name" value={to.name} onChange={(v) => setTo((t) => ({ ...t, name: v }))} />
           <Field
@@ -270,7 +276,7 @@ export function OutreachPanel({
           <p className="mb-2 text-[11px] text-fg-dim">{draft.subject}</p>
           <pre className="whitespace-pre-wrap break-words text-[12px] leading-[1.5]">{draft.body}</pre>
         </div>
-      </div>
+      </fieldset>
     </div>
   );
 }

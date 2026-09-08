@@ -125,6 +125,14 @@ describe('track', () => {
     expect(extract({ title: 'Product Designer', description: '' }).track).toBe('design');
   });
 
+  it.each([
+    ['Associate Creative Director, Growth Marketing', 'design'],
+    ['Designer, Brand and Marketing (Part-Time)', 'design'],
+    ['Design Engineer, Growth & Marketing', 'engineering'],
+  ] as const)('lets the role before a qualifier decide %s', (title, track) => {
+    expect(extract({ title, description: '' }).track).toBe(track);
+  });
+
   /**
    * Titles taken verbatim off the live Design tab, where they were all wrong. `DESIGN_TITLE`
    * was tested before `ENGINEERING_TITLE`, so any title carrying "design", "visual", "brand"
@@ -137,6 +145,7 @@ describe('track', () => {
     'Hardware Physical Design / VLSI Intern',
     'Mixed Signal Design Intern',
     'Analog Design Intern',
+    'Mechanical Design Engineer, Data Centre Engineering',
     'Software Engineer, Silicon Design Methodology',
     'Machine Learning Engineer Intern - Brand Ads',
     'Visual Generation & Multimodal Evaluation Machine Learning Engineer Intern - AML-ARK',
@@ -207,6 +216,32 @@ describe('track', () => {
     ).toBe('design');
   });
 
+  it('uses the role evidence for ambiguous Waymo titles instead of broad design words', () => {
+    expect(
+      extract({
+        title: 'Technical Lead Manager, Route & Motion Generation',
+        description:
+          'Software Engineering builds the brains of the autonomous driver. Lead onboard motion planning systems and write robust C++.',
+        sourceFields: { department: 'Planner' },
+      }).track,
+    ).toBe('engineering');
+    expect(
+      extract({
+        title: 'Brand Media Strategy & Analytics Manager',
+        description: 'Lead paid media strategy, media buying, audience targeting, and growth marketing analytics.',
+        sourceFields: { department: 'O-Marketing-Corp' },
+      }).track,
+    ).toBe('other');
+    expect(
+      extract({
+        title: 'Design Studio Process Manager',
+        description:
+          'Own facility layout optimization using industrial engineering, operational modeling, and manufacturing workflows.',
+        sourceFields: { department: 'GPS Offices/Labs/Mfg' },
+      }).track,
+    ).toBe('other');
+  });
+
   /** The vetoes added above are narrow on purpose; these are the near misses they must not take. */
   it.each([
     'Production Designer', // `producer` must not match `production`
@@ -262,6 +297,9 @@ describe('track', () => {
 
   it('vetoes a GTM or PM role that happens to contain a track word', () => {
     expect(extract({ title: 'Sales Engineer', description: '' }).track).toBe('other');
+    expect(extract({ title: 'Customer Engineer (Pre-Sales)', description: '' }).track).toBe('other');
+    expect(extract({ title: 'Brand Development Associate (Account Manager)', description: '' }).track).toBe('other');
+    expect(extract({ title: 'Brand Manager Global Originals, Marketing', description: '' }).track).toBe('other');
     expect(extract({ title: 'Design Program Manager', description: '' }).track).toBe('other');
     expect(extract({ title: 'Product Manager, Growth', description: '' }).track).toBe('other');
     expect(extract({ title: 'Technical Support Engineer', description: '' }).track).toBe('other');
@@ -315,6 +353,43 @@ describe('precedence', () => {
     expect(result.employment_type).toBe('contract');
     expect(result.work_mode).toBe('hybrid');
     expect(result.location).toBeNull();
+  });
+
+  it('does not treat another worker type as the posting type', () => {
+    expect(
+      extract({
+        title: 'Creative Director',
+        description:
+          'Collaborate with external agency and freelance partners. Full-time employees are eligible for equity.',
+      }).employment_type,
+    ).toBe('full-time');
+    expect(
+      extract({
+        title: 'Creative Director',
+        description:
+          'Experience managing or directing external agency, freelance, or vendor creative partners. Full-time employees are eligible for equity.',
+      }).employment_type,
+    ).toBe('full-time');
+    expect(
+      extract({
+        title: 'Visual Designer',
+        description: 'For part time roles, compensation will be adjusted appropriately.',
+      }).employment_type,
+    ).toBeNull();
+  });
+
+  it('uses freelance for a freelance project that also has part-time hours', () => {
+    expect(
+      extract({
+        title: 'Mobile Designer',
+        description: 'This is a part-time freelance project of 20-30 hours per week.',
+      }).employment_type,
+    ).toBe('freelance');
+  });
+
+  it('still recognizes explicit employment declarations', () => {
+    expect(extract({ title: 'Designer', description: 'This is a part-time role.' }).employment_type).toBe('part-time');
+    expect(extract({ title: 'Engineer', description: 'This is a full-time position.' }).employment_type).toBe('full-time');
   });
 
   it('takes responsibilities and skills from the sections the source structured', () => {
@@ -398,6 +473,21 @@ describe('pay rate', () => {
     expect(pay('This role pays $45 per hour.')).toEqual({ min: 45, max: null, period: 'hour' });
   });
 
+  it('preserves explicit EUR and GBP symbols', () => {
+    expect(pay('We will pay €2,100 monthly.')).toEqual({
+      min: 2_100,
+      max: null,
+      period: 'month',
+      currencySymbol: '€',
+    });
+    expect(pay('We pay our interns £592.00 per week.')).toEqual({
+      min: 592,
+      max: null,
+      period: 'week',
+      currencySymbol: '£',
+    });
+  });
+
   it('reads a k-suffixed range', () => {
     expect(pay('Compensation is $120k-$160k.')).toEqual({ min: 120_000, max: 160_000, period: 'year' });
   });
@@ -410,12 +500,48 @@ describe('pay rate', () => {
     expect(pay('Base is $120.5k annually.')).toEqual({ min: 120_500, max: null, period: 'year' });
   });
 
+  it('reads a range written as "and up to"', () => {
+    expect(pay('Base salary will begin at $145,000 and up to $200,000.')).toEqual({
+      min: 145_000,
+      max: 200_000,
+      period: 'year',
+    });
+  });
+
   it('infers the period from magnitude when the posting states none', () => {
     expect(pay('Base compensation of $185,000.')).toEqual({ min: 185_000, max: null, period: 'year' });
   });
 
   it('is not fooled by a 401(k) or a headcount', () => {
     expect(pay('We offer a 401k match and have 10k users.')).toBeNull();
+  });
+
+  it.each([
+    'We provide a monthly employee wellness benefits package via Juno of $105 per month.',
+    'We provide a monthly employee wellness benefits package via Juno of £75 per month.',
+    'We deploy a monthly ‘employee wellness’ benefits package via Juno of £75 per month.',
+    'You receive €50 each month on your Givve card.',
+    'Client Book Revenue per Employee (RPE): $15,000.',
+    'Fertility HRA reimbursement up to $10,000 per year.',
+    "We're shaping the future of a $10T industry.",
+    'Compensation is $11 one-time for completing the assessment.',
+    'A one time $100 USD work from home stipend is added to your first paycheck.',
+  ])('does not present non-wage money as compensation: %s', (description) => {
+    expect(pay(description)).toBeNull();
+  });
+
+  it('skips a benefit amount and continues to the actual salary', () => {
+    expect(
+      pay('Remote employees receive a $125/week meal stipend. The base salary range is $90,000 - $115,000 annually.'),
+    ).toEqual({ min: 90_000, max: 115_000, period: 'year' });
+  });
+
+  it('keeps a role stipend when it is the stated compensation', () => {
+    expect(pay('The intern stipend is $1,500 per month.')).toEqual({
+      min: 1_500,
+      max: null,
+      period: 'month',
+    });
   });
 
   it('reads paid / unpaid, and leaves unknown as null', () => {
@@ -490,6 +616,25 @@ describe('the smaller fields', () => {
     expect(badges('Requires an active security clearance.')).toContain('security-clearance');
     expect(badges('Please submit a portfolio with your application.')).toContain('portfolio-required');
     expect(badges('This is a summer internship.', 'Design Intern')).toContain('internship');
+  });
+
+  it('does not mistake non-academic uses of degree for education', () => {
+    const result = extract({
+      title: 'Product Designer',
+      description: 'You will operate with a high degree of autonomy.',
+      sourceFields: {
+        sections: [
+          {
+            heading: 'Requirements',
+            items: [
+              'Operate with a high degree of autonomy',
+              "Bachelor's degree in design or equivalent experience",
+            ],
+          },
+        ],
+      },
+    });
+    expect(result.education).toEqual(["Bachelor's degree in design or equivalent experience"]);
   });
 });
 
@@ -654,5 +799,32 @@ describe('an explicit remote statement outranks a passing mention of hybrid', ()
     'Hybrid schedule, three days in the office.',
   ])('still reads %s as hybrid', (description) => {
     expect(mode(description)).toBe('hybrid');
+  });
+});
+
+describe('an explicit in-person requirement outranks incidental remote days', () => {
+  const mode = (description: string) => extract({ title: 'Product Designer', description }).work_mode;
+
+  it('reads Koto-style studio work as onsite', () => {
+    expect(
+      mode(
+        'You have a willingness to work in person in our London studio. We work in person, with an optional WFH day on Friday and an additional 20 remote days per year.',
+      ),
+    ).toBe('onsite');
+    expect(
+      mode(
+        'You are comfortable working in person from our Culver City studio. We work in person with an optional WFH day and two weeks of remote work per year.',
+      ),
+    ).toBe('onsite');
+  });
+
+  it('still keeps explicit remote and hybrid roles', () => {
+    expect(mode('This is a fully remote role with two in-person team events per year.')).toBe('remote');
+    expect(mode('This is a hybrid role, and you will work in person three days per week.')).toBe('hybrid');
+  });
+
+  it('does not treat a negated remote phrase as remote', () => {
+    expect(mode('This role is based in person in San Francisco, CA (not remote).')).toBe('onsite');
+    expect(mode('This position is not a remote role and will be located in a fulfillment center.')).toBeNull();
   });
 });

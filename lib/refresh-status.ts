@@ -7,6 +7,20 @@
  */
 export type Phase = 'idle' | 'ingesting' | 'enriching' | 'syncing' | 'done';
 
+export type HostedRefreshStatus = {
+  hosted: true;
+  queued: boolean;
+  lastRunAt: number | null;
+  dispatchConfigured: boolean;
+  dispatch?: 'started' | 'scheduled' | 'failed' | 'coalesced';
+  request: {
+    id: number;
+    status: 'queued' | 'running' | 'succeeded' | 'failed';
+    completedAt: number | null;
+    error: string | null;
+  } | null;
+};
+
 const STAMP = /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\] /;
 
 export function phaseFromLog(log: string, sinceMs: number): Phase {

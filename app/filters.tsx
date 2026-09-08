@@ -7,7 +7,6 @@ import {
   vocab,
   toggleFilter,
   withFilter,
-  type Filter,
   type Group,
   type Params,
 } from '@/lib/params';
@@ -69,7 +68,7 @@ function Select({ p, filter, values }: { p: Params; filter: 'posted'; values: re
   return (
     <span className="flex items-baseline gap-1.5">
       <label htmlFor={id} className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">
-        {filter}
+        seen
       </label>
       <span className="select-box" data-on={selected ? 'true' : undefined}>
         <select id={id} name={filter} className="select" defaultValue={selected ?? ''}>
@@ -147,7 +146,7 @@ export function Filters({ p }: { p: Params }) {
   return (
     <form
       action="/"
-      className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-rule py-2"
+      className="flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-rule py-2"
     >
       {/* Submitting replaces the whole query string, so state that is not a control here has
           to ride along. `job` deliberately does not: filtering closes the drawer. */}

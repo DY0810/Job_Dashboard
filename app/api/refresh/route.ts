@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { driver, getDb, needsTurso } from '@/lib/db';
 import { connectorRuns } from '@/lib/db/schema';
-import { phaseFromLog, type Phase } from '@/lib/refresh-status';
-import { pendingRequest, requestRefresh } from '@/lib/refresh-queue';
+import { phaseFromLog, type HostedRefreshStatus, type Phase } from '@/lib/refresh-status';
+import { getRefreshRequest, requestRefresh, type RefreshRequest } from '@/lib/refresh-queue';
 import { desc } from 'drizzle-orm';
 
 /**
@@ -80,13 +80,34 @@ async function lastRunAt(): Promise<number | null> {
   return row?.startedAt.getTime() ?? null;
 }
 
-export async function GET() {
+function publicRequest(request: RefreshRequest | null): HostedRefreshStatus['request'] {
+  if (!request) return null;
+  return {
+    id: request.id,
+    status: request.completedAt
+      ? (request.error ? 'failed' : 'succeeded')
+      : (request.claimedAt ? 'running' : 'queued'),
+    completedAt: request.completedAt?.getTime() ?? null,
+    error: request.error,
+  };
+}
+
+export async function GET(request: Request) {
   if (hosted()) {
-    // Nothing runs here. Report whether a request is still waiting for a runner, and when
-    // a cycle last ran — the page watches that number to know its ask landed.
-    if (needsTurso()) return Response.json({ hosted: true, queued: false, lastRunAt: null });
-    const waiting = await pendingRequest(getDb());
-    return Response.json({ hosted: true, queued: Boolean(waiting), lastRunAt: await lastRunAt() });
+    if (needsTurso()) return Response.json({ error: 'database not configured' }, { status: 503 });
+    const rawId = new URL(request.url).searchParams.get('request');
+    const id = rawId === null ? undefined : Number(rawId);
+    if (id !== undefined && (!Number.isSafeInteger(id) || id < 1)) {
+      return Response.json({ error: 'invalid request id' }, { status: 400 });
+    }
+    const [latest, last] = await Promise.all([getRefreshRequest(getDb(), id), lastRunAt()]);
+    return Response.json({
+      hosted: true,
+      queued: Boolean(latest && !latest.completedAt && !latest.claimedAt),
+      lastRunAt: last,
+      dispatchConfigured: Boolean(process.env.WORKIE_GH_TOKEN?.trim()),
+      request: publicRequest(latest),
+    } satisfies HostedRefreshStatus);
   }
   const state = running();
   return Response.json({ hosted: false, running: state.running, phase: state.running ? phase(state.sinceMs) : 'idle' });
@@ -98,9 +119,9 @@ export async function GET() {
  * a failed dispatch just means the scheduled run claims it instead, so errors are logged
  * and swallowed.
  */
-async function dispatchWorkflow(): Promise<void> {
-  const token = process.env.WORKIE_GH_TOKEN;
-  if (!token) return;
+async function dispatchWorkflow(): Promise<HostedRefreshStatus['dispatch']> {
+  const token = process.env.WORKIE_GH_TOKEN?.trim();
+  if (!token) return 'scheduled';
   const repo = process.env.WORKIE_GH_REPO ?? 'DY0810/Job_Dashboard';
   const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/refresh.yml/dispatches`, {
     method: 'POST',
@@ -109,8 +130,11 @@ async function dispatchWorkflow(): Promise<void> {
       accept: 'application/vnd.github+json',
     },
     body: JSON.stringify({ ref: 'main' }),
+    signal: AbortSignal.timeout(10_000),
   });
-  if (res.status !== 204) console.error('workflow dispatch', res.status, await res.text());
+  if (res.status === 204) return 'started';
+  console.error('workflow dispatch failed', res.status);
+  return 'failed';
 }
 
 export async function POST(request: Request) {
@@ -119,9 +143,18 @@ export async function POST(request: Request) {
     if (needsTurso()) return Response.json({ error: 'database not configured' }, { status: 503 });
     try {
       const by = new URL(request.url).searchParams.get('by')?.slice(0, 40) || null;
-      const { queued } = await requestRefresh(getDb(), by);
-      await dispatchWorkflow().catch((error) => console.error('workflow dispatch', error));
-      return Response.json({ hosted: true, queued, lastRunAt: await lastRunAt() }, { status: 202 });
+      const { request: entry, queued: created } = await requestRefresh(getDb(), by);
+      const dispatch = created
+        ? await dispatchWorkflow().catch(() => 'failed' as const)
+        : 'coalesced';
+      return Response.json({
+        hosted: true,
+        queued: !entry.claimedAt,
+        lastRunAt: await lastRunAt(),
+        dispatchConfigured: Boolean(process.env.WORKIE_GH_TOKEN?.trim()),
+        dispatch,
+        request: publicRequest(entry),
+      } satisfies HostedRefreshStatus, { status: 202 });
     } catch (error) {
       console.error('POST /api/refresh (hosted)', error);
       return Response.json({ error: 'could not queue a refresh' }, { status: 500 });

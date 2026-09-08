@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { connectorRuns, postingSources, postings } from '../lib/db/schema.ts';
 import { createRuntime, type Connector, type ConnectorPosting, type Runtime } from '../lib/runtime.ts';
-import { main, runIngest } from './ingest.ts';
+import { main, readCheckpoints, runIngest } from './ingest.ts';
 import { keyedConnectors } from './connectors/keyed.ts';
 
 function memoryDb(): Db {
@@ -73,7 +73,56 @@ function flakyRuntime(): Runtime {
 
 const silent = (): void => {};
 
+describe('resumable collection', () => {
+  it('advances only committed batches and bypasses cadence until catch-up finishes', async () => {
+    const db = memoryDb();
+    const source: Connector = {
+      name: 'paged', kind: 'aggregator', minIntervalMs: 86_400_000,
+      async fetch(context) {
+        const page = Number(context.checkpoint?.value ?? 0);
+        context.degraded('incremental window');
+        context.checkpoint?.save(page + 1, page < 1);
+        return [posting({ source: 'paged', sourceUrl: `https://board.test/${page}`, title: `Designer ${page}` })];
+      },
+    };
+    const run = (id: string) => runIngest({
+      db, connectors: [source], runtime: createRuntime(), runId: id, now: () => POSTED, log: silent,
+    });
+    await run('page-1');
+    expect(readCheckpoints(db).get('paged')).toEqual({ value: 1, pending: true });
+    await run('page-2');
+    expect(readCheckpoints(db).get('paged')).toEqual({ value: 2, pending: false });
+    expect((await run('page-3')).skipped[0]?.kind).toBe('cadence');
+  });
+
+  it.each([false, true])('does not advance a failed or dry-run fetch (dryRun=%s)', async (dryRun) => {
+    const db = memoryDb();
+    const source: Connector = {
+      name: 'paged', kind: 'aggregator',
+      async fetch(context) {
+        context.checkpoint?.save('next-cursor', true);
+        if (!dryRun) throw new Error('source failed');
+        return [posting()];
+      },
+    };
+    await runIngest({ db, connectors: [source], runtime: createRuntime(), runId: 'test', dryRun, log: silent });
+    expect(readCheckpoints(db).size).toBe(0);
+  });
+});
+
 describe('connector isolation (Phase 2 gate)', () => {
+  it('isolates malformed records before they can abort persistence for other sources', async () => {
+    const db = memoryDb();
+    const broken: Connector = { name: 'bad-shape', kind: 'ats', fetch: async () => [
+      posting({ sourceUrl: { unexpected: true } as unknown as string }),
+    ] };
+    const result = await runIngest({
+      db, connectors: [healthy, broken], runtime: flakyRuntime(), runId: 'malformed', log: silent,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(db.select().from(postings).all()).toHaveLength(2);
+    expect(result.runs.find((run) => run.connector === 'bad-shape')?.degraded).toContain('discarded 1 malformed postings');
+  });
   it('one healthy + one 500 + one hang: the run completes, records three rows, exits 0', async () => {
     const db = memoryDb();
     const result = await runIngest({
@@ -269,6 +318,79 @@ describe('idempotency', () => {
 });
 
 describe('review regressions', () => {
+  it.each([true, false])('separates historical requisitions (original still listed: %s)', async (originalListed) => {
+    const db = memoryDb();
+    const firstUrl = 'https://boards.test/jobs/100';
+    const secondUrl = 'https://boards.test/jobs/200';
+    db.insert(postings).values({
+      id: 1, dedupeKey: 'legacy-merged', canonicalUrl: firstUrl, postedAt: new Date(POSTED),
+      firstSeenRun: 'old', company: 'Acme', title: 'Electrical Engineer (Actuators)',
+      companyNorm: 'acme', titleNorm: 'electrical engineer', locationKey: 'onsite|sf|CA|US',
+    }).run();
+    for (const url of [firstUrl, secondUrl]) db.insert(postingSources).values({
+      postingId: 1, source: 'greenhouse', sourceUrl: url, postedAt: new Date(POSTED),
+      sourcePriority: 1, lastSeenRun: 'old',
+    }).run();
+    const entries = [
+      posting({ source: 'greenhouse', publisherId: '100', sourceUrl: firstUrl,
+        title: 'Electrical Engineer (Actuators)', description: 'Actuator job, two years experience.' }),
+      posting({ source: 'greenhouse', publisherId: '200', sourceUrl: secondUrl,
+        title: 'Electrical Engineer (Motor Controls)', description: 'Motor job, three years experience.' }),
+    ].filter((_, index) => originalListed || index > 0);
+    const source: Connector = { name: 'greenhouse', kind: 'ats', fetch: async () => entries };
+    const base = { db, connectors: [source], runtime: flakyRuntime(), log: silent };
+    await runIngest({ ...base, runId: 'repair-1' });
+    const rows = db.select().from(postings).all();
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.id === 1)?.canonicalUrl).toBe(firstUrl);
+    expect(rows.find((row) => row.canonicalUrl === secondUrl)?.description).toContain('Motor job');
+    expect(new Set(db.select().from(postingSources).all().map((row) => row.postingId)).size).toBe(2);
+    entries.reverse();
+    await runIngest({ ...base, runId: 'repair-2' });
+    expect(db.select().from(postings).all().map((row) => row.id)).toEqual(rows.map((row) => row.id));
+  });
+
+  it('does not demote a known ATS source when a repo repeats the same URL later', async () => {
+    const db = memoryDb();
+    const base = { db, runtime: flakyRuntime(), log: silent };
+    await runIngest({ ...base, connectors: [healthy], runId: 'primary-1' });
+    const repo: Connector = { name: 'repo', kind: 'repo', fetch: async () => [
+      posting({ source: 'repo', sourceKind: 'repo', description: 'A sparse README row.' }),
+    ] };
+    await runIngest({ ...base, connectors: [repo], runId: 'primary-2' });
+    const stored = db.select().from(postingSources).all().find((row) => row.sourceUrl === 'https://boards.test/jobs/1');
+    expect(stored?.sourcePriority).toBe(1);
+    expect(stored?.source).toBe('healthy');
+  });
+
+  it('keeps primary-source text and structured fields when only a lower-ranked source refreshes', async () => {
+    const db = memoryDb();
+    const primary: Connector = {
+      name: 'primary', kind: 'ats',
+      fetch: async () => [posting({
+        source: 'primary',
+        description: 'Primary salary and requirements.',
+        sourceFields: { workMode: 'onsite', department: 'Design', location: 'San Francisco, CA' },
+      })],
+    };
+    const secondary: Connector = {
+      name: 'secondary', kind: 'aggregator',
+      fetch: async () => [posting({
+        source: 'secondary', sourceKind: 'aggregator', sourceUrl: 'https://agg.test/p/1',
+        description: 'An incomplete syndicated snippet.',
+        sourceFields: { workMode: 'remote', department: 'Marketing' },
+      })],
+    };
+    const base = { db, runtime: flakyRuntime(), log: silent };
+    await runIngest({ ...base, connectors: [primary, secondary], runId: 'priority-1' });
+    await runIngest({ ...base, connectors: [secondary], runId: 'priority-2' });
+    expect(db.select().from(postings).get()).toMatchObject({
+      description: 'Primary salary and requirements.',
+      sourceFields: { workMode: 'onsite', department: 'Design' },
+      canonicalUrl: 'https://boards.test/jobs/1',
+    });
+  });
+
   it('a source with no usable date does not abort the batch or lose the other rows', async () => {
     const db = memoryDb();
     const undated: Connector = {

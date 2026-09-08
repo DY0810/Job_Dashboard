@@ -120,6 +120,16 @@
     "postings_at_probe": 34
   },
   {
+    "name": "Anduril",
+    "ats": "greenhouse",
+    "token": "andurilindustries",
+    "tags": [
+      "defense-tech"
+    ],
+    "verified_at": "2026-09-08T08:24:44.000Z",
+    "postings_at_probe": 2212
+  },
+  {
     "name": "Anthropic",
     "ats": "greenhouse",
     "token": "anthropic",
@@ -464,6 +474,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:20.429Z"
+  },
+  {
+    "name": "Cursor",
+    "ats": "ashby",
+    "token": "cursor",
+    "tags": [
+      "ai"
+    ],
+    "verified_at": "2026-09-08T08:24:44.000Z",
+    "postings_at_probe": 124
   },
   {
     "name": "Databricks",
@@ -2333,6 +2353,16 @@
     ],
     "verified_at": "2026-08-20T23:56:51.208Z",
     "postings_at_probe": 5
+  },
+  {
+    "name": "xAI",
+    "ats": "greenhouse",
+    "token": "xai",
+    "tags": [
+      "ai"
+    ],
+    "verified_at": "2026-09-08T08:24:44.000Z",
+    "postings_at_probe": 257
   },
   {
     "name": "Zapier",

@@ -11,6 +11,7 @@
     "ingest": "node scripts/ingest.ts",
     "seed": "node scripts/seed.ts",
     "push:remote": "node --env-file-if-exists=.env.local scripts/push-remote.ts",
+    "pull:remote": "node --env-file-if-exists=.env.local scripts/pull-remote.ts",
     "enrich": "node scripts/enrich.ts",
     "linkcheck": "node scripts/linkcheck.ts",
     "db:generate": "drizzle-kit generate",
@@ -27,7 +28,7 @@
     "@libsql/client": "^0.17.4",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
-    "next": "15.5.15",
+    "next": "15.5.25",
     "nodemailer": "^9.1.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -44,9 +45,15 @@
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
-    "eslint-config-next": "15.5.15",
+    "eslint-config-next": "15.5.25",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.28",
+      "sharp": "0.35.4"
+    }
   }
 }

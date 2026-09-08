@@ -75,10 +75,11 @@ const SIMPLIFY_README_ROW =
   '| **Figma** | Product Designer | San Francisco, CA | <a href="https://boards.greenhouse.io/figma/jobs/4567890?utm_source=Simplify&utm_medium=Simplify"><img src="https://i.imgur.com/w6lyvuC.png" width="84" alt="Apply"></a> | Jul 30 |';
 
 const fromGreenhouse = (job: typeof GREENHOUSE_JOB): RawPosting => ({
-  source: 'greenhouse',
-  sourceKind: 'ats',
-  sourceUrl: job.absolute_url,
-  postedAt: Date.parse(job.first_published),
+    source: 'greenhouse',
+    sourceKind: 'ats',
+    sourceUrl: job.absolute_url,
+    publisherId: String(job.id),
+    postedAt: Date.parse(job.first_published),
   company: 'Figma', // the ATS payload has no company field; the connector registry supplies it
   title: job.title,
   location: job.location.name,

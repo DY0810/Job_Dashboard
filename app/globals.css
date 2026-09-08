@@ -163,6 +163,46 @@
   font-stretch: 85%;
 }
 
+/* Keep the same rows and controls on phones, with the title and action visible first. */
+@media (max-width: 700px) {
+  .rows[data-track] { min-width: 0 !important; }
+  .rows[data-track] thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .rows[data-track] tbody { display: block; }
+  .rows[data-track] tbody tr:not(.band) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .rows[data-track] td[data-field] {
+    display: block;
+    width: auto;
+    max-width: none;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .rows[data-track] [data-field="title"] { grid-area: 1 / 1; }
+  .rows[data-track] [data-field="company"] { grid-area: 2 / 1; }
+  .rows[data-track] [data-field="apply"] { grid-area: 1 / 2 / 3 / 3; align-self: start; }
+  .rows[data-track] [data-field="pay"] { grid-area: 3 / 1; }
+  .rows[data-track] [data-field="seen"] { grid-area: 3 / 2; text-align: right; }
+  .rows[data-track] [data-field="badges"] { grid-area: 4 / 1 / 5 / 3; }
+  .rows[data-track] [data-field="badges"] > span { flex-wrap: wrap; white-space: normal; }
+  .rows[data-track] [data-field="summary"],
+  .rows[data-track] [data-field="level"],
+  .rows[data-track] [data-field="location"] { grid-column: 1 / -1; }
+}
+
 .rows thead th {
   position: sticky;
   top: 0;

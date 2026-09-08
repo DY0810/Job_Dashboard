@@ -146,6 +146,7 @@ export interface Params {
   badge: string | null;
   /** The posting whose drawer is open, from `?job=<id>`. */
   job: number | null;
+  page: number;
 }
 
 const value = z.string().max(200).optional();
@@ -163,6 +164,7 @@ const Raw = z.object({
   job: z
     .preprocess((v) => (v === undefined || v === '' ? undefined : v), z.coerce.number().int().positive().optional())
     .catch(undefined),
+  page: z.coerce.number().int().min(1).max(10_000).catch(1),
 });
 
 /** Next hands repeated params through as arrays; for a single-valued param the first wins. */
@@ -211,6 +213,7 @@ export function parseParams(input: RawSearchParams): Params {
     level: collect(input.level),
     badge: first(input.badge),
     job: first(input.job),
+    page: first(input.page),
   });
   // Resolved before the filters, because Design's `type` vocabulary depends on it. A `basis`
   // on an Engineering URL is dropped rather than honoured: the split is a Design control, and
@@ -227,6 +230,7 @@ export function parseParams(input: RawSearchParams): Params {
     posted: pick(raw.posted, vocab(raw.tab, 'posted', basis)) as Params['posted'],
     badge: raw.badge ?? null,
     job: raw.job ?? null,
+    page: raw.page,
   };
 }
 
@@ -247,6 +251,7 @@ export function href(p: Params): string {
   for (const group of GROUPS) if (p[group].length > 0) q.set(group, p[group].join(','));
   if (p.badge) q.set('badge', p.badge);
   if (p.job !== null) q.set('job', String(p.job));
+  if (p.page > 1) q.set('page', String(p.page));
   const s = q.toString();
   return s ? `/?${s}` : '/';
 }
@@ -311,6 +316,7 @@ export function bare(p: Params): Params {
     posted: null,
     ...(Object.fromEntries(GROUPS.map((group) => [group, [] as string[]])) as Record<Group, string[]>),
     badge: null,
+    page: 1,
   };
 }
 
@@ -320,6 +326,10 @@ export function cleared(p: Params): string {
 
 export function withJob(p: Params, job: number | null): string {
   return href({ ...p, job });
+}
+
+export function withPage(p: Params, page: number): string {
+  return href(parseParams({ ...toRaw(p), page: String(page) }));
 }
 
 /** Note the missing `job`: changing a filter closes the drawer — filtering is a table action. */

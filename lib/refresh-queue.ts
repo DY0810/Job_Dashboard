@@ -1,43 +1,33 @@
-/**
- * The refresh queue: how a visitor on the hosted site asks the laptop to poll the sources.
- *
- * The pipeline — 18 connectors, enrich, ghost detection — runs where `workie.db` is, through
- * the synchronous driver, and takes minutes. Nothing on Vercel can run it. So the hosted
- * button writes a row here and the laptop claims it, which needs no inbound networking and
- * no tunnel; the cost is that the laptop must be awake to notice.
- *
- * One unclaimed row is the whole queue. Three people clicking during one cycle is one
- * request, because one cycle answers all three.
- */
-
-import { and, desc, eq, isNull, lt } from 'drizzle-orm';
+/** A durable request shared by Vercel and the sole GitHub Actions writer. */
+import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
 
 import { driver, type ReadDb } from './db/index.ts';
 import { refreshRequests } from './db/schema.ts';
 
 export type RefreshRequest = typeof refreshRequests.$inferSelect;
 
-/** A claim older than this was taken by a cycle that died; the request is free again. */
-export const CLAIM_TIMEOUT_MS = 20 * 60 * 1000;
+// Longer than the workflow's 120-minute budget, including its weekly link check.
+export const CLAIM_TIMEOUT_MS = 130 * 60 * 1000;
+
+export async function getRefreshRequest(db: ReadDb, id?: number): Promise<RefreshRequest | null> {
+  return (await driver(db).select().from(refreshRequests)
+    .where(id === undefined ? undefined : eq(refreshRequests.id, id))
+    .orderBy(desc(refreshRequests.id)).limit(1).get()) ?? null;
+}
 
 /** The oldest request nobody is acting on, including one whose claimer went away. */
 export async function pendingRequest(db: ReadDb, now: number = Date.now()): Promise<RefreshRequest | null> {
   const rows = await driver(db)
     .select()
     .from(refreshRequests)
-    .where(isNull(refreshRequests.claimedAt))
+    .where(and(
+      isNull(refreshRequests.completedAt),
+      or(isNull(refreshRequests.claimedAt), lt(refreshRequests.claimedAt, new Date(now - CLAIM_TIMEOUT_MS))),
+    ))
     .orderBy(refreshRequests.requestedAt)
     .limit(1)
     .all();
-  if (rows[0]) return rows[0];
-  const stale = await driver(db)
-    .select()
-    .from(refreshRequests)
-    .where(lt(refreshRequests.claimedAt, new Date(now - CLAIM_TIMEOUT_MS)))
-    .orderBy(desc(refreshRequests.requestedAt))
-    .limit(1)
-    .all();
-  return stale[0] ?? null;
+  return rows[0] ?? null;
 }
 
 /**
@@ -49,14 +39,19 @@ export async function requestRefresh(
   by: string | null = null,
   now: number = Date.now(),
 ): Promise<{ request: RefreshRequest; queued: boolean }> {
-  const waiting = await pendingRequest(db, now);
-  if (waiting && waiting.claimedAt === null) return { request: waiting, queued: false };
+  // The partial unique index makes simultaneous visitors share one active request.
   const rows = await driver(db)
     .insert(refreshRequests)
     .values({ requestedBy: by, requestedAt: new Date(now) })
+    .onConflictDoNothing()
     .returning()
     .all();
-  return { request: rows[0]!, queued: true };
+  if (rows[0]) return { request: rows[0], queued: true };
+  const active = await driver(db).select().from(refreshRequests)
+    .where(isNull(refreshRequests.completedAt)).limit(1).get();
+  // A runner may finish between our INSERT and SELECT; retry against the constraint.
+  if (!active) return requestRefresh(db, by, now);
+  return { request: active, queued: false };
 }
 
 /**
@@ -75,9 +70,25 @@ export async function claimRequest(db: ReadDb, now: number = Date.now()): Promis
   const rows = await driver(db)
     .update(refreshRequests)
     .set({ claimedAt: new Date(now) })
-    .where(and(eq(refreshRequests.id, waiting.id), unchanged))
+    .where(and(eq(refreshRequests.id, waiting.id), isNull(refreshRequests.completedAt), unchanged))
     .returning()
     .all();
   // Empty means another poller claimed it between the read and the write; not ours to run.
   return rows[0] ?? null;
+}
+
+export async function finishRequest(
+  db: ReadDb,
+  claim: RefreshRequest,
+  error: string | null,
+  now = Date.now(),
+): Promise<void> {
+  if (!claim.claimedAt) throw new Error('Cannot finish an unclaimed refresh');
+  await driver(db).update(refreshRequests)
+    .set({ completedAt: new Date(now), error })
+    .where(and(
+      eq(refreshRequests.id, claim.id),
+      eq(refreshRequests.claimedAt, claim.claimedAt),
+      isNull(refreshRequests.completedAt),
+    )).run();
 }

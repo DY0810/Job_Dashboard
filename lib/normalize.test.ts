@@ -75,6 +75,24 @@ describe('normalizeTitle', () => {
     );
   });
 
+  it('preserves meaningful trailing parenthetical specializations', () => {
+    expect(normalizeTitle('Electrical Engineer (Actuators)')).toBe('electrical engineer actuators');
+    expect(normalizeTitle('Electrical Engineer (Motor Controls)')).toBe('electrical engineer motor controls');
+    expect(normalizeTitle('Software Engineer (Backend)')).toBe('software engineer backend');
+  });
+
+  it('does not strip a real specialization that contains a remote-work marker', () => {
+    expect(normalizeTitle('Engineer - Distributed Systems')).toBe('engineer distributed systems');
+    expect(normalizeTitle('Engineer - Remote Systems')).toBe('engineer remote systems');
+    expect(normalizeTitle('Frontend Engineer - Remote')).toBe('frontend engineer');
+    expect(normalizeTitle('Open-Source Engineer - US Remote')).toBe('open source engineer');
+    expect(normalizeTitle('Security Engineer - Fully Remote')).toBe('security engineer');
+    expect(normalizeTitle('Security Engineer - Fully Remote within Europe')).toBe('security engineer');
+    expect(normalizeTitle('Backend Engineer - Remote Friendly')).toBe('backend engineer');
+    expect(normalizeTitle('Platform Engineer - Remote Germany')).toBe('platform engineer');
+    expect(normalizeTitle('Product Designer - Berlin or Remote')).toBe('product designer');
+  });
+
   it('is total over junk input', () => {
     expect(normalizeTitle(null)).toBe('');
     expect(normalizeTitle('  ')).toBe('');
@@ -228,6 +246,36 @@ describe('normalizeLocation', () => {
       expect(loc.city_norm).toBeNull();
     },
   );
+
+  it('does not treat a negated remote marker as remote', () => {
+    expect(normalizeLocation('Not Remote, San Francisco, CA')).toEqual({
+      city_norm: 'sf',
+      state: 'CA',
+      country: 'US',
+      is_remote: false,
+    });
+    expect(normalizeLocation('Remote not available, Austin, TX')).toEqual({
+      city_norm: 'austin',
+      state: 'TX',
+      country: 'US',
+      is_remote: false,
+    });
+  });
+
+  it('retains a country named after a remote marker', () => {
+    expect(normalizeLocation('Remote India')).toEqual({
+      city_norm: null,
+      state: null,
+      country: 'IN',
+      is_remote: true,
+    });
+    expect(normalizeLocation('Remote PT/ET Hours')).toEqual({
+      city_norm: null,
+      state: null,
+      country: null,
+      is_remote: true,
+    });
+  });
 
   it('reads country from explicit country tokens', () => {
     expect(normalizeLocation('Berlin, Germany')).toEqual({
@@ -658,6 +706,21 @@ describe('cities abroad that arrive without a country', () => {
   it('a recognized metro later in the string still wins the city', () => {
     // "London, San Francisco, CA" is a job listed in both; SF is the one that matters here.
     expect(normalizeLocation('London, San Francisco, CA')).toMatchObject({ city_norm: 'sf', state: 'CA' });
+  });
+
+  it('lets an adjacent explicit state or country disambiguate a city name', () => {
+    expect(normalizeLocation('Paris, Texas, United States')).toEqual({
+      city_norm: 'paris',
+      state: 'TX',
+      country: 'US',
+      is_remote: false,
+    });
+    expect(normalizeLocation('San Jose, Costa Rica')).toEqual({
+      city_norm: 'san jose',
+      state: null,
+      country: 'CR',
+      is_remote: false,
+    });
   });
 });
 

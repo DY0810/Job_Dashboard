@@ -14,9 +14,8 @@ import { MAX_BATCH, accountFor, sendAll, sendConfigured, sendGate } from '@/lib/
 export const runtime = 'nodejs';
 
 const Message = z.object({
-  // Deliberately loose. Full RFC 5322 validation rejects addresses that work, and the real
-  // check is the SMTP server's — a bad address comes back in `failed` with its reason.
-  to: z.string().trim().min(3).max(320).includes('@'),
+  // One address per draft, never a comma-separated recipient list or injected header.
+  to: z.string().trim().max(320).pipe(z.email()),
   subject: z.string().trim().min(1).max(300),
   body: z.string().trim().min(1).max(20_000),
 });

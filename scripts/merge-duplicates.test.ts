@@ -27,6 +27,7 @@ interface Options {
   description?: string | null;
   enriched?: boolean;
   urls?: string[];
+  publisherId?: string;
 }
 
 /** One posting plus its sources. Only the columns this pass reads are worth spelling out. */
@@ -59,7 +60,8 @@ function insert(database: Db, options: Options): number {
         source: 'greenhouse',
         sourceUrl: url,
         postedAt: new Date(options.postedAt ?? NOW),
-        sourcePriority: 0,
+        sourcePriority: 1,
+        publisherId: options.publisherId ?? 'same-position',
         lastSeenRun: 'run-1',
       })
       .run();
@@ -68,6 +70,14 @@ function insert(database: Db, options: Options): number {
 }
 
 describe('merge:duplicates', () => {
+  it('does not undo the split of different requisitions with identical title and location', () => {
+    const database = db();
+    insert(database, { key: 'a', publisherId: '100' });
+    insert(database, { key: 'b', publisherId: '200' });
+    expect(findDuplicateGroups(database)).toEqual([]);
+    expect(runMerge(database).merged).toBe(0);
+    expect(database.select().from(postings).all()).toHaveLength(2);
+  });
   it('merges two rows that agree on all three dedupe_key components', () => {
     const database = db();
     const keep = insert(database, { key: 'a' });

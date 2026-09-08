@@ -8,15 +8,15 @@ import { describe, expect, it } from 'vitest';
 
 import { extract } from '../../lib/extract.ts';
 import { normalizeCompany, normalizeTitle } from '../../lib/normalize.ts';
-import { RobotsDisallowedError } from '../../lib/runtime.ts';
+import { HttpError, RobotsDisallowedError } from '../../lib/runtime.ts';
 import type { Connector, ConnectorContext, ConnectorPosting, Runtime } from '../../lib/runtime.ts';
 
 import { ashby, greenhouse, lever, recruitee, smartrecruiters, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
-import { braintrust, himalayas, hn, jobicy, muse, remoteok, remotive, workingnomads } from './agg.ts';
+import { braintrust, himalayas, hn, jobicy, jobicyEngineering, muse, remoteok, remotive, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
 import { adzuna, careerjet, jooble, usajobs } from './keyed.ts';
-import { parseReadmeTable, simplifyInternships } from './repo.ts';
+import { parseReadmeTable, simplifyInternships, simplifyNewGrads } from './repo.ts';
 import { designjobsCareers, dribbble, jobspresso, weworkremotely, weworkremotelyDesign } from './rss.ts';
 
 /** A runtime that answers every request with one canned body. */
@@ -75,7 +75,7 @@ function expectCanonicalShape(posting: ConnectorPosting, expected: Connector): v
  * `workday` is the third: its list endpoint returns no body at all, and the per-posting detail
  * endpoint would be one request each — 2,000 for NVIDIA alone. Title-only, like the two above.
  */
-const NO_DESCRIPTION_AVAILABLE = new Set(['simplify-internships', 'dribbble', 'workday']);
+const NO_DESCRIPTION_AVAILABLE = new Set(['simplify-internships', 'simplify-new-grads', 'dribbble', 'workday']);
 
 const RECORDED: Connector[] = [
   greenhouse,
@@ -256,6 +256,29 @@ describe('simplify README table parser', () => {
     expect(rows[0].sourceUrl).toBe('https://acme.test/apply/1');
     expect(rows[1].postedAt).toBe(NOW - 3 * 86_400_000);
   });
+
+  it('keeps the source identity when the same contract feeds New-Grad Positions', () => {
+    const [row] = parseReadmeTable(
+      '<table><tr><td>Acme</td><td>Software Engineer New Grad</td><td>Remote</td><td><a href="https://acme.test/apply">Apply</a></td><td>0d</td></tr></table>',
+      NOW,
+      'simplify-new-grads',
+    );
+    expect(row.source).toBe('simplify-new-grads');
+  });
+
+  it('reads the same table contract through the New-Grad connector', async () => {
+    const runtime: Runtime = {
+      fetchText: async () =>
+        '<table><tr><td>Acme</td><td>Software Engineer New Grad</td><td>Remote</td><td><a href="https://acme.test/apply">Apply</a></td><td>0d</td></tr></table>',
+      fetchJson: async <T,>() => {
+        throw new Error('New-Grad Positions is a README, not JSON') as T;
+      },
+      isAllowed: async () => true,
+    };
+    const rows = await simplifyNewGrads.fetch({ ...replay('simplify-internships').context, runtime });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source).toBe('simplify-new-grads');
+  });
 });
 
 describe('HN row marking', () => {
@@ -428,7 +451,7 @@ describe('design and freelance sources', () => {
     const page = (count: number) =>
       JSON.stringify({
         limit: 20,
-        offset: 0,
+        nextCursor: 'opaque cursor',
         totalCount: 100_000,
         jobs: Array.from({ length: count }, (_, i) => ({
           title: `Product Designer ${i}`,
@@ -441,12 +464,255 @@ describe('design and freelance sources', () => {
         })),
       });
 
-    it('pages past the 20-row cap the endpoint enforces, and stops at five pages', async () => {
-      // The endpoint echoes `limit: 20` back however large a limit it is sent, so more than
-      // 20 postings can only come from the offset loop — and an unbounded loop against a board
-      // of 100k postings would never stop, so the cap is the assertion that matters.
-      const results = await himalayas.fetch({ ...replay('himalayas').context, runtime: stubRuntime(page(20)) });
+    const cursorRuntime = (count: number): Runtime => {
+      let calls = 0;
+      return {
+        fetchText: async () => page(count),
+        fetchJson: async () => {
+          calls += 1;
+          return { ...JSON.parse(page(count)), nextCursor: `cursor-${calls}` };
+        },
+        isAllowed: async () => true,
+      };
+    };
+
+    it('pages past the 20-row cap with the provider cursor, and stops at five pages', async () => {
+      // An unbounded cursor walk against a board of 100k postings would never stop, so the cap
+      // is the assertion that matters.
+      const results = await himalayas.fetch({ ...replay('himalayas').context, runtime: cursorRuntime(20) });
       expect(results.length).toBe(100);
+    });
+
+    it('passes each opaque nextCursor back instead of deprecated offsets', async () => {
+      const urls: string[] = [];
+      let calls = 0;
+      const runtime: Runtime = {
+        fetchText: async () => page(20),
+        fetchJson: async (url) => {
+          urls.push(url);
+          calls += 1;
+          return { ...JSON.parse(page(20)), nextCursor: `cursor-${calls}` };
+        },
+        isAllowed: async () => true,
+      };
+
+      await himalayas.fetch({ ...replay('himalayas').context, runtime });
+
+      expect(urls).toHaveLength(5);
+      expect(new URL(urls[0]).searchParams.get('cursor')).toBeNull();
+      for (const [index, url] of urls.slice(1).entries()) {
+        const query = new URL(url).searchParams;
+        expect(query.get('cursor')).toBe(`cursor-${index + 1}`);
+        expect(query.has('offset')).toBe(false);
+      }
+    });
+
+    it('marks the run partial when the reported total exceeds the bounded window', async () => {
+      const { context, degraded, logs } = replay('himalayas');
+      const results = await himalayas.fetch({ ...context, runtime: cursorRuntime(20) });
+
+      expect(results).toHaveLength(100);
+      expect(degraded).toEqual([
+        'Himalayas: normal head refresh read 100 rows without whole-scan reconciliation',
+      ]);
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          connector: 'himalayas',
+          pages: 5,
+          fetched: 100,
+          reportedTotal: 100000,
+        }),
+      );
+    });
+
+    it('stages the next cursor after a bounded catch-up chunk', async () => {
+      const { context, degraded } = replay('himalayas');
+      const saves: { value: unknown; pending: boolean }[] = [];
+      const results = await himalayas.fetch({
+        ...context,
+        env: { WORKIE_CATCH_UP_PAGES: '5' },
+        runtime: cursorRuntime(20),
+        checkpoint: {
+          value: null,
+          save: (value, pending) => saves.push({ value, pending }),
+        },
+      });
+
+      expect(results).toHaveLength(100);
+      expect(saves).toEqual([
+        {
+          value: {
+            version: 1,
+            cursor: 'cursor-5',
+            providerUpdatedAt: null,
+            providerTotal: 100000,
+            scanned: 100,
+            complete: false,
+          },
+          pending: true,
+        },
+      ]);
+      expect(degraded).toEqual([
+        'Himalayas: checkpoint catch-up read 100 rows across 5 cursor pages',
+      ]);
+    });
+
+    it('marks the final cursor chunk complete but remains ghost-degraded', async () => {
+      const { context, degraded } = replay('himalayas');
+      const saves: { value: unknown; pending: boolean }[] = [];
+      const finalPage = JSON.stringify({
+        totalCount: 100000,
+        jobs: [
+          {
+            title: 'Product Designer',
+            companyName: 'Stub Co',
+            employmentType: 'Full Time',
+            locationRestrictions: ['United States'],
+            pubDate: 1_787_000_000,
+            applicationLink: 'https://himalayas.app/companies/stub/jobs/designer',
+            description: 'Design work on a product team.',
+          },
+        ],
+      });
+      const results = await himalayas.fetch({
+        ...context,
+        env: { WORKIE_CATCH_UP_PAGES: '5' },
+        runtime: stubRuntime(finalPage),
+        checkpoint: {
+          value: {
+            version: 1,
+            cursor: 'resume cursor',
+            providerUpdatedAt: 1,
+            providerTotal: 100000,
+            scanned: 100,
+            complete: false,
+          },
+          save: (value, pending) => saves.push({ value, pending }),
+        },
+      });
+
+      expect(results).toHaveLength(1);
+      expect(saves[0]?.pending).toBe(false);
+      expect(saves[0]?.value).toMatchObject({ scanned: 101, cursor: null, complete: true });
+      expect(degraded).toEqual([
+        'Himalayas: checkpoint catch-up read 1 rows across 1 cursor pages',
+      ]);
+    });
+
+    it('uses the default 100-page catch-up budget and validates its override', async () => {
+      const { context } = replay('himalayas');
+      const urls: string[] = [];
+      const runtime: Runtime = {
+        fetchText: async () => page(20),
+        fetchJson: async (url) => {
+          urls.push(url);
+          return { ...JSON.parse(page(20)), nextCursor: `cursor-${urls.length}` };
+        },
+        isAllowed: async () => true,
+      };
+
+      await himalayas.fetch({
+        ...context,
+        runtime,
+        checkpoint: { value: null, save: () => {} },
+      });
+      expect(urls).toHaveLength(100);
+
+      await expect(
+        himalayas.fetch({
+          ...context,
+          env: { WORKIE_CATCH_UP_PAGES: '1001' },
+          runtime,
+          checkpoint: { value: null, save: () => {} },
+        }),
+      ).rejects.toThrow(/WORKIE_CATCH_UP_PAGES/);
+    });
+
+    it('restarts a completed sweep on its next due run', async () => {
+      const { context } = replay('himalayas');
+      const saves: { value: unknown; pending: boolean }[] = [];
+      const results = await himalayas.fetch({
+        ...context,
+        env: { WORKIE_CATCH_UP_PAGES: '5' },
+        runtime: cursorRuntime(20),
+        checkpoint: {
+          value: {
+            version: 1,
+            cursor: null,
+            providerUpdatedAt: 1,
+            providerTotal: 100000,
+            scanned: 100000,
+            complete: true,
+          },
+          save: (value, pending) => saves.push({ value, pending }),
+        },
+      });
+
+      expect(results).toHaveLength(100);
+      expect(saves[0]).toMatchObject({
+        value: { cursor: 'cursor-5', scanned: 100, complete: false },
+        pending: true,
+      });
+    });
+
+    it('resets an invalid provider cursor instead of retrying it forever', async () => {
+      const { context, degraded } = replay('himalayas');
+      const saves: { value: unknown; pending: boolean }[] = [];
+      const runtime: Runtime = {
+        fetchText: async () => '',
+        fetchJson: async (url) => {
+          throw new HttpError(400, url);
+        },
+        isAllowed: async () => true,
+      };
+
+      const results = await himalayas.fetch({
+        ...context,
+        env: { WORKIE_CATCH_UP_PAGES: '5' },
+        runtime,
+        checkpoint: {
+          value: {
+            version: 1,
+            cursor: 'expired cursor',
+            providerUpdatedAt: 1,
+            providerTotal: 100000,
+            scanned: 40,
+            complete: false,
+          },
+          save: (value, pending) => saves.push({ value, pending }),
+        },
+      });
+
+      expect(results).toHaveLength(0);
+      expect(saves[0]).toMatchObject({
+        value: { cursor: null, scanned: 0, complete: false },
+        pending: true,
+      });
+      expect(degraded).toContain('Himalayas: provider rejected checkpoint cursor; resetting to the head');
+    });
+
+    it('advances through an empty page with a new cursor without saving an infinite loop', async () => {
+      const { context } = replay('himalayas');
+      const saves: { value: unknown; pending: boolean }[] = [];
+      const bodies = [
+        { totalCount: 100000, nextCursor: 'after-empty', jobs: [] },
+        JSON.parse(page(20)),
+      ];
+      const runtime: Runtime = {
+        fetchText: async () => '',
+        fetchJson: async () => bodies.shift(),
+        isAllowed: async () => true,
+      };
+
+      const results = await himalayas.fetch({
+        ...context,
+        env: { WORKIE_CATCH_UP_PAGES: '2' },
+        runtime,
+        checkpoint: { value: null, save: (value, pending) => saves.push({ value, pending }) },
+      });
+
+      expect(results).toHaveLength(20);
+      expect(saves[0]).toMatchObject({ value: { cursor: 'opaque cursor', scanned: 20 }, pending: true });
     });
 
     it('stops early when a page comes back short rather than asking for the next one', async () => {
@@ -472,6 +738,199 @@ describe('design and freelance sources', () => {
       expect(results[0].location).toBe('Remote');
       expect(results[0].sourceFields?.employmentType).toBe('contract');
     });
+  });
+});
+
+describe('muse pagination', () => {
+  const page = (pageCount: number, count = 20) =>
+    JSON.stringify({
+      page_count: pageCount,
+      results: Array.from({ length: count }, (_, i) => ({
+        name: `Product Designer ${i}`,
+        contents: 'Design work.',
+        publication_date: '2026-09-08T00:00:00Z',
+        company: { name: 'Stub Co' },
+        locations: [{ name: 'Remote' }],
+        refs: { landing_page: `https://www.themuse.com/jobs/stub-${i}` },
+      })),
+    });
+
+  it('keeps a normal head refresh ghost-degraded', async () => {
+    const { context, degraded } = replay('muse');
+    const results = await muse.fetch({ ...context, runtime: stubRuntime(page(20)) });
+
+    expect(results).toHaveLength(40);
+    expect(degraded).toEqual([
+      'Muse: normal category-head refresh read 40 rows without whole-scan reconciliation',
+    ]);
+  });
+
+  it('stages category-page progress for the next catch-up run', async () => {
+    const { context, degraded } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+    const results = await muse.fetch({
+      ...context,
+      env: { WORKIE_CATCH_UP_PAGES: '5' },
+      runtime: stubRuntime(page(20)),
+      checkpoint: {
+        value: null,
+        save: (value, pending) => saves.push({ value, pending }),
+      },
+    });
+
+    expect(results).toHaveLength(100);
+    expect(saves).toEqual([
+      {
+        value: { version: 1, scope: 0, page: 5, pageCount: 20, complete: false },
+        pending: true,
+      },
+    ]);
+    expect(degraded).toEqual([
+      'Muse: checkpoint catch-up read 100 rows across 5 category pages',
+    ]);
+  });
+
+  it('completes both scopes but remains ghost-degraded', async () => {
+    const { context, degraded } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+    const body = page(1, 1);
+    const results = await muse.fetch({
+      ...context,
+      runtime: stubRuntime(body),
+      checkpoint: {
+        value: { version: 1, scope: 0, page: 0, pageCount: null, complete: false },
+        save: (value, pending) => saves.push({ value, pending }),
+      },
+    });
+
+    expect(results).toHaveLength(2);
+    expect(saves).toEqual([
+      {
+        value: { version: 1, scope: 2, page: 0, pageCount: null, complete: true },
+        pending: false,
+      },
+    ]);
+    expect(degraded).toEqual([
+      'Muse: checkpoint catch-up read 2 rows across 2 category pages',
+    ]);
+  });
+
+  it('continues from the final Design page into Science and Engineering', async () => {
+    const { context } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+    const urls: string[] = [];
+    const runtime: Runtime = {
+      fetchText: async () => '',
+      fetchJson: async (url) => {
+        urls.push(url);
+        const parsed = new URL(url);
+        const category = parsed.searchParams.get('category');
+        const pageNumber = Number(parsed.searchParams.get('page'));
+        return JSON.parse(page(category === 'Design and UX' && pageNumber === 19 ? 20 : 3, 1));
+      },
+      isAllowed: async () => true,
+    };
+
+    const rows = await muse.fetch({
+      ...context,
+      env: { WORKIE_CATCH_UP_PAGES: '2' },
+      runtime,
+      checkpoint: {
+        value: { version: 1, scope: 0, page: 19, pageCount: 20, complete: false },
+        save: (value, pending) => saves.push({ value, pending }),
+      },
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(urls.map((url) => new URL(url).searchParams.get('category'))).toEqual([
+      'Design and UX',
+      'Science and Engineering',
+    ]);
+    expect(saves).toEqual([
+      {
+        value: { version: 1, scope: 1, page: 1, pageCount: 3, complete: false },
+        pending: true,
+      },
+    ]);
+  });
+
+  it('starts a new resumable sweep after a completed checkpoint while reading both heads', async () => {
+    const { context } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+    const urls: string[] = [];
+    const runtime: Runtime = {
+      fetchText: async () => '',
+      fetchJson: async (url) => {
+        urls.push(url);
+        return JSON.parse(page(3, 1));
+      },
+      isAllowed: async () => true,
+    };
+
+    const rows = await muse.fetch({
+      ...context,
+      runtime,
+      checkpoint: {
+        value: { version: 1, scope: 2, page: 0, pageCount: null, complete: true },
+        save: (value, pending) => saves.push({ value, pending }),
+      },
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(urls.map((url) => new URL(url).searchParams.get('category'))).toEqual([
+      'Design and UX',
+      'Science and Engineering',
+    ]);
+    expect(saves).toEqual([
+      {
+        value: { version: 1, scope: 0, page: 1, pageCount: 3, complete: false },
+        pending: true,
+      },
+    ]);
+  });
+
+  it('does not advance past an empty page before the provider-reported end', async () => {
+    const { context, degraded } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+    const rows = await muse.fetch({
+      ...context,
+      env: { WORKIE_CATCH_UP_PAGES: '5' },
+      runtime: stubRuntime(JSON.stringify({ page_count: 3, results: [] })),
+      checkpoint: {
+        value: { version: 1, scope: 0, page: 1, pageCount: 3, complete: false },
+        save: (value, pending) => saves.push({ value, pending }),
+      },
+    });
+
+    expect(rows).toHaveLength(0);
+    expect(saves).toEqual([
+      {
+        value: { version: 1, scope: 0, page: 1, pageCount: 3, complete: false },
+        pending: true,
+      },
+    ]);
+    expect(degraded).toContain('Design and UX page 1: empty before advertised end');
+  });
+
+  it('preserves a missing location as unknown instead of inventing Remote', async () => {
+    const body = JSON.stringify({
+      page_count: 1,
+      results: [
+        {
+          name: 'Product Designer',
+          contents: 'Design work.',
+          publication_date: '2026-09-08T00:00:00Z',
+          company: { name: 'Stub Co' },
+          refs: { landing_page: 'https://www.themuse.com/jobs/stub' },
+        },
+      ],
+    });
+    const { context } = replay('muse');
+
+    const rows = await muse.fetch({ ...context, runtime: stubRuntime(body) });
+
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.location).toBeNull();
   });
 });
 
@@ -607,6 +1066,27 @@ describe('employer boards', () => {
         expect(posting.sourceKind).toBe('ats');
       }
     });
+
+    it('marks a capped newest-window response partial', async () => {
+      const jobs = Array.from({ length: 100 }, (_, index) => ({
+        title: `Software Development Engineer ${index}`,
+        job_path: `/en/jobs/${index}/role`,
+        posted_date: 'September 8, 2026',
+        normalized_location: 'Seattle, Washington, USA',
+        description: 'Build things.',
+      }));
+      const runtime: Runtime = {
+        fetchText: async () => JSON.stringify({ hits: 10_000, jobs }),
+        fetchJson: async <T,>() => ({ hits: 10_000, jobs }) as unknown as T,
+        isAllowed: async () => true,
+      };
+      const { context, degraded } = replay('amazon');
+
+      const results = await amazon.fetch({ ...context, runtime });
+
+      expect(results).toHaveLength(10000);
+      expect(degraded).toEqual(['Amazon: read 10000 of 10000 reported hits; search window may be capped']);
+    });
   });
 });
 
@@ -692,6 +1172,25 @@ describe('jobicy', () => {
       expect(posting.sourceKind).toBe('aggregator');
       expect(posting.sourceUrl).toMatch(/^https:\/\/jobicy\.com\/jobs\//);
     }
+  });
+
+  it('keeps engineering at the provider cap partial instead of claiming it is complete', async () => {
+    const jobs = Array.from({ length: 200 }, (_, id) => ({
+      id,
+      url: `https://jobicy.com/jobs/${id}-x`,
+      jobTitle: 'Software Engineer',
+      companyName: 'Stub',
+      pubDate: '2026-09-08T00:00:00+00:00',
+      jobDescription: 'Build systems.',
+    }));
+    const { context, degraded } = replay('jobicy');
+    const rows = await jobicyEngineering.fetch({
+      ...context,
+      runtime: stubRuntime(JSON.stringify({ jobCount: 200, jobs })),
+    });
+
+    expect(rows).toHaveLength(200);
+    expect(degraded).toEqual(['jobicy-engineering: received 200 jobs at the 200-row API cap']);
   });
 });
 

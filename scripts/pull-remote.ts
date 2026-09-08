@@ -8,21 +8,22 @@
  * it no longer recognises. Turso holds every mirrored column, so the hosted copy IS the
  * backup; this restores it.
  *
- * Refuses to overwrite a database that already has postings — a bootstrap tool, not a sync.
- * `--force` for when you really do want to rebuild the file from the remote.
+ * Never overwrites an existing file. For a separate snapshot, set WORKIE_DB to a new path.
  *
  *   npm run pull:remote
  *   npm run pull:remote -- --from=file:/tmp/mirror.db    a local libSQL file, for tests
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, linkSync, rmSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import type Database from 'better-sqlite3';
 
 import { createClient } from '@libsql/client';
-import { getTableName, gt, sql } from 'drizzle-orm';
+import { getTableName, gt } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
 
-import { openDb, type Db, type TursoDb } from '../lib/db/index.ts';
+import { MIGRATIONS_DIR, openDb, type Db, type TursoDb } from '../lib/db/index.ts';
 import * as schema from '../lib/db/schema.ts';
 import { TABLES, type Mirrored } from './push-remote.ts';
 
@@ -54,15 +55,29 @@ export async function pullRemote(
   authToken: string | undefined,
   path?: string,
 ): Promise<{ table: string; rows: number }[]> {
-  const remote = drizzle(createClient({ url, authToken }), { schema });
-  const local = openDb(path, { migrate: true });
-
-  const counts: { table: string; rows: number }[] = [];
-  // Parents before children, same order the push inserts in and for the same foreign key.
-  for (const table of TABLES) {
-    counts.push({ table: getTableName(table), rows: await pullTable(remote, local, table) });
+  const target = path ?? process.env.WORKIE_DB ?? 'workie.db';
+  if (existsSync(target)) throw new Error(`${target} already exists; choose a new WORKIE_DB path`);
+  const staging = `${target}.bootstrap-${process.pid}`;
+  if (existsSync(staging)) throw new Error(`bootstrap staging file already exists: ${staging}`);
+  const client = createClient({ url, authToken });
+  const remote = drizzle(client, { schema });
+  const local = openDb(staging, { migrate: true }) as Db & { $client: Database.Database };
+  try {
+    await migrate(remote, { migrationsFolder: MIGRATIONS_DIR });
+    const counts: { table: string; rows: number }[] = [];
+    for (const table of TABLES) {
+      counts.push({ table: getTableName(table), rows: await pullTable(remote, local, table) });
+    }
+    local.$client.pragma('wal_checkpoint(TRUNCATE)');
+    local.$client.close();
+    // Publish only a complete snapshot; a failed download must never look cacheable.
+    linkSync(staging, target);
+    return counts;
+  } finally {
+    if (local.$client.open) local.$client.close();
+    client.close();
+    for (const suffix of ['', '-wal', '-shm']) rmSync(`${staging}${suffix}`, { force: true });
   }
-  return counts;
 }
 
 function arg(name: string): string | undefined {
@@ -75,15 +90,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (!url) throw new Error('no source: set TURSO_DATABASE_URL, or pass --from=file:/path.db');
 
   const path = process.env.WORKIE_DB ?? 'workie.db';
-  if (existsSync(path) && !process.argv.includes('--force')) {
-    // `openDb` would create an empty file, so existence alone is the guard — a database
-    // already here is the pipeline's working state, and clobbering it loses id lineage.
-    const rows = openDb(path, { migrate: true }).select({ n: sql<number>`count(*)` }).from(schema.postings).get();
-    if ((rows?.n ?? 0) > 0) {
-      throw new Error(`${path} already has ${rows!.n} postings; pass --force to rebuild it from the remote`);
-    }
-  }
-
   const started = Date.now();
   const counts = await pullRemote(url, process.env.TURSO_AUTH_TOKEN, path);
   console.log(

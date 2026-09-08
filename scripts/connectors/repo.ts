@@ -1,20 +1,22 @@
 /**
- * GitHub README table parser (plan Phase 6) — SimplifyJobs' internship list.
+ * GitHub README table parser (plan Phase 6) — SimplifyJobs' internship and new-grad lists.
  * `source_priority = 5`, the lowest: these rows point at someone else's apply link and carry
  * no description, so any other source for the same job outranks them for `canonical_url`.
  *
  * The list is an HTML `<table>` inside README.md (it stopped being a markdown pipe table),
  * with `↳` in the company cell meaning "same company as the row above".
  *
- * NOTE: the repo is renamed every year (Summer2026 -> Summer2027 -> ...). GitHub keeps the
- * old name redirecting, so this URL survives a rename; a brand-new repo would not, and the
- * connector would then fail loudly rather than quietly returning nothing.
+ * The seasonal internship repo is renamed every year. New-Grad Positions is a stable canonical
+ * repository on its `dev` branch. A rename or contract change fails loudly rather than silently
+ * returning nothing.
  */
 
 import type { Connector, ConnectorPosting } from '../../lib/runtime.ts';
 
-const README_URL =
+const INTERNSHIPS_README_URL =
   'https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/README.md';
+const NEW_GRADS_README_URL =
+  'https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/README.md';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -51,7 +53,11 @@ function cleanUrl(url: string): string {
 }
 
 /** Exported for the offline test — pure, so it needs no fixture plumbing of its own. */
-export function parseReadmeTable(markdown: string, now: number): ConnectorPosting[] {
+export function parseReadmeTable(
+  markdown: string,
+  now: number,
+  source: string = 'simplify-internships',
+): ConnectorPosting[] {
   const postings: ConnectorPosting[] = [];
   let company = '';
 
@@ -70,7 +76,7 @@ export function parseReadmeTable(markdown: string, now: number): ConnectorPostin
     if (!href) continue;
 
     postings.push({
-      source: 'simplify-internships',
+      source,
       sourceKind: 'repo',
       sourceUrl: cleanUrl(href[1]),
       postedAt: ageToPostedAt(text(cells[4] ?? ''), now),
@@ -94,8 +100,20 @@ export const simplifyInternships: Connector = {
   // within one edit of current without re-downloading an unchanged file 48 times.
   minIntervalMs: 3 * 60 * 60 * 1000,
   async fetch(context) {
-    const markdown = await context.runtime.fetchText(README_URL);
+    const markdown = await context.runtime.fetchText(INTERNSHIPS_README_URL);
     const postings = parseReadmeTable(markdown, Date.now());
+    if (postings.length === 0) throw new Error('README parsed but yielded no rows');
+    return postings;
+  },
+};
+
+export const simplifyNewGrads: Connector = {
+  name: 'simplify-new-grads',
+  kind: 'repo',
+  minIntervalMs: 3 * 60 * 60 * 1000,
+  async fetch(context) {
+    const markdown = await context.runtime.fetchText(NEW_GRADS_README_URL);
+    const postings = parseReadmeTable(markdown, Date.now(), 'simplify-new-grads');
     if (postings.length === 0) throw new Error('README parsed but yielded no rows');
     return postings;
   },
@@ -113,4 +131,4 @@ export const simplifyInternships: Connector = {
  * which is where their real postings come from.
  */
 
-export const repoConnectors: Connector[] = [simplifyInternships];
+export const repoConnectors: Connector[] = [simplifyInternships, simplifyNewGrads];

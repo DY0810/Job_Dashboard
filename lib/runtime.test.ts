@@ -166,13 +166,22 @@ describe('robots.txt', () => {
     expect(parseRobots(text).isAllowed('/jobs')).toBe(true);
   });
 
-  it('treats an unreachable robots.txt as allow-all rather than zeroing out a run', async () => {
+  it('does not crawl when robots.txt cannot be retrieved', async () => {
     const { fetchImpl } = recorder((url) => {
       if (url.endsWith('/robots.txt')) throw new Error('ECONNRESET');
       return json({ ok: true });
     });
     const runtime = createRuntime({ fetchImpl });
-    await expect(runtime.fetchJson('https://board.test/jobs')).resolves.toEqual({ ok: true });
+    await expect(runtime.fetchJson('https://board.test/jobs')).rejects.toBeInstanceOf(RobotsDisallowedError);
+  });
+
+  it.each([429, 500, 503])('does not crawl after robots.txt returns %i', async (status) => {
+    const { calls, fetchImpl } = recorder((url) => url.endsWith('/robots.txt')
+      ? new Response('unavailable', { status })
+      : json({ unexpected: true }));
+    await expect(createRuntime({ fetchImpl }).fetchJson('https://board.test/jobs'))
+      .rejects.toBeInstanceOf(RobotsDisallowedError);
+    expect(calls).toHaveLength(1);
   });
 });
 
@@ -238,6 +247,18 @@ describe('retry policy', () => {
 });
 
 describe('timeout', () => {
+  it('keeps the deadline active while reading the response body', async () => {
+    const runtime = createRuntime({
+      minGapMs: 0,
+      fetchImpl: async (_url, init) => new Response(new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted body')));
+        },
+      })),
+    });
+    await expect(runtime.fetchText('https://slow.test/jobs', { respectRobots: false, timeoutMs: 30 }))
+      .rejects.toThrow('timeout after 30ms');
+  }, 500);
   it('aborts a hanging request and says so without leaking the query string', async () => {
     const runtime = createRuntime({
       minGapMs: 0,
@@ -422,7 +443,7 @@ describe('publicOnly covers the robots.txt side-fetch', () => {
    * /robots.txt, and the harness fetches that before anything else. Redirecting THAT at an
    * internal address reached it. Reproduced against real sockets before this was closed.
    */
-  it('does not chase a redirected robots.txt, and does not disallow the request either', async () => {
+  it('does not bypass robots after refusing its unsafe redirect', async () => {
     const seen: string[] = [];
     const runtime = createRuntime({
       fetchImpl: async (url, init) => {
@@ -435,7 +456,8 @@ describe('publicOnly covers the robots.txt side-fetch', () => {
       minGapMs: 0,
     });
 
-    expect(await runtime.fetchText('https://board.test/job/1', { publicOnly: true })).toBe('the job page');
+    await expect(runtime.fetchText('https://board.test/job/1', { publicOnly: true }))
+      .rejects.toBeInstanceOf(RobotsDisallowedError);
     // The robots fetch must be the one that opts out of redirect following.
     expect(seen).toContain('manual https://board.test/robots.txt');
   });
@@ -456,10 +478,27 @@ describe('publicOnly covers the robots.txt side-fetch', () => {
       minGapMs: 0,
     });
 
-    // Guarded: the redirect is declined, so this caller gets ALLOW_ALL and proceeds.
-    await runtime.fetchText('https://board.test/job/1', { publicOnly: true });
-    // Unguarded: must re-read robots rather than inherit the guarded ALLOW_ALL.
+    await expect(runtime.fetchText('https://board.test/job/1', { publicOnly: true }))
+      .rejects.toBeInstanceOf(RobotsDisallowedError);
+    // Unguarded: must re-read robots rather than inherit the guarded response.
     await expect(runtime.fetchText('https://board.test/job/1')).rejects.toBeInstanceOf(RobotsDisallowedError);
     expect(robotsRequests).toBe(2);
+  });
+
+  it('checks the redirected path against the destination robots rules', async () => {
+    const seen: string[] = [];
+    const runtime = createRuntime({
+      minGapMs: 0,
+      resolveHost: async () => ['93.184.216.34'],
+      fetchImpl: async (url) => {
+        seen.push(url);
+        if (url === 'https://origin.test/robots.txt') return new Response(ROBOTS_ALL);
+        if (url === 'https://target.test/robots.txt') return new Response('User-agent: *\nDisallow: /private');
+        return new Response(null, { status: 302, headers: { location: 'https://target.test/private/job' } });
+      },
+    });
+    await expect(runtime.fetchText('https://origin.test/job', { publicOnly: true }))
+      .rejects.toBeInstanceOf(RobotsDisallowedError);
+    expect(seen).not.toContain('https://target.test/private/job');
   });
 });

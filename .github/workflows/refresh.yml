@@ -9,17 +9,39 @@
 name: refresh
 on:
   schedule:
-    - cron: '*/30 * * * *'
-  workflow_dispatch: {}
+    # Avoid the top-of-hour peak. GitHub can still delay or skip scheduled runs.
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+    inputs:
+      catch_up:
+        description: Complete resumable catalog imports within the runner time budget
+        type: boolean
+        default: false
+      linkcheck_ids:
+        description: Optional comma-separated posting IDs to verify before publishing
+        type: string
+        default: ''
 
 concurrency:
   group: refresh
   cancel-in-progress: false # a running ingest finishes; the next tick waits behind it
 
+permissions:
+  contents: read
+
 jobs:
   cycle:
     runs-on: ubuntu-latest
     timeout-minutes: 120 # a plain cycle is ~10 min; the weekly linkcheck budgets 90 inside refresh.sh
+    env:
+      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+      ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+      CAREERJET_AFFID: ${{ secrets.CAREERJET_AFFID }}
+      JOOBLE_KEY: ${{ secrets.JOOBLE_KEY }}
+      USAJOBS_KEY: ${{ secrets.USAJOBS_KEY }}
+      USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,16 +49,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-
-      # refresh.sh reads its environment from .env.local, exactly as it does on a laptop —
-      # writing one here means the script runs verbatim, mirror step and all.
-      - name: Configure environment
-        run: |
-          printf 'TURSO_DATABASE_URL=%s\nTURSO_AUTH_TOKEN=%s\n' \
-            "$TURSO_DATABASE_URL" "$TURSO_AUTH_TOKEN" > .env.local
-        env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
 
       # A cache entry is immutable, so every run saves under its own id and restore takes
       # the newest by prefix. The linkcheck stamp travels with the db so "weekly" survives
@@ -47,30 +59,65 @@ jobs:
           path: |
             workie.db
             logs/.linkcheck-stamp
-          key: workie-db-${{ github.run_id }}
+          key: workie-db-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: workie-db-
 
       - name: Bootstrap from Turso when the cache is cold
+        id: bootstrap
         run: |
           if [ ! -f workie.db ]; then
-            node --env-file-if-exists=.env.local scripts/pull-remote.ts
+            node scripts/pull-remote.ts
             # A cold start should not also be a 90-minute linkcheck; let that wait a week.
             mkdir -p logs && touch logs/.linkcheck-stamp
           fi
 
       # Claims a pending hosted-button request if one is waiting, then runs the ordinary
       # cycle either way — ingest, enrich, weekly linkcheck, mirror to Turso.
+      - name: Verify selected application links
+        if: inputs.linkcheck_ids != ''
+        env:
+          LINKCHECK_IDS: ${{ inputs.linkcheck_ids }}
+        run: |
+          node --input-type=module <<'JS'
+          import { inArray } from 'drizzle-orm';
+          import { openDb } from './lib/db/index.ts';
+          import { postings } from './lib/db/schema.ts';
+          import { createRuntime } from './lib/runtime.ts';
+          import { parseAuditedIds, runLinkcheck, formatSummary } from './scripts/linkcheck.ts';
+          const ids = parseAuditedIds(process.env.LINKCHECK_IDS);
+          const db = openDb(undefined, { migrate: true });
+          const rows = db.select({ id: postings.id, track: postings.track,
+            delistedAt: postings.delistedAt, reason: postings.delistedReason })
+            .from(postings).where(inArray(postings.id, ids)).all();
+          if (rows.length !== ids.length) throw new Error('Some requested posting IDs do not exist');
+          const checkable = rows.filter(r => r.track && (!r.delistedAt || r.reason === 'linkcheck')).map(r => r.id);
+          if (checkable.length) {
+            console.log(formatSummary(await runLinkcheck(db, createRuntime(), { ids: checkable }), false));
+          } else {
+            console.log('Selected postings are already excluded from the board');
+          }
+          JS
+
       - name: Run refresh cycle
-        run: node --env-file-if-exists=.env.local scripts/claim-refresh.ts --always
+        run: |
+          args=(--always)
+          if [ "$CATCH_UP" = "true" ]; then args+=(--catch-up); fi
+          node scripts/claim-refresh.ts "${args[@]}"
+        env:
+          CATCH_UP: ${{ inputs.catch_up }}
+
+      - name: Collector health
+        if: always()
+        run: npm run status
 
       - name: Save state
-        if: always()
+        if: always() && steps.bootstrap.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: |
             workie.db
             logs/.linkcheck-stamp
-          key: workie-db-${{ github.run_id }}
+          key: workie-db-${{ github.run_id }}-${{ github.run_attempt }}
 
       # The summary lines FIRST, then the tail. A blind `tail -40` is worthless on the run
       # that matters: when the mirror throws, its stack trace is longer than 40 lines and

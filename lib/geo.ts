@@ -42,16 +42,17 @@ export const GEO_TIER = {
 
 /**
  * `is_remote` is parsed from the location string, `work_mode` comes from extraction, and they
- * disagree often ("London, United Kingdom" on a role the body says is remote). Remote is one
- * of the target tiers, so either signal is enough — requiring both to agree would drop real
- * matches, which is stricter than what was asked for.
+ * disagree often ("Remote India" on a role whose structured work mode says onsite). A stated
+ * work mode is more specific than a location label: remote wins when explicitly stated, while
+ * onsite/hybrid suppress a stale or over-broad `is_remote` flag. With no work mode, the
+ * normalized location remains the fallback.
  */
 export function geoTier(location: NormalizedLocation, workMode: string | null = null): number {
   if (location.city_norm !== null && GEO_TIER.metros.includes(location.city_norm)) {
     return GEO_TIER.metro;
   }
   if (location.state === GEO_TIER.californiaCode) return GEO_TIER.california;
-  if (location.is_remote || workMode === 'remote') return GEO_TIER.remote;
+  if (workMode === 'remote' || (workMode === null && location.is_remote)) return GEO_TIER.remote;
   if (location.city_norm === null && location.state === null && location.country === null) {
     return GEO_TIER.unknown;
   }

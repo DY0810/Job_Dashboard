@@ -27,7 +27,7 @@
  * answer forever.
  */
 
-import { decodeHtmlEntities, normalizeDescription } from './normalize.ts';
+import { decodeHtmlEntities, normalizeDescription, withoutNegatedRemote } from './normalize.ts';
 import { isVoiceRole, VOICE_BADGE } from './voice.ts';
 
 export type Track = 'design' | 'engineering';
@@ -37,6 +37,7 @@ export type EmploymentType = 'full-time' | 'part-time' | 'contract' | 'freelance
 export type WorkMode = 'remote' | 'hybrid' | 'onsite';
 export type Season = 'summer' | 'fall' | 'winter' | 'spring';
 export type PayPeriod = 'hour' | 'week' | 'month' | 'year';
+export type CurrencySymbol = '$' | '€' | '£';
 
 /** A heading plus its bullets, as the source itself structured them. */
 export interface Section {
@@ -70,6 +71,8 @@ export interface PayRate {
   min: number | null;
   max: number | null;
   period: PayPeriod | null;
+  /** Omitted for dollars so existing stored/test shapes remain backward-compatible. */
+  currencySymbol?: CurrencySymbol;
 }
 
 export interface Extraction {
@@ -408,7 +411,11 @@ function extractSeniority(title: string, body: string): Seniority {
  * that happen to contain a track word.
  */
 const TRACK_VETO =
-  /\b(?:sales|account\s+(?:executive|manager|director)|business\s+development|revenue|quota|marketing|brand\s+marketing|communications|public\s+relations|recruit\w*|talent|people\s+(?:ops|operations|partner)|human\s+resources|hr\b|finance|accounting|controller|legal|counsel|paralegal|compliance|policy|lobby\w*|customer\s+(?:success|support|experience)|technical\s+support|support\s+engineer|help\s+desk|solutions?\s+(?:consultant|architect|engineer|analyst|design\w*)|sales\s+engineer|pre-?sales|partnerships?|alliance\w*|procurement|facilities|ambassador|producer|enforcement|administrative|executive\s+assistant|office\s+manager|chief\s+of\s+staff|program\s+manager|project\s+manager|product\s+manager|operations\s+manager|engagement\s+(?:manager|lead)|general\s+manager|store\s+manager|employer\s+brand|(?:sales|partner|revenue|gtm|customer|field|technology)\s+enablement|enablement\s+(?:manager|lead|analyst|specialist)|strategist|buyer|purchaser|patent\w*|community\s+(?:manager|engagement)|product\s+management|product\s+marketing|produktmanage\w*|vertrieb\w*|scrum\s+master|trust\s+(?:and|&)\s+safety|content\s+(?:writer|strategist|marketer)|copywriter|social\s+media|community\s+manager|event\w*|teacher|instructor|nurse|physician|clinician|driver|warehouse|logistics|supply\s+chain)\b/i;
+  /\b(?:sales|account\s+(?:executive|manager|director)|business\s+development|brand\s+(?:development\s+)?(?:associate|manager)|brand\s+media\s+strategy|design\s+studio\s+process\s+manager|revenue|quota|marketing|brand\s+marketing|communications|public\s+relations|recruit\w*|talent|people\s+(?:ops|operations|partner)|human\s+resources|hr\b|finance|accounting|controller|legal|counsel|paralegal|compliance|policy|lobby\w*|customer\s+(?:success|support|experience)|technical\s+support|support\s+engineer|help\s+desk|solutions?\s+(?:consultant|architect|engineer|analyst|design\w*)|sales\s+engineer|pre-?sales|partnerships?|alliance\w*|procurement|facilities|ambassador|producer|enforcement|administrative|executive\s+assistant|office\s+manager|chief\s+of\s+staff|program\s+manager|project\s+manager|product\s+manager|operations\s+manager|engagement\s+(?:manager|lead)|general\s+manager|store\s+manager|employer\s+brand|(?:sales|partner|revenue|gtm|customer|field|technology)\s+enablement|enablement\s+(?:manager|lead|analyst|specialist)|strategist|buyer|purchaser|patent\w*|community\s+(?:manager|engagement)|product\s+management|product\s+marketing|produktmanage\w*|vertrieb\w*|scrum\s+master|trust\s+(?:and|&)\s+safety|content\s+(?:writer|strategist|marketer)|copywriter|social\s+media|community\s+manager|event\w*|teacher|instructor|nurse|physician|clinician|driver|warehouse|logistics|supply\s+chain)\b/i;
+
+/** These role labels remain vetoes even when a parenthetical or suffix follows a technical head. */
+const FULL_TITLE_ROLE_VETO =
+  /\b(?:pre-?sales|solutions?\s+(?:consultant|architect|engineer|analyst|design\w*)|sales\s+engineer|technical\s+support|support\s+engineer|help\s+desk)\b/i;
 
 /**
  * A title states its role first and qualifies it afterwards: "Machine Learning Engineer Intern
@@ -453,7 +460,7 @@ const ENGINEERING_ROLE = /\b(?:engineer(?:ing|s)?|developer|programmer|swe|sde|s
  * Product Designer" is a real industrial-design role and stays on the Design tab.
  */
 const HARDWARE_DESIGN =
-  /\b(?:asic|vlsi|dft|rtl|soc|pcb|fpga|silicon|semiconductor|tapeout|verilog|vhdl|wafer|foundry|circuit|electrical|bim|datacent(?:er|re)|data\s+cent(?:er|re)|mixed[\s-]signal|physical\s+design|design\s+for\s+test|chip\s+design\w*|analog|firmware)\b/i;
+  /\b(?:asic|vlsi|dft|rtl|soc|pcb|fpga|silicon|semiconductor|tapeout|verilog|vhdl|wafer|foundry|circuit|electrical|bim|datacent(?:er|re)|data\s+cent(?:er|re)|mixed[\s-]signal|physical\s+design|mechanical\s+design|route\s*(?:&|and)\s*motion\s+generation|design\s+for\s+test|chip\s+design\w*|analog|firmware)\b/i;
 
 /**
  * Design disciplines this tool does not cover. Not a misclassification like the hardware terms
@@ -474,7 +481,7 @@ const HARDWARE_DESIGN =
  * closer to graphic and brand work than to the built environment. Say so before widening this.
  */
 const OFF_TRACK_DESIGN =
-  /\b(?:interior\s+design\w*|interior\s+architect\w*|landscape\s+(?:design\w*|architect\w*)|industrial\s+design\w*|revit|archicad|autocad|landfx|sketchup|solidworks)\b/i;
+  /\b(?:interior\s+design\w*|interior\s+architect\w*|landscape\s+(?:design\w*|architect\w*)|industrial\s+design\w*|cad\s+designer\b|mechanical\s+designer\b|revit|archicad|autocad|landfx|sketchup|solidworks)\b/i;
 
 const DESIGN_TITLE =
   /\b(?:design(?:er)?s?\b(?![\s/-]*engineer)|ux|ui\b|user\s+experience|user\s+interface|interaction|visual|graphic|motion|brand(?:ing)?|illustrat\w*|typograph\w*|art\s+direct\w*|creative\s+direct\w*|design\s+research|ux\s+research|user\s+research|design\s+system|product\s+design|(?:3d|vfx|concept|character|environment)\s+artist|animator|vfx)\b/i;
@@ -512,22 +519,34 @@ function countMatches(text: string, pattern: RegExp): number {
   return seen.size;
 }
 
+function trackFromTitle(text: string): Track | null {
+  if (ENGINEERING_ROLE.test(text) || HARDWARE_DESIGN.test(text)) return 'engineering';
+  if (DESIGN_TITLE.test(text)) return 'design';
+  if (ENGINEERING_TITLE.test(text)) return 'engineering';
+  return null;
+}
+
 function extractTrack(title: string, body: string, source: SourceFields | null | undefined): Track | 'other' {
-  if (TRACK_VETO.test(title) || OFF_TRACK_DESIGN.test(title)) return 'other';
+  // CAD/AEC terms can live in a parenthetical qualifier ("Designer (AutoCAD)") and remain
+  // decisive, unlike department qualifiers such as "Growth Marketing".
+  if (OFF_TRACK_DESIGN.test(title)) return 'other';
+  if (FULL_TITLE_ROLE_VETO.test(title)) return 'other';
 
   // The head first, then the whole title. Reading the head alone is what stops a trailing
   // qualifier deciding the track — "Product Designer, Developer Tools" is a designer, and
-  // testing the whole string for `developer` would have called it engineering. The full-title
-  // pass is the fallback for titles that lead with something uninformative ("Intern - Product
-  // Design"), which is how this behaved before the head existed.
+  // testing the whole string for `developer` would have called it engineering. Vetoes obey
+  // that same boundary: "Designer, Brand and Marketing" is a designer, while "Marketing
+  // Associate" is still off-track. The full-title pass is only the fallback for titles that
+  // lead with something uninformative ("Intern - Product Design").
   const head = titleHead(title);
-  for (const text of head === title ? [title] : [head, title]) {
-    // Ahead of the design check, and that order is the fix: `DESIGN_TITLE` matching first is
-    // why "Hardware ASIC Design Intern" and "Machine Learning Engineer Intern - Brand Ads"
-    // were on the Design tab. An engineering role noun, or silicon, settles it.
-    if (ENGINEERING_ROLE.test(text) || HARDWARE_DESIGN.test(text)) return 'engineering';
-    if (DESIGN_TITLE.test(text)) return 'design';
-    if (ENGINEERING_TITLE.test(text)) return 'engineering';
+  if (TRACK_VETO.test(head)) return 'other';
+  const headTrack = trackFromTitle(head);
+  if (headTrack && !/^(?:design|engineering)$/i.test(head.trim())) return headTrack;
+
+  if (head !== title) {
+    if (TRACK_VETO.test(title)) return 'other';
+    const titleTrack = trackFromTitle(title);
+    if (titleTrack) return titleTrack;
   }
 
   const department = `${source?.department ?? ''} ${source?.team ?? ''}`.trim();
@@ -557,8 +576,8 @@ function extractTrack(title: string, body: string, source: SourceFields | null |
 /** Matched against the TITLE, where any mention is the posting naming its own type. */
 const EMPLOYMENT_TITLE: readonly [EmploymentType, RegExp][] = [
   ['internship', /\b(?:intern(?:ship)?s?|co-?op|placement\s+year|summer\s+analyst)\b/i],
-  ['part-time', /\bpart[\s-]?time\b/i],
   ['freelance', /\bfreelance(?:r)?\b/i],
+  ['part-time', /\bpart[\s-]?time\b/i],
   ['contract', /\b(?:contract(?:or)?|contract-to-hire|fixed[\s-]term|temporary|temp)\b/i],
   ['full-time', /\bfull[\s-]?time\b/i],
 ];
@@ -573,14 +592,18 @@ const EMPLOYMENT_BODY: readonly [EmploymentType, RegExp][] = [
     'internship',
     /\b(?:(?:this|a|an|our)\s+(?:\w+[\s-]){0,3}intern(?:ship)?\b|intern(?:ship)?\s+(?:program|position|role|cohort|term)\b|\d+[\s-]week\s+intern)/i,
   ],
-  ['part-time', /\bpart[\s-]?time\b/i],
   ['freelance', /\bfreelance(?:r)?\b/i],
+  ['part-time', /\bpart[\s-]?time\b/i],
   [
     'contract',
     /\b(?:(?:this|a|an)\s+(?:\w+[\s-]){0,3}(?:contract|fixed[\s-]term|temporary)\s+(?:role|position|engagement)|contract[\s-]to[\s-]hire|on\s+a\s+contract\s+basis)\b/i,
   ],
   ['full-time', /\bfull[\s-]?time\b/i],
 ];
+
+/** References to somebody else's working arrangement are not the posting declaring its own. */
+const NON_ROLE_EMPLOYMENT =
+  /\b(?:external\s+(?:agency|agencies)\s+(?:and|,)\s+)?freelance(?:\s*,?\s*(?:or|and)\s+(?:vendor|agency))?\s+(?:creative\s+)?partners?\b|\bfor\s+part[\s-]?time\s+roles?\b/gi;
 
 function extractEmploymentType(
   title: string,
@@ -589,7 +612,8 @@ function extractEmploymentType(
 ): EmploymentType | null {
   if (source?.employmentType) return source.employmentType;
   for (const [type, pattern] of EMPLOYMENT_TITLE) if (pattern.test(title)) return type;
-  for (const [type, pattern] of EMPLOYMENT_BODY) if (pattern.test(body)) return type;
+  const roleText = body.replace(NON_ROLE_EMPLOYMENT, ' ');
+  for (const [type, pattern] of EMPLOYMENT_BODY) if (pattern.test(roleText)) return type;
   // Not stated is not full-time. Every posting on this board is plausibly full-time and
   // saying so without evidence would make the chip meaningless.
   return null;
@@ -610,6 +634,10 @@ const HYBRID = /\bhybrid\b/i;
 const REMOTE_EXPLICIT =
   /\b(?:fully\s+remote|100%\s+remote|remote[\s-](?:first|based|role|position|work)|work\s+from\s+home|work\s+from\s+anywhere|fully\s+distributed)\b/i;
 const REMOTE = /\b(?:fully\s+remote|100%\s+remote|remote[\s-](?:first|friendly|based|role|position|work)|work\s+from\s+home|work\s+from\s+anywhere|distributed\s+team|remote\b)/i;
+const LIMITED_REMOTE =
+  /\b(?:additional\s+|up\s+to\s+|optional\s+)?(?:\d+|one|two|three|four|five|ten|twenty)\s+(?:remote\s+days?|days?\s+(?:of\s+)?remote(?:\s+work)?|weeks?\s+(?:of\s+)?remote\s+work)\s+(?:per|a|each)\s+year\b/gi;
+const ONSITE_EXPLICIT =
+  /\b(?:(?:a\s+)?(?:willingness|required|expected|eager|excited)\s+to\s+work\s+in[\s-]person|this\s+is\s+an?\s+in[\s-]person\s+(?:role|position)|we\s+work\s+in[\s-]person(?:\s*,?\s*(?:with|at|in|from))|work\s+in[\s-]person\s+(?:at|in|from)\s+our)\b/i;
 const ONSITE = /\b(?:on-?site|in-?office|in[\s-]person|onsite\s+in|based\s+in\s+our\s+\w+\s+office)\b/i;
 
 function extractWorkMode(
@@ -618,9 +646,10 @@ function extractWorkMode(
   source: SourceFields | null | undefined,
 ): WorkMode | null {
   if (source?.workMode) return source.workMode;
-  const text = `${title} ${body}`;
+  const text = withoutNegatedRemote(`${title} ${body}`).replace(LIMITED_REMOTE, ' ');
   if (REMOTE_EXPLICIT.test(text)) return 'remote';
   if (HYBRID.test(text)) return 'hybrid';
+  if (ONSITE_EXPLICIT.test(text)) return 'onsite';
   if (REMOTE.test(text)) return 'remote';
   if (ONSITE.test(text)) return 'onsite';
   return null;
@@ -658,7 +687,25 @@ const PERIOD_WORDS: readonly [PayPeriod, RegExp][] = [
  * reads as a salary. Every figure this returns was written as money by the posting.
  */
 const PAY_RANGE =
-  /([$€£])\s?(\d{1,3}(?:[,.]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?\s*(?:(?:-|–|—|to|and)\s*[$€£]?\s?(\d{1,3}(?:[,.]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?)?/g;
+  /([$€£])\s?(\d{1,3}(?:[,.]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?\s*(?:(?:-|–|—|to|and(?:\s+up\s+to)?|up\s+to)\s*[$€£]?\s?(\d{1,3}(?:[,.]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*([kK])?)?/g;
+
+const PAY_CONTEXT =
+  /\b(?:salary|compensation|pay|paid|base|hourly\s+rate|wages?|earnings?|remuneration|stipend)\b/i;
+const STRONG_PAY_CONTEXT =
+  /\b(?:salary|compensation|base\s+(?:pay|salary|compensation)|pay\s+(?:range|rate)|hourly\s+rate|wages?|earnings?|remuneration|(?:we|role|position|job|interns?)\s+(?:will\s+)?pay(?:s|ing|ed)?)\b[^$€£]{0,80}$/i;
+const NON_WAGE_BEFORE =
+  /\b(?:client\s+book\s+revenue|revenue\s+per\s+employee|valuation|funding|series\s+[a-z]|payment\s+volume|(?:fertility|medical|dependent\s+care)\s+(?:hra|fsa|reimbursement|benefit)|(?:wellness[\s'‘’"]*|lifestyle|education(?:al)?|learning|home\s+office|work\s+from\s+home|remote\s+work|internet|mobile|cell\s+phone|meal|lunch|food|commuter)\s+(?:benefits?(?:\s+package)?|budget|stipend|allowance|reimbursement|account|wallet|coverage|package)|(?:weekly\s+)?lunch\s+stipend|401\s*\(?k\)?|employer\s+match|matching\s+contribution|years?\s+of\s+service|tenure\s+(?:award|reward)|one[\s-]time|signing\s+bonus|referral\s+bonus)\b/i;
+const NON_WAGE_AFTER =
+  /\b(?:one[\s-]time|meal\s+stipend|lunch\s+stipend|education(?:al)?\s+budget|wellness\s+(?:benefit|stipend)|lifestyle\s+stipend|remote\s+work\s+reimbursement|fertility\s+hra|medical\s+fsa|givve|juno|sharebite|food\s+stamps?|per\s+working\s+day)\b/i;
+
+function moneyContext(body: string, start: number, end: number): { before: string; after: string } {
+  const before = body.slice(Math.max(0, start - 160), start);
+  const boundary = Math.max(before.lastIndexOf('.'), before.lastIndexOf('!'), before.lastIndexOf('?'));
+  return {
+    before: before.slice(boundary + 1),
+    after: body.slice(end, Math.min(body.length, end + 80)),
+  };
+}
 
 function toAmount(digits: string, thousands: string | undefined): number {
   const value = Number(digits.replace(/[,](?=\d{3}\b)/g, '').replace(/[.](?=\d{3}\b)/g, ''));
@@ -677,12 +724,21 @@ function extractPayRate(body: string): PayRate | null {
     if (!Number.isFinite(min) || min <= 0) continue;
 
     const trailing = body.slice(match.index + match[0].length, match.index + match[0].length + 24);
+    const context = moneyContext(body, match.index, match.index + match[0].length);
     // A magnitude suffix means this is a COMPANY number, not a wage — "$11B valuation",
     // "$150M Series C", "raised $1.5B". Nobody's salary is quoted in billions, but the
     // magnitude fallback below reads a bare "11" as $11 AN HOUR, so ElevenLabs advertised
     // $11/hr and Baseten $1.5/hr on the board. `k` is deliberately NOT here: "$120-160k" is
     // exactly how a real salary band is written.
-    if (/^\s*(?:[bm]\b|bn\b|billion|million|trillion)/i.test(trailing)) continue;
+    if (/^\s*(?:[bmt]\b|bn\b|billion|million|trillion|%)/i.test(trailing)) continue;
+    if (/^\s*one[\s-]time\b/i.test(context.after)) continue;
+    const stronglyPayRelated = STRONG_PAY_CONTEXT.test(context.before);
+    if (
+      (!stronglyPayRelated && NON_WAGE_BEFORE.test(context.before)) ||
+      (!stronglyPayRelated && NON_WAGE_AFTER.test(context.after))
+    ) {
+      continue;
+    }
     let period: PayPeriod | null = null;
     for (const [candidate, pattern] of PERIOD_WORDS) {
       if (pattern.test(trailing)) {
@@ -691,8 +747,13 @@ function extractPayRate(body: string): PayRate | null {
       }
     }
     // No unit given: magnitude decides. Nobody is paid $150,000 an hour or $60 a year, and
-    // anything in between is genuinely ambiguous and stays null rather than being guessed.
-    period ??= min >= 1000 ? 'year' : min < 200 ? 'hour' : null;
+    // a low bare amount is only an hourly rate when the same clause calls it compensation.
+    period ??=
+      min >= 1000
+        ? 'year'
+        : min < 200 && (max !== null || PAY_CONTEXT.test(`${context.before} ${context.after}`))
+          ? 'hour'
+          : null;
 
     // A figure with no unit and an ambiguous magnitude is more likely a price than a wage.
     if (period === null) continue;
@@ -703,7 +764,12 @@ function extractPayRate(body: string): PayRate | null {
     // fallback misread — "$1.0" from Stripe's payment volume, "$2.7" from a funding round.
     if (period === 'hour' && min < 7.25) continue;
     if (period === 'year' && min < 10_000) continue;
-    return { min, max: max !== null && max >= min ? max : null, period };
+    return {
+      min,
+      max: max !== null && max >= min ? max : null,
+      period,
+      ...(match[1] === '$' ? {} : { currencySymbol: match[1] as CurrencySymbol }),
+    };
   }
   return null;
 }
@@ -789,7 +855,7 @@ const RESPONSIBILITY_HEADING =
 const SKILL_HEADING =
   /\b(?:qualification|requirement|skills?|what\s+you(?:'|’)?ll\s+bring|what\s+we(?:'|’)?re\s+looking\s+for|who\s+you\s+are|about\s+you|you\s+(?:have|are|might)|experience|must\s+have|nice\s+to\s+have|preferred|ideal\s+candidate|tech\s+stack)/i;
 const EDUCATION_TERM =
-  /\b(?:bachelor|master|b\.?s\.?c?\b|m\.?s\.?c?\b|ph\.?d|doctorate|undergraduate|degree|major(?:ing)?\s+in|coursework|gpa|university|college|diploma)\b/i;
+  /\b(?:bachelor|master|b\.?s\.?c?\b|m\.?s\.?c?\b|ph\.?d|doctorate|undergraduate|degree(?!\s+of\b)|major(?:ing)?\s+in|coursework|gpa|university|college|diploma)\b/i;
 
 /** The prompt used to forbid these by instruction; a list does it deterministically. */
 const MARKETING_COPY =

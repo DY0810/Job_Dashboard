@@ -122,10 +122,11 @@ function shortTitle(title: string): string | null {
  */
 export function stillQueued<T extends { to: string }>(
   sent: T[],
-  failed: { to: string }[],
+  failed: { to: string; index?: number }[],
 ): T[] {
-  const missed = new Set(failed.map((f) => f.to));
-  return sent.filter((message) => missed.has(message.to));
+  return sent.filter((message, index) =>
+    failed.some((failure) => failure.index === undefined ? failure.to === message.to : failure.index === index),
+  );
 }
 
 export function compose(

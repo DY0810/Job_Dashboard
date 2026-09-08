@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import nodemailer from 'nodemailer';
 
-import { MAX_BATCH, SMTP, accountFor, sendAddresses, sendConfigured, sendGate } from './send.ts';
+import { MAX_BATCH, SMTP, accountFor, sendAddresses, sendAll, sendConfigured, sendGate } from './send.ts';
 
 const env = { ...process.env };
 afterEach(() => {
   process.env = { ...env };
+  vi.restoreAllMocks();
 });
 
 const req = (token?: string) =>
@@ -130,6 +132,19 @@ describe('the batch shape', () => {
 });
 
 describe('the SMTP transport', () => {
+  it('identifies the failed message even when recipients are identical', async () => {
+    const sendMail = vi.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('rejected'));
+    const close = vi.fn();
+    vi.spyOn(nodemailer, 'createTransport').mockReturnValue({
+      sendMail, close,
+    } as unknown as ReturnType<typeof nodemailer.createTransport>);
+    const result = await sendAll({ user: 'sender@example.test', pass: 'test' }, [
+      { to: 'same@example.test', subject: 'first', body: 'sent' },
+      { to: 'same@example.test', subject: 'second', body: 'failed' },
+    ]);
+    expect(result).toEqual({ sent: 1, failed: [{ index: 1, to: 'same@example.test', reason: 'rejected' }] });
+    expect(close).toHaveBeenCalledOnce();
+  });
   /**
    * The security property, pinned because it is one boolean away from being wrong. With
    * `secure: false` on port 587, nodemailer ATTEMPTS STARTTLS but proceeds in the clear if

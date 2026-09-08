@@ -11,6 +11,7 @@
 import type { EmploymentType } from '../../lib/extract.ts';
 import { normalizeDescription } from '../../lib/normalize.ts';
 import {
+  HttpError,
   toEpochMs,
   type Connector,
   type ConnectorContext,
@@ -368,29 +369,168 @@ const HIMALAYAS_TYPE: Record<string, EmploymentType> = {
  * "United States" normalizes to a US location instead of the bare "Remote" that most remote
  * boards report, which is the difference between landing in a target tier and landing nowhere.
  *
- * PAGED, because the endpoint caps a page at 20 however large a `limit` you send — it echoes
- * `"limit": 20` back at you — and one page an hour off a board of 100k postings is a trickle
- * that would mostly re-fetch what it already had. Five pages is 100 newest per run, bounded so
- * a board that keeps answering cannot turn one cycle into an unbounded crawl.
+ * The current provider contract caps a page at 20 and returns an opaque `nextCursor`. Cursor
+ * traversal avoids the duplicates and skips that changing offset pagination can produce. Five
+ * pages per run keep each catch-up chunk bounded; a persisted cursor resumes the full active
+ * catalogue on the next cloud cycle.
  */
 const HIMALAYAS_PAGES = 5;
 const HIMALAYAS_PAGE = 20;
+const ONE_DAY = 24 * 60 * 60 * 1000;
+const DEFAULT_CATCH_UP_PAGES = 100;
+const MAX_CATCH_UP_PAGES = 1000;
+
+function catchUpPageBudget(env: Record<string, string | undefined>): number {
+  const raw = env.WORKIE_CATCH_UP_PAGES?.trim();
+  if (!raw) return DEFAULT_CATCH_UP_PAGES;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error('WORKIE_CATCH_UP_PAGES must be an integer between 1 and 1000');
+  }
+  const pages = Number(raw);
+  if (pages < 1 || pages > MAX_CATCH_UP_PAGES) {
+    throw new Error('WORKIE_CATCH_UP_PAGES must be an integer between 1 and 1000');
+  }
+  return pages;
+}
+
+interface HimalayasCheckpoint {
+  version: 1;
+  cursor: string | null;
+  providerUpdatedAt: number | null;
+  providerTotal: number | null;
+  scanned: number;
+  complete: boolean;
+}
+
+function himalayasCheckpoint(value: unknown): HimalayasCheckpoint | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<HimalayasCheckpoint>;
+  const scanned = candidate.scanned;
+  const complete = candidate.complete;
+  if (
+    candidate.version !== 1 ||
+    typeof complete !== 'boolean' ||
+    typeof scanned !== 'number' ||
+    !Number.isInteger(scanned) ||
+    scanned < 0 ||
+    (candidate.cursor !== null && typeof candidate.cursor !== 'string') ||
+    (candidate.providerUpdatedAt !== null &&
+      candidate.providerUpdatedAt !== undefined &&
+      typeof candidate.providerUpdatedAt !== 'number') ||
+    (candidate.providerTotal !== null &&
+      candidate.providerTotal !== undefined &&
+      typeof candidate.providerTotal !== 'number')
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    cursor: candidate.cursor ?? null,
+    providerUpdatedAt: candidate.providerUpdatedAt ?? null,
+    providerTotal: candidate.providerTotal ?? null,
+    scanned,
+    complete,
+  };
+}
 
 export const himalayas: Connector = {
   name: 'himalayas',
   kind: 'aggregator',
-  minIntervalMs: 60 * 60 * 1000,
+  // The provider documents a daily data refresh. More frequent polls only re-read its cache.
+  minIntervalMs: ONE_DAY,
   async fetch(context) {
     const jobs: HimalayasJob[] = [];
-    for (let page = 0; page < HIMALAYAS_PAGES; page += 1) {
-      const body = await context.runtime.fetchJson<{ jobs?: HimalayasJob[] }>(
-        `https://himalayas.app/jobs/api?limit=${HIMALAYAS_PAGE}&offset=${page * HIMALAYAS_PAGE}`,
-      );
-      // A short page means the board ran out; asking for the next one would return nothing.
-      if (!body.jobs?.length) break;
+    const checkpoint = himalayasCheckpoint(context.checkpoint?.value);
+    const restartingSweep = context.checkpoint !== undefined && checkpoint?.complete === true;
+    const catchingUp = context.checkpoint !== undefined;
+    const pageBudget = catchingUp ? catchUpPageBudget(context.env) : HIMALAYAS_PAGES;
+    let pages = 0;
+    let totalCount: number | undefined;
+    let updatedAt: number | undefined;
+    let cursor: string | undefined = restartingSweep ? undefined : checkpoint?.cursor ?? undefined;
+    let resetCursor = false;
+    const seenCursors = new Set(cursor ? [cursor] : []);
+    for (let page = 0; page < pageBudget; page += 1) {
+      const query = new URLSearchParams({ limit: String(HIMALAYAS_PAGE) });
+      if (cursor) query.set('cursor', cursor);
+      let body: {
+        totalCount?: number;
+        nextCursor?: string;
+        updatedAt?: number;
+        jobs?: HimalayasJob[];
+      };
+      try {
+        body = await context.runtime.fetchJson(`https://himalayas.app/jobs/api?${query}`);
+      } catch (error) {
+        if (cursor && error instanceof HttpError && error.status === 400) {
+          resetCursor = true;
+          cursor = undefined;
+          context.degraded('Himalayas: provider rejected checkpoint cursor; resetting to the head');
+          break;
+        }
+        throw error;
+      }
+      totalCount ??= body.totalCount;
+      updatedAt ??= body.updatedAt;
+      const nextCursor = typeof body.nextCursor === 'string' && body.nextCursor ? body.nextCursor : undefined;
+      if (!body.jobs?.length) {
+        if (nextCursor && !seenCursors.has(nextCursor)) {
+          cursor = nextCursor;
+          seenCursors.add(nextCursor);
+          pages += 1;
+          continue;
+        }
+        if (nextCursor) {
+          resetCursor = true;
+          context.degraded('Himalayas: provider repeated a cursor after an empty page; resetting to the head');
+        }
+        cursor = undefined;
+        break;
+      }
       jobs.push(...body.jobs);
-      if (body.jobs.length < HIMALAYAS_PAGE) break;
+      pages += 1;
+      if (nextCursor && seenCursors.has(nextCursor)) {
+        resetCursor = true;
+        cursor = undefined;
+        context.degraded('Himalayas: provider repeated a cursor; resetting to the head');
+        break;
+      }
+      cursor = nextCursor;
+      if (cursor) seenCursors.add(cursor);
+      // The absence of a next cursor is the provider's completion signal.
+      if (body.jobs.length < HIMALAYAS_PAGE || !cursor) break;
     }
+
+    if (catchingUp && context.checkpoint) {
+      const complete = !resetCursor && cursor === undefined;
+      context.checkpoint.save(
+        {
+          version: 1,
+          cursor: cursor ?? null,
+          providerUpdatedAt: updatedAt ?? checkpoint?.providerUpdatedAt ?? null,
+          providerTotal: totalCount ?? checkpoint?.providerTotal ?? null,
+          scanned: restartingSweep || resetCursor ? jobs.length : (checkpoint?.scanned ?? 0) + jobs.length,
+          complete,
+        } satisfies HimalayasCheckpoint,
+        !complete,
+      );
+    }
+
+    // A chunk never reconciles the whole source. Even its final chunk must not age the
+    // postings seen in earlier chunks toward deletion.
+    context.degraded(
+      catchingUp
+        ? `Himalayas: checkpoint catch-up read ${jobs.length} rows across ${pages} cursor pages`
+        : `Himalayas: normal head refresh read ${jobs.length} rows without whole-scan reconciliation`,
+    );
+    context.log({
+      connector: 'himalayas',
+      pages,
+      fetched: jobs.length,
+      reportedTotal: totalCount ?? null,
+      checkpointCatchup: catchingUp,
+      checkpointPending: catchingUp ? cursor !== undefined : null,
+    });
     return jobs
       .filter((job) => job.applicationLink ?? job.guid)
       .map((job) => {
@@ -436,16 +576,15 @@ interface JobicyJob {
 }
 
 /**
- * ONE REQUEST IS THE WHOLE DESIGN CORPUS, verified rather than assumed: the board publishes two
- * design industry slugs, and `web-app-design` (15 rows) is entirely contained in
- * `design-multimedia` (39) — every id in the smaller set appears in the larger. Polling both
- * would double the requests for nothing.
+ * Jobicy's live taxonomy has separate `design-multimedia` and `engineering` slugs. They are
+ * separate connectors because the API returns one industry's newest window per request and the
+ * two windows have different completeness states.
  *
  * The filter genuinely bites, which is why this source is worth having where Freelancer.com was
  * not: a slug the board does not know returns HTTP 400 with `Invalid 'industry' value`, rather
  * than silently serving the unfiltered board.
  */
-const JOBICY_URL = 'https://jobicy.com/api/v2/remote-jobs?count=100&industry=design-multimedia';
+const JOBICY_PAGE_SIZE = 200;
 
 /** Their spelling, hyphenated and title-cased, to the schema's. */
 const JOBICY_TYPE: Record<string, EmploymentType> = {
@@ -470,27 +609,35 @@ const JOBICY_TYPE: Record<string, EmploymentType> = {
  * not a rule, and it is the one thing here worth reversing first if the maintainer disagrees:
  * delete this connector from `aggConnectors`, or give it a `skip` the way `remotive` has.
  *
- * ponytail: no paging. The design slug returns 39 of a 100-row cap in one call, so there is
- * nothing to page through. Add an `offset` loop if the design corpus ever approaches 100.
+ * Jobicy publishes no page or cursor contract. `jobCount < count` is therefore the only proof
+ * that an industry's returned window is complete; an equal count stays partial rather than
+ * silently claiming the capped window is the whole catalogue.
  */
-export const jobicy: Connector = {
-  name: 'jobicy',
-  kind: 'aggregator',
-  /** Whole design board in one response; it stamped `lastUpdate` once in the hour observed. */
-  minIntervalMs: 60 * 60 * 1000,
-  async fetch(context) {
-    const body = await context.runtime.fetchJson<{ jobCount?: number; jobs?: JobicyJob[] }>(
-      JOBICY_URL,
-    );
-    const jobs = body.jobs ?? [];
-    context.log({ connector: 'jobicy', fetched: jobs.length, reportedCount: body.jobCount ?? null });
+function jobicyConnector(name: string, industry: string): Connector {
+  return {
+    name,
+    kind: 'aggregator',
+    minIntervalMs: 60 * 60 * 1000,
+    async fetch(context) {
+      const url = new URL('https://jobicy.com/api/v2/remote-jobs');
+      url.searchParams.set('count', String(JOBICY_PAGE_SIZE));
+      url.searchParams.set('industry', industry);
+      const body = await context.runtime.fetchJson<{ jobCount?: number; jobs?: JobicyJob[] }>(
+        url.toString(),
+      );
+      const jobs = body.jobs ?? [];
+      const reportedCount = body.jobCount ?? null;
+      if (reportedCount !== null && reportedCount >= JOBICY_PAGE_SIZE) {
+        context.degraded(`${name}: received ${reportedCount} jobs at the ${JOBICY_PAGE_SIZE}-row API cap`);
+      }
+      context.log({ connector: name, industry, fetched: jobs.length, reportedCount });
 
-    return jobs
-      .filter((job) => job.url && job.jobTitle)
-      .map((job) => {
-        const type = JOBICY_TYPE[(job.jobType?.[0] ?? '').trim().toLowerCase()];
-        return {
-          ...aggRow('jobicy', {
+      return jobs
+        .filter((job) => job.url && job.jobTitle)
+        .map((job) => {
+          const type = JOBICY_TYPE[(job.jobType?.[0] ?? '').trim().toLowerCase()];
+          return {
+            ...aggRow(name, {
             company: job.companyName,
             title: job.jobTitle,
             // "Europe,  USA" is a list of eligible regions, not one place, and the doubled
@@ -501,14 +648,21 @@ export const jobicy: Connector = {
             postedAt: toEpochMs(job.pubDate),
             description: job.jobDescription ?? job.jobExcerpt ?? '',
           }),
-          ...(type ? { sourceFields: { employmentType: type } } : {}),
-        };
-      });
-  },
-};
+            ...(type ? { sourceFields: { employmentType: type } } : {}),
+          };
+        });
+    },
+  };
+}
+
+/** Complete as of the 2026-09-08 live check: 60 rows below the 200-row provider cap. */
+export const jobicy = jobicyConnector('jobicy', 'design-multimedia');
+
+/** The current engineering response reaches the provider cap and is intentionally partial. */
+export const jobicyEngineering = jobicyConnector('jobicy-engineering', 'engineering');
 
 // ---------------------------------------------------------------------------------------
-// The Muse — the only board found where BOTH location and level are structured and filterable
+// The Muse
 // ---------------------------------------------------------------------------------------
 
 interface MuseJob {
@@ -522,20 +676,50 @@ interface MuseJob {
 }
 
 /**
- * Asked per LEVEL, not once for the category, and that is the whole point of this source.
- *
- * `category=Design and UX` alone is 2,256 rows, ~1,800 of them senior — rows `enrich` would
- * fetch, classify and then throw away. The API filters server-side on a real enumerated field,
- * so asking only for the three levels this dashboard keeps turns a 113-page download into ~8
- * pages. Measured 2026-08-24: Internship 35, Entry Level 2, Mid Level 410.
- *
- * `descending=true` matters as much. Unsorted, the first page is a mix reaching back over a
- * year — The Muse leaves stale rows published; sorted, page 0 runs 13-14 of 20 inside the
- * 60-day window with a median age under a month.
+ * Level filtering was not reliable in a live check: a Management request returned a Mid Level
+ * row. Checkpointed category walks leave eligibility to the existing deterministic extractor,
+ * which is the shared authority on tracks and seniority.
  */
-const MUSE_LEVELS = ['Internship', 'Entry Level', 'Mid Level'] as const;
-/** Mid Level is 21 pages; the tail is progressively staler, so the newest few are the value. */
-const MUSE_PAGES = 3;
+const MUSE_SCOPES = ['Design and UX', 'Science and Engineering'] as const;
+
+interface MuseCheckpoint {
+  version: 1;
+  scope: number;
+  page: number;
+  pageCount: number | null;
+  complete: boolean;
+}
+
+function museCheckpoint(value: unknown): MuseCheckpoint | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<MuseCheckpoint>;
+  const scope = candidate.scope;
+  const page = candidate.page;
+  const complete = candidate.complete;
+  if (
+    candidate.version !== 1 ||
+    typeof scope !== 'number' ||
+    !Number.isInteger(scope) ||
+    scope < 0 ||
+    scope > MUSE_SCOPES.length ||
+    typeof page !== 'number' ||
+    !Number.isInteger(page) ||
+    page < 0 ||
+    (candidate.pageCount !== null &&
+      candidate.pageCount !== undefined &&
+      (!Number.isInteger(candidate.pageCount) || candidate.pageCount < 0)) ||
+    typeof complete !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    scope,
+    page,
+    pageCount: candidate.pageCount ?? null,
+    complete,
+  };
+}
 
 export const muse: Connector = {
   name: 'muse',
@@ -543,39 +727,106 @@ export const muse: Connector = {
   minIntervalMs: 60 * 60 * 1000,
   async fetch(context) {
     const jobs: MuseJob[] = [];
-    for (const level of MUSE_LEVELS) {
-      for (let page = 0; page < MUSE_PAGES; page += 1) {
-        const query = new URLSearchParams({
-          category: 'Design and UX',
-          level,
-          page: String(page),
-          descending: 'true',
-        });
-        // A page that fails ends THIS level and keeps everything already collected, the way
-        // the ATS connectors isolate one dead board token from the rest of the registry.
-        // Nine requests per cycle is nine chances to throw away eight good pages otherwise.
-        let body: { results?: MuseJob[]; page_count?: number };
-        try {
-          body = await context.runtime.fetchJson(`https://www.themuse.com/api/public/jobs?${query}`);
-        } catch (error) {
-          context.degraded(`${level} page ${page}: ${(error as Error).message}`);
-          break;
-        }
-        if (!body.results?.length) break;
-        jobs.push(...body.results);
-        // `page` is zero-based and `page_count` is a count, so this is the last page.
-        if (page + 1 >= (body.page_count ?? 0)) break;
+    const checkpoint = museCheckpoint(context.checkpoint?.value);
+    const restartingSweep = context.checkpoint !== undefined && checkpoint?.complete === true;
+    const catchingUp = context.checkpoint !== undefined && !restartingSweep;
+    const pageBudget = catchingUp ? catchUpPageBudget(context.env) : MUSE_SCOPES.length;
+    let scope = catchingUp ? checkpoint?.scope ?? 0 : 0;
+    let page = catchingUp ? checkpoint?.page ?? 0 : 0;
+    let pageCount = catchingUp ? checkpoint?.pageCount ?? null : null;
+    let requests = 0;
+    const headPageCounts: Array<number | null> = [];
+    let headFailed = false;
+
+    while (scope < MUSE_SCOPES.length && requests < pageBudget) {
+      const query = new URLSearchParams({
+        category: MUSE_SCOPES[scope],
+        page: String(page),
+        descending: 'true',
+      });
+      let body: { results?: MuseJob[]; page_count?: number };
+      try {
+        body = await context.runtime.fetchJson(`https://www.themuse.com/api/public/jobs?${query}`);
+      } catch (error) {
+        context.degraded(`${MUSE_SCOPES[scope]} page ${page}: ${(error as Error).message}`);
+        headFailed = true;
+        break;
+      }
+      requests += 1;
+      const reportedPageCount = body.page_count;
+      if (
+        typeof reportedPageCount !== 'number' ||
+        !Number.isInteger(reportedPageCount) ||
+        reportedPageCount < 0
+      ) {
+        context.degraded(`${MUSE_SCOPES[scope]} page ${page}: response omitted page_count`);
+        headFailed = true;
+        break;
+      }
+
+      pageCount = reportedPageCount;
+      if (!catchingUp && page === 0) headPageCounts[scope] = reportedPageCount;
+      const rows = body.results ?? [];
+      if (rows.length === 0 && page + 1 < reportedPageCount) {
+        context.degraded(`${MUSE_SCOPES[scope]} page ${page}: empty before advertised end`);
+        headFailed = true;
+        break;
+      }
+      jobs.push(...rows);
+      if (!catchingUp || rows.length === 0 || page + 1 >= reportedPageCount) {
+        scope += 1;
+        page = 0;
+        pageCount = null;
+      } else {
+        page += 1;
       }
     }
+
+    if (catchingUp && context.checkpoint) {
+      const complete = scope >= MUSE_SCOPES.length;
+      context.checkpoint.save(
+        {
+          version: 1,
+          scope,
+          page,
+          pageCount,
+          complete,
+        } satisfies MuseCheckpoint,
+        !complete,
+      );
+    } else if (restartingSweep && context.checkpoint && !headFailed) {
+      const designHasMore = (headPageCounts[0] ?? 0) > 1;
+      const scienceHasRows = (headPageCounts[1] ?? 0) > 0;
+      const complete = !designHasMore && !scienceHasRows;
+      context.checkpoint.save(
+        {
+          version: 1,
+          scope: designHasMore ? 0 : scienceHasRows ? 1 : MUSE_SCOPES.length,
+          page: designHasMore ? 1 : 0,
+          pageCount: designHasMore ? headPageCounts[0] ?? null : null,
+          complete,
+        } satisfies MuseCheckpoint,
+        !complete,
+      );
+    }
+
+    // A category chunk, including its final page, cannot reconcile postings seen by other
+    // chunks and must never age them toward deletion.
+    context.degraded(
+      catchingUp
+        ? `Muse: checkpoint catch-up read ${jobs.length} rows across ${requests} category pages`
+        : `Muse: normal category-head refresh read ${jobs.length} rows without whole-scan reconciliation`,
+    );
     return jobs
       .filter((job) => job.refs?.landing_page)
       .map((job) =>
         aggRow('muse', {
           company: job.company?.name,
           title: job.name,
-          // Several offices means several rows on one posting; the first is enough for the
-          // normalizer, and these are already "City, ST" rather than free text.
-          location: job.locations?.[0]?.name ?? 'Remote',
+          // The Muse is not remote-only. A missing location is unknown, not a claim that the
+          // role is remote; only sources that define every listing as remote may use that
+          // fallback.
+          location: job.locations?.[0]?.name ?? null,
           url: job.refs!.landing_page!,
           postedAt: toEpochMs(job.publication_date),
           description: job.contents ?? '',
@@ -592,5 +843,6 @@ export const aggConnectors: Connector[] = [
   braintrust,
   himalayas,
   jobicy,
+  jobicyEngineering,
   muse,
 ];

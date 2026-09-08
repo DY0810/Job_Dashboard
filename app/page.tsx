@@ -8,13 +8,13 @@ import {
   WINDOW_MS,
   bare,
   cleared,
-  href,
   parseParams,
   type Params,
   type RawSearchParams,
   type Tab,
   withBasis,
   withJob,
+  withPage,
   withTab,
 } from "@/lib/params";
 import { rowChips } from "@/lib/chips";
@@ -93,7 +93,7 @@ function payRate(row: Row): string | null {
     min !== null && max !== null && min !== max
       ? `${one(min)}–${one(max)}`
       : one(min ?? max!);
-  return `$${span}/${period ? PERIOD[period] : ""}`;
+  return `${row.payCurrencySymbol ?? "$"}${span}/${period ? PERIOD[period] : ""}`;
 }
 
 /** A cell with no value still says so. `fg-dim`, not `fg-faint`: it is content, and content
@@ -129,7 +129,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
   const fresh = now - row.effectiveAt < WINDOW_MS.day;
   return (
     <tr>
-      <td className={`nums ${fresh ? "text-accent" : "text-fg-dim"}`}>
+      <td data-field="seen" className={`nums ${fresh ? "text-accent" : "text-fg-dim"}`}>
         <time
           dateTime={seen.toISOString()}
           title={`first seen ${seen.toLocaleString()} · listed ${row.postedAt.toLocaleString()}`}
@@ -137,32 +137,32 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
           {ago(seen, now)}
         </time>
       </td>
-      <td>
+      <td data-field="badges">
         <Badges row={row} p={p} />
       </td>
       {/* Identifying text, not a facet: no badge, no filter. `title` gives the long tail back
           on hover without costing a row of height. */}
-      <td className={width(p.tab, "title")} title={row.title}>
+      <td data-field="title" className={width(p.tab, "title")} title={row.title}>
         {row.title}
       </td>
       {p.tab === "engineering" ? (
-        <td className={`${width(p.tab, "summary")} text-fg-dim`}>
+        <td data-field="summary" className={`${width(p.tab, "summary")} text-fg-dim`}>
           {row.summary ?? <Nothing />}
         </td>
       ) : null}
-      <td className="nums">{pay ?? <Nothing />}</td>
+      <td data-field="pay" className="nums">{pay ?? <Nothing />}</td>
       {p.tab === "engineering" ? (
         <>
-          <td className="text-fg-dim">{row.seniority ?? <Nothing />}</td>
+          <td data-field="level" className="text-fg-dim">{row.seniority ?? <Nothing />}</td>
           {/* Not `nums`: a place is not a number, and these are raw ATS strings that run
               long, so `.clip` caps and ellipsises them. */}
-          <td className={`text-fg-dim ${width(p.tab, "location") ?? ""}`}>
+          <td data-field="location" className={`text-fg-dim ${width(p.tab, "location") ?? ""}`}>
             {row.location ?? <Nothing />}
           </td>
         </>
       ) : null}
       {/* The drawer trigger. One per row, so the tab order through the table stays short. */}
-      <td>
+      <td data-field="company">
         <Link
           href={withJob(p, row.id)}
           scroll={false}
@@ -172,7 +172,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
           <Chevron />
         </Link>
       </td>
-      <td>
+      <td data-field="apply">
         <a
           className="chip"
           href={row.canonicalUrl}
@@ -256,8 +256,8 @@ function Empty({ outside }: { outside: number }) {
  *  site is asked to render is often this. Name the two variables rather than throwing. */
 function NotConfigured() {
   return (
-    <main className="min-h-dvh px-4 pb-16">
-      <header className="flex items-baseline gap-6 border-b border-rule py-2">
+    <main className="flex h-dvh min-h-0 flex-col px-4 pb-3">
+      <header className="flex shrink-0 flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <span className="w-wide text-[11px] text-fg-dim">not configured</span>
       </header>
@@ -349,8 +349,8 @@ export default async function Page({
   const columns = COLUMNS[p.tab];
 
   return (
-    <main className="min-h-dvh px-4 pb-16">
-      <header className="flex items-baseline gap-6 border-b border-rule py-2">
+    <main className="flex h-dvh min-h-0 flex-col px-4 pb-3">
+      <header className="flex shrink-0 flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <nav className="flex gap-4" aria-label="Track">
           {TABS.map((tab) => (
@@ -393,8 +393,8 @@ export default async function Page({
           </nav>
         ) : null}
 
-        <div className="ml-auto flex items-baseline gap-4 text-[11px] text-fg-dim">
-          <span className="nums">
+        <div className="ml-auto flex min-w-0 flex-wrap items-baseline gap-4 text-[11px] text-fg-dim">
+          <span className="nums whitespace-nowrap">
             {lastRun
               ? `last run ${ago(lastRun.startedAt, now)} ago`
               : "no ingest run yet"}
@@ -407,7 +407,12 @@ export default async function Page({
 
       <Filters p={p} />
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && p.page > 1 ? (
+        <div className="flex items-center gap-3 py-8">
+          <p>No jobs on this page.</p>
+          <Link href={withPage(p, 1)} className="chip">first page</Link>
+        </div>
+      ) : rows.length === 0 ? (
         // The counts below are the only extra queries, and only on a page with no rows: the
         // empty state asks about the tab, the zero-result state asks about these filters.
         (await tabIsEmpty(db, p, now)) ? (
@@ -416,7 +421,8 @@ export default async function Page({
           <NoMatches p={p} outside={await outsideTargetLocations(db, p, now)} />
         )
       ) : (
-        <table className="rows">
+        <div className="min-h-0 flex-1 overflow-auto" role="region" aria-label="Job results" tabIndex={0}>
+          <table className="rows" data-track={p.tab} style={{ minWidth: p.tab === "design" ? 1000 : 1320 }}>
             <caption className="sr-only">
               {p.tab} postings, newest first
               {p.tab === "design" ? ", target locations only" : ""}
@@ -444,16 +450,18 @@ export default async function Page({
               {rows.slice(freshCount).map((row) => (
                 <PostingRow key={row.id} row={row} p={p} now={now} />
               ))}
-              {capped ? (
-                <tr>
-                  <td colSpan={columns.length} className="py-3 text-center text-[11px] text-fg-dim">
-                    Showing the {ROW_CAP} newest. Narrow with the filters above to reach the rest.
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
-        </table>
+          </table>
+        </div>
       )}
+
+      {capped || p.page > 1 ? (
+        <nav aria-label="Job pages" className="flex shrink-0 items-center justify-end gap-3 border-t border-rule py-3 text-[11px]">
+          {p.page > 1 ? <Link className="chip" href={withPage(p, p.page - 1)}>previous</Link> : null}
+          <span className="nums">page {p.page}</span>
+          {capped ? <Link className="chip" href={withPage(p, p.page + 1)}>next</Link> : null}
+        </nav>
+      ) : null}
 
       <Drawer jobId={p.job} closeHref={withJob(p, null)} />
     </main>

@@ -22,6 +22,8 @@ export interface RawPosting {
   source: string;
   sourceKind: SourceKind;
   sourceUrl: string;
+  /** Stable job/requisition id in this publisher's own namespace, when available. */
+  publisherId?: string | number;
   /**
    * The application form itself, when this source publishes one distinct from the posting
    * page (Ashby's applyUrl, Lever's /apply). Optional: sourceUrl stays the stable identity
@@ -39,12 +41,17 @@ export interface PostingSource {
   source: string;
   sourceKind: SourceKind;
   sourceUrl: string;
+  publisherId?: string;
   applyUrl?: string;
   sourcePriority: number;
   postedAt: number;
 }
 
 export interface DedupedPosting {
+  /**
+   * The normalized triple, additionally namespaced by the winning ATS publisher identity when
+   * one exists. Distinct requisitions can therefore coexist under the schema's unique key.
+   */
   dedupeKey: string;
   companyNorm: string;
   titleNorm: string;
@@ -107,8 +114,17 @@ export function locationKey(location: NormalizedLocation): string {
   return `onsite|${location.city_norm ?? ''}|${location.state ?? ''}|${location.country ?? ''}`;
 }
 
-function keyOf(companyNorm: string, titleNorm: string, locKey: string): string {
-  return sha256([companyNorm, titleNorm, locKey].join(KEY_SEPARATOR));
+function keyOf(
+  companyNorm: string,
+  titleNorm: string,
+  locKey: string,
+  publisherIdentity?: string,
+): string {
+  return sha256(
+    [companyNorm, titleNorm, locKey, ...(publisherIdentity ? [publisherIdentity] : [])].join(
+      KEY_SEPARATOR,
+    ),
+  );
 }
 
 /**
@@ -176,17 +192,81 @@ interface Group {
   locationKey: string;
   location: NormalizedLocation;
   sources: PostingSource[];
+  publisherIds: Map<string, string>;
+}
+
+function canonicalSourceUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^utm_/i.test(key) || /^(?:gh_src|lever-source)$/i.test(key)) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.searchParams.sort();
+    url.pathname = url.pathname.replace(/\/+$/, '');
+    return `${url.protocol}//${url.hostname.toLowerCase()}${url.port ? `:${url.port}` : ''}${url.pathname}${url.search}`;
+  } catch {
+    return value.replace(/#.*$/, '').replace(/\/+$/, '');
+  }
+}
+
+/**
+ * Stable identity in one connector's namespace. Exported so persisted source rows can be
+ * backfilled with exactly the same URL compatibility rules as an incoming batch.
+ */
+export function publisherIdOf(
+  raw: Pick<RawPosting, 'publisherId' | 'source' | 'sourceKind' | 'sourceUrl'>,
+): string | null {
+  const explicit = raw.publisherId === undefined ? '' : String(raw.publisherId).trim();
+  if (explicit) return explicit;
+  if (raw.sourceKind !== 'ats') return null;
+
+  try {
+    const url = new URL(raw.sourceUrl);
+    if (raw.source === 'greenhouse') {
+      return /\/jobs\/([^/]+)/.exec(url.pathname)?.[1] ?? url.searchParams.get('token');
+    }
+  } catch {
+    // The canonical URL fallback below is deterministic for malformed fixture input too.
+  }
+  return canonicalSourceUrl(raw.sourceUrl) || null;
+}
+
+function publisherKey(source: string, id: string): string {
+  return `${source}${KEY_SEPARATOR}${id}`;
+}
+
+function sharesPublisherIdentity(a: Group, b: Group): boolean {
+  if (a.companyNorm !== b.companyNorm) return false;
+  for (const [source, id] of a.publisherIds) {
+    if (b.publisherIds.get(source) === id) return true;
+  }
+  return false;
+}
+
+function hasPublisherConflict(a: Group, b: Group): boolean {
+  for (const [source, id] of a.publisherIds) {
+    const other = b.publisherIds.get(source);
+    if (other !== undefined && other !== id) return true;
+  }
+  return false;
 }
 
 /**
  * Collapse raw postings from every connector into one row per job.
  *
- * Three passes, in order:
- *  1. exact `dedupe_key`;
- *  2. near-dupe — same company AND same location, title ratio ≥ 0.90;
- *  3. remote-vs-city (finding I) — same company, title ratio ≥ 0.95, and exactly one side
+ * Four passes, in order:
+ *  1. exact normalized key, including an ATS publisher identity when one is available;
+ *  2. publisher identity — aliases/tracking URLs for one publisher job id;
+ *  3. near-dupe — same company AND same location, title ratio ≥ 0.90;
+ *  4. remote-vs-city (finding I) — same company, title ratio ≥ 0.95, and exactly one side
  *     remote. This is the pass that catches the same job listed as "San Francisco" on the
  *     ATS and "Remote" on an aggregator.
+ *
+ * Passes 3 and 4 may merge different publishers, but never two distinct ids from the same
+ * publisher. That keeps cross-source dedupe useful without collapsing sibling requisitions.
  *
  * Within a pass the best-ranked group (by source priority, then earliest date, then URL)
  * keeps its identity and absorbs the others, so the ATS row's location survives as truth and
@@ -205,9 +285,15 @@ export function dedupePostings(
   const fallbackPostedAt = options.fallbackPostedAt ?? Date.now();
   let groups = groupByKey(postings);
 
+  // URL aliases and tracking variants for one publisher id are the same posting even when
+  // their display title or location changed. This pass also makes the later conflict guard
+  // independent of input order.
+  groups = mergePass(groups, sharesPublisherIdentity);
+
   groups = mergePass(
     groups,
     (a, b) =>
+      !hasPublisherConflict(a, b) &&
       a.companyNorm === b.companyNorm &&
       a.locationKey === b.locationKey &&
       tokenSetRatio(a.titleNorm, b.titleNorm) >= NEAR_DUPE_THRESHOLD,
@@ -216,6 +302,7 @@ export function dedupePostings(
   groups = mergePass(
     groups,
     (a, b) =>
+      !hasPublisherConflict(a, b) &&
       a.companyNorm === b.companyNorm &&
       a.location.is_remote !== b.location.is_remote &&
       tokenSetRatio(a.titleNorm, b.titleNorm) >= REMOTE_MERGE_THRESHOLD,
@@ -232,11 +319,14 @@ function groupByKey(postings: RawPosting[]): Group[] {
     const titleNorm = normalizeTitle(raw.title);
     const location = normalizeLocation(raw.location);
     const locKey = locationKey(location);
-    const key = keyOf(companyNorm, titleNorm, locKey);
+    const id = publisherIdOf(raw);
+    const identity = id ? publisherKey(raw.source, id) : undefined;
+    const key = keyOf(companyNorm, titleNorm, locKey, identity);
     const source: PostingSource = {
       source: raw.source,
       sourceKind: raw.sourceKind,
       sourceUrl: raw.sourceUrl,
+      ...(id ? { publisherId: id } : {}),
       applyUrl: raw.applyUrl,
       sourcePriority: SOURCE_PRIORITY[raw.sourceKind],
       postedAt: raw.postedAt,
@@ -252,6 +342,7 @@ function groupByKey(postings: RawPosting[]): Group[] {
         locationKey: locKey,
         location,
         sources: [source],
+        publisherIds: new Map(id ? [[raw.source, id]] : []),
       });
     }
   }
@@ -265,8 +356,12 @@ function mergePass(groups: Group[], canMerge: (kept: Group, candidate: Group) =>
 
   for (const group of ranked) {
     const target = kept.find((candidate) => canMerge(candidate, group));
-    if (target) target.sources.push(...group.sources);
-    else kept.push(group);
+    if (!target) {
+      kept.push(group);
+      continue;
+    }
+    target.sources.push(...group.sources);
+    for (const [source, id] of group.publisherIds) target.publisherIds.set(source, id);
   }
 
   return kept;
@@ -332,19 +427,25 @@ function materialize(group: Group, fallbackPostedAt: number): DedupedPosting {
   return { ...group, sources, postedAt, canonicalUrl };
 }
 
-/** `posting_sources` is unique on (posting, source_url); two reports of one URL are one row. */
+/**
+ * One source record per publisher identity when available, otherwise per canonicalized URL.
+ * This collapses tracking and hostname aliases without conflating distinct requisitions.
+ */
 function collapseSourceUrls(sources: PostingSource[]): PostingSource[] {
   const byUrl = new Map<string, PostingSource>();
 
   for (const source of sources) {
-    const existing = byUrl.get(source.sourceUrl);
+    const identity = source.publisherId
+      ? publisherKey(source.source, source.publisherId)
+      : canonicalSourceUrl(source.sourceUrl);
+    const existing = byUrl.get(identity);
     if (!existing) {
-      byUrl.set(source.sourceUrl, { ...source });
+      byUrl.set(identity, { ...source });
       continue;
     }
     const postedAt = earliest(existing.postedAt, source.postedAt);
     byUrl.set(
-      source.sourceUrl,
+      identity,
       source.sourcePriority < existing.sourcePriority
         ? { ...source, postedAt }
         : { ...existing, postedAt },

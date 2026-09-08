@@ -235,6 +235,7 @@ export interface RobotsRules {
 }
 
 const ALLOW_ALL: RobotsRules = { isAllowed: () => true, crawlDelayMs: 0 };
+const DISALLOW_ALL: RobotsRules = { isAllowed: () => false, crawlDelayMs: 0 };
 
 interface Rule {
   allow: boolean;
@@ -384,15 +385,13 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     // must not be able to stall a whole connector.
     try {
       const init: RequestInit = guarded ? { redirect: 'manual' } : {};
-      const response = await withTimeout(`${origin}/robots.txt`, init, defaultTimeoutMs);
-      if (guarded && REDIRECT_STATUS.has(response.status)) return ALLOW_ALL;
+      const { response, text } = await withTimeout(`${origin}/robots.txt`, init, defaultTimeoutMs);
+      if (guarded && REDIRECT_STATUS.has(response.status)) return DISALLOW_ALL;
+      if (response.status === 429 || response.status >= 500) return DISALLOW_ALL;
       if (!response.ok) return ALLOW_ALL;
-      return parseRobots(await response.text());
+      return parseRobots(text);
     } catch {
-      // ponytail: fail OPEN on an unreachable robots.txt. RFC 9309 says treat a 5xx as a
-      // full disallow; here that would let one flaky minute silently zero out a run, and we
-      // only ever call documented endpoints. Revisit if a Tier-3 scraper phase lands.
-      return ALLOW_ALL;
+      return DISALLOW_ALL;
     }
   }
 
@@ -413,15 +412,18 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     init: RequestInit,
     timeoutMs: number,
     label: string = safeUrl(url),
-  ): Promise<Response> {
+  ): Promise<{ response: Response; text: string }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetchImpl(url, {
+      const response = await fetchImpl(url, {
         ...init,
         headers: { 'User-Agent': USER_AGENT, Accept: '*/*', ...init.headers },
         signal: controller.signal,
       });
+      // Headers alone do not finish the request: a stalled body used to outlive the timeout.
+      const text = await response.text();
+      return { response, text };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(
@@ -472,8 +474,8 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
 
     for (let attempt = 0; ; ) {
       await throttle(new URL(target).host, Math.max(minGapMs, crawlDelayMs));
-      const response = await withTimeout(target, init, timeoutMs, label);
-      if (response.ok) return response.text();
+      const { response, text } = await withTimeout(target, init, timeoutMs, label);
+      if (response.ok) return text;
 
       if (options.publicOnly && REDIRECT_STATUS.has(response.status)) {
         const location = response.headers.get('location');
@@ -483,10 +485,14 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
         target = new URL(location, target).toString();
         // Each hop is a destination the remote side chose, so each hop is re-checked.
         await assertPublicDestination(target, label, resolveHost);
-        // ponytail: a hop keeps the original method and the origin host's Crawl-delay, and
-        // does not re-read robots.txt for a new origin. `linkcheck` only ever sends HEAD/GET
-        // to a URL a board published as its own apply link, so none of the three bites; a
-        // future publicOnly caller that POSTs or crawls across origins would need them.
+        if (options.respectRobots !== false) {
+          const destination = new URL(target);
+          const rules = await robotsFor(destination.origin, true);
+          if (!rules.isAllowed(destination.pathname + destination.search)) {
+            throw new RobotsDisallowedError(label);
+          }
+          crawlDelayMs = rules.crawlDelayMs;
+        }
         continue; // a hop is not a retry attempt
       }
 
@@ -553,6 +559,11 @@ export interface ConnectorContext {
    * and only bars it from ageing anything toward delisting this cycle.
    */
   degraded(reason: string): void;
+  /** Local cursor state, saved only after this connector's returned postings are persisted. */
+  checkpoint?: {
+    value: unknown;
+    save(value: unknown, pending: boolean): void;
+  };
 }
 
 export interface Connector {

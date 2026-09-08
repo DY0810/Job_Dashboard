@@ -63,6 +63,14 @@ describe('GEO_TIER', () => {
     expect(tierOf('London, United Kingdom', 'hybrid')).toBe(GEO_TIER.elsewhere);
   });
 
+  it('lets explicit onsite and hybrid work modes override a location-derived remote flag', () => {
+    const remoteIndia = { city_norm: null, state: null, country: 'IN', is_remote: true };
+    expect(geoTier(remoteIndia)).toBe(GEO_TIER.remote);
+    expect(geoTier(remoteIndia, 'remote')).toBe(GEO_TIER.remote);
+    expect(geoTier(remoteIndia, 'onsite')).toBe(GEO_TIER.elsewhere);
+    expect(geoTier(remoteIndia, 'hybrid')).toBe(GEO_TIER.elsewhere);
+  });
+
   it.each(['Berlin', 'Berlin, Germany', 'Austin, TX', 'London', 'New Orleans, LA'])(
     'puts %s in tier 3',
     (location) => {

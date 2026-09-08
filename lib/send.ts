@@ -145,16 +145,16 @@ export const MAX_BATCH = 10;
 export async function sendAll(
   account: Account,
   messages: Outgoing[],
-): Promise<{ sent: number; failed: { to: string; reason: string }[] }> {
+): Promise<{ sent: number; failed: { index: number; to: string; reason: string }[] }> {
   if (messages.length > MAX_BATCH) throw new Error(`at most ${MAX_BATCH} messages at a time`);
 
   const transport = nodemailer.createTransport({ ...SMTP, auth: { user: account.user, pass: account.pass } });
 
-  const failed: { to: string; reason: string }[] = [];
+  const failed: { index: number; to: string; reason: string }[] = [];
   let sent = 0;
   // Serial, not Promise.all: one authenticated SMTP connection, and a partial failure has to
   // report WHICH recipients missed out rather than collapsing into one rejected promise.
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     try {
       await transport.sendMail({
         from: account.user,
@@ -164,7 +164,7 @@ export async function sendAll(
       });
       sent += 1;
     } catch (error) {
-      failed.push({ to: message.to, reason: (error as Error).message.slice(0, 200) });
+      failed.push({ index, to: message.to, reason: (error as Error).message.slice(0, 200) });
     }
   }
   transport.close();
