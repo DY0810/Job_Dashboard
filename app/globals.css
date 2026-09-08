@@ -239,10 +239,54 @@
   background-color: var(--surface);
 }
 
+@media (min-width: 701px) {
+  .rows thead th:last-child,
+  .rows td[data-field="apply"] {
+    position: sticky;
+    right: 0;
+    width: 64px;
+    min-width: 64px;
+    max-width: 64px;
+    z-index: 2;
+    background-color: var(--canvas);
+  }
+
+  .rows thead th:nth-last-child(2),
+  .rows td[data-field="company"] {
+    position: sticky;
+    right: 64px;
+    width: 180px;
+    min-width: 180px;
+    max-width: 180px;
+    padding-left: 12px;
+    z-index: 2;
+    background-color: var(--canvas);
+    box-shadow: -1px 0 var(--rule);
+  }
+
+  .rows thead th:nth-last-child(-n + 2) { z-index: 3; }
+  .rows td[data-field="company"] a > span {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+@media (min-width: 701px) and (max-width: 1351px) {
+  .rows td[data-field="badges"] > span {
+    width: 220px;
+    max-width: 220px;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+}
+
 /* The one column that absorbs the slack, and truncates rather than wrapping a row. */
 .rows td.grow,
 .rows th.grow {
   width: 100%;
+  min-width: 180px;
   max-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

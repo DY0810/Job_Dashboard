@@ -166,9 +166,10 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
         <Link
           href={withJob(p, row.id)}
           scroll={false}
-          className="inline-flex items-center gap-1 hover:text-fg-dim"
+          title={row.company}
+          className="inline-flex max-w-full items-center gap-1 hover:text-fg-dim"
         >
-          {row.company}
+          <span>{row.company}</span>
           <Chevron />
         </Link>
       </td>
@@ -423,7 +424,7 @@ export default async function Page({
         )
       ) : (
         <div className="min-h-0 flex-1 overflow-auto" role="region" aria-label="Job results" tabIndex={0}>
-          <table className="rows" data-track={p.tab} style={{ minWidth: p.tab === "design" ? 1000 : 1320 }}>
+          <table className="rows" data-track={p.tab} style={{ minWidth: p.tab === "design" ? 900 : 1320 }}>
             <caption className="sr-only">
               {p.tab} postings, newest first
               {p.tab === "design" ? ", target locations only" : ""}

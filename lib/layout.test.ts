@@ -22,6 +22,12 @@ const CSS = readFileSync('app/globals.css', 'utf8');
 const PAGE = readFileSync('app/page.tsx', 'utf8');
 
 describe('the flexible column contract', () => {
+  it('pins company and Apply within the scroll region above the stacked-layout breakpoint', () => {
+    expect(CSS).toContain('@media (min-width: 701px)');
+    expect(CSS).toMatch(/\.rows td\[data-field="apply"\]\s*\{[^}]*position: sticky;[^}]*right: 0;/);
+    expect(CSS).toMatch(/\.rows td\[data-field="company"\]\s*\{[^}]*position: sticky;[^}]*right: 64px;/);
+  });
+
   it('still depends on a definite width, or this whole file is moot', () => {
     // The premise. If someone rewrites `.grow` to not use a percentage — `table-layout: fixed`,
     // say — this guard is obsolete rather than merely passing, and should be deleted.

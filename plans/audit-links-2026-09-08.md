@@ -21,6 +21,9 @@
    Robots refusals and 401/403/429 are blocked, not dead.
 5. Do not request LinkedIn, Indeed, Glassdoor, ZipRecruiter, or Handshake links.
 
+Report URLs are log-safe and omit query strings. Use the posting ID to retrieve its
+full current `canonicalUrl` before rechecking a query-dependent application link.
+
 ## Canonical URL trace
 
 - `scripts/connectors/*` produce `sourceUrl` and, where available, a distinct `applyUrl`.
