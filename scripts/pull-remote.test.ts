@@ -7,7 +7,7 @@ import { expect, it } from 'vitest';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { postings } from '../lib/db/schema.ts';
 import { fixtures } from './seed.ts';
-import { pullRemote } from './pull-remote.ts';
+import { ensureCachedState, pullRemote } from './pull-remote.ts';
 
 it('publishes a complete cold bootstrap and refuses to overwrite it', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'workie-bootstrap-'));
@@ -39,6 +39,30 @@ it('never publishes a partial bootstrap when a later table fails', async () => {
     await expect(pullRemote(`file:${source}`, undefined, target)).rejects.toThrow();
     expect(existsSync(target)).toBe(false);
     expect(existsSync(`${target}.bootstrap-${process.pid}`)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('recovers a cache behind the mirror without overwriting an ahead-of-mirror cache', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'workie-cache-generation-'));
+  try {
+    const source = join(dir, 'source.db');
+    const cache = join(dir, 'cache.db');
+    const db = openDb(source, { migrate: true }) as Db & { $client: Database.Database };
+    db.insert(postings).values(fixtures(Date.now())).run();
+    await db.$client.backup(cache);
+    db.$client.close();
+    const old = openDb(cache) as Db & { $client: Database.Database };
+    old.run(sql`delete from postings where id = (select max(id) from postings)`);
+    old.$client.close();
+    expect(await ensureCachedState(`file:${source}`, undefined, cache)).toBe(true);
+    expect(existsSync(`${cache}.stale-${process.pid}`)).toBe(true);
+
+    const current = openDb(cache) as Db & { $client: Database.Database };
+    current.insert(postings).values({ ...fixtures(Date.now())[0], id: 99_999, dedupeKey: 'ahead' }).run();
+    current.$client.close();
+    expect(await ensureCachedState(`file:${source}`, undefined, cache)).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

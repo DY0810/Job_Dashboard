@@ -62,12 +62,14 @@ jobs:
           key: workie-db-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: workie-db-
 
-      - name: Bootstrap from Turso when the cache is cold
+      - name: Validate cached writer state against Turso
         id: bootstrap
         run: |
-          if [ ! -f workie.db ]; then
-            node scripts/pull-remote.ts
-            # A cold start should not also be a 90-minute linkcheck; let that wait a week.
+          cold=0
+          if [ ! -f workie.db ]; then cold=1; fi
+          node scripts/pull-remote.ts --check-cache
+          if [ "$cold" = 1 ]; then
+            # A cold start should not also be a 90-minute linkcheck.
             mkdir -p logs && touch logs/.linkcheck-stamp
           fi
 
@@ -110,8 +112,21 @@ jobs:
         if: always()
         run: npm run status
 
-      - name: Save state
+      - name: Checkpoint cached database
+        id: checkpoint
         if: always() && steps.bootstrap.outcome == 'success'
+        run: |
+          node --input-type=module <<'JS'
+          import Database from 'better-sqlite3';
+          const db = new Database('workie.db', { fileMustExist: true });
+          const result = db.pragma('wal_checkpoint(TRUNCATE)');
+          db.close();
+          if (result.some(row => row.busy !== 0)) throw new Error('Database checkpoint is still busy');
+          console.log('Committed database state is checkpointed for cache recovery');
+          JS
+
+      - name: Save state
+        if: always() && steps.checkpoint.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: |

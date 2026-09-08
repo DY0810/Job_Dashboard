@@ -49,6 +49,8 @@ next-env.d.ts
 *.db-wal
 *.db-shm
 *.db.bootstrap-*
+*.db.recovered-*
+*.db.stale-*
 /fixtures/live
 
 # Playwright MCP scratch: page snapshots and console logs from browser verification.

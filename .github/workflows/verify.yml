@@ -1,7 +1,6 @@
 name: verify
 on:
-  push:
-    branches: [main]
+  push: {}
   pull_request:
 
 permissions:

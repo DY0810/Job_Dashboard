@@ -14,9 +14,9 @@
  *   npm run pull:remote -- --from=file:/tmp/mirror.db    a local libSQL file, for tests
  */
 
-import { existsSync, linkSync, rmSync } from 'node:fs';
+import { existsSync, linkSync, renameSync, rmSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import type Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
 
 import { createClient } from '@libsql/client';
 import { getTableName, gt } from 'drizzle-orm';
@@ -29,6 +29,46 @@ import { TABLES, type Mirrored } from './push-remote.ts';
 
 /** Rows per page. Descriptions make `postings` rows heavy; 200 keeps each response modest. */
 const PAGE = 200;
+const GENERATION = `select
+  coalesce((select max(id) from postings), 0) as posting,
+  coalesce((select max(id) from posting_sources), 0) as source,
+  coalesce((select max(started_at) from connector_runs), 0) as run`;
+
+/** A cache is an optimization, never permission to overwrite a newer hosted generation. */
+export async function ensureCachedState(url: string, authToken: string | undefined, path: string): Promise<boolean> {
+  if (!existsSync(path)) {
+    await pullRemote(url, authToken, path);
+    return true;
+  }
+  const remote = createClient({ url, authToken });
+  let latest: Record<string, unknown>;
+  try {
+    latest = (await remote.execute(GENERATION)).rows[0];
+  } finally {
+    remote.close();
+  }
+  let cached: Record<string, number> | null = null;
+  const local = new Database(path, { readonly: true });
+  try {
+    cached = local.prepare(GENERATION).get() as Record<string, number>;
+  } catch {
+    // A partially restored or corrupt cache is replaceable; the hosted copy is authoritative.
+  } finally {
+    local.close();
+  }
+  if (cached && ['posting', 'source', 'run'].every((key) => Number(latest[key]) <= cached![key])) return false;
+
+  const replacement = `${path}.recovered-${process.pid}`;
+  await pullRemote(url, authToken, replacement);
+  const backup = `${path}.stale-${process.pid}`;
+  if (existsSync(backup)) throw new Error(`stale-cache backup already exists: ${backup}`);
+  renameSync(path, backup);
+  for (const suffix of ['-wal', '-shm']) {
+    if (existsSync(`${path}${suffix}`)) renameSync(`${path}${suffix}`, `${backup}${suffix}`);
+  }
+  renameSync(replacement, path);
+  return true;
+}
 
 async function pullTable(remote: TursoDb, local: Db, table: Mirrored): Promise<number> {
   let last = 0;
@@ -90,6 +130,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (!url) throw new Error('no source: set TURSO_DATABASE_URL, or pass --from=file:/path.db');
 
   const path = process.env.WORKIE_DB ?? 'workie.db';
+  if (process.argv.includes('--check-cache')) {
+    if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('--check-cache is restricted to the cloud writer');
+    const restored = await ensureCachedState(url, process.env.TURSO_AUTH_TOKEN, path);
+    console.log(restored ? 'Recovered writer state from Turso' : 'Cached writer state is current or ahead of the mirror');
+    process.exit(0);
+  }
   const started = Date.now();
   const counts = await pullRemote(url, process.env.TURSO_AUTH_TOKEN, path);
   console.log(

@@ -13,6 +13,8 @@
 *.db-wal
 *.db-shm
 *.db.bootstrap-*
+*.db.recovered-*
+*.db.stale-*
 
 # Cycle logs, rotated daily by scripts/refresh.sh. Local-only diagnostics.
 /logs
