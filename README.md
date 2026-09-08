@@ -47,8 +47,13 @@ workflow's maximum runtime.
 
 Collection keys belong in **GitHub repository Actions secrets**, not only in Vercel.
 The workflow forwards `JOOBLE_KEY`, `CAREERJET_AFFID`, `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`,
-`USAJOBS_KEY`, and `USAJOBS_EMAIL` when present. A configured key does not override a source's
+`USAJOBS_KEY`, `USAJOBS_EMAIL`, and `MUSE_API_KEY` when present. A configured key does not override a source's
 robots policy.
+
+The Muse requires app registration beyond testing. It is disabled without its
+registered API key. Its public API rejects page 100, so the connector walks the
+company directory and company/category partitions, splitting oversized partitions
+by supported levels and reporting any remaining provider limits.
 
 Large paginated feeds keep `connector_checkpoints` inside the Actions database cache.
 A checkpoint advances only after its returned postings commit. Pending imports bypass the

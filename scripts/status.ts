@@ -68,7 +68,7 @@ export function collectStatus(
   const env = options.env ?? process.env;
   const now = options.now ?? Date.now();
   const lastOk = lastSuccessByConnector(db);
-  const checkpoints = readCheckpoints(db);
+  const checkpoints = readCheckpoints(db, list);
   const cutoff = new Date(cutoffTimestamp(now));
 
   // Live postings per connector, in one grouped query rather than one query per connector.

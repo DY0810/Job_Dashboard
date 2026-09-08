@@ -92,20 +92,23 @@ const CHECKPOINT_DDL = `create table if not exists connector_checkpoints (
 )`;
 
 /** Local-only state rides the existing Actions database cache, like mirror_state. */
-export function readCheckpoints(db: Db): Map<string, Checkpoint> {
+export function readCheckpoints(db: Db, sources: Connector[] = []): Map<string, Checkpoint> {
+  const initial = new Map(sources.filter((source) => source.resumable)
+    .map((source) => [source.name, { value: null, pending: true } as Checkpoint]));
   if (!db.get(sql`select name from sqlite_master where type = 'table' and name = 'connector_checkpoints'`)) {
-    return new Map();
+    return initial;
   }
   const rows = db.all(sql`select source, value, pending from connector_checkpoints`) as {
     source: string; value: string; pending: number;
   }[];
-  return new Map(rows.map((row) => {
+  const stored = rows.map((row): [string, Checkpoint] => {
     try {
       return [row.source, { value: JSON.parse(row.value), pending: Boolean(row.pending) }];
     } catch {
       return [row.source, { value: null, pending: true }];
     }
-  }));
+  });
+  return new Map([...initial, ...stored]);
 }
 
 function message(error: unknown): string {
@@ -175,7 +178,7 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
   const log = options.log ?? jsonLog;
   const now = options.now ?? Date.now;
   const startedAt = new Date(now());
-  const checkpoints = readCheckpoints(db);
+  const checkpoints = readCheckpoints(db, options.connectors);
 
   const selected =
     options.only === undefined

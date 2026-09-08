@@ -42,6 +42,7 @@ jobs:
       JOOBLE_KEY: ${{ secrets.JOOBLE_KEY }}
       USAJOBS_KEY: ${{ secrets.USAJOBS_KEY }}
       USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
+      MUSE_API_KEY: ${{ secrets.MUSE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

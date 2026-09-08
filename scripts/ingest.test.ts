@@ -74,6 +74,26 @@ function flakyRuntime(): Runtime {
 const silent = (): void => {};
 
 describe('resumable collection', () => {
+  it('starts a new full import even when the old bounded connector ran recently', async () => {
+    const db = memoryDb();
+    db.insert(connectorRuns).values({
+      connector: 'paged', runId: 'old-head-only', status: 'ok', fetched: 100, startedAt: new Date(POSTED),
+    }).run();
+    let called = false;
+    const source: Connector = {
+      name: 'paged', kind: 'aggregator', resumable: true, minIntervalMs: 86_400_000,
+      async fetch(context) {
+        called = true;
+        context.degraded('catch-up chunk');
+        context.checkpoint?.save({ page: 1 }, true);
+        return [];
+      },
+    };
+    await runIngest({ db, connectors: [source], runtime: createRuntime(), runId: 'new-import',
+      now: () => POSTED + 60_000, log: silent });
+    expect(called).toBe(true);
+    expect(readCheckpoints(db).get('paged')?.pending).toBe(true);
+  });
   it('advances only committed batches and bypasses cadence until catch-up finishes', async () => {
     const db = memoryDb();
     const source: Connector = {

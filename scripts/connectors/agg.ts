@@ -436,6 +436,7 @@ function himalayasCheckpoint(value: unknown): HimalayasCheckpoint | null {
 export const himalayas: Connector = {
   name: 'himalayas',
   kind: 'aggregator',
+  resumable: true,
   // The provider documents a daily data refresh. More frequent polls only re-read its cache.
   minIntervalMs: ONE_DAY,
   async fetch(context) {
@@ -675,81 +676,226 @@ interface MuseJob {
   refs?: { landing_page?: string };
 }
 
+interface MuseCompany {
+  name?: string;
+}
+
 /**
- * Level filtering was not reliable in a live check: a Management request returned a Mid Level
- * row. Checkpointed category walks leave eligibility to the existing deterministic extractor,
- * which is the shared authority on tracks and seniority.
+ * The provider rejects page 100 even when broad queries report more than 100 pages. Its company
+ * filter uses the directory's literal name, not the numeric id. Walk company/category partitions
+ * and use only the four verified levels to split a partition that exceeds the page ceiling.
  */
-const MUSE_SCOPES = ['Design and UX', 'Science and Engineering'] as const;
+const MUSE_CATEGORIES = [
+  'Design and UX',
+  'Software Engineering',
+  'Data and Analytics',
+  'Computer and IT',
+  'Science and Engineering',
+] as const;
+const MUSE_LEVELS = ['Internship', 'Entry Level', 'Mid Level', 'Senior Level'] as const;
+const MUSE_PAGE_LIMIT = 100;
 
 interface MuseCheckpoint {
-  version: 1;
-  scope: number;
+  version: 2;
+  directoryPage: number;
+  directoryPageCount: number | null;
+  companyIndex: number;
+  companyName: string | null;
+  category: number;
+  level: number | null;
   page: number;
   pageCount: number | null;
+  providerLimited: number;
   complete: boolean;
+}
+
+function emptyMuseCheckpoint(): MuseCheckpoint {
+  return {
+    version: 2,
+    directoryPage: 0,
+    directoryPageCount: null,
+    companyIndex: 0,
+    companyName: null,
+    category: 0,
+    level: null,
+    page: 0,
+    pageCount: null,
+    providerLimited: 0,
+    complete: false,
+  };
 }
 
 function museCheckpoint(value: unknown): MuseCheckpoint | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<MuseCheckpoint>;
-  const scope = candidate.scope;
+  const directoryPage = candidate.directoryPage;
+  const companyIndex = candidate.companyIndex;
+  const category = candidate.category;
+  const level = candidate.level;
   const page = candidate.page;
+  const providerLimited = candidate.providerLimited;
   const complete = candidate.complete;
   if (
-    candidate.version !== 1 ||
-    typeof scope !== 'number' ||
-    !Number.isInteger(scope) ||
-    scope < 0 ||
-    scope > MUSE_SCOPES.length ||
+    candidate.version !== 2 ||
+    typeof directoryPage !== 'number' ||
+    !Number.isInteger(directoryPage) ||
+    directoryPage < 0 ||
+    directoryPage >= MUSE_PAGE_LIMIT ||
+    typeof companyIndex !== 'number' ||
+    !Number.isInteger(companyIndex) ||
+    companyIndex < 0 ||
+    (candidate.companyName !== null && typeof candidate.companyName !== 'string') ||
+    typeof category !== 'number' ||
+    !Number.isInteger(category) ||
+    category < 0 ||
+    category > MUSE_CATEGORIES.length ||
+    (level !== null &&
+      (typeof level !== 'number' ||
+        !Number.isInteger(level) ||
+        level < 0 ||
+        level >= MUSE_LEVELS.length)) ||
     typeof page !== 'number' ||
     !Number.isInteger(page) ||
     page < 0 ||
+    page >= MUSE_PAGE_LIMIT ||
+    (candidate.directoryPageCount !== null &&
+      candidate.directoryPageCount !== undefined &&
+      (!Number.isInteger(candidate.directoryPageCount) || candidate.directoryPageCount < 0)) ||
     (candidate.pageCount !== null &&
       candidate.pageCount !== undefined &&
       (!Number.isInteger(candidate.pageCount) || candidate.pageCount < 0)) ||
+    typeof providerLimited !== 'number' ||
+    !Number.isInteger(providerLimited) ||
+    providerLimited < 0 ||
     typeof complete !== 'boolean'
   ) {
     return null;
   }
   return {
-    version: 1,
-    scope,
+    version: 2,
+    directoryPage,
+    directoryPageCount: candidate.directoryPageCount ?? null,
+    companyIndex,
+    companyName: candidate.companyName ?? null,
+    category,
+    level: level ?? null,
     page,
     pageCount: candidate.pageCount ?? null,
+    providerLimited,
     complete,
   };
+}
+
+function advanceMusePartition(state: MuseCheckpoint): void {
+  state.page = 0;
+  state.pageCount = null;
+  if (state.level !== null) {
+    state.level += 1;
+    if (state.level < MUSE_LEVELS.length) return;
+    state.level = null;
+  }
+  state.category += 1;
 }
 
 export const muse: Connector = {
   name: 'muse',
   kind: 'aggregator',
+  resumable: true,
+  skip: (env) => env.MUSE_API_KEY?.trim() ? null : 'MUSE_API_KEY not set; The Muse requires registration for production use',
   minIntervalMs: 60 * 60 * 1000,
   async fetch(context) {
     const jobs: MuseJob[] = [];
+    const request = <T>(path: string, query: URLSearchParams) => {
+      const key = context.env.MUSE_API_KEY?.trim();
+      if (key) query.set('api_key', key);
+      return context.runtime.fetchJson<T>(`https://www.themuse.com/api/public/${path}?${query}`, {
+        minGapMs: key ? 1000 : 7200,
+      });
+    };
     const checkpoint = museCheckpoint(context.checkpoint?.value);
-    const restartingSweep = context.checkpoint !== undefined && checkpoint?.complete === true;
-    const catchingUp = context.checkpoint !== undefined && !restartingSweep;
-    const pageBudget = catchingUp ? catchUpPageBudget(context.env) : MUSE_SCOPES.length;
-    let scope = catchingUp ? checkpoint?.scope ?? 0 : 0;
-    let page = catchingUp ? checkpoint?.page ?? 0 : 0;
-    let pageCount = catchingUp ? checkpoint?.pageCount ?? null : null;
+    const checkpointed = context.checkpoint !== undefined;
+    const state = checkpoint?.complete ? emptyMuseCheckpoint() : checkpoint ?? emptyMuseCheckpoint();
+    const pageBudget = checkpointed ? catchUpPageBudget(context.env) : 2;
+    const directories = new Map<number, { results?: MuseCompany[]; page_count?: number }>();
     let requests = 0;
-    const headPageCounts: Array<number | null> = [];
-    let headFailed = false;
 
-    while (scope < MUSE_SCOPES.length && requests < pageBudget) {
+    while (!state.complete && requests < pageBudget) {
+      if (state.companyName === null) {
+        if (state.directoryPage >= MUSE_PAGE_LIMIT) {
+          context.degraded(`Muse: company directory exceeds the ${MUSE_PAGE_LIMIT}-page provider limit`);
+          state.providerLimited += 1;
+          state.complete = true;
+          break;
+        }
+        let directory = directories.get(state.directoryPage);
+        if (!directory) {
+          try {
+            directory = await request<{ results?: MuseCompany[]; page_count?: number }>(
+              'companies', new URLSearchParams({ page: String(state.directoryPage) }));
+          } catch (error) {
+            context.degraded(`Muse directory page ${state.directoryPage}: ${(error as Error).message}`);
+            break;
+          }
+          requests += 1;
+          directories.set(state.directoryPage, directory);
+        }
+        if (
+          typeof directory.page_count !== 'number' ||
+          !Number.isInteger(directory.page_count) ||
+          directory.page_count < 0
+        ) {
+          context.degraded(`Muse company directory page ${state.directoryPage}: response omitted page_count`);
+          break;
+        }
+        state.directoryPageCount = directory.page_count;
+        const companies = (directory.results ?? [])
+          .map((company) => company.name?.trim())
+          .filter((name): name is string => Boolean(name));
+        if (companies.length === 0 && state.directoryPage + 1 < directory.page_count) {
+          context.degraded(`Muse directory page ${state.directoryPage}: empty before advertised end`);
+          break;
+        }
+        if (state.companyIndex >= companies.length) {
+          if (companies.length === 0 || state.directoryPage + 1 >= directory.page_count) {
+            state.complete = true;
+          } else {
+            state.directoryPage += 1;
+            state.companyIndex = 0;
+          }
+          continue;
+        }
+        state.companyName = companies[state.companyIndex];
+        state.category = 0;
+        state.level = null;
+        state.page = 0;
+        state.pageCount = null;
+        continue;
+      }
+
+      if (state.category >= MUSE_CATEGORIES.length) {
+        state.companyIndex += 1;
+        state.companyName = null;
+        state.category = 0;
+        state.level = null;
+        state.page = 0;
+        state.pageCount = null;
+        continue;
+      }
+
       const query = new URLSearchParams({
-        category: MUSE_SCOPES[scope],
-        page: String(page),
+        company: state.companyName,
+        category: MUSE_CATEGORIES[state.category],
+        page: String(state.page),
         descending: 'true',
       });
+      if (state.level !== null) query.set('level', MUSE_LEVELS[state.level]);
       let body: { results?: MuseJob[]; page_count?: number };
       try {
-        body = await context.runtime.fetchJson(`https://www.themuse.com/api/public/jobs?${query}`);
+        body = await request('jobs', query);
       } catch (error) {
-        context.degraded(`${MUSE_SCOPES[scope]} page ${page}: ${(error as Error).message}`);
-        headFailed = true;
+        context.degraded(
+          `Muse ${state.companyName} / ${MUSE_CATEGORIES[state.category]} page ${state.page}: ${(error as Error).message}`,
+        );
         break;
       }
       requests += 1;
@@ -759,63 +905,56 @@ export const muse: Connector = {
         !Number.isInteger(reportedPageCount) ||
         reportedPageCount < 0
       ) {
-        context.degraded(`${MUSE_SCOPES[scope]} page ${page}: response omitted page_count`);
-        headFailed = true;
+        context.degraded(
+          `Muse ${state.companyName} / ${MUSE_CATEGORIES[state.category]} page ${state.page}: response omitted page_count`,
+        );
         break;
       }
 
-      pageCount = reportedPageCount;
-      if (!catchingUp && page === 0) headPageCounts[scope] = reportedPageCount;
       const rows = body.results ?? [];
-      if (rows.length === 0 && page + 1 < reportedPageCount) {
-        context.degraded(`${MUSE_SCOPES[scope]} page ${page}: empty before advertised end`);
-        headFailed = true;
+      if (state.level === null && reportedPageCount > MUSE_PAGE_LIMIT) {
+        // Do not persist an overlapping broad page; the level partitions cover this scope.
+        state.level = 0;
+        state.page = 0;
+        state.pageCount = null;
+        continue;
+      }
+
+      const providerLimited = state.level !== null && reportedPageCount > MUSE_PAGE_LIMIT;
+      if (rows.length === 0 && state.page + 1 < reportedPageCount) {
+        context.degraded(
+          `Muse ${state.companyName} / ${MUSE_CATEGORIES[state.category]} page ${state.page}: empty before advertised end`,
+        );
         break;
       }
       jobs.push(...rows);
-      if (!catchingUp || rows.length === 0 || page + 1 >= reportedPageCount) {
-        scope += 1;
-        page = 0;
-        pageCount = null;
+      if (state.page + 1 >= Math.min(reportedPageCount, MUSE_PAGE_LIMIT)) {
+        if (providerLimited) {
+          context.degraded(
+            `Muse provider-limited ${state.companyName} / ${MUSE_CATEGORIES[state.category]} / ${MUSE_LEVELS[state.level!]} at ${MUSE_PAGE_LIMIT} pages`,
+          );
+          state.providerLimited += 1;
+        }
+        advanceMusePartition(state);
       } else {
-        page += 1;
+        state.page += 1;
+        state.pageCount = reportedPageCount;
       }
     }
 
-    if (catchingUp && context.checkpoint) {
-      const complete = scope >= MUSE_SCOPES.length;
-      context.checkpoint.save(
-        {
-          version: 1,
-          scope,
-          page,
-          pageCount,
-          complete,
-        } satisfies MuseCheckpoint,
-        !complete,
-      );
-    } else if (restartingSweep && context.checkpoint && !headFailed) {
-      const designHasMore = (headPageCounts[0] ?? 0) > 1;
-      const scienceHasRows = (headPageCounts[1] ?? 0) > 0;
-      const complete = !designHasMore && !scienceHasRows;
-      context.checkpoint.save(
-        {
-          version: 1,
-          scope: designHasMore ? 0 : scienceHasRows ? 1 : MUSE_SCOPES.length,
-          page: designHasMore ? 1 : 0,
-          pageCount: designHasMore ? headPageCounts[0] ?? null : null,
-          complete,
-        } satisfies MuseCheckpoint,
-        !complete,
-      );
+    if (checkpointed && context.checkpoint) {
+      context.checkpoint.save(state satisfies MuseCheckpoint, !state.complete);
     }
+    context.log({
+      connector: 'muse', fetched: jobs.length, requests,
+      directoryPage: state.directoryPage, directoryPages: state.directoryPageCount,
+      companyIndex: state.companyIndex, complete: state.complete,
+      providerLimited: state.providerLimited,
+    });
 
-    // A category chunk, including its final page, cannot reconcile postings seen by other
-    // chunks and must never age them toward deletion.
+    // A company/category chunk, including its final page, cannot reconcile other chunks.
     context.degraded(
-      catchingUp
-        ? `Muse: checkpoint catch-up read ${jobs.length} rows across ${requests} category pages`
-        : `Muse: normal category-head refresh read ${jobs.length} rows without whole-scan reconciliation`,
+      `Muse: company-partitioned run read ${jobs.length} rows across ${requests} requests without whole-scan reconciliation`,
     );
     return jobs
       .filter((job) => job.refs?.landing_page)

@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { extract } from '../../lib/extract.ts';
 import { normalizeCompany, normalizeTitle } from '../../lib/normalize.ts';
 import { HttpError, RobotsDisallowedError } from '../../lib/runtime.ts';
-import type { Connector, ConnectorContext, ConnectorPosting, Runtime } from '../../lib/runtime.ts';
+import type { Connector, ConnectorContext, ConnectorPosting, FetchOptions, Runtime } from '../../lib/runtime.ts';
 
 import { ashby, greenhouse, lever, recruitee, smartrecruiters, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
@@ -98,7 +98,6 @@ const RECORDED: Connector[] = [
   teamtailor,
   amazon,
   jobicy,
-  muse,
   designjobsCareers,
 ];
 
@@ -741,92 +740,48 @@ describe('design and freelance sources', () => {
   });
 });
 
-describe('muse pagination', () => {
-  const page = (pageCount: number, count = 20) =>
-    JSON.stringify({
-      page_count: pageCount,
-      results: Array.from({ length: count }, (_, i) => ({
-        name: `Product Designer ${i}`,
-        contents: 'Design work.',
-        publication_date: '2026-09-08T00:00:00Z',
-        company: { name: 'Stub Co' },
-        locations: [{ name: 'Remote' }],
-        refs: { landing_page: `https://www.themuse.com/jobs/stub-${i}` },
-      })),
-    });
-
-  it('keeps a normal head refresh ghost-degraded', async () => {
-    const { context, degraded } = replay('muse');
-    const results = await muse.fetch({ ...context, runtime: stubRuntime(page(20)) });
-
-    expect(results).toHaveLength(40);
-    expect(degraded).toEqual([
-      'Muse: normal category-head refresh read 40 rows without whole-scan reconciliation',
-    ]);
+describe('muse company-partitioned import', () => {
+  const job = (extra: Record<string, unknown> = {}) => ({
+    name: 'Product Designer',
+    contents: 'Design work.',
+    publication_date: '2026-09-08T00:00:00Z',
+    company: { name: 'Modern Animal, Inc.' },
+    locations: [{ name: 'Remote' }],
+    refs: { landing_page: 'https://www.themuse.com/jobs/stub' },
+    ...extra,
+  });
+  const jobs = (pageCount: number, results: Record<string, unknown>[] = [job()]) => ({
+    page_count: pageCount,
+    results,
+  });
+  const directory = (names: string[], pageCount = 1) => ({
+    page_count: pageCount,
+    results: names.map((name) => ({ name })),
+  });
+  const checkpoint = (extra: Record<string, unknown> = {}) => ({
+    version: 2,
+    directoryPage: 0,
+    directoryPageCount: 1,
+    companyIndex: 0,
+    companyName: 'Modern Animal, Inc.',
+    category: 0,
+    level: null,
+    page: 0,
+    pageCount: null,
+    providerLimited: 0,
+    complete: false,
+    ...extra,
   });
 
-  it('stages category-page progress for the next catch-up run', async () => {
+  it('uses the directory name in a company-scoped category query and saves v2 progress', async () => {
     const { context, degraded } = replay('muse');
-    const saves: { value: unknown; pending: boolean }[] = [];
-    const results = await muse.fetch({
-      ...context,
-      env: { WORKIE_CATCH_UP_PAGES: '5' },
-      runtime: stubRuntime(page(20)),
-      checkpoint: {
-        value: null,
-        save: (value, pending) => saves.push({ value, pending }),
-      },
-    });
-
-    expect(results).toHaveLength(100);
-    expect(saves).toEqual([
-      {
-        value: { version: 1, scope: 0, page: 5, pageCount: 20, complete: false },
-        pending: true,
-      },
-    ]);
-    expect(degraded).toEqual([
-      'Muse: checkpoint catch-up read 100 rows across 5 category pages',
-    ]);
-  });
-
-  it('completes both scopes but remains ghost-degraded', async () => {
-    const { context, degraded } = replay('muse');
-    const saves: { value: unknown; pending: boolean }[] = [];
-    const body = page(1, 1);
-    const results = await muse.fetch({
-      ...context,
-      runtime: stubRuntime(body),
-      checkpoint: {
-        value: { version: 1, scope: 0, page: 0, pageCount: null, complete: false },
-        save: (value, pending) => saves.push({ value, pending }),
-      },
-    });
-
-    expect(results).toHaveLength(2);
-    expect(saves).toEqual([
-      {
-        value: { version: 1, scope: 2, page: 0, pageCount: null, complete: true },
-        pending: false,
-      },
-    ]);
-    expect(degraded).toEqual([
-      'Muse: checkpoint catch-up read 2 rows across 2 category pages',
-    ]);
-  });
-
-  it('continues from the final Design page into Science and Engineering', async () => {
-    const { context } = replay('muse');
     const saves: { value: unknown; pending: boolean }[] = [];
     const urls: string[] = [];
     const runtime: Runtime = {
       fetchText: async () => '',
-      fetchJson: async (url) => {
+      fetchJson: async <T>(url: string) => {
         urls.push(url);
-        const parsed = new URL(url);
-        const category = parsed.searchParams.get('category');
-        const pageNumber = Number(parsed.searchParams.get('page'));
-        return JSON.parse(page(category === 'Design and UX' && pageNumber === 19 ? 20 : 3, 1));
+        return (url.includes('/companies?') ? directory(['Modern Animal, Inc.']) : jobs(2)) as unknown as T;
       },
       isAllowed: async () => true,
     };
@@ -835,102 +790,183 @@ describe('muse pagination', () => {
       ...context,
       env: { WORKIE_CATCH_UP_PAGES: '2' },
       runtime,
-      checkpoint: {
-        value: { version: 1, scope: 0, page: 19, pageCount: 20, complete: false },
-        save: (value, pending) => saves.push({ value, pending }),
-      },
+      checkpoint: { value: null, save: (value, pending) => saves.push({ value, pending }) },
     });
 
-    expect(rows).toHaveLength(2);
-    expect(urls.map((url) => new URL(url).searchParams.get('category'))).toEqual([
-      'Design and UX',
-      'Science and Engineering',
-    ]);
-    expect(saves).toEqual([
-      {
-        value: { version: 1, scope: 1, page: 1, pageCount: 3, complete: false },
-        pending: true,
-      },
-    ]);
+    expect(rows).toHaveLength(1);
+    const query = new URL(urls[1]).searchParams;
+    expect(query.get('company')).toBe('Modern Animal, Inc.');
+    expect(query.get('category')).toBe('Design and UX');
+    expect(saves[0]).toMatchObject({
+      value: { version: 2, companyName: 'Modern Animal, Inc.', category: 0, page: 1, complete: false },
+      pending: true,
+    });
+    expect(degraded).toContain('Muse: company-partitioned run read 1 rows across 2 requests without whole-scan reconciliation');
   });
 
-  it('starts a new resumable sweep after a completed checkpoint while reading both heads', async () => {
+  it('splits an oversized company/category partition into verified levels before paging it', async () => {
     const { context } = replay('muse');
     const saves: { value: unknown; pending: boolean }[] = [];
     const urls: string[] = [];
     const runtime: Runtime = {
       fetchText: async () => '',
-      fetchJson: async (url) => {
+      fetchJson: async <T>(url: string) => {
         urls.push(url);
-        return JSON.parse(page(3, 1));
+        return (urls.length === 1 ? jobs(101) : jobs(2)) as unknown as T;
       },
       isAllowed: async () => true,
     };
 
     const rows = await muse.fetch({
       ...context,
+      env: { WORKIE_CATCH_UP_PAGES: '2' },
+      runtime,
+      checkpoint: { value: checkpoint(), save: (value, pending) => saves.push({ value, pending }) },
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(new URL(urls[0]).searchParams.get('level')).toBeNull();
+    expect(new URL(urls[1]).searchParams.get('level')).toBe('Internship');
+    expect(saves[0]).toMatchObject({
+      value: { category: 0, level: 0, page: 1, pageCount: 2, complete: false },
+      pending: true,
+    });
+  });
+
+  it('continues from the last category to the next company without dropping the directory cursor', async () => {
+    const { context } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+    const runtime: Runtime = {
+      fetchText: async () => '',
+      fetchJson: async <T>(url: string) =>
+        (url.includes('/companies?') ? directory(['Modern Animal, Inc.', 'Beta Labs']) : jobs(1)) as unknown as T,
+      isAllowed: async () => true,
+    };
+
+    const rows = await muse.fetch({
+      ...context,
+      env: { WORKIE_CATCH_UP_PAGES: '2' },
       runtime,
       checkpoint: {
-        value: { version: 1, scope: 2, page: 0, pageCount: null, complete: true },
+        value: checkpoint({ category: 4, page: 0 }),
         save: (value, pending) => saves.push({ value, pending }),
       },
     });
 
-    expect(rows).toHaveLength(2);
-    expect(urls.map((url) => new URL(url).searchParams.get('category'))).toEqual([
-      'Design and UX',
-      'Science and Engineering',
-    ]);
-    expect(saves).toEqual([
-      {
-        value: { version: 1, scope: 0, page: 1, pageCount: 3, complete: false },
-        pending: true,
-      },
-    ]);
+    expect(rows).toHaveLength(1);
+    expect(saves[0]).toMatchObject({
+      value: { companyIndex: 1, companyName: 'Beta Labs', category: 0, page: 0, complete: false },
+      pending: true,
+    });
   });
 
-  it('does not advance past an empty page before the provider-reported end', async () => {
+  it('resets a legacy v1 checkpoint into a v2 sweep without deleting checkpoint storage', async () => {
+    const { context } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+    const runtime: Runtime = {
+      fetchText: async () => '',
+      fetchJson: async <T>(url: string) =>
+        (url.includes('/companies?') ? directory(['Modern Animal, Inc.']) : jobs(1)) as unknown as T,
+      isAllowed: async () => true,
+    };
+
+    await muse.fetch({
+      ...context,
+      env: { WORKIE_CATCH_UP_PAGES: '2' },
+      runtime,
+      checkpoint: {
+        value: { version: 1, scope: 0, page: 4, pageCount: 20, complete: false },
+        save: (value, pending) => saves.push({ value, pending }),
+      },
+    });
+
+    expect(saves[0]).toMatchObject({ value: { version: 2, companyName: 'Modern Animal, Inc.' }, pending: true });
+  });
+
+  it('never requests page 100 and records a provider-limited level partition', async () => {
     const { context, degraded } = replay('muse');
     const saves: { value: unknown; pending: boolean }[] = [];
+    const urls: string[] = [];
+    const runtime: Runtime = {
+      fetchText: async () => '',
+      fetchJson: async <T>(url: string) => {
+        urls.push(url);
+        return jobs(101) as unknown as T;
+      },
+      isAllowed: async () => true,
+    };
+
+    await muse.fetch({
+      ...context,
+      env: { WORKIE_CATCH_UP_PAGES: '1' },
+      runtime,
+      checkpoint: {
+        value: checkpoint({ level: 0, page: 99, pageCount: 101 }),
+        save: (value, pending) => saves.push({ value, pending }),
+      },
+    });
+
+    expect(new URL(urls[0]).searchParams.get('page')).toBe('99');
+    expect(saves[0]).toMatchObject({ value: { level: 1, page: 0, providerLimited: 1 }, pending: true });
+    expect(degraded.some((reason) => reason.includes('provider-limited Modern Animal, Inc.'))).toBe(true);
+  });
+
+  it('keeps an unexpectedly empty page retryable instead of claiming its remaining jobs were imported', async () => {
+    const { context, degraded } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+
     const rows = await muse.fetch({
       ...context,
-      env: { WORKIE_CATCH_UP_PAGES: '5' },
-      runtime: stubRuntime(JSON.stringify({ page_count: 3, results: [] })),
+      env: { WORKIE_CATCH_UP_PAGES: '1' },
+      runtime: stubRuntime(JSON.stringify(jobs(3, []))),
       checkpoint: {
-        value: { version: 1, scope: 0, page: 1, pageCount: 3, complete: false },
+        value: checkpoint({ page: 1, pageCount: 3 }),
         save: (value, pending) => saves.push({ value, pending }),
       },
     });
 
     expect(rows).toHaveLength(0);
-    expect(saves).toEqual([
-      {
-        value: { version: 1, scope: 0, page: 1, pageCount: 3, complete: false },
-        pending: true,
-      },
-    ]);
-    expect(degraded).toContain('Design and UX page 1: empty before advertised end');
+    expect(saves[0]).toMatchObject({ value: { category: 0, page: 1, providerLimited: 0 }, pending: true });
+    expect(degraded.some((reason) => reason.includes('empty before advertised end'))).toBe(true);
   });
 
   it('preserves a missing location as unknown instead of inventing Remote', async () => {
-    const body = JSON.stringify({
-      page_count: 1,
-      results: [
-        {
-          name: 'Product Designer',
-          contents: 'Design work.',
-          publication_date: '2026-09-08T00:00:00Z',
-          company: { name: 'Stub Co' },
-          refs: { landing_page: 'https://www.themuse.com/jobs/stub' },
-        },
-      ],
-    });
     const { context } = replay('muse');
+    const saves: { value: unknown; pending: boolean }[] = [];
+    const rows = await muse.fetch({
+      ...context,
+      env: { WORKIE_CATCH_UP_PAGES: '1' },
+      runtime: stubRuntime(JSON.stringify(jobs(1, [job({ locations: undefined })]))),
+      checkpoint: {
+        value: checkpoint(),
+        save: (value, pending) => saves.push({ value, pending }),
+      },
+    });
 
-    const rows = await muse.fetch({ ...context, runtime: stubRuntime(body) });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].location).toBeNull();
+    expect(saves[0]?.pending).toBe(true);
+  });
 
-    expect(rows).toHaveLength(2);
-    for (const row of rows) expect(row.location).toBeNull();
+  it('requires production registration and attaches the key with its documented rate floor', async () => {
+    expect(muse.skip?.({})).toContain('MUSE_API_KEY');
+    expect(muse.skip?.({ MUSE_API_KEY: 'test-key' })).toBeNull();
+    const { context } = replay('muse');
+    const requests: { url: string; gap: number | undefined }[] = [];
+    const runtime: Runtime = {
+      fetchText: async () => '',
+      isAllowed: async () => true,
+      fetchJson: async <T>(url: string, options?: FetchOptions) => {
+        requests.push({ url, gap: options?.minGapMs });
+        return jobs(1) as unknown as T;
+      },
+    };
+    await muse.fetch({
+      ...context, runtime, env: { MUSE_API_KEY: 'test-key', WORKIE_CATCH_UP_PAGES: '1' },
+      checkpoint: { value: checkpoint(), save: () => {} },
+    });
+    expect(new URL(requests[0].url).searchParams.get('api_key')).toBe('test-key');
+    expect(requests[0].gap).toBe(1000);
   });
 });
 

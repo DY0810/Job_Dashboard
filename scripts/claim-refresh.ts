@@ -19,6 +19,7 @@ import * as schema from '../lib/db/schema.ts';
 import { claimRequest, finishRequest } from '../lib/refresh-queue.ts';
 import { MIGRATIONS_DIR, openDb, type Db, type ReadDb, type TursoDb } from '../lib/db/index.ts';
 import { readCheckpoints } from './ingest.ts';
+import { connectors } from './connectors/index.ts';
 
 export function runRefreshCycles(
   cycle: (pendingOnly: boolean) => number,
@@ -89,13 +90,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // rather than starting a second ingest.
   const catchUp = process.argv.includes('--catch-up');
   let local: Db | undefined;
+  const enabled = connectors.filter((connector) => !connector.skip?.(process.env));
+  const enabledNames = new Set(enabled.map((connector) => connector.name));
   const cycle = () => runRefreshCycles(
     (pendingOnly) => spawnSync('bash', [
       'scripts/refresh.sh',
       ...(pendingOnly ? ['--pending'] : []),
       ...(catchUp ? ['--skip-linkcheck'] : []),
     ], { stdio: 'inherit' }).status ?? 1,
-    () => readCheckpoints(local ??= openDb()),
+    () => new Map([...readCheckpoints(local ??= openDb(), enabled)].filter(([name]) => enabledNames.has(name))),
     catchUp,
   );
   const result = await claimAndRun(cycle);

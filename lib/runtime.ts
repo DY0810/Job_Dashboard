@@ -32,6 +32,8 @@ export interface FetchOptions {
   timeoutMs?: number;
   /** Retries on 429/5xx only. 0 disables. */
   retries?: number;
+  /** A provider-specific per-host floor, never faster than the runtime's default. */
+  minGapMs?: number;
   /** Consult robots.txt first. Default true; opt out only for documented public APIs. */
   respectRobots?: boolean;
   /**
@@ -473,7 +475,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     let redirects = 0;
 
     for (let attempt = 0; ; ) {
-      await throttle(new URL(target).host, Math.max(minGapMs, crawlDelayMs));
+      await throttle(new URL(target).host, Math.max(minGapMs, crawlDelayMs, options.minGapMs ?? 0));
       const { response, text } = await withTimeout(target, init, timeoutMs, label);
       if (response.ok) return text;
 
@@ -569,6 +571,8 @@ export interface ConnectorContext {
 export interface Connector {
   name: string;
   kind: SourceKind;
+  /** A missing checkpoint means this source still needs its initial catalog import. */
+  resumable?: boolean;
   /**
    * Return a human-readable reason to skip this run, or null to run. A missing API key is a
    * skip, not an error: it writes no `connector_runs` row, so ghost detection cannot read
