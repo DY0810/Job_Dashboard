@@ -104,10 +104,14 @@ export function runGhostPass(db: Db, options: GhostOptions): GhostStats {
     // sources still list them — absence counts of zero — so "no longer a ghost" is true of
     // them from the moment they are marked, and without the reason column this statement
     // would undo every weekly link check within half an hour.
+    // Require an actual source below the threshold. Negating isGhostNow also matched
+    // retired duplicates with no remaining sources and brought them back every cycle.
     stats.restored = tx
       .update(postings)
       .set({ delistedAt: null, delistedReason: null })
-      .where(and(eq(postings.delistedReason, 'ghost'), sql`not (${isGhostNow})`))
+      .where(and(eq(postings.delistedReason, 'ghost'),
+        sql`${postings.id} in (select ${postingSources.postingId} from ${postingSources}
+          where ${postingSources.absenceCount} < ${GHOST_ABSENCE_THRESHOLD})`))
       .run().changes;
   });
 

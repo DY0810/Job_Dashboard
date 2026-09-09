@@ -162,6 +162,25 @@ describe('ghost detection, positive', () => {
 });
 
 describe('ghost detection, negative — the ones that matter', () => {
+  it('does not restore a retired duplicate without sources, but permits a real reappearance', async () => {
+    const test = harness();
+    await test.cycle(1, [scripted('board', () => [job(URL_A), anchor()])]);
+    const id = test.postingId(URL_A);
+    const source = test.db.select().from(postingSources).where(eq(postingSources.postingId, id)).get()!;
+    test.db.delete(postingSources).where(eq(postingSources.id, source.id)).run();
+    test.db.update(postings).set({ delistedAt: new Date(T0), delistedReason: 'ghost' })
+      .where(eq(postings.id, id)).run();
+
+    expect(runGhostPass(test.db, { runId: 'gone', okConnectors: ['board'] }).restored).toBe(0);
+    expect(test.db.select().from(postings).where(eq(postings.id, id)).get()).toMatchObject({
+      delistedAt: new Date(T0), delistedReason: 'ghost', description: 'Design things at Acme.',
+    });
+
+    test.db.insert(postingSources).values({ ...source, lastSeenRun: 'back', absenceCount: 0 }).run();
+    expect(runGhostPass(test.db, { runId: 'back', okConnectors: ['board'] }).restored).toBe(1);
+    expect(test.delistedAt(URL_A)).toBeNull();
+  });
+
   it('a source that ERRORS twice delists nothing and does not move the counter', async () => {
     const test = harness();
     let healthy = true;

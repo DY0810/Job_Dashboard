@@ -226,7 +226,11 @@ export function publisherIdOf(
   try {
     const url = new URL(raw.sourceUrl);
     if (raw.source === 'greenhouse') {
-      return /\/jobs\/([^/]+)/.exec(url.pathname)?.[1] ?? url.searchParams.get('token');
+      const id =
+        /\/(?:jobs?|positions?|detail)\/(\d+)(?:\/|$)/.exec(url.pathname)?.[1] ??
+        url.searchParams.get('gh_jid') ??
+        url.searchParams.get('token');
+      if (id) return id;
     }
   } catch {
     // The canonical URL fallback below is deterministic for malformed fixture input too.

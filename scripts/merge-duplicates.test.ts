@@ -27,7 +27,7 @@ interface Options {
   description?: string | null;
   enriched?: boolean;
   urls?: string[];
-  publisherId?: string;
+  publisherId?: string | null;
 }
 
 /** One posting plus its sources. Only the columns this pass reads are worth spelling out. */
@@ -61,7 +61,7 @@ function insert(database: Db, options: Options): number {
         sourceUrl: url,
         postedAt: new Date(options.postedAt ?? NOW),
         sourcePriority: 1,
-        publisherId: options.publisherId ?? 'same-position',
+        publisherId: options.publisherId === undefined ? 'same-position' : options.publisherId,
         lastSeenRun: 'run-1',
       })
       .run();
@@ -70,6 +70,26 @@ function insert(database: Db, options: Options): number {
 }
 
 describe('merge:duplicates', () => {
+  it('does not merge a legacy row that already contains conflicting Greenhouse ids', () => {
+    const database = db();
+    insert(database, {
+      key: 'a',
+      publisherId: null,
+      urls: [
+        'https://careers.airbnb.com/positions/7230257?gh_jid=7230257',
+        'https://careers.airbnb.com/positions/8080767?gh_jid=8080767',
+      ],
+    });
+    insert(database, {
+      key: 'b',
+      publisherId: null,
+      urls: ['https://careers.airbnb.com/positions/8080767?gh_jid=8080767'],
+    });
+
+    expect(findDuplicateGroups(database)).toEqual([]);
+    expect(runMerge(database).merged).toBe(0);
+  });
+
   it('does not undo the split of different requisitions with identical title and location', () => {
     const database = db();
     insert(database, { key: 'a', publisherId: '100' });

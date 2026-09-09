@@ -452,6 +452,7 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
     const oldPosts = tx.select({
       id: postings.id, dedupeKey: postings.dedupeKey, canonicalUrl: postings.canonicalUrl,
       companyNorm: postings.companyNorm, titleNorm: postings.titleNorm, locationKey: postings.locationKey,
+      title: postings.title, location: postings.location, delistedAt: postings.delistedAt,
     }).from(postings).all();
     const oldById = new Map(oldPosts.map((post) => [post.id, post]));
     const oldByKey = new Map(oldPosts.map((post) => [post.dedupeKey, post]));
@@ -487,6 +488,17 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
     }
     const claimed = new Map<number, string>();
     const movedFrom = new Set<number>();
+    // Repair clones already revived by the old restore rule. Only an identical application
+    // with a real source owner qualifies; unrelated source-less records stay untouched.
+    const applicationKey = (post: (typeof oldPosts)[number]) =>
+      JSON.stringify([post.companyNorm, post.title, post.location, post.canonicalUrl]);
+    const ownedApplications = new Set(oldPosts
+      .filter((owner) => owner.delistedAt === null && byPost.has(owner.id))
+      .map(applicationKey));
+    for (const previous of oldPosts) {
+      if (previous.delistedAt !== null || byPost.has(previous.id)) continue;
+      if (ownedApplications.has(applicationKey(previous))) movedFrom.add(previous.id);
+    }
     const applicationPage = (url: string) => url.replace(/\/(?:apply|application)(?=[?#]|$)/, '');
 
     for (const post of deduped) {
@@ -516,8 +528,12 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
           source.source === primary.source && source.publisherId && source.publisherId !== priorId);
       };
       const exact = oldByKey.get(post.dedupeKey);
-      let postingId = exact && compatible(exact.id) ? exact.id
-        : [...references.values()].map((source) => source.postingId).find(compatible);
+      // Preserve the original compatible posting, not whichever source row was inserted
+      // first or duplicate already adopted the new key. Otherwise an over-merged original
+      // keeps sibling sources AND the same canonical URL as the chosen duplicate.
+      let postingId = [...references.values()].map((source) => source.postingId)
+        .sort((a, b) => a - b).find(compatible)
+        ?? (exact && compatible(exact.id) ? exact.id : undefined);
       if (postingId === undefined) {
         const candidates = (byNormal.get(normalKey(post)) ?? []).filter((candidate) => compatible(candidate.id));
         if (candidates.length === 1) postingId = candidates[0].id;
@@ -674,6 +690,8 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
     }
     for (const id of movedFrom) {
       if (!tx.select({ id: postingSources.id }).from(postingSources).where(eq(postingSources.postingId, id)).get()) {
+        // Preserve the retired record. The restore pass requires a real source before
+        // making it visible again, so moving its sources cannot resurrect this duplicate.
         tx.update(postings).set({ delistedAt: new Date(), delistedReason: 'ghost' })
           .where(eq(postings.id, id)).run();
       }

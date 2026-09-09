@@ -1,7 +1,9 @@
+import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 
 import { openDb, type Db } from '../lib/db/index.ts';
 import { connectorRuns, postingSources, postings } from '../lib/db/schema.ts';
+import { dedupePostings } from '../lib/dedupe.ts';
 import { createRuntime, type Connector, type ConnectorPosting, type Runtime } from '../lib/runtime.ts';
 import { main, readCheckpoints, runIngest } from './ingest.ts';
 import { keyedConnectors } from './connectors/keyed.ts';
@@ -338,6 +340,94 @@ describe('idempotency', () => {
 });
 
 describe('review regressions', () => {
+  it('keeps an unrelated source-less record with a different application URL', async () => {
+    const db = memoryDb();
+    const connector: Connector = { name: 'healthy', kind: 'ats', fetch: async () => [posting()] };
+    const base = { db, connectors: [connector], runtime: flakyRuntime(), log: silent };
+    await runIngest({ ...base, runId: 'first' });
+    const original = db.select().from(postings).get()!;
+    const unrelated = { ...original, id: original.id + 1, dedupeKey: 'unrelated',
+      canonicalUrl: 'https://boards.test/jobs/different-requisition' };
+    db.insert(postings).values(unrelated).run();
+    await runIngest({ ...base, runId: 'second' });
+    expect(db.select().from(postings).where(eq(postings.id, unrelated.id)).get()).toEqual(unrelated);
+  });
+
+  it.each([
+    { partial: false, siblingsListed: false },
+    { partial: true, siblingsListed: false },
+    { partial: false, siblingsListed: true },
+    { partial: true, siblingsListed: true },
+  ])('does not resurrect the emptied Workday duplicate ($partial, $siblingsListed)', async ({ partial, siblingsListed }) => {
+    const db = memoryDb();
+    const urls = [
+      'https://workday.wd5.myworkdayjobs.com/workday/job/USAVAReston/Analytics-Sr-Software-Engineer--US-Federal-_JR-0105496',
+      'https://workday.wd5.myworkdayjobs.com/workday/job/USAVAReston/Software-Development-Engineer---ML-Ops--US-Federal-_JR-0105395',
+      'https://workday.wd5.myworkdayjobs.com/workday/job/USAVAReston/Software-Development-Engineer--US-Federal-_JR-0105421',
+      'https://workday.wd5.myworkdayjobs.com/workday/job/USAVAReston/Software-Development-Engineer--US-Federal-_JR-0105439',
+    ];
+    const entries = urls.map((url, index) => posting({
+      source: 'workday', sourceUrl: url, publisherId: url.split('_').at(-1),
+      company: 'Workday',
+      title: ['Analytics Sr Software Engineer (US Federal)',
+        'Software Development Engineer - ML Ops (US Federal)',
+        'Software Development Engineer (US Federal)',
+        'Software Development Engineer (US Federal)'][index],
+      location: 'USA, VA, Reston',
+      description: '',
+    })).filter((_, index) => siblingsListed || index === 3);
+    const canonicalKey = dedupePostings([entries.at(-1)!])[0].dedupeKey;
+    for (const id of [8948, 18737]) {
+      db.insert(postings).values({
+        id, dedupeKey: id === 18737 ? canonicalKey : `legacy-${id}`,
+        canonicalUrl: urls[3], postedAt: new Date(POSTED),
+        firstSeenRun: 'old', company: 'Workday', title: 'Software Development Engineer (US Federal)',
+        companyNorm: 'workday', titleNorm: 'software development engineer',
+        locationKey: 'onsite|reston|VA|US',
+        description: id === 8948 ? 'The single legacy body.' : null,
+      }).run();
+      for (const [index, url] of (id === 8948 ? urls : [urls[3]]).entries()) {
+        db.insert(postingSources).values({
+          id: id === 8948 ? [118188, 118189, 118190, 1390345][index] : 1024658,
+          postingId: id, source: 'workday', sourceUrl: url, publisherId: null,
+          postedAt: new Date(POSTED), sourcePriority: 1, lastSeenRun: 'old',
+        }).run();
+      }
+    }
+    const source: Connector = {
+      name: 'workday', kind: 'ats',
+      fetch: async (context) => {
+        if (partial) context.degraded('Another Workday tenant failed');
+        return entries;
+      },
+    };
+    const base = { db, connectors: [source], runtime: flakyRuntime(), log: silent };
+    await runIngest({ ...base, runId: 'repair-1' });
+    const rows = db.select().from(postings).all();
+    const expectedJobs = siblingsListed ? 4 : 1;
+    expect(rows.filter((row) => row.delistedAt === null)).toHaveLength(expectedJobs);
+    expect(rows.find((row) => row.id === 8948)).toMatchObject({
+      canonicalUrl: urls[3], description: 'The single legacy body.',
+    });
+    expect(rows.find((row) => row.id === 18737)).toMatchObject({
+      delistedAt: expect.any(Date), delistedReason: 'ghost',
+    });
+    expect(rows.filter((row) => row.id !== 8948).every((row) => row.description === null)).toBe(true);
+    const sources = db.select().from(postingSources).all();
+    expect(sources.map((row) => row.sourceUrl).sort()).toEqual([...urls].sort());
+    expect(new Set(sources.map((row) => row.postingId)).size).toBe(expectedJobs);
+    // Earlier releases restored an already-emptied duplicate. A later poll must repair
+    // that stored state even though there is no source left to move off the duplicate.
+    db.update(postings).set({ delistedAt: null, delistedReason: null }).where(eq(postings.id, 18737)).run();
+    entries.reverse();
+    await runIngest({ ...base, runId: 'repair-2' });
+    expect(db.select().from(postings).all().map((row) => row.id)).toEqual(rows.map((row) => row.id));
+    expect(db.select().from(postings).all().filter((row) => row.delistedAt === null)).toHaveLength(expectedJobs);
+    await runIngest({ ...base, runId: 'repair-3' });
+    expect(db.select().from(postings).all().map((row) => row.id)).toEqual(rows.map((row) => row.id));
+    expect(db.select().from(postings).all().filter((row) => row.delistedAt === null)).toHaveLength(expectedJobs);
+  });
+
   it.each([true, false])('separates historical requisitions (original still listed: %s)', async (originalListed) => {
     const db = memoryDb();
     const firstUrl = 'https://boards.test/jobs/100';

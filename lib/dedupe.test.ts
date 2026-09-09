@@ -188,6 +188,23 @@ describe('publisher identity', () => {
     expect(dedupePostings([first, other])).toHaveLength(2);
   });
 
+  it('derives Greenhouse ids from custom career paths and gh_jid query parameters', () => {
+    expect(
+      publisherIdOf(
+        posting({
+          sourceUrl: 'https://careers.airbnb.com/positions/7230257?gh_jid=7230257',
+        }),
+      ),
+    ).toBe('7230257');
+    expect(
+      publisherIdOf(
+        posting({
+          sourceUrl: 'https://www.pinterestcareers.com/jobs/?gh_jid=8120416',
+        }),
+      ),
+    ).toBe('8120416');
+  });
+
   it('still merges equivalent jobs reported by different publishers', () => {
     const merged = dedupePostings([
       posting({ publisherId: '5186581007' }),

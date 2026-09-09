@@ -94,12 +94,20 @@ The desktop view remains a table. On phones the same rows arrange title, company
 pay and badges vertically without hiding the other fields. Salary symbols are preserved;
 wellness budgets and other benefits are not treated as the salary.
 
+Applied checkboxes appear at the end of each row and posting detail. Checkmarks and
+**Save defaults** preferences stay in this browser, not on the shared board. Saved defaults
+fill a bare landing URL; explicit filters and **Clear** override them without erasing them.
+
 ## Writing to Talkie
 
 Reading the board needs nothing. **Creating, editing and deleting notes require
 `WORKIE_WRITE_TOKEN`**, sent as an `x-workie-token` header — the board asks for it once and
 keeps it in the browser, alongside the author name. Share the token with whoever you share
 the link with; anyone without it can read but not change anything.
+
+Notes autosave after a short typing pause; **Done** finishes editing. Unsaved text is kept
+locally across refreshes and navigation, including when authorization or the network fails.
+A client-generated key makes retrying a new note safe without creating a second copy.
 
 Note ids are sequential integers, and `notes`/`note_comments` are deliberately excluded from
 `push:remote`'s mirror, so the hosted database is their only copy. An ungated `DELETE` loop
