@@ -57,7 +57,7 @@ export default async function Talkie({
           </div>
         </details>
       </header>
-      <Board key={week} notes={notes} canWrite={week === current} />
+      <Board key={week} notes={notes} canWrite={week === current} week={week} />
     </main>
   );
 }

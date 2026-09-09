@@ -197,6 +197,8 @@
   .rows[data-track] [data-field="pay"] { grid-area: 3 / 1; }
   .rows[data-track] [data-field="seen"] { grid-area: 3 / 2; text-align: right; }
   .rows[data-track] [data-field="badges"] { grid-area: 4 / 1 / 5 / 3; }
+  .rows[data-track] [data-field="applied"] { grid-column: 1 / -1; text-align: left; }
+  .rows[data-track] [data-field="applied"] label .sr-only { position: static; width: auto; height: auto; clip-path: none; clip: auto; overflow: visible; }
   .rows[data-track] [data-field="badges"] > span { flex-wrap: wrap; white-space: normal; }
   .rows[data-track] [data-field="summary"],
   .rows[data-track] [data-field="level"],
@@ -240,8 +242,8 @@
 }
 
 @media (min-width: 701px) {
-  .rows thead th:last-child,
-  .rows td[data-field="apply"] {
+  .rows thead th[data-field="applied"],
+  .rows td[data-field="applied"] {
     position: sticky;
     right: 0;
     width: 64px;
@@ -251,10 +253,21 @@
     background-color: var(--canvas);
   }
 
-  .rows thead th:nth-last-child(2),
-  .rows td[data-field="company"] {
+  .rows thead th[data-field="apply"],
+  .rows td[data-field="apply"] {
     position: sticky;
     right: 64px;
+    width: 64px;
+    min-width: 64px;
+    max-width: 64px;
+    z-index: 2;
+    background-color: var(--canvas);
+  }
+
+  .rows thead th[data-field="company"],
+  .rows td[data-field="company"] {
+    position: sticky;
+    right: 128px;
     width: 180px;
     min-width: 180px;
     max-width: 180px;
@@ -264,7 +277,7 @@
     box-shadow: -1px 0 var(--rule);
   }
 
-  .rows thead th:nth-last-child(-n + 2) { z-index: 3; }
+  .rows thead th:nth-last-child(-n + 3) { z-index: 3; }
   .rows td[data-field="company"] a > span {
     min-width: 0;
     overflow: hidden;
@@ -279,6 +292,23 @@
     max-width: 220px;
     flex-wrap: wrap;
     white-space: normal;
+  }
+}
+
+.posting-location { display: none; }
+
+@media (min-width: 701px) and (max-width: 1151px) {
+  .rows[data-track="design"] [data-field="location"] { display: none; }
+  .rows[data-track="design"] .posting-title,
+  .rows[data-track="design"] .posting-location {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .rows[data-track="design"] .posting-location {
+    font-size: 11px;
+    color: var(--fg-dim);
   }
 }
 

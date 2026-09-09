@@ -1,7 +1,15 @@
 import { z } from 'zod';
 import { getDb, needsTurso } from '@/lib/db';
 import { writeGate } from '@/lib/write-gate';
-import { MAX_NOTES_PER_WEEK, NoteInput, countActivitySince, createNote, listNotes, weekKey } from '@/lib/notes';
+import {
+  MAX_NOTES_PER_WEEK,
+  NoteInput,
+  countActivitySince,
+  createNote,
+  findNoteByClientKey,
+  listNotes,
+  weekKey,
+} from '@/lib/notes';
 
 const Since = z.coerce.number().int().min(0).catch(0);
 
@@ -27,6 +35,12 @@ export async function POST(request: Request) {
     if (!input.success) return Response.json({ error: 'invalid note' }, { status: 400 });
 
     const db = getDb();
+    // A response can be lost after the write reached the database. Returning the prior note
+    // for the browser's stable client key makes a reload/retry safe, including at the cap.
+    if (input.data.clientKey) {
+      const existing = await findNoteByClientKey(db, input.data.clientKey);
+      if (existing) return Response.json(existing);
+    }
     if ((await listNotes(db, weekKey(new Date()))).length >= MAX_NOTES_PER_WEEK) {
       return Response.json({ error: 'this week is full' }, { status: 429 });
     }

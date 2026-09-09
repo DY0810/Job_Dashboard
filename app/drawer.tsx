@@ -7,6 +7,7 @@ import { type OutreachKind, type Sender } from '@/lib/outreach';
 import { OutreachPanel } from './outreach-panel';
 import { readSenderDraft, readSenderProfile, saveSenderProfile, validSender } from './outreach-storage';
 import { Close, ExternalLink } from './icons';
+import { AppliedCheckbox } from './applied-checkbox';
 
 type State =
   | { status: 'loading' }
@@ -186,6 +187,14 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
               <Bullets title="Responsibilities" items={state.posting.responsibilities} />
               <Bullets title="Skills and requirements" items={state.posting.skills} />
               <Bullets title="Education and experience" items={state.posting.education} />
+              <section aria-label="Application status" className="border-t border-rule pt-4">
+                <AppliedCheckbox
+                  key={state.posting.id}
+                  postingId={state.posting.id}
+                  title={state.posting.title}
+                  company={state.posting.company}
+                />
+              </section>
             </div>
           )}
         </div>

@@ -5,51 +5,53 @@ import { useEffect, useRef, useState } from 'react';
 import type { Comment, NoteWithComments } from '@/lib/notes';
 import { Close } from '../icons';
 import { SEEN_KEY } from '../talkie-badge';
+import {
+  clearEditDraft,
+  clearNewNoteDraft,
+  clearTalkieToken,
+  readEditDraft,
+  readNewNoteDraft,
+  readTalkieAuthor,
+  readTalkieToken,
+  saveEditDraft,
+  saveNewNoteDraft,
+  saveTalkieAuthor,
+  saveTalkieToken,
+  type NewNoteDraft,
+} from './storage';
+import { DeferredEditWriter, sameNoteDraft, shouldAttachServerId } from './autosave';
 
 const MIN = { w: 120, h: 80 };
 const MAX = { w: 800, h: 600 };
-const AUTHOR_KEY = 'talkie-author';
-const TOKEN_KEY = 'talkie-token';
-
 type Rect = { x: number; y: number; w: number; h: number };
 type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 /** The same drag machinery moves a note; `move` is checked before any edge test. */
 type Grab = Edge | 'move';
 const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
-/**
- * Every write goes through here, so the write token is attached in exactly one place.
- *
- * The token is what the server checks instead of an account. It is asked for once, on the
- * first 401, and kept in this browser — the same shape as the author name beside it. A wrong
- * or missing token is cleared so the next attempt asks again rather than failing silently.
- */
-async function call<T>(url: string, init: RequestInit, fallback: string): Promise<T> {
-  const send = (token: string | null) =>
-    fetch(url, {
-      ...init,
-      headers: {
-        'content-type': 'application/json',
-        ...(token ? { 'x-workie-token': token } : {}),
-        ...init.headers,
-      },
-    });
+class TokenError extends Error {}
 
-  let res = await send(localStorage.getItem(TOKEN_KEY));
-  if (res.status === 401) {
-    localStorage.removeItem(TOKEN_KEY);
-    const entered = window.prompt('Write token for this board:')?.trim();
-    if (!entered) throw new Error('a write token is needed to change this board');
-    localStorage.setItem(TOKEN_KEY, entered);
-    res = await send(entered);
-    if (res.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
-      throw new Error('that token was not accepted');
-    }
-  }
+async function call<T>(url: string, init: RequestInit, token: string | null, fallback: string): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { 'x-workie-token': token } : {}),
+      ...init.headers,
+    },
+  });
+  if (res.status === 401) throw new TokenError('a write token is needed to change this board');
   if (res.status === 503) throw new Error('writes are not configured on this deployment');
   if (!res.ok) throw new Error(res.status === 429 ? 'this week is full' : fallback);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
+}
+
+function newClientKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16);
+    return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16);
+  });
 }
 
 /**
@@ -58,20 +60,41 @@ async function call<T>(url: string, init: RequestInit, fallback: string): Promis
  * decides a note's WIDTH; its height follows whatever it holds, replies included, so nothing
  * is ever clipped behind a scrollbar. Nothing animates: drawing is direct manipulation.
  */
-export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[]; canWrite: boolean }) {
+export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComments[]; canWrite: boolean; week: string }) {
   const [notes, setNotes] = useState(initial);
   const [draft, setDraft] = useState<Rect | null>(null);
-  const [pending, setPending] = useState<Rect | null>(null);
+  const [pending, setPending] = useState<NewNoteDraft | null>(null);
+  const [pendingServerId, setPendingServerId] = useState<number | null>(null);
+  const [pendingError, setPendingError] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const [author, setAuthor] = useState('');
+  const [tokenForm, setTokenForm] = useState(false);
+  const [token, setToken] = useState('');
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [retryWrites, setRetryWrites] = useState(0);
   const [mounted, setMounted] = useState(false);
   const origin = useRef<{ x: number; y: number } | null>(null);
+  const createTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const createInFlight = useRef<{ clientKey: string; promise: Promise<void> } | null>(null);
+  const pendingRef = useRef<NewNoteDraft | null>(null);
+  const pendingServerIdRef = useRef<number | null>(null);
+  const replacePending = (next: NewNoteDraft | null) => {
+    pendingRef.current = next;
+    setPending(next);
+  };
+  const replacePendingServerId = (next: number | null) => {
+    pendingServerIdRef.current = next;
+    setPendingServerId(next);
+  };
 
   useEffect(() => {
     setMounted(true);
-    setAuthor(localStorage.getItem(AUTHOR_KEY) ?? '');
+    setAuthor(readTalkieAuthor());
+    if (canWrite) replacePending(readNewNoteDraft(week));
     // Opening the board is what "viewed" means. The badge on the other tabs counts from here.
-    localStorage.setItem(SEEN_KEY, String(Date.now()));
-  }, []);
+    try { localStorage.setItem(SEEN_KEY, String(Date.now())); } catch {}
+    return () => { if (createTimer.current) clearTimeout(createTimer.current); };
+  }, [canWrite, week]);
 
   const point = (e: React.PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -95,27 +118,130 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
     });
   };
   const onUp = () => {
-    if (draft && draft.w >= MIN.w && draft.h >= MIN.h) setPending(draft);
+    if (draft && draft.w >= MIN.w && draft.h >= MIN.h) {
+      const pendingDraft: NewNoteDraft = { ...draft, h: 0, body: '', week, clientKey: newClientKey() };
+      replacePending(pendingDraft);
+      setPendingError(null);
+      if (!saveNewNoteDraft(pendingDraft)) {
+        setStorageWarning('Browser storage is unavailable; keep this tab open until the note saves.');
+      }
+    }
     origin.current = null;
     setDraft(null);
   };
 
   const patch = (id: number, fn: (n: NoteWithComments) => NoteWithComments) =>
     setNotes((all) => all.map((n) => (n.id === id ? fn(n) : n)));
-  const touch = () => localStorage.setItem(SEEN_KEY, String(Date.now()));
+  const touch = () => { try { localStorage.setItem(SEEN_KEY, String(Date.now())); } catch {} };
+  const write = async <T,>(url: string, init: RequestInit, fallback: string): Promise<T> => {
+    try {
+      return await call<T>(url, init, sessionToken ?? readTalkieToken(), fallback);
+    } catch (error) {
+      if (error instanceof TokenError) {
+        clearTalkieToken();
+        setSessionToken(null);
+        setTokenForm(true);
+      }
+      throw error;
+    }
+  };
 
-  const save = async (rect: Rect, body: string) => {
-    const note = await call<NoteWithComments>('/api/notes', {
-      // h: 0 — the drawn height sized the editor; the saved note fits its text until a
-      // top or bottom grip sets a minimum.
-      method: 'POST', body: JSON.stringify({ ...rect, h: 0, body, author: author || undefined }),
-    }, 'could not save');
-    setNotes((all) => [...all, { ...note, createdAt: new Date(note.createdAt), updatedAt: new Date(note.updatedAt), comments: [] }]);
-    setPending(null);
-    touch();
+  const save = (pendingDraft: NewNoteDraft, keepEditor: boolean): Promise<void> => {
+    const body = pendingDraft.body.trim();
+    if (!body) return Promise.resolve();
+    const active = createInFlight.current;
+    if (active?.clientKey === pendingDraft.clientKey) {
+      if (keepEditor) return active.promise;
+      return active.promise.then(() => {
+        const latest = pendingRef.current;
+        if (latest?.clientKey === pendingDraft.clientKey) return save(latest, false);
+      });
+    }
+
+    let retry: NewNoteDraft | null = null;
+    const fields = (value: NewNoteDraft) => ({
+      body: value.body.trim(), x: value.x, y: value.y, w: value.w, h: value.h,
+    });
+    const work = (async () => {
+      try {
+        const priorId = pendingServerIdRef.current;
+        const note = priorId === null
+          ? await write<NoteWithComments>('/api/notes', {
+              method: 'POST',
+              body: JSON.stringify({ ...pendingDraft, body, author: author || undefined }),
+            }, 'could not save')
+          : await write<NoteWithComments>(
+              `/api/notes/${priorId}`,
+              { method: 'PATCH', body: JSON.stringify(fields(pendingDraft)) },
+              'could not save',
+            );
+        if (shouldAttachServerId(pendingRef.current?.clientKey, pendingDraft.clientKey)) {
+          replacePendingServerId(note.id);
+        }
+        let normalized = { ...note, createdAt: new Date(note.createdAt), updatedAt: new Date(note.updatedAt), comments: [] as Comment[] };
+        const newer = pendingRef.current;
+        if (newer?.clientKey === pendingDraft.clientKey && newer.body.trim() && !sameNoteDraft(newer, normalized)) {
+          const updated = await write<NoteWithComments>(
+            `/api/notes/${note.id}`,
+            { method: 'PATCH', body: JSON.stringify(fields(newer)) },
+            'could not save',
+          );
+          normalized = { ...updated, createdAt: new Date(updated.createdAt), updatedAt: new Date(updated.updatedAt), comments: [] };
+        }
+        setNotes((all) =>
+          all.some((existing) => existing.id === normalized.id)
+            ? all.map((existing) => (
+                existing.id === normalized.id ? { ...normalized, comments: existing.comments } : existing
+              ))
+            : [...all, normalized],
+        );
+        const current = pendingRef.current;
+        if (current?.clientKey === pendingDraft.clientKey) {
+          if (sameNoteDraft(current, normalized)) {
+            if (!keepEditor) {
+              clearNewNoteDraft(pendingDraft.clientKey);
+              replacePending(null);
+              replacePendingServerId(null);
+            }
+          } else if (current.body.trim()) {
+            retry = current;
+          }
+          setPendingError(null);
+          setStorageWarning(null);
+        }
+        touch();
+      } finally {
+        if (createInFlight.current?.clientKey === pendingDraft.clientKey) createInFlight.current = null;
+        if (retry) scheduleSave(retry);
+      }
+    })();
+    createInFlight.current = { clientKey: pendingDraft.clientKey, promise: work };
+    return work;
+  };
+  const scheduleSave = (pendingDraft: NewNoteDraft) => {
+    if (createTimer.current) clearTimeout(createTimer.current);
+    if (!pendingDraft.body.trim()) return;
+    createTimer.current = setTimeout(() => {
+      void save(pendingDraft, true).catch((error) => {
+        if (pendingRef.current?.clientKey === pendingDraft.clientKey) setPendingError((error as Error).message);
+      });
+    }, 700);
+  };
+  useEffect(() => {
+    if (pending?.body.trim()) scheduleSave(pending);
+    // A restored draft gets its first autosave after mount. A newly supplied token retries
+    // it too; body changes schedule directly through `updatePending`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending?.clientKey, retryWrites]);
+  const updatePending = (next: NewNoteDraft, autosave: boolean = true) => {
+    replacePending(next);
+    if (!saveNewNoteDraft(next)) {
+      setStorageWarning('Browser storage is unavailable; keep this tab open until the note saves.');
+    }
+    if (autosave) scheduleSave(next);
   };
   const edit = async (id: number, body: string) => {
-    await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ body }) }, 'could not save');
+    await write(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ body }) }, 'could not save');
     patch(id, (n) => ({ ...n, body }));
   };
   // No confirmation, at the user's request: delete means delete. The control is quiet and
@@ -131,25 +257,25 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
       return { ...n, ...geometry };
     });
     try {
-      await call(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(geometry) }, 'could not resize');
+      await write(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(geometry) }, 'could not resize');
     } catch (error) {
       patch(id, (n) => ({ ...n, ...previous }));
       throw error;
     }
   };
   const remove = async (id: number) => {
-    await call(`/api/notes/${id}`, { method: 'DELETE' }, 'could not delete').catch(() => {});
+    await write(`/api/notes/${id}`, { method: 'DELETE' }, 'could not delete');
     setNotes((all) => all.filter((n) => n.id !== id));
   };
   const reply = async (id: number, body: string) => {
-    const comment = await call<Comment>(`/api/notes/${id}/comments`, {
+    const comment = await write<Comment>(`/api/notes/${id}/comments`, {
       method: 'POST', body: JSON.stringify({ body, author: author || undefined }),
     }, 'could not reply');
     patch(id, (n) => ({ ...n, comments: [...n.comments, { ...comment, createdAt: new Date(comment.createdAt) }] }));
     touch();
   };
   const unreply = async (id: number, cid: number) => {
-    await call(`/api/notes/${id}/comments/${cid}`, { method: 'DELETE' }, 'could not delete').catch(() => {});
+    await write(`/api/notes/${id}/comments/${cid}`, { method: 'DELETE' }, 'could not delete');
     patch(id, (n) => ({ ...n, comments: n.comments.filter((c) => c.id !== cid) }));
   };
 
@@ -173,11 +299,43 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
               value={author}
               maxLength={40}
               placeholder="your name"
-              onChange={(e) => { setAuthor(e.target.value); localStorage.setItem(AUTHOR_KEY, e.target.value); }}
+              onChange={(e) => { setAuthor(e.target.value); saveTalkieAuthor(e.target.value); }}
             />
           </label>
         ) : null}
       </div>
+
+      {tokenForm ? (
+        <form
+          aria-label="Talkie write token"
+          className="flex flex-wrap items-end gap-2 border-b border-rule py-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const next = token.trim();
+            if (!next) return;
+            setSessionToken(next);
+            saveTalkieToken(next);
+            setToken('');
+            setTokenForm(false);
+            setRetryWrites((version) => version + 1);
+          }}
+        >
+          <label className="flex min-w-48 flex-1 flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">write token</span>
+            <input
+              autoFocus
+              required
+              type="password"
+              autoComplete="off"
+              className="border-b border-rule bg-transparent text-fg outline-none focus:border-fg-dim"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+            />
+          </label>
+          <button type="submit" className="chip">save token</button>
+          <button type="button" className="chip" onClick={() => setTokenForm(false)}>cancel</button>
+        </form>
+      ) : null}
 
       <div
         className="board"
@@ -189,7 +347,7 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
         role="region"
         aria-label="Notes board"
       >
-        {notes.map((note) => (
+        {notes.filter((note) => note.id !== pendingServerId).map((note) => (
           <NoteCard
             key={note.id}
             note={note}
@@ -200,15 +358,31 @@ export function Board({ notes: initial, canWrite }: { notes: NoteWithComments[];
             onDelete={() => remove(note.id)}
             onReply={(body) => reply(note.id, body)}
             onUnreply={(cid) => unreply(note.id, cid)}
+            retryWrites={retryWrites}
           />
         ))}
 
         {pending ? (
           <NoteEditor
+            key={pending.clientKey}
             rect={pending}
-            onMove={(at) => setPending((cur) => (cur ? { ...cur, ...at } : cur))}
-            onSave={(body) => save(pending, body)}
-            onCancel={() => setPending(null)}
+            initial={pending.body}
+            error={pendingError ?? storageWarning}
+            saved={notes.some((note) => note.id === pendingServerId && sameNoteDraft(pending, note))}
+            onChange={(body) => updatePending({ ...pending, body })}
+            onMove={(at) => updatePending({ ...pending, ...at })}
+            onSave={async (body) => {
+              const next = { ...pending, body };
+              updatePending(next, false);
+              await save(next, false);
+            }}
+            onCancel={() => {
+              if (createTimer.current) clearTimeout(createTimer.current);
+              clearNewNoteDraft(pending.clientKey);
+              replacePending(null);
+              replacePendingServerId(null);
+              setPendingError(null);
+            }}
           />
         ) : null}
 
@@ -238,15 +412,65 @@ function When({ at, mounted }: { at: Date; mounted: boolean }) {
 }
 
 function NoteCard({
-  note, mounted, canWrite, onEdit, onResize, onDelete, onReply, onUnreply,
+  note, mounted, canWrite, onEdit, onResize, onDelete, onReply, onUnreply, retryWrites,
 }: {
   note: NoteWithComments; mounted: boolean; canWrite: boolean;
-  onEdit: (body: string) => Promise<void>; onResize: (geometry: Partial<Rect>) => Promise<void>; onDelete: () => void;
-  onReply: (body: string) => Promise<void>; onUnreply: (cid: number) => void;
+  onEdit: (body: string) => Promise<void>; onResize: (geometry: Partial<Rect>) => Promise<void>; onDelete: () => Promise<void>;
+  onReply: (body: string) => Promise<void>; onUnreply: (cid: number) => Promise<void>; retryWrites: number;
 }) {
   const [editing, setEditing] = useState(false);
+  const [draftBody, setDraftBody] = useState(note.body);
   const [error, setError] = useState<string | null>(null);
   const replyRef = useRef<HTMLInputElement>(null);
+  const latestDraft = useRef(note.body);
+  const onEditRef = useRef(onEdit);
+  onEditRef.current = onEdit;
+  const writer = useRef<DeferredEditWriter | null>(null);
+  const ensureWriter = () => {
+    if (!writer.current) {
+      writer.current = new DeferredEditWriter(note.body, {
+        delayMs: 700,
+        write: (body) => onEditRef.current(body),
+        onAcknowledged: (body) => {
+          if (latestDraft.current.trim() === body) clearEditDraft(note.id);
+          setError(null);
+        },
+        onError: (err) => setError((err as Error).message),
+      });
+    }
+    return writer.current;
+  };
+
+  useEffect(() => {
+    if (!canWrite) {
+      setEditing(false);
+      return;
+    }
+    const recovered = readEditDraft(note.id);
+    if (recovered !== null) {
+      latestDraft.current = recovered;
+      setDraftBody(recovered);
+      setEditing(true);
+      ensureWriter().setDesired(recovered);
+    } else {
+      latestDraft.current = note.body;
+      setDraftBody(note.body);
+    }
+    return () => {
+      writer.current?.dispose();
+      writer.current = null;
+    };
+    // Note-body acknowledgements must not dispose a timer for newer local text.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canWrite, note.id]);
+
+  useEffect(() => {
+    if (!editing || !readEditDraft(note.id) || !draftBody.trim()) return;
+    ensureWriter().retry();
+    // Token submission changes `retryWrites`; recovery gets one retry without requiring
+    // another keystroke. Normal edits are scheduled by `onChange` below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, retryWrites]);
 
   // Resizing after the fact: every edge and corner is a grip. Right/left change the width
   // (left moves the note as it shrinks); bottom/top set a MINIMUM height (top moves it) —
@@ -333,10 +557,32 @@ function NoteCard({
     return (
       <NoteEditor
         rect={{ ...note, h: 0 }}
-        onMove={(at) => { void onResize(at); }}
-        initial={note.body}
-        onSave={async (body) => { await onEdit(body); setEditing(false); }}
-        onCancel={() => setEditing(false)}
+        initial={draftBody}
+        error={error}
+        saved={draftBody.trim() === note.body.trim()}
+        onMove={(at) => { void onResize(at).catch((err) => setError((err as Error).message)); }}
+        onChange={(body) => {
+          latestDraft.current = body;
+          setDraftBody(body);
+          if (!saveEditDraft(note.id, body)) {
+            setError('Browser storage is unavailable; keep this tab open until the note saves.');
+          }
+          ensureWriter().setDesired(body);
+        }}
+        onSave={async (body) => {
+          latestDraft.current = body;
+          ensureWriter().setDesired(body);
+          await ensureWriter().flush();
+          setEditing(false);
+        }}
+        onCancel={() => {
+          clearEditDraft(note.id);
+          writer.current?.dispose();
+          writer.current = null;
+          latestDraft.current = note.body;
+          setDraftBody(note.body);
+          setEditing(false);
+        }}
       />
     );
   }
@@ -350,6 +596,20 @@ function NoteCard({
       setError(null);
     } catch (e) {
       setError((e as Error).message);
+    }
+  };
+  const removeNote = async () => {
+    try {
+      await onDelete();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  const removeReply = async (cid: number) => {
+    try {
+      await onUnreply(cid);
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
 
@@ -374,10 +634,14 @@ function NoteCard({
         <When at={note.createdAt} mounted={mounted} />
         {canWrite ? (
           <span className="note-actions">
-            <button type="button" className="note-action" onClick={() => setEditing(true)}>
+            <button type="button" className="note-action" onClick={() => {
+              latestDraft.current = note.body;
+              setDraftBody(note.body);
+              setEditing(true);
+            }}>
               edit
             </button>
-            <button type="button" className="note-action" onClick={onDelete}>
+            <button type="button" className="note-action" onClick={() => { void removeNote(); }}>
               delete
             </button>
           </span>
@@ -395,7 +659,7 @@ function NoteCard({
               <span className="comment-meta">
                 <When at={comment.createdAt} mounted={mounted} />
                 {canWrite ? (
-                  <button type="button" className="comment-close" onClick={() => onUnreply(comment.id)} aria-label="Delete reply">
+                  <button type="button" className="comment-close" onClick={() => { void removeReply(comment.id); }} aria-label="Delete reply">
                     <Close />
                   </button>
                 ) : null}
@@ -434,14 +698,18 @@ function NoteCard({
 }
 
 function NoteEditor({
-  rect, initial = '', onSave, onCancel, onMove,
+  rect, initial = '', error: externalError = null, saved = false, onSave, onCancel, onMove, onChange,
 }: {
   rect: Rect; initial?: string; onSave: (body: string) => Promise<void>; onCancel: () => void;
   /** Where the note was let go. The parent decides whether that is a draft or a save. */
   onMove?: (at: { x: number; y: number }) => void;
+  onChange?: (body: string) => void;
+  error?: string | null;
+  saved?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [body, setBody] = useState(initial);
   const busy = useRef(false);
 
   // A note can be moved while it is still being written. Same rule as a saved note: the
@@ -482,14 +750,25 @@ function NoteEditor({
     el.style.height = '0px';
     el.style.height = `${el.scrollHeight}px`;
   };
-  useEffect(() => { ref.current?.focus(); fit(); }, []);
+  useEffect(() => {
+    setBody(initial);
+    ref.current?.focus();
+    fit();
+  }, [initial]);
 
   const commit = async () => {
     if (busy.current) return;
-    const body = ref.current?.value.trim() ?? '';
-    if (!body || body === initial) return onCancel();
+    const value = body.trim();
+    if (!value) return onCancel();
     busy.current = true;
-    try { await onSave(body); } catch (e) { setError((e as Error).message); busy.current = false; }
+    try {
+      await onSave(value);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      busy.current = false;
+    }
   };
 
   return (
@@ -501,22 +780,34 @@ function NoteEditor({
       onPointerUp={onUp}
       onPointerCancel={onUp}
     >
-      {/* Enter commits; Shift+Enter is a new line; Esc discards. Clicking away does nothing —
-          the draft stays open with its text, waiting. Saving on blur meant a stray click
-          published a half-written note. */}
+      {/* Typing saves after a short pause; Enter flushes now, Shift+Enter is a new line, and
+          Esc intentionally discards the local draft. Clicking away leaves recovery intact. */}
       <textarea
         ref={ref}
-        defaultValue={initial}
+        value={body}
         maxLength={1000}
         rows={1}
-        placeholder="Type, then Enter to save. Shift+Enter for a new line. Esc discards."
-        onInput={fit}
+        aria-label="Note"
+        placeholder="Write a note"
+        onChange={(event) => {
+          setError(null);
+          setBody(event.target.value);
+          onChange?.(event.target.value);
+          requestAnimationFrame(fit);
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
           if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commit(); }
         }}
       />
-      {error ? <div className="note-meta">{error}</div> : null}
+      <div className="note-meta flex items-center justify-between gap-2">
+        {error || externalError ? (
+          <span role="alert">{error ?? externalError}</span>
+        ) : (
+          <span role="status">{saved ? 'saved' : body.trim() ? 'saving...' : 'draft'}</span>
+        )}
+        <button type="button" className="note-action" onClick={() => { void commit(); }}>done</button>
+      </div>
     </div>
   );
 }

@@ -160,6 +160,8 @@ export const notes = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     body: text('body').notNull(),
     author: text('author'),
+    /** Browser-generated key for retry-safe autosave of a newly drawn note. */
+    clientKey: text('client_key'),
     x: integer('x').notNull(),
     y: integer('y').notNull(),
     w: integer('w').notNull(),
@@ -167,7 +169,7 @@ export const notes = sqliteTable(
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (table) => [index('notes_created_idx').on(table.createdAt)],
+  (table) => [index('notes_created_idx').on(table.createdAt), uniqueIndex('notes_client_key_idx').on(table.clientKey)],
 );
 
 /**

@@ -25,6 +25,7 @@ import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
 import { Chevron, ExternalLink } from "./icons";
 import { ThemeToggle } from "./theme-toggle";
+import { AppliedCheckbox } from "./applied-checkbox";
 
 /**
  * The table, described once: header label and width class together, in render order. `grow`
@@ -35,6 +36,7 @@ import { ThemeToggle } from "./theme-toggle";
  */
 interface Column {
   label: string;
+  field?: string;
   className?: string;
 }
 
@@ -43,16 +45,18 @@ const COLUMNS: Record<Tab, Column[]> = {
     { label: "seen" },
     { label: "badges" },
     { label: "title", className: "grow" },
-    { label: "pay rate" },
+    { label: "pay rate", field: "pay" },
+    { label: "location", className: "clip" },
     { label: "company" },
     { label: "apply" },
+    { label: "applied" },
   ],
   engineering: [
     { label: "seen" },
     { label: "badges" },
     { label: "title", className: "clip" },
     { label: "summary", className: "grow" },
-    { label: "pay rate" },
+    { label: "pay rate", field: "pay" },
     { label: "level" },
     // `grad` was here and was empty on 2,427 of 2,511 rows (96.7%) — ~94px of em dashes
     // on a board whose first principle is density. `location` is null on 2. The 84 real
@@ -60,6 +64,7 @@ const COLUMNS: Record<Tab, Column[]> = {
     { label: "location", className: "clip" },
     { label: "company" },
     { label: "apply" },
+    { label: "applied" },
   ],
 };
 
@@ -143,7 +148,8 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
       {/* Identifying text, not a facet: no badge, no filter. `title` gives the long tail back
           on hover without costing a row of height. */}
       <td data-field="title" className={width(p.tab, "title")} title={row.title}>
-        {row.title}
+        <span className="posting-title">{row.title}</span>
+        {p.tab === "design" ? <span className="posting-location">{row.location ?? <Nothing />}</span> : null}
       </td>
       {p.tab === "engineering" ? (
         <td data-field="summary" className={`${width(p.tab, "summary")} text-fg-dim`}>
@@ -152,15 +158,11 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
       ) : null}
       <td data-field="pay" className="nums">{pay ?? <Nothing />}</td>
       {p.tab === "engineering" ? (
-        <>
-          <td data-field="level" className="text-fg-dim">{row.seniority ?? <Nothing />}</td>
-          {/* Not `nums`: a place is not a number, and these are raw ATS strings that run
-              long, so `.clip` caps and ellipsises them. */}
-          <td data-field="location" className={`text-fg-dim ${width(p.tab, "location") ?? ""}`}>
-            {row.location ?? <Nothing />}
-          </td>
-        </>
+        <td data-field="level" className="text-fg-dim">{row.seniority ?? <Nothing />}</td>
       ) : null}
+      <td data-field="location" className={`text-fg-dim ${width(p.tab, "location") ?? ""}`} title={row.location ?? undefined}>
+        {row.location ?? <Nothing />}
+      </td>
       {/* The drawer trigger. One per row, so the tab order through the table stays short. */}
       <td data-field="company">
         <Link
@@ -184,6 +186,9 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
           apply
           <ExternalLink />
         </a>
+      </td>
+      <td data-field="applied">
+        <AppliedCheckbox postingId={row.id} title={row.title} company={row.company} compact />
       </td>
     </tr>
   );
@@ -424,7 +429,7 @@ export default async function Page({
         )
       ) : (
         <div className="min-h-0 flex-1 overflow-auto" role="region" aria-label="Job results" tabIndex={0}>
-          <table className="rows" data-track={p.tab} style={{ minWidth: p.tab === "design" ? 900 : 1320 }}>
+          <table className="rows" data-track={p.tab} style={{ minWidth: p.tab === "design" ? 900 : 1384 }}>
             <caption className="sr-only">
               {p.tab} postings, newest first
               {p.tab === "design" ? ", target locations only" : ""}
@@ -433,7 +438,7 @@ export default async function Page({
             <thead>
               <tr>
                 {columns.map((column) => (
-                  <th key={column.label} scope="col" className={column.className}>
+                  <th key={column.label} data-field={column.field ?? column.label} scope="col" className={column.className}>
                     {column.label}
                   </th>
                 ))}

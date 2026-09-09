@@ -11,6 +11,7 @@ import {
   type Params,
 } from '@/lib/params';
 import { AutoApply } from './auto-apply';
+import { FilterDefaults } from './filter-defaults';
 import { Chevron } from './icons';
 
 const WINDOW_LABEL: Record<string, string> = { hour: '1h', day: '24h', week: '7d', month: '30d' };
@@ -155,6 +156,7 @@ export function Filters({ p }: { p: Params }) {
       <AutoApply />
 
       <input type="hidden" name="tab" value={p.tab} />
+      <input type="hidden" name="filters" value="all" />
       {/* The split is a control of its own, above this form. Without it here, submitting the
           filters would drop the reader back onto the employed side. */}
       {p.basis ? <input type="hidden" name="basis" value={p.basis} /> : null}
@@ -175,7 +177,8 @@ export function Filters({ p }: { p: Params }) {
       {/* Badges are free slugs, not a fixed vocabulary, so the active one stays a chip. */}
       {p.badge ? <BadgeChip p={p} value={p.badge} /> : null}
 
-      <span className="ml-auto flex items-baseline gap-1">
+      <span className="ml-auto flex flex-wrap items-baseline gap-1">
+        <FilterDefaults p={p} />
         <button type="submit" className="chip">
           filter
         </button>

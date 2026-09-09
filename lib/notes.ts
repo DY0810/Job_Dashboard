@@ -31,6 +31,8 @@ export const MAX_NOTES_PER_WEEK = 400;
 export const NoteInput = z.object({
   body: z.string().trim().min(1).max(1000),
   author: z.string().trim().max(40).optional(),
+  /** Optional for legacy clients; new board drafts always send a stable UUID. */
+  clientKey: z.uuid().optional(),
   x: z.number().int().min(0).max(4000),
   y: z.number().int().min(0).max(4000),
   w: z.number().int().min(120).max(800),
@@ -132,13 +134,32 @@ export async function listWeeks(db: ReadDb): Promise<string[]> {
 }
 
 export async function createNote(db: ReadDb, input: NoteInput, now: number = Date.now()): Promise<Note> {
+  if (input.clientKey) {
+    const existing = await findNoteByClientKey(db, input.clientKey);
+    if (existing) return existing;
+  }
   const at = new Date(now);
   const rows = await driver(db)
     .insert(notes)
     .values({ ...input, author: input.author || null, createdAt: at, updatedAt: at })
+    .onConflictDoNothing({ target: notes.clientKey })
     .returning()
     .all();
-  return rows[0]!;
+  if (rows[0]) return rows[0];
+  // A concurrent retry won the unique key between the lookup and insert.
+  const existing = input.clientKey ? await findNoteByClientKey(db, input.clientKey) : null;
+  if (existing) return existing;
+  throw new Error('could not create note');
+}
+
+export async function findNoteByClientKey(db: ReadDb, clientKey: string): Promise<Note | null> {
+  return (
+    (await driver(db)
+      .select()
+      .from(notes)
+      .where(eq(notes.clientKey, clientKey))
+      .get()) ?? null
+  );
 }
 
 /**

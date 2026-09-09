@@ -587,7 +587,7 @@ describe('badges and dropdowns write the same filter', () => {
 
   it('a filter link cannot carry a value the tab does not offer', async () => {
     // Season is Engineering's; `posted` is now shared, so it survives on both tabs.
-    expect(withFilter(params('design'), 'season', 'summer')).toBe('/');
+    expect(withFilter(params('design'), 'season', 'summer')).toBe('/?filters=all');
     expect(withFilter(params('design'), 'posted', 'hour')).toBe('/?posted=hour');
     expect(withFilter(params('engineering'), 'posted', 'hour')).toBe('/?tab=engineering&posted=hour');
   });
@@ -668,12 +668,12 @@ describe('the Design freelance split', () => {
   it('drops a type the destination side does not offer when crossing', async () => {
     // Carrying `type=part-time` onto the freelance side would show an empty table under a
     // control set to a value that side cannot have.
-    expect(withBasis(params('design', { type: ['part-time'] }), 'freelance')).toBe('/?basis=freelance');
-    expect(withBasis(params('design', { type: ['contract'], basis: 'freelance' }), 'employed')).toBe('/');
+    expect(withBasis(params('design', { type: ['part-time'] }), 'freelance')).toBe('/?basis=freelance&filters=all');
+    expect(withBasis(params('design', { type: ['contract'], basis: 'freelance' }), 'employed')).toBe('/?filters=all');
   });
 
   it('survives clearing the filters — clear is not a way across the split', async () => {
-    expect(cleared(params('design', { basis: 'freelance', type: ['contract'] }))).toBe('/?basis=freelance');
+    expect(cleared(params('design', { basis: 'freelance', type: ['contract'] }))).toBe('/?basis=freelance&filters=all');
   });
 });
 
@@ -690,7 +690,7 @@ describe('search params are validated, not trusted', () => {
     ['design employed', { tab: 'design', basis: 'employed', posted: 'week' }, { posted: 'week' }],
     ['design freelance', { tab: 'design', basis: 'freelance', type: ['contract'] }, { basis: 'freelance', type: ['contract'] }],
     ['engineering', { tab: 'engineering', posted: 'day', level: ['entry'] }, { tab: 'engineering', posted: 'day', level: ['entry'] }],
-    ['nothing chosen', { tab: 'design', basis: 'employed' }, {}],
+    ['nothing chosen', { tab: 'design', basis: 'employed' }, { filters: 'all' }],
   ])('%s: a form submission parses to the same params as the tidy URL', (_label, chosen, tidy) => {
     const empties = { type: '', pay: '', mode: '', season: '', level: '', posted: '' };
     // The form sends every control; the chosen ones overwrite their empty defaults.

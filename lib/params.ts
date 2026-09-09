@@ -147,6 +147,8 @@ export interface Params {
   /** The posting whose drawer is open, from `?job=<id>`. */
   job: number | null;
   page: number;
+  /** An intentional unfiltered view must not be replaced by this browser's saved defaults. */
+  unfiltered?: true;
 }
 
 const value = z.string().max(200).optional();
@@ -223,7 +225,7 @@ export function parseParams(input: RawSearchParams): Params {
   const groups = Object.fromEntries(
     GROUPS.map((group) => [group, pickAll(raw[group], vocab(raw.tab, group, basis))]),
   ) as Record<Group, string[]>;
-  return {
+  const p: Params = {
     ...groups,
     tab: raw.tab,
     basis,
@@ -232,6 +234,9 @@ export function parseParams(input: RawSearchParams): Params {
     job: raw.job ?? null,
     page: raw.page,
   };
+  const explicit = first(input.filters) === 'all'
+    || [...FILTERS, 'badge'].some((key) => input[key] !== undefined);
+  return explicit && !hasFilters(p) ? { ...p, unfiltered: true } : p;
 }
 
 export function hasFilters(p: Params): boolean {
@@ -245,6 +250,7 @@ export function href(p: Params): string {
   // Only the non-default side is written. `employed` is what a bare `/` already means, and
   // spelling it out would give the same table two URLs.
   if (p.basis && p.basis !== DEFAULT_BASIS) q.set('basis', p.basis);
+  if (p.unfiltered && !hasFilters(p)) q.set('filters', 'all');
   if (p.posted) q.set('posted', p.posted);
   // One comma list per group rather than a repeated key: both parse, and this is the shorter
   // of the two to paste into a message.
@@ -321,7 +327,7 @@ export function bare(p: Params): Params {
 }
 
 export function cleared(p: Params): string {
-  return href({ ...bare(p), job: null });
+  return href({ ...bare(p), job: null, unfiltered: true });
 }
 
 export function withJob(p: Params, job: number | null): string {
@@ -342,5 +348,6 @@ function toRaw(p: Params): RawSearchParams {
       GROUPS.map((group) => [group, p[group].length > 0 ? p[group].join(',') : undefined]),
     ),
     badge: p.badge ?? undefined,
+    filters: p.unfiltered ? 'all' : undefined,
   };
 }

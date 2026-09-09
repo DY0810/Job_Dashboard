@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import type { Db } from './db/index.ts';
 import {
   CommentInput, MAX_NOTES_PER_WEEK, NoteInput, NotePatch, addComment, countActivitySince, createNote,
-  deleteComment, deleteNote, listNotes, listWeeks, updateNote, weekKey, weekLabel, weekRange,
+  deleteComment, deleteNote, findNoteByClientKey, listNotes, listWeeks, updateNote, weekKey, weekLabel, weekRange,
 } from './notes.ts';
 
 function memoryDb(): Db {
@@ -87,6 +87,17 @@ describe('the board', () => {
     expect(thisWeek[0]).toMatchObject({ id: a.id, author: 'dyl', x: 40, y: 60, w: 240, h: 160 });
     expect((await listNotes(db, '2026-W33')).map((n) => n.body)).toEqual(['last week']);
     expect(await listNotes(db, '2026-W30')).toEqual([]);
+  });
+
+  it('uses a client key to make a retried new-note save idempotent', async () => {
+    const db = memoryDb();
+    const input = { ...NOTE, clientKey: '8b64ed75-4c6f-49f2-8e8a-958489279491' };
+    const first = await createNote(db, input, T('2026-08-20T10:00:00Z'));
+    const retried = await createNote(db, { ...input, body: 'a retry must not fork the note' }, T('2026-08-20T10:01:00Z'));
+
+    expect(retried.id).toBe(first.id);
+    expect((await listNotes(db, '2026-W34')).map((note) => note.body)).toEqual([NOTE.body]);
+    expect(await findNoteByClientKey(db, input.clientKey)).toMatchObject({ id: first.id });
   });
 
   it('lists the weeks that have notes, newest first', async () => {
