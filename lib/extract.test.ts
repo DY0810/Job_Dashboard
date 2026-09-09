@@ -18,6 +18,19 @@ import { GRADED_FIELDS, POSTING_FIXTURES, SENIOR_FIXTURES } from './extract.fixt
 import { normalizeDescription } from './normalize.ts';
 import { VOICE_BADGE } from './voice.ts';
 
+describe('technical roles attached to design teams', () => {
+  it.each([
+    ['DC Design Manager for Region (AMER), Data Center Engineering', 'engineering'],
+    ['DC Design & Portfolio Management, Data Center Engineer', 'engineering'],
+    ['Principal TPM, AWS UX Design Team', 'other'],
+    ['Product Designer, Data Center Management', 'design'],
+    ['UX Designer, TPM Tools', 'design'],
+    ['TPM Firmware Engineer', 'engineering'],
+  ])('classifies %s as %s', (title, track) => {
+    expect(extract({ title, description: '' }).track).toBe(track);
+  });
+});
+
 function run(fixture: { title: string; description: string }, sourceFields?: ExtractInput['sourceFields']) {
   return extract({
     title: fixture.title,

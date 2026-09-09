@@ -539,7 +539,12 @@ function extractTrack(title: string, body: string, source: SourceFields | null |
   // Associate" is still off-track. The full-title pass is only the fallback for titles that
   // lead with something uninformative ("Intern - Product Design").
   const head = titleHead(title);
-  if (TRACK_VETO.test(head)) return 'other';
+  if (TRACK_VETO.test(head) || /^(?:(?:principal|senior|sr\.?|staff|lead)\s+)*tpm$/i.test(head)) return 'other';
+  // DC design management is infrastructure when the title supplies that context.
+  // A Product/UX Designer attached to a data-center team still follows its own role.
+  if (/^(?:(?:senior|sr\.?|principal)\s+)?dc\s+design\b/i.test(head) && HARDWARE_DESIGN.test(title)) {
+    return 'engineering';
+  }
   const headTrack = trackFromTitle(head);
   if (headTrack && !/^(?:design|engineering)$/i.test(head.trim())) return headTrack;
 

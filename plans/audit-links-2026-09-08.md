@@ -88,6 +88,30 @@ an origin returns 403 or 429, later URLs on that origin are recorded as unreques
 and blocked, not falsely described as having returned that status. This avoids
 repeated requests to a provider that has already refused the audit.
 
+## Completed Census
+
+The corrected pass began at 21:07 UTC on September 8, 2026 and completed in 83 minutes:
+
+| View | Pages | Captured Links | API Matches | Live Page | Candidate Dead | Blocked | Unknown |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Design employed | 10 | 1,877 | 1,877 | 348 | 3 | 1,383 | 143 |
+| Design freelance | 1 | 154 | 154 | 25 | 0 | 121 | 8 |
+| Engineering | 58 | 11,418 | 11,396 | 1,803 | 19 | 6,640 | 2,956 |
+| Total | 69 | 13,449 | 13,427 | 2,176 | 22 | 8,144 | 3,107 |
+
+All Apply cells were paired, with no duplicate IDs or API URL mismatches. The 22
+unavailable Engineering detail requests returned 404 again on recheck. This was a
+live audit window, not a frozen snapshot. Blocked and unknown links are not verified
+as working or closed.
+
+Cloud run `34287401657` rechecked the 22 candidate closures using their current,
+unredacted database URLs. Two records were already excluded; one of the 20 checked
+had recovered, and 19 were marked closed. The subsequent mirror succeeded. All 19
+returned 404 from the production API; recovered Pinterest record `6048` returned 200.
+No blocked or unknown destination was delisted on that evidence.
+
+Detailed local artifact: `logs/audit-2026-09-08/production-links-a19fff0.json`.
+
 `linkcheck` currently classifies response bodies using the stored pre-redirect URL. Final URL
 exposure from the runtime is not required for fail-closed behavior, but would let callers
 apply host-specific 200-page fingerprints to the destination that actually served the body.
