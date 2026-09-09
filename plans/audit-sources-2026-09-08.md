@@ -106,5 +106,7 @@ advancement commits after postings, pending scans bypass the completed-scan
 cadence, and the cloud `catch_up` workflow advances only pending catalogs between
 enrichment and mirror steps. Cloud run `34257909517` completed the Himalayas traversal and
 reported no enabled pending imports. The later targeted run `34269480932` verified 2,498
-Workday records and the full 10,000-result Amazon window. Registry repairs and the AWS
-supplement still require their own post-change cloud verification.
+Workday records and the full 10,000-result Amazon window. Run `34276481157` then verified
+all 124 Cursor URL mappings and a 14,510-record Amazon union, including the 8,024-record
+AWS partition. It mirrored successfully. Amazon's remaining ceiling and the unresolved
+Intercom destination are not counted as complete coverage.
