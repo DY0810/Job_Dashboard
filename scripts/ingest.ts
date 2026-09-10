@@ -341,6 +341,7 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
         db,
         harvested.flatMap((outcome) => outcome.postings),
         runId,
+        log,
       );
 
   // A cursor must never advance past rows that failed to commit. Failed connectors and
@@ -431,7 +432,12 @@ function bump(counts: Counts, connector: string, key: 'newPostings' | 'merged'):
   counts.set(connector, entry);
 }
 
-function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
+function persist(
+  db: Db,
+  batch: ConnectorPosting[],
+  runId: string,
+  log: (record: Record<string, unknown>) => void,
+): Counts {
   const counts: Counts = new Map();
   if (batch.length === 0) return counts;
 
@@ -455,7 +461,6 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
       title: postings.title, location: postings.location, delistedAt: postings.delistedAt,
     }).from(postings).all();
     const oldById = new Map(oldPosts.map((post) => [post.id, post]));
-    const oldByKey = new Map(oldPosts.map((post) => [post.dedupeKey, post]));
     const oldSources = tx.select().from(postingSources).all();
     type SourceRow = (typeof oldSources)[number];
     const byUrl = new Map<string, SourceRow[]>();
@@ -527,7 +532,9 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
         return !priorId || !post.sources.some((source) =>
           source.source === primary.source && source.publisherId && source.publisherId !== priorId);
       };
-      const exact = oldByKey.get(post.dedupeKey);
+      // Earlier groups can change key ownership inside this transaction.
+      const exact = tx.select({ id: postings.id }).from(postings)
+        .where(eq(postings.dedupeKey, post.dedupeKey)).get();
       // Preserve the original compatible posting, not whichever source row was inserted
       // first or duplicate already adopted the new key. Otherwise an over-merged original
       // keeps sibling sources AND the same canonical URL as the chosen duplicate.
@@ -537,6 +544,16 @@ function persist(db: Db, batch: ConnectorPosting[], runId: string): Counts {
       if (postingId === undefined) {
         const candidates = (byNormal.get(normalKey(post)) ?? []).filter((candidate) => compatible(candidate.id));
         if (candidates.length === 1) postingId = candidates[0].id;
+      }
+      if (postingId === undefined && exact) {
+        // A legacy merge can leave B's key on A. Preserve A's id and content, but release
+        // that stale key before inserting B. Fresh keys are hashes, not this id namespace.
+        tx.update(postings).set({ dedupeKey: `retained:${exact.id}` })
+          .where(eq(postings.id, exact.id)).run();
+        log({
+          run: runId, event: 'dedupe-key-conflict', retainedPostingId: exact.id,
+          incomingSources: [...new Set(post.sources.map((source) => source.source))],
+        });
       }
 
       const inserted = postingId === undefined;

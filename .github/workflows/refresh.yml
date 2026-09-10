@@ -176,7 +176,7 @@ jobs:
           f=$(ls -t logs/refresh-*.log 2>/dev/null | head -1) || true
           if [ -z "$f" ]; then echo "no cycle log written"; exit 0; fi
           echo "── cycle ──"
-          grep -aE '"event":"summary"|ingest exit=|enrich exit=|push:remote exit=|linkcheck exit=|refresh-claim-failed|cycle (start|end)' "$f" | tail -20 || true
+          grep -aE '"event":"(summary|dedupe-key-conflict)"|ingest exit=|enrich exit=|push:remote exit=|linkcheck exit=|refresh-claim-failed|cycle (start|end)' "$f" | tail -20 || true
           echo "── connectors that did not succeed ──"
           grep -aoE '"connector":"[a-z0-9-]+","status":"(error|skipped)"[^}]*' "$f" | tail -15 || true
           echo "── tail ──"

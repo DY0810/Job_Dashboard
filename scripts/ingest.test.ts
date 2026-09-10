@@ -340,6 +340,64 @@ describe('idempotency', () => {
 });
 
 describe('review regressions', () => {
+  it.each([
+    { originalListed: false, originalFirst: false },
+    { originalListed: true, originalFirst: false },
+    { originalListed: true, originalFirst: true },
+  ])('splits a legacy row holding another requisition key ($originalListed, $originalFirst)', async ({
+    originalListed, originalFirst,
+  }) => {
+    const db = memoryDb();
+    const original = posting({
+      source: 'greenhouse', publisherId: '100', sourceUrl: 'https://boards.test/jobs/100',
+      description: 'Original requisition body.',
+    });
+    const sibling = posting({
+      source: 'greenhouse', publisherId: '200', sourceUrl: 'https://boards.test/jobs/200',
+      postedAt: POSTED + (originalFirst ? 1 : -1), description: 'Separate requisition body.',
+    });
+    let rows = [original];
+    const connector: Connector = { name: 'greenhouse', kind: 'ats', fetch: async () => rows };
+    const events: Record<string, unknown>[] = [];
+    const base = { db, connectors: [connector], runtime: flakyRuntime(),
+      log: (record: Record<string, unknown>) => { events.push(record); } };
+    await runIngest({ ...base, runId: 'seed' });
+    const originalId = db.select().from(postings).get()!.id;
+    const siblingKey = dedupePostings([sibling])[0].dedupeKey;
+    db.update(postings).set({ dedupeKey: siblingKey }).where(eq(postings.id, originalId)).run();
+    db.insert(postingSources).values({
+      postingId: originalId, source: 'greenhouse', sourceUrl: sibling.sourceUrl,
+      publisherId: '200', postedAt: new Date(sibling.postedAt), sourcePriority: 1,
+      lastSeenRun: 'legacy',
+    }).run();
+
+    rows = originalListed ? [original, sibling] : [sibling];
+    expect((await runIngest({ ...base, runId: 'split' })).exitCode).toBe(0);
+    expect(events.filter((event) => event.event === 'dedupe-key-conflict')).toEqual(
+      originalFirst ? [] : [{
+        run: 'split', event: 'dedupe-key-conflict', retainedPostingId: originalId,
+        incomingSources: ['greenhouse'],
+      }],
+    );
+    const split = db.select().from(postings).all();
+    expect(split).toHaveLength(2);
+    expect(split.find((row) => row.id === originalId)).toMatchObject({
+      canonicalUrl: original.sourceUrl, description: original.description,
+    });
+    const siblingRow = split.find((row) => row.id !== originalId)!;
+    expect(siblingRow).toMatchObject({
+      dedupeKey: siblingKey, canonicalUrl: sibling.sourceUrl, description: sibling.description,
+    });
+    expect(db.select().from(postingSources).all().map((source) => [source.publisherId, source.postingId]))
+      .toEqual([['100', originalId], ['200', siblingRow.id]]);
+
+    rows = [sibling, original];
+    await runIngest({ ...base, runId: 'repeat' });
+    expect(db.select().from(postings).all().map((row) => row.id)).toEqual(split.map((row) => row.id));
+    expect(db.select().from(postings).all().map((row) => row.dedupeKey).sort())
+      .toEqual(dedupePostings(rows).map((row) => row.dedupeKey).sort());
+  });
+
   it('keeps an unrelated source-less record with a different application URL', async () => {
     const db = memoryDb();
     const connector: Connector = { name: 'healthy', kind: 'ats', fetch: async () => [posting()] };
