@@ -340,6 +340,38 @@ describe('idempotency', () => {
 });
 
 describe('review regressions', () => {
+  it.each([false, true])('keeps the ATS job when a repo labels the same application differently (form alias: %s)', async (formAlias) => {
+    const db = memoryDb();
+    const ats = posting({
+      source: 'greenhouse', publisherId: '100',
+      sourceUrl: 'https://boards.test/jobs/100',
+      applyUrl: formAlias ? 'https://boards.test/jobs/100/apply' : undefined,
+      title: 'Software Engineer, Machine Learning Infrastructure',
+      description: 'Complete employer description.',
+    });
+    const repo = posting({
+      source: 'simplify-new-grads', sourceKind: 'repo',
+      sourceUrl: formAlias ? `${ats.applyUrl}?utm_source=Simplify` : ats.sourceUrl,
+      title: 'Software Engineer New Grad', description: '',
+    });
+    let entries = [repo];
+    const connector: Connector = { name: 'test', kind: 'ats', fetch: async () => entries };
+    const base = { db, connectors: [connector], runtime: flakyRuntime(), log: silent };
+    await runIngest({ ...base, runId: 'repo-first' });
+    const originalId = db.select().from(postings).get()!.id;
+
+    entries = [repo, ats];
+    await runIngest({ ...base, runId: 'combined' });
+    const saved = db.select().from(postings).all();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      id: originalId, title: ats.title, description: ats.description,
+      canonicalUrl: ats.applyUrl ?? ats.sourceUrl, delistedAt: null,
+    });
+    await runIngest({ ...base, runId: 'repeat' });
+    expect(db.select().from(postings).all()).toEqual(saved);
+  });
+
   it.each([
     { originalListed: false, originalFirst: false },
     { originalListed: true, originalFirst: false },

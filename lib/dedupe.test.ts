@@ -91,6 +91,45 @@ describe('dedupeKey', () => {
 });
 
 describe('publisher identity', () => {
+  it('keeps conflicting native ids even when their posting URLs match', () => {
+    const sourceUrl = 'https://careers.example.test/jobs/shared';
+    const merged = dedupePostings([
+      posting({ publisherId: '100', sourceUrl }),
+      posting({ publisherId: '200', sourceUrl }),
+      posting({
+        source: 'simplify-new-grads', sourceKind: 'repo', sourceUrl,
+        title: 'Designer, New Graduate',
+      }),
+    ]);
+    expect(merged).toHaveLength(2);
+    expect(merged.flatMap((post) => post.sources.filter((source) => source.source === 'greenhouse'))
+      .map((source) => source.publisherId).sort()).toEqual(['100', '200']);
+  });
+
+  it('does not use a shared external application form to merge different jobs', () => {
+    const applyUrl = 'https://forms.example.test/apply';
+    expect(dedupePostings([
+      posting({ applyUrl }),
+      posting({
+        source: 'simplify-new-grads', sourceKind: 'repo', sourceUrl: applyUrl,
+        title: 'Software Engineering Internship',
+      }),
+    ])).toHaveLength(2);
+  });
+
+  it.each([
+    ['https://careers.example.test/jobs?job=/apply', 'https://careers.example.test/jobs?job='],
+    ['https://careers.example.test/jobs#job-100', 'https://careers.example.test/jobs#job-200'],
+  ])('preserves functional URL routing (%s)', (atsUrl, repoUrl) => {
+    expect(dedupePostings([
+      posting({ publisherId: '100', sourceUrl: atsUrl }),
+      posting({
+        source: 'simplify-new-grads', sourceKind: 'repo',
+        sourceUrl: repoUrl, title: 'Software Engineering Internship',
+      }),
+    ])).toHaveLength(2);
+  });
+
   it('scopes a native publisher id to the normalized employer', () => {
     const merged = dedupePostings([
       posting({

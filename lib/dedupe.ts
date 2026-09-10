@@ -193,6 +193,18 @@ interface Group {
   location: NormalizedLocation;
   sources: PostingSource[];
   publisherIds: Map<string, string>;
+  urls: Set<string>;
+}
+
+/** A URL only if it is one a browser may navigate to: http(s), nothing else. */
+function httpUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:' ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 function canonicalSourceUrl(value: string): string {
@@ -243,11 +255,15 @@ function publisherKey(source: string, id: string): string {
 }
 
 function sharesPublisherIdentity(a: Group, b: Group): boolean {
-  if (a.companyNorm !== b.companyNorm) return false;
+  if (a.companyNorm !== b.companyNorm || hasPublisherConflict(a, b)) return false;
   for (const [source, id] of a.publisherIds) {
     if (b.publisherIds.get(source) === id) return true;
   }
-  return false;
+  // Repo lists reuse employer links but may abbreviate the title or location. An exact
+  // ATS job-page match is stronger evidence than those labels, never than conflicting ids.
+  return (a.sources.some((source) => source.sourceKind === 'ats')
+    || b.sources.some((source) => source.sourceKind === 'ats'))
+    && [...a.urls].some((url) => b.urls.has(url));
 }
 
 function hasPublisherConflict(a: Group, b: Group): boolean {
@@ -263,7 +279,7 @@ function hasPublisherConflict(a: Group, b: Group): boolean {
  *
  * Four passes, in order:
  *  1. exact normalized key, including an ATS publisher identity when one is available;
- *  2. publisher identity — aliases/tracking URLs for one publisher job id;
+ *  2. publisher identity — a shared native id or exact ATS job-page URL;
  *  3. near-dupe — same company AND same location, title ratio ≥ 0.90;
  *  4. remote-vs-city (finding I) — same company, title ratio ≥ 0.95, and exactly one side
  *     remote. This is the pass that catches the same job listed as "San Francisco" on the
@@ -326,6 +342,12 @@ function groupByKey(postings: RawPosting[]): Group[] {
     const id = publisherIdOf(raw);
     const identity = id ? publisherKey(raw.source, id) : undefined;
     const key = keyOf(companyNorm, titleNorm, locKey, identity);
+    // /apply and /application are job-page aliases. An unrelated external application
+    // form may serve many roles, so applyUrl alone is not evidence of shared identity.
+    const url = httpUrl(raw.sourceUrl);
+    const page = url ? new URL(url) : null;
+    if (page) page.pathname = page.pathname.replace(/\/(?:apply|application)\/?$/, '');
+    const urls = page ? [canonicalSourceUrl(page.toString()) + page.hash] : [];
     const source: PostingSource = {
       source: raw.source,
       sourceKind: raw.sourceKind,
@@ -337,7 +359,10 @@ function groupByKey(postings: RawPosting[]): Group[] {
     };
 
     const existing = groups.get(key);
-    if (existing) existing.sources.push(source);
+    if (existing) {
+      existing.sources.push(source);
+      for (const url of urls) existing.urls.add(url);
+    }
     else {
       groups.set(key, {
         dedupeKey: key,
@@ -347,6 +372,7 @@ function groupByKey(postings: RawPosting[]): Group[] {
         location,
         sources: [source],
         publisherIds: new Map(id ? [[raw.source, id]] : []),
+        urls: new Set(urls),
       });
     }
   }
@@ -366,6 +392,7 @@ function mergePass(groups: Group[], canMerge: (kept: Group, candidate: Group) =>
     }
     target.sources.push(...group.sources);
     for (const [source, id] of group.publisherIds) target.publisherIds.set(source, id);
+    for (const url of group.urls) target.urls.add(url);
   }
 
   return kept;
@@ -408,17 +435,6 @@ function materialize(group: Group, fallbackPostedAt: number): DedupedPosting {
   // the 60-day cutoff. Every source keeps its own date on its own row regardless.
   const postedAt = atsDates.length > 0 ? Math.max(minAll, Math.min(...atsDates)) : minAll;
 
-  /** A URL only if it is one a browser may navigate to: http(s), nothing else. */
-  function httpUrl(value: string | null | undefined): string | null {
-    if (!value) return null;
-    try {
-      const { protocol } = new URL(value);
-      return protocol === 'http:' || protocol === 'https:' ? value : null;
-    } catch {
-      return null;
-    }
-  }
-
   const ats = sources.filter((source) => source.sourceKind === 'ats');
   // The winner's application-form URL beats its posting page: the apply button should land
   // the user on the form, not one click away from it.
@@ -428,7 +444,14 @@ function materialize(group: Group, fallbackPostedAt: number): DedupedPosting {
   // survive a downgrade or a move to `window.open`. Checked at the seam instead.
   const canonicalUrl = httpUrl(winner?.applyUrl) ?? httpUrl(winner?.sourceUrl) ?? '';
 
-  return { ...group, sources, postedAt, canonicalUrl };
+  return {
+    dedupeKey: group.dedupeKey,
+    companyNorm: group.companyNorm,
+    titleNorm: group.titleNorm,
+    locationKey: group.locationKey,
+    location: group.location,
+    sources, postedAt, canonicalUrl,
+  };
 }
 
 /**
