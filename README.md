@@ -83,6 +83,34 @@ This bypasses only the polling interval for those names. Credential requirements
 robots rules and request rate limits still apply; the ordinary cycle then enriches
 and mirrors their results.
 
+### GitHub Job Lists
+
+The following additional repositories are polled every three hours through GitHub's
+rendered-content API. The Actions job uses its built-in, read-only `GITHUB_TOKEN`;
+no extra repository secret is required.
+
+| Connector | Repository | Lists |
+| --- | --- | --- |
+| `vansh-internships` | `vanshb03/Summer2027-Internships` | Summer internships |
+| `speedyapply-ai` | `speedyapply/2027-AI-College-Jobs` | US and international internships and new-grad roles |
+| `speedyapply-swe` | `speedyapply/2027-SWE-College-Jobs` | US and international internships and new-grad roles |
+| `jobright-software` | `jobright-ai/2026-Software-Engineer-Internship` | Recent software internships |
+| `jobright-engineering` | `jobright-ai/2026-Engineer-Internship` | Recent engineering internships |
+| `jobright-marketing` | `jobright-ai/2026-Marketing-Internship` | Recent marketing internships |
+| `jobright-design` | `jobright-ai/2026-Design-Internship` | Recent design internships |
+| `jobright-art` | `jobright-ai/2026-Art-Internship` | Recent art internships |
+
+The Vansh and SpeedyApply 2026 repository URLs now redirect to their 2027 names.
+Jobright's URLs retain 2026. Jobright supplies links to its own listings, not
+employer-direct application links; company links to LinkedIn are never followed.
+Existing track, location, seniority and pay filters still apply. Missing pay stays
+unknown, and any salary is source-supplied rather than independently verified.
+
+These are curated snapshots, not complete employer catalogs. Their runs are marked
+partial so a row aging out of a list does not count as evidence that the job closed.
+Normal link checks still apply. A failed file does not discard successful sibling
+files or stop the other connectors.
+
 ### Browsing Jobs
 
 Each page contains at most 200 jobs; Previous/Next reaches the remaining matching results.
@@ -157,7 +185,7 @@ cannot have changed are not asked.
 | --- | --- | --- |
 | ATS boards — Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee | every cycle | Where a new posting appears first. This is the point of the tool. |
 | `hn` | 6h | "Who is Hiring" is one thread a month. |
-| `simplify-internships` | 3h | A hand-maintained GitHub README; a few commits a day. |
+| Repository lists: Simplify, Vansh, SpeedyApply, Jobright | 3h | Curated GitHub job tables. |
 | RSS + smaller aggregators — WeWorkRemotely, Dribbble, Jobspresso, Working Nomads, RemoteOK, Arbeitnow, Braintrust, Jobicy | 1h | Provider feeds may expose a bounded window rather than the full catalog. |
 | Himalayas | 24h after a completed sweep | Daily provider cache; pending cursor imports advance on intervening runs. |
 | Muse | 1h after a completed sweep | Design and Science-and-Engineering scopes, with resumable category pagination. |

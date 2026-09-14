@@ -340,6 +340,31 @@ describe('idempotency', () => {
 });
 
 describe('review regressions', () => {
+  it('preserves distinct repository posting ids across partial snapshots', async () => {
+    const db = memoryDb();
+    const original = posting({
+      source: 'jobright-design', sourceKind: 'repo',
+      sourceUrl: 'https://jobright.ai/jobs/info/first', publisherId: 'first',
+    });
+    const sibling = { ...original, sourceUrl: 'https://jobright.ai/jobs/info/second', publisherId: 'second' };
+    let entries = [original];
+    const connector: Connector = {
+      name: 'jobright-design', kind: 'repo',
+      fetch: async (context) => { context.degraded('Curated snapshot'); return entries; },
+    };
+    const base = { db, connectors: [connector], runtime: flakyRuntime(), log: silent };
+    await runIngest({ ...base, runId: 'first' });
+    const originalId = db.select().from(postings).get()!.id;
+    entries = [sibling];
+    await runIngest({ ...base, runId: 'second' });
+    const rows = db.select().from(postings).all();
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.id === originalId)?.canonicalUrl).toBe(original.sourceUrl);
+    entries = [sibling, original];
+    await runIngest({ ...base, runId: 'repeat' });
+    expect(db.select().from(postings).all().map((row) => row.id)).toEqual(rows.map((row) => row.id));
+  });
+
   it.each([false, true])('keeps the ATS job when a repo labels the same application differently (form alias: %s)', async (formAlias) => {
     const db = memoryDb();
     const ats = posting({

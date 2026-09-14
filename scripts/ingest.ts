@@ -527,7 +527,7 @@ function persist(
         const primary = sources.find((source) =>
           applicationPage(source.sourceUrl) === applicationPage(previous?.canonicalUrl ?? '')
           || display.get(source.sourceUrl)?.applyUrl === previous?.canonicalUrl) ?? sources[0];
-        if (!primary || (primary.sourcePriority !== SOURCE_PRIORITY.ats && sourceKinds.get(primary.source) !== 'ats')) return true;
+        if (!primary) return true;
         const priorId = nativeIds.get(primary.id);
         return !priorId || !post.sources.some((source) =>
           source.source === primary.source && source.publisherId && source.publisherId !== priorId);
