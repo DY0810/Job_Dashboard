@@ -105,6 +105,9 @@ Jobright's URLs retain 2026. Jobright supplies links to its own listings, not
 employer-direct application links; company links to LinkedIn are never followed.
 Existing track, location, seniority and pay filters still apply. Missing pay stays
 unknown, and any salary is source-supplied rather than independently verified.
+Select **paid** and **pay not listed** together to include unknown pay while excluding
+explicitly unpaid jobs; **save defaults** keeps that choice in this browser.
+Unknown pay is labeled on each row, and explicit pay statements in job titles count too.
 
 These are curated snapshots, not complete employer catalogs. Their runs are marked
 partial so a row aging out of a list does not count as evidence that the job closed.

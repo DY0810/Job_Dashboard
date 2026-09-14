@@ -40,8 +40,7 @@ export function rowChips(row: ChipRow, tab: 'design' | 'engineering'): Chip[] {
 
   if (row.employmentType) chips.push({ group: 'type', value: row.employmentType });
   if (row.workMode) chips.push({ group: 'mode', value: row.workMode });
-  // `paid = null` is "the posting does not say" — it claims neither chip (finding G).
-  if (row.paid !== null) chips.push({ group: 'pay', value: row.paid ? 'paid' : 'unpaid' });
+  chips.push({ group: 'pay', value: row.paid === null ? 'unknown' : row.paid ? 'paid' : 'unpaid' });
   if (row.internshipSeason) chips.push({ group: 'season', value: row.internshipSeason });
   if (tab === 'design' && row.seniority) chips.push({ group: 'level', value: row.seniority });
 

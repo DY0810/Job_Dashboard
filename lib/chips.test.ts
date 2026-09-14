@@ -60,7 +60,7 @@ describe('rowChips', () => {
   it('still shows every distinct badge', () => {
     expect(
       labels({ employmentType: 'internship', badges: ['internship', 'portfolio-required'] }),
-    ).toEqual(['internship', 'portfolio-required']);
+    ).toEqual(['internship', 'unknown', 'portfolio-required']);
   });
 
   it('renders the fields in the documented order', () => {
@@ -80,12 +80,14 @@ describe('rowChips', () => {
   });
 
   it('carries the level on Design only — Engineering has a column for it', () => {
-    expect(labels({ seniority: 'mid' }, 'design')).toEqual(['mid']);
-    expect(labels({ seniority: 'mid' }, 'engineering')).toEqual([]);
+    expect(labels({ seniority: 'mid' }, 'design')).toEqual(['unknown', 'mid']);
+    expect(labels({ seniority: 'mid' }, 'engineering')).toEqual(['unknown']);
   });
 
-  it('omits pay entirely when the posting does not say', () => {
-    expect(labels({ paid: null })).toEqual([]);
+  it('distinguishes unknown pay from explicitly unpaid work', () => {
+    expect(rowChips(ROW, 'engineering')).toContainEqual({ group: 'pay', value: 'unknown' });
+    expect(labels({ paid: null })).toEqual(['unknown']);
     expect(labels({ paid: false })).toEqual(['unpaid']);
+    expect(labels({ paid: true })).toEqual(['paid']);
   });
 });

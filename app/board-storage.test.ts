@@ -44,15 +44,15 @@ describe('personal board state', () => {
     expect(saveApplied(1, true, null)).toBe(false);
   });
 
-  it('restores entry, junior, mid and paid without stealing the tab, split, or drawer', () => {
+  it('restores entry, junior, mid and paid-or-unknown without stealing the tab, split, or drawer', () => {
     const storage = store();
-    const chosen = parseParams({ pay: 'paid', level: 'entry,junior,mid', job: '12', page: '3' });
+    const chosen = parseParams({ pay: 'paid,unknown', level: 'entry,junior,mid', job: '12', page: '3' });
     expect(saveDefaultFilters(chosen, storage)).toBe(true);
     const saved = readDefaultFilters(storage);
     expect(defaultFiltersHref(parseParams({ tab: 'engineering', job: '5' }), saved))
-      .toBe('/?tab=engineering&pay=paid&level=entry%2Cjunior%2Cmid&job=5');
+      .toBe('/?tab=engineering&pay=paid%2Cunknown&level=entry%2Cjunior%2Cmid&job=5');
     expect(defaultFiltersHref(parseParams({ basis: 'freelance' }), saved))
-      .toBe('/?basis=freelance&pay=paid&level=entry%2Cjunior%2Cmid');
+      .toBe('/?basis=freelance&pay=paid%2Cunknown&level=entry%2Cjunior%2Cmid');
     expect(defaultFiltersHref(parseParams({}), null)).toBeNull();
   });
 

@@ -88,7 +88,7 @@ export const VOCAB = {
  * one's name. They still sort together, above mid.
  */
 export const SHARED_VOCAB = {
-  pay: ['paid', 'unpaid'],
+  pay: ['paid', 'unpaid', 'unknown'],
   mode: ['remote', 'hybrid', 'onsite'],
   level: ['entry', 'junior', 'mid'],
 } as const;

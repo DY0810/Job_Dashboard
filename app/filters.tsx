@@ -16,6 +16,10 @@ import { Chevron } from './icons';
 
 const WINDOW_LABEL: Record<string, string> = { hour: '1h', day: '24h', week: '7d', month: '30d' };
 
+function valueLabel(group: Group, value: string): string {
+  return group === 'pay' && value === 'unknown' ? 'pay not listed' : value;
+}
+
 /** A filter value, as a link. No client state: the URL is the state. */
 function Chip({ href, on, children }: { href: string; on: boolean; children: React.ReactNode }) {
   return (
@@ -38,10 +42,10 @@ export function RowChip({ p, group, value }: { p: Params; group: Group; value: s
   // A value with no filter on this side still gets shown — it just is not pressable, because
   // there is no filter for it to apply. `p.basis` is passed so a badge offers what the
   // checkbox above it offers: on the employed side of Design, a `contract` badge is text.
-  if (!vocab(p.tab, group, p.basis).includes(value)) return <span className="chip">{value}</span>;
+  if (!vocab(p.tab, group, p.basis).includes(value)) return <span className="chip">{valueLabel(group, value)}</span>;
   return (
     <Chip href={toggleFilter(p, group, value)} on={p[group].includes(value)}>
-      {value}
+      {valueLabel(group, value)}
     </Chip>
   );
 }
@@ -117,7 +121,7 @@ function CheckGroup({ p, group, values }: { p: Params; group: Group; values: rea
             defaultChecked={chosen.includes(value)}
             className="chip-check-input"
           />
-          {value}
+          {valueLabel(group, value)}
         </label>
       ))}
     </fieldset>

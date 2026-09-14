@@ -389,6 +389,22 @@ describe('rows that must never render', () => {
 });
 
 describe('filters', () => {
+  it.each([
+    { pay: 'paid,unknown', allowed: [true, null] },
+    { pay: 'unknown', allowed: [null] },
+    { pay: 'unpaid,unknown', allowed: [false, null] },
+    { pay: 'paid,unpaid,unknown', allowed: [true, false, null] },
+  ])('includes exactly the selected pay states for $pay on both tabs', async ({ pay, allowed }) => {
+    for (const tab of TABS) {
+      const all = await listPostings(db, params(tab), NOW);
+      expect(new Set(all.map((row) => row.paid))).toEqual(new Set([true, false, null]));
+      const selected = await listPostings(db, parseParams({ tab, pay }), NOW);
+      expect(selected.map((row) => row.id)).toEqual(
+        all.filter((row) => allowed.includes(row.paid)).map((row) => row.id),
+      );
+    }
+  });
+
   // `d-sparse` rather than `d-unknown-pay`: both have no pay, and this one is on the employed
   // side, so the assertion is about the pay rule and not about which side of the split it is on.
   it('pay unknown matches neither value but stays visible with the filter off (finding G)', async () => {

@@ -961,7 +961,7 @@ export function extract({ title, description, sourceFields: source }: ExtractInp
     seniority: extractSeniority(title, body),
     employment_type,
     internship_season: extractSeason(title, body),
-    paid: extractPaid(body, pay_rate),
+    paid: extractPaid(`${title}. ${body}`, pay_rate),
     work_mode: extractWorkMode(title, body, source),
     location: source?.location?.trim() || null,
     pay_rate,

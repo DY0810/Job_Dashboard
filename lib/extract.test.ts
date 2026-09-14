@@ -566,6 +566,15 @@ describe('pay rate', () => {
     // "unpaid leave" is benefits boilerplate, not this role's pay.
     expect(paid('Benefits include unpaid leave for family reasons.')).toBeNull();
   });
+
+  it.each([
+    ['UX Design Intern (Unpaid)', false],
+    ['Unpaid Software Engineering Intern', false],
+    ['Design - Paid Internship', true],
+    ['Designer, Paid Media', null],
+  ] as const)('reads compensation evidence from a title-only listing: %s', (title, paid) => {
+    expect(extract({ title, description: '' }).paid).toBe(paid);
+  });
 });
 
 // ---------------------------------------------------------------------------------------
