@@ -44,7 +44,6 @@ jobs:
       TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
       ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
       ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
-      CAREERJET_AFFID: ${{ secrets.CAREERJET_AFFID }}
       JOOBLE_KEY: ${{ secrets.JOOBLE_KEY }}
       USAJOBS_KEY: ${{ secrets.USAJOBS_KEY }}
       USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}

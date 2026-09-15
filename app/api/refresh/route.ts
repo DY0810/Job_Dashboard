@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { driver, getDb, needsTurso } from '@/lib/db';
 import { connectorRuns } from '@/lib/db/schema';
 import { phaseFromLog, type HostedRefreshStatus, type Phase } from '@/lib/refresh-status';
-import { getRefreshRequest, requestRefresh, type RefreshRequest } from '@/lib/refresh-queue';
+import { CLAIM_TIMEOUT_MS, getRefreshRequest, requestRefresh, type RefreshRequest } from '@/lib/refresh-queue';
+import { cronGate } from '@/lib/write-gate';
 import { desc } from 'drizzle-orm';
 
 /**
@@ -144,7 +145,10 @@ export async function POST(request: Request) {
     try {
       const by = new URL(request.url).searchParams.get('by')?.slice(0, 40) || null;
       const { request: entry, queued: created } = await requestRefresh(getDb(), by);
-      const dispatch = created
+      // A later authenticated tick can recover a failed dispatch or an abandoned claim.
+      const canRetry = !entry.claimedAt || entry.claimedAt.getTime() < Date.now() - CLAIM_TIMEOUT_MS;
+      const retry = !created && canRetry && cronGate(request) === null;
+      const dispatch = created || retry
         ? await dispatchWorkflow().catch(() => 'failed' as const)
         : 'coalesced';
       return Response.json({

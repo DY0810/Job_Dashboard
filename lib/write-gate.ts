@@ -1,5 +1,5 @@
 /**
- * The write gate for Talkie.
+ * Write gates for Talkie and the scheduler.
  *
  * The board has no accounts by design — it is shared by link, and the link is the invitation.
  * That is fine for reading. It is not fine for `PATCH` and `DELETE`: note ids are sequential
@@ -51,4 +51,14 @@ export function writeGate(request: Request): Response | null {
     return Response.json({ error: 'writes are not configured' }, { status: 503 });
   }
   return null;
+}
+
+/** The scheduler has its own token, unrelated to note editing or email sending. */
+export function cronGate(request: Request): Response | null {
+  const expected = process.env.CRON_SECRET?.trim();
+  if (!expected) return Response.json({ error: 'scheduler is not configured' }, { status: 503 });
+  const got = request.headers.get('authorization');
+  return got && sameToken(got, `Bearer ${expected}`)
+    ? null
+    : Response.json({ error: 'not authorized' }, { status: 401 });
 }

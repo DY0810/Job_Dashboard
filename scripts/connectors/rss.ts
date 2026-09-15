@@ -9,7 +9,7 @@
 
 import Parser from 'rss-parser';
 
-import type { EmploymentType } from '../../lib/extract.ts';
+import type { EmploymentType, WorkMode } from '../../lib/extract.ts';
 import { normalizeDescription } from '../../lib/normalize.ts';
 import {
   toEpochMs,
@@ -30,6 +30,8 @@ interface FeedItem {
   region?: string;
   type?: string;
   category?: string;
+  location?: string;
+  jobId?: string;
 }
 
 /**
@@ -43,6 +45,8 @@ type FeedMapper = (item: FeedItem) => {
   title: string;
   location: string | null;
   employmentType?: EmploymentType;
+  workMode?: WorkMode;
+  attribution?: string;
 };
 
 function rssConnector(
@@ -51,7 +55,7 @@ function rssConnector(
   map: FeedMapper,
   fetchOptions: FetchOptions = {},
 ): Connector {
-  const parser = new Parser<unknown, FeedItem>({ customFields: { item: ['region', 'type', 'category'] } });
+  const parser = new Parser<unknown, FeedItem>({ customFields: { item: ['region', 'type', 'category', 'location', 'jobId'] } });
   return {
     name,
     kind: 'rss',
@@ -64,16 +68,22 @@ function rssConnector(
         .filter((item) => item.link)
         .map((item) => {
           const mapped = map(item);
+          const body = normalizeDescription(item.content ?? item.contentSnippet ?? '');
           return {
             source: name,
             sourceKind: 'rss' as const,
             sourceUrl: item.link!,
+            ...(typeof item.jobId === 'string' ? { publisherId: item.jobId } : {}),
             postedAt: toEpochMs(item.isoDate ?? item.pubDate),
             company: mapped.company,
             title: mapped.title,
             location: mapped.location,
-            description: normalizeDescription(item.content ?? item.contentSnippet ?? ''),
-            ...(mapped.employmentType ? { sourceFields: { employmentType: mapped.employmentType } } : {}),
+            description: mapped.attribution && body
+              ? `${body}\n\nSource: ${mapped.attribution} (${item.link})` : body,
+            ...(mapped.employmentType || mapped.workMode ? { sourceFields: {
+              ...(mapped.employmentType ? { employmentType: mapped.employmentType } : {}),
+              ...(mapped.workMode ? { workMode: mapped.workMode } : {}),
+            } } : {}),
           };
         });
     },
@@ -92,6 +102,27 @@ const WWR_TYPE: Record<string, EmploymentType> = {
   contract: 'contract',
   freelance: 'freelance',
   internship: 'internship',
+};
+
+const remotiveFeed = rssConnector('remotive', 'https://remotive.com/remote-jobs/feed', item => ({
+  company: (item.creator ?? '').trim(),
+  title: (item.title ?? '').trim(),
+  location: item.location?.trim() || null,
+  employmentType: WWR_TYPE[(item.type ?? '').trim().toLowerCase().replace(/_/g, '-')],
+  workMode: 'remote',
+  attribution: 'Remotive',
+}), { publicOnly: true });
+
+/** Remotive publishes this RSS endpoint separately from its robots-blocked JSON API. */
+export const remotive: Connector = {
+  ...remotiveFeed,
+  async fetch(context) {
+    context.degraded('Public RSS snapshot; absence is not closure evidence');
+    const rows = (await remotiveFeed.fetch(context))
+      .filter(row => /^https:\/\/remotive\.com\/remote-jobs\//i.test(row.sourceUrl));
+    if (rows.length === 0) throw new Error('Remotive RSS returned no readable postings');
+    return rows;
+  },
 };
 
 /** WWR encodes the pair as `"Company: Role"` and puts the location in a `<region>` element. */
@@ -222,6 +253,7 @@ export const designjobsCareers = rssConnector(
 );
 
 export const rssConnectors: Connector[] = [
+  remotive,
   weworkremotely,
   weworkremotelyDesign,
   dribbble,

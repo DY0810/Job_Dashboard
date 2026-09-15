@@ -183,7 +183,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
           target="_blank"
           rel="noreferrer noopener"
         >
-          apply
+          {row.canonicalUrl.startsWith("https://remotive.com/") ? "apply via Remotive" : "apply"}
           <ExternalLink />
         </a>
       </td>

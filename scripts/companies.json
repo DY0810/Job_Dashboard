@@ -842,12 +842,13 @@
   },
   {
     "name": "Glean",
-    "ats": "smartrecruiters",
-    "token": "glean",
+    "ats": "greenhouse",
+    "token": "gleanwork",
     "tags": [
       "ai"
     ],
-    "verified_at": "2026-08-18T04:01:19.383Z"
+    "verified_at": "2026-09-15T00:39:01Z",
+    "postings_at_probe": 117
   },
   {
     "name": "Glossier",

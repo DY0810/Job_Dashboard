@@ -4,20 +4,20 @@
  * `npm run ingest -- --dry-run --record --only=<name>`.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { extract } from '../../lib/extract.ts';
 import { normalizeCompany, normalizeTitle } from '../../lib/normalize.ts';
 import { HttpError, RobotsDisallowedError } from '../../lib/runtime.ts';
 import type { Connector, ConnectorContext, ConnectorPosting, FetchOptions, Runtime } from '../../lib/runtime.ts';
 
-import { ashby, greenhouse, lever, recruitee, smartrecruiters, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
+import { ashby, greenhouse, lever, recruitee, registry, smartrecruiters, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
-import { braintrust, himalayas, hn, jobicy, jobicyEngineering, muse, remoteok, remotive, workingnomads } from './agg.ts';
+import { braintrust, himalayas, hn, jobicy, jobicyEngineering, muse, remoteok, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
 import { adzuna, careerjet, jooble, usajobs } from './keyed.ts';
 import { parseReadmeTable, simplifyInternships, simplifyNewGrads } from './repo.ts';
-import { designjobsCareers, dribbble, jobspresso, weworkremotely, weworkremotelyDesign } from './rss.ts';
+import { designjobsCareers, dribbble, jobspresso, remotive, weworkremotely, weworkremotelyDesign } from './rss.ts';
 
 /** A runtime that answers every request with one canned body. */
 function stubRuntime(body: string): Runtime {
@@ -104,6 +104,17 @@ const RECORDED: Connector[] = [
 describe.each(RECORDED.map((connector) => [connector.name, connector] as const))(
   '%s (recorded fixture)',
   (name, connector) => {
+    // Keep the recorded tenant in this offline test, not in the current employer registry.
+    const recordedTenant = {
+      name: 'Glean (historical fixture)', ats: 'smartrecruiters', token: 'glean',
+      tags: [], verified_at: '2026-08-18T04:01:19.383Z',
+    };
+    beforeAll(() => { if (connector === smartrecruiters) registry().push(recordedTenant); });
+    afterAll(() => {
+      const index = registry().indexOf(recordedTenant);
+      if (index >= 0) registry().splice(index, 1);
+    });
+
     it('returns at least one posting in the canonical shape', async () => {
       const { context } = replay(name);
       const results = await connector.fetch(context);
@@ -190,13 +201,12 @@ describe('ATS per-target isolation (Phase 3 gate)', () => {
 describe('keyed connectors', () => {
   const KEYS: Record<string, Record<string, string>> = {
     adzuna: { ADZUNA_APP_ID: 'a', ADZUNA_APP_KEY: 'b' },
-    careerjet: { CAREERJET_AFFID: 'a' },
+    careerjet: { CAREERJET_API_KEY: 'a' },
     jooble: { JOOBLE_KEY: 'a' },
     usajobs: { USAJOBS_KEY: 'a', USAJOBS_EMAIL: 'b@c.d' },
   };
 
-  /** The two whose key is the only thing standing between them and a run. */
-  const KEYED = [careerjet, jooble];
+  const KEYED = [jooble];
   /**
    * The two that are refused by robots.txt on the API host itself, so no key can enable them.
    * `api.adzuna.com` and `data.usajobs.gov` both publish `User-agent: * / Disallow: /`
@@ -204,11 +214,11 @@ describe('keyed connectors', () => {
    * were skipped for this reason, supplying a key produced a RobotsDisallowedError per cycle
    * instead of postings.
    */
-  const ROBOTS_BLOCKED = [adzuna, usajobs];
+  const ROBOTS_BLOCKED = [adzuna, careerjet, usajobs];
 
   it.each(KEYED)('$name skips when its key is absent', (connector) => {
     const reason = connector.skip?.({});
-    expect(reason).toMatch(/not set in \.env\.local/);
+    expect(reason).toMatch(/not configured/);
     // The notice must name the variable to set — and never the value of anything.
     expect(reason).toMatch(/[A-Z_]{4,}/);
   });
@@ -222,11 +232,11 @@ describe('keyed connectors', () => {
     // The whole point: a key does not unlock it, and the notice says why rather than
     // implying a missing variable.
     expect(reason).toMatch(/robots\.txt disallows/);
-    expect(reason).not.toMatch(/not set in \.env\.local/);
+    expect(reason).not.toMatch(/not configured/);
   });
 
   it.each(ROBOTS_BLOCKED)('$name names the host that refused it', (connector) => {
-    expect(connector.skip?.({})).toMatch(/^(api\.adzuna\.com|data\.usajobs\.gov)/);
+    expect(connector.skip?.({})).toMatch(/^(api\.adzuna\.com|search\.api\.careerjet\.net|data\.usajobs\.gov)/);
   });
 });
 
@@ -258,8 +268,46 @@ describe('fixture recorder', () => {
 });
 
 describe('remotive', () => {
-  it('is disabled because remotive.com/robots.txt disallows /api/*', () => {
-    expect(remotive.skip?.({})).toMatch(/robots\.txt disallows \/api\/\*/);
+  it('uses the published RSS feed, preserves its fields and attribution, and never calls the blocked API', async () => {
+    const urls: string[] = [];
+    const degraded: string[] = [];
+    const context: ConnectorContext = {
+      env: {}, log: () => {}, degraded: reason => degraded.push(reason),
+      runtime: {
+        isAllowed: async () => true,
+        fetchJson: async () => { throw new Error('The JSON API is forbidden'); },
+        fetchText: async url => {
+          urls.push(url);
+          return `<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel>
+            <item><title>Product Designer</title><dc:creator>Acme</dc:creator><jobId>2069746</jobId>
+              <location>USA, Canada</location><type>full_time</type>
+              <link>https://remotive.com/remote-jobs/design/product-designer-2069746</link>
+              <pubDate>Mon, 14 Sep 2026 20:33:27 GMT</pubDate>
+              <description><![CDATA[<p>Design accessible interfaces. Salary: $90,000 per year.</p>]]></description>
+            </item></channel></rss>`;
+        },
+      },
+    };
+    expect(remotive.skip?.({}) ?? null).toBeNull();
+    const rows = await remotive.fetch(context);
+    expect(urls).toEqual(['https://remotive.com/remote-jobs/feed']);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      source: 'remotive', sourceKind: 'rss', publisherId: '2069746',
+      company: 'Acme', title: 'Product Designer', location: 'USA, Canada',
+      sourceFields: { employmentType: 'full-time', workMode: 'remote' },
+    });
+    expect(rows[0].description).toContain('Source: Remotive');
+    expect(rows[0].description).toContain(rows[0].sourceUrl);
+    expect(degraded.length).toBeGreaterThan(0);
+    expect(extract({ ...rows[0], title: rows[0].title ?? '' })).toMatchObject({ paid: true, work_mode: 'remote' });
+  });
+
+  it('fails visibly on an empty RSS snapshot instead of claiming a complete catalog', async () => {
+    await expect(remotive.fetch({
+      runtime: stubRuntime('<rss version="2.0"><channel></channel></rss>'),
+      env: {}, log: () => {}, degraded: () => {},
+    })).rejects.toThrow(/no .*postings/i);
   });
 });
 

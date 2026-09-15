@@ -232,7 +232,7 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
               target="_blank"
               rel="noreferrer noopener"
             >
-              apply
+              {state.posting.canonicalUrl.startsWith('https://remotive.com/') ? 'apply via Remotive' : 'apply'}
               <ExternalLink />
             </a>
             <Outreach kind="coffee" onPick={pickKind} />

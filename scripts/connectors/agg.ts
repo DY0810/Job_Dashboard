@@ -162,49 +162,6 @@ export const remoteok: Connector = {
   },
 };
 
-interface RemotiveJob {
-  title?: string;
-  company_name?: string;
-  url?: string;
-  publication_date?: string;
-  candidate_required_location?: string;
-  description?: string;
-}
-
-/**
- * DISABLED, and not by accident: `remotive.com/robots.txt` carries `Disallow: /api/*`.
- *
- * That is not a blanket crawler rule that happens to catch us — it names the exact path this
- * connector would call. SmartRecruiters' `Disallow: /` sits over a documented public API and
- * is arguable; this does not. So Remotive skips the way a keyless connector skips: a logged
- * notice, no `connector_runs` row, no effect on the run's exit code.
- *
- * The mapper below is kept and tested against the documented response shape so that if
- * Remotive changes that line, re-enabling is deleting this `skip`.
- */
-export const remotive: Connector = {
-  name: 'remotive',
-  kind: 'aggregator',
-  skip: () => 'remotive.com/robots.txt disallows /api/* — connector left in place, not run',
-  async fetch(context) {
-    const body = await context.runtime.fetchJson<{ jobs?: RemotiveJob[] }>(
-      'https://remotive.com/api/remote-jobs',
-    );
-    return (body.jobs ?? [])
-      .filter((job) => job.url)
-      .map((job) =>
-        aggRow('remotive', {
-          company: job.company_name,
-          title: job.title,
-          location: job.candidate_required_location ?? 'Remote',
-          url: job.url!,
-          postedAt: toEpochMs(job.publication_date),
-          description: job.description ?? '',
-        }),
-      );
-  },
-};
-
 /**
  * REMOVED: arbeitnow. A German board — 234 of the 235 rows it had contributed were outside the
  * US, and the one that was not was an accident. Worse, it reported `remote ? 'Remote' : location`,
@@ -977,7 +934,6 @@ export const muse: Connector = {
 export const aggConnectors: Connector[] = [
   hn,
   remoteok,
-  remotive,
   workingnomads,
   braintrust,
   himalayas,

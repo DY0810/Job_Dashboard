@@ -23,7 +23,7 @@ const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 const missing = (env: Record<string, string | undefined>, ...names: string[]): string | null => {
   const absent = names.filter((name) => !env[name]?.trim());
-  return absent.length > 0 ? `${absent.join(', ')} not set in .env.local` : null;
+  return absent.length > 0 ? `${absent.join(', ')} not configured` : null;
 };
 
 interface AdzunaResult {
@@ -82,47 +82,19 @@ export const adzuna: Connector = {
   },
 };
 
-interface CareerjetJob {
-  title?: string;
-  description?: string;
-  company?: string;
-  locations?: string;
-  url?: string;
-  date?: string;
-}
-
+/**
+ * The legacy public.api endpoint failed verification. The documented v4 replacement
+ * requires a publisher API key and real search-user metadata, and its robots.txt refuses
+ * crawling too. Do not revive the old affid request or fabricate a user's IP to enable it.
+ */
 export const careerjet: Connector = {
   name: 'careerjet',
   kind: 'aggregator',
-  skip: (env) => missing(env, 'CAREERJET_AFFID'),
+  skip: () => 'search.api.careerjet.net/robots.txt disallows / — publisher access required',
   /** Metered free tier — see the file header. */
   minIntervalMs: SIX_HOURS,
-  async fetch(context) {
-    const url = new URL('https://public.api.careerjet.net/search');
-    url.searchParams.set('affid', context.env.CAREERJET_AFFID!);
-    url.searchParams.set('keywords', 'software engineer OR product designer');
-    url.searchParams.set('locale_code', 'en_US');
-    url.searchParams.set('pagesize', '50');
-    // Careerjet requires both, and rejects the request without them. They identify the end
-    // user of a search UI; this is a personal batch job, so they are ours.
-    url.searchParams.set('user_ip', '127.0.0.1');
-    url.searchParams.set('user_agent', 'WorkieBot/0.1');
-
-    const body = await context.runtime.fetchJson<{ jobs?: CareerjetJob[] }>(url.toString(), {
-      redactUrl: 'https://public.api.careerjet.net/search',
-    });
-    return (body.jobs ?? [])
-      .filter((job) => job.url)
-      .map((job) =>
-        aggRow('careerjet', {
-          company: job.company,
-          title: job.title,
-          location: job.locations,
-          url: job.url!,
-          postedAt: toEpochMs(job.date),
-          description: job.description ?? '',
-        }),
-      );
+  async fetch() {
+    throw new Error('Careerjet requires a permitted v4 integration before ingestion can be enabled');
   },
 };
 
