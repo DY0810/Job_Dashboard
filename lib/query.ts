@@ -11,7 +11,7 @@
 import { and, asc, count, desc, eq, gte, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm';
 import { cutoffTimestamp } from './dedupe.ts';
 import { driver, type ReadDb } from './db/index.ts';
-import { postings } from './db/schema.ts';
+import { postings, postingSources } from './db/schema.ts';
 import { GEO_TIER } from './geo.ts';
 import { DESIGN_TYPE, VISIBLE_SENIORITY, WINDOW_MS, bare, type Params } from './params.ts';
 
@@ -283,6 +283,13 @@ export async function getPostingDetail(db: ReadDb, id: number, now: number = Dat
         education: postings.education,
         expectedGrad: postings.expectedGrad,
         canonicalUrl: postings.canonicalUrl,
+        // Keep the outer id qualified; Drizzle strips column qualifiers in select expressions.
+        remotiveSourceUrl: sql<string | null>`(
+          select ${postingSources.sourceUrl} from ${postingSources}
+          where ${postingSources.postingId} = "postings"."id"
+            and ${postingSources.source} = 'remotive'
+          limit 1
+        )`,
       })
       .from(postings)
       .where(and(eq(postings.id, id), ...visible(now)))

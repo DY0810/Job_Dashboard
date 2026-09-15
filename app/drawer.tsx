@@ -154,6 +154,17 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
                       eligibility. */}
                   {state.posting.expectedGrad ? ` · grad ${state.posting.expectedGrad}` : ''}
                 </p>
+                {state.posting.remotiveSourceUrl ? (
+                  <a
+                    href={state.posting.remotiveSourceUrl}
+                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-fg-dim underline"
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    Source: Remotive
+                    <ExternalLink />
+                  </a>
+                ) : null}
               </>
             ) : (
               <h2 className="text-[15px] text-fg-dim">
@@ -232,7 +243,7 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
               target="_blank"
               rel="noreferrer noopener"
             >
-              {state.posting.canonicalUrl.startsWith('https://remotive.com/') ? 'apply via Remotive' : 'apply'}
+              apply
               <ExternalLink />
             </a>
             <Outreach kind="coffee" onPick={pickKind} />

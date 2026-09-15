@@ -16,7 +16,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { REFS, fixtures, refKey } from '../scripts/seed.ts';
 import type { Db } from './db/index.ts';
-import { postings } from './db/schema.ts';
+import { postings, postingSources } from './db/schema.ts';
 import { GEO_TIER, geoTier } from './geo.ts';
 import {
   geoTierSql,
@@ -380,6 +380,20 @@ describe('rows that must never render', () => {
 
   it('a visible posting is reachable by deep link', async () => {
     expect((await getPostingDetail(db, idOf('e-sf-3d'), NOW))?.company).toBe('Northline');
+  });
+
+  it('retains a Remotive credit link when an employer owns the application URL', async () => {
+    const id = idOf('e-sf-3d');
+    const original = await getPostingDetail(db, id, NOW);
+    const sourceUrl = 'https://remotive.com/remote-jobs/software-development/engineer-1234';
+    db.insert(postingSources).values({
+      postingId: id, source: 'remotive', sourceUrl, sourcePriority: 3,
+      postedAt: new Date(NOW), lastSeenRun: 'attribution-test',
+    }).run();
+    const detail = await getPostingDetail(db, id, NOW);
+    expect(detail?.remotiveSourceUrl).toBe(sourceUrl);
+    expect(detail?.canonicalUrl).toBe(original?.canonicalUrl);
+    expect(detail?.canonicalUrl).not.toBe(sourceUrl);
   });
 
   it('a tab never shows the other track', async () => {
