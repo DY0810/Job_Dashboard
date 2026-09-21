@@ -7,7 +7,7 @@ import { InboxControl, initialView, pollingDelay } from './inbox/control';
 import { QuestionForm, kindNames } from './inbox/question-form';
 import styles from './inbox/inbox.module.css';
 
-export function NotificationBell() {
+export function NotificationBell({ standalone = false }: { standalone?: boolean }) {
   const [view, setView] = useState(initialView);
   const [open, setOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -18,6 +18,10 @@ export function NotificationBell() {
     try { storage = localStorage; } catch { /* Inbox still works without browser recovery. */ }
     const instance = new InboxControl(setView, storage);
     control.current = instance;
+    if (standalone) {
+      dialog.current?.showModal();
+      setOpen(true);
+    }
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -57,7 +61,7 @@ export function NotificationBell() {
       window.removeEventListener('offline', offline);
       window.removeEventListener('beforeunload', unload);
     };
-  }, []);
+  }, [standalone]);
   const counts = !view.locked ? view.inbox : null;
   const countLabel = counts ? `${counts.unread} unread, ${counts.unresolved} unresolved` :
     view.loading ? 'checking session' : 'locked or unavailable';

@@ -24,7 +24,7 @@ export default async function Talkie({
 
   if (needsTurso()) {
     return (
-      <main className="min-h-dvh px-4 py-12 text-[11px] text-fg-dim">
+      <main id="main-content" className="min-h-dvh px-4 py-12 text-[11px] text-fg-dim">
         Database not configured: set {TURSO_ENV.join(' and ')}.
       </main>
     );
@@ -34,7 +34,7 @@ export default async function Talkie({
   const options = [current, ...weeks.filter((w) => w !== current)];
 
   return (
-    <main className="min-h-dvh px-4 pb-16">
+    <main id="main-content" className="min-h-dvh px-4 pb-16">
       <header className="flex flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <nav className="flex gap-4" aria-label="Track">

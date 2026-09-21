@@ -1,16 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ThemeToggle } from '../theme-toggle';
-import Workers from './workers';
 import { NotificationBell } from '../notification-bell';
-import styles from './workers.module.css';
+import { ThemeToggle } from '../theme-toggle';
+import styles from '../workers/workers.module.css';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
-  title: 'Workers | Workie', robots: { index: false, follow: false }, referrer: 'no-referrer',
+  title: 'Inbox | Workie', robots: { index: false, follow: false }, referrer: 'no-referrer',
 };
 
-export default function WorkersPage() {
+export default function InboxPage() {
   return <main id="main-content" className={styles.page}>
     <header className={styles.header}>
       <Link href="/" prefetch={false}>Workie</Link>
@@ -18,13 +17,17 @@ export default function WorkersPage() {
         <Link href="/" prefetch={false}>Jobs</Link>
         <Link href="/profile" prefetch={false}>Profile</Link>
         <Link href="/applications" prefetch={false}>Applications</Link>
-        <span aria-current="page">Workers</span>
+        <Link href="/workers" prefetch={false}>Workers</Link>
         <Link href="/settings" prefetch={false}>Settings</Link>
+        <span aria-current="page">Inbox</span>
         <Link href="/sign-in" prefetch={false}>Account</Link>
       </nav>
       <ThemeToggle />
-      <NotificationBell />
+      <NotificationBell standalone />
     </header>
-    <Workers />
+    <section className={styles.section} aria-labelledby="inbox-heading">
+      <h1 id="inbox-heading">Answer inbox</h1>
+      <p className={styles.muted}>Private questions from applications appear here. Close the panel to return to this page.</p>
+    </section>
   </main>;
 }

@@ -127,11 +127,32 @@
     text-decoration: none;
   }
 
+  .skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 100;
+    padding: 6px 9px;
+    border: 1px solid var(--fg);
+    background: var(--canvas);
+    color: var(--fg);
+    transform: translateY(-180%);
+    transition: transform 120ms var(--ease-state);
+  }
+
+  .skip-link:focus-visible {
+    transform: translateY(0);
+  }
+
   [aria-disabled="true"],
   :disabled {
     color: var(--fg-faint);
     cursor: not-allowed;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skip-link { transition: none; }
 }
 
 /* ─────────────────────────────────────────────────────────────────────── widths ──

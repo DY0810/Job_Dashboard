@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 };
 
 export default function ImportPage() {
-  return <main className={styles.page}>
+  return <main id="main-content" className={styles.page}>
     <header className={styles.header}>
       <Link href="/" prefetch={false}>Workie</Link>
       <nav aria-label="Account">
