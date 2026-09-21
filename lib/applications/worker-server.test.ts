@@ -5,7 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
-import { account, applications, applicationRuns, applicationEvents, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
+import { account, applications, applicationReceipts, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
 import { createEmptyPolicy } from './policy.ts';
 import { hashValue } from './stores.ts';
 import { APPLICATION_STATES, SAFE_STAGES, canTransition, type ApplicationState } from './state.ts';
@@ -14,6 +14,7 @@ import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing } f
 import { createRun, enqueueApplication, listRuns, commandRun, commandApplication } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent, submitIntent } from './events.ts';
+import { beginSubmission, recordReceipt } from './submissions.ts';
 import { type WorkerOptions } from './worker-store.ts';
 
 vi.mock('server-only', () => ({}));
@@ -89,6 +90,87 @@ describe('Phase 3 pure protocol and transition guards', () => {
   });
 });
 describe('hashed owner-approved pairings', () => {
+  it('binds a durable submission intent and immutable exact-role receipt', async () => {
+    const { worker, app } = await prepared();
+    const lease = await claim(worker.token);
+    await db.update(applications).set({ state: 'ready', checkpoint: { stage: 'ready', sequence: 0 } }).where(eq(applications.id, app.id));
+    const intentId = randomUUID();
+    const identity = { ats: app.ats, tenant: app.tenant, requisition: app.requisition };
+    const started = await beginSubmission(db, worker.token, app.id, {
+      protocolVersion: 1, intentId, fence: lease.fence, expectedRevision: lease.revision,
+      identity, company: 'Fixture Co', role: 'Software Engineering Intern', manifestHash: 'a'.repeat(64), artifactHashes: ['b'.repeat(64)],
+    }, options);
+    expect(started).toMatchObject({ applicationId: app.id, intentId, state: 'submitting', replayed: false });
+    const receipt = await recordReceipt(db, worker.token, app.id, {
+      protocolVersion: 1, intentId, identity, company: 'Fixture Co', role: 'Software Engineering Intern',
+      receiptId: 'receipt-123', submittedAt: now, evidence: {
+        source: 'confirmation_page', pageUrl: 'https://boards.greenhouse.io/fixture/jobs/123', observedText: 'Fixture Co Software Engineering Intern',
+      },
+    }, options);
+    expect(receipt).toMatchObject({ applicationId: app.id, intentId, state: 'submitted', replayed: false });
+    expect(await recordReceipt(db, worker.token, app.id, {
+      protocolVersion: 1, intentId, identity, company: 'Fixture Co', role: 'Software Engineering Intern',
+      receiptId: 'receipt-123', submittedAt: now, evidence: {
+        source: 'confirmation_page', pageUrl: 'https://boards.greenhouse.io/fixture/jobs/123', observedText: 'Fixture Co Software Engineering Intern',
+      },
+    }, options)).toMatchObject({ replayed: true, state: 'submitted' });
+    expect((await db.select().from(applications).where(eq(applications.id, app.id)))[0]).toMatchObject({ state: 'submitted', leaseUntil: null });
+  });
+  it('fails closed for owner and identity mismatches and rejects receipt replay changes', async () => {
+    const { worker, app } = await prepared();
+    const lease = await claim(worker.token);
+    await db.update(applications).set({ state: 'ready', checkpoint: { stage: 'ready', sequence: 0 } }).where(eq(applications.id, app.id));
+    const identity = { ats: app.ats, tenant: app.tenant, requisition: app.requisition };
+    const base = {
+      protocolVersion: 1 as const, intentId: randomUUID(), fence: lease.fence, expectedRevision: lease.revision,
+      identity, company: 'Fixture Co', role: 'Software Engineering Intern', manifestHash: 'a'.repeat(64), artifactHashes: ['b'.repeat(64)],
+    };
+    await expect(beginSubmission(db, worker.token, app.id, { ...base, identity: { ...identity, tenant: 'other' } }, options))
+      .rejects.toMatchObject({ status: 409, code: 'IDENTITY_MISMATCH' });
+    expect(await db.select().from(applicationSubmissions)).toHaveLength(0);
+    const intent = await beginSubmission(db, worker.token, app.id, base, options);
+    await expect(recordReceipt(db, worker.token, app.id, {
+      protocolVersion: 1, intentId: intent.intentId, identity, company: 'Fixture Co', role: 'Other role',
+      receiptId: 'receipt-123', submittedAt: now, evidence: {
+        source: 'confirmation_page', pageUrl: 'https://boards.greenhouse.io/fixture/jobs/123', observedText: 'Other role',
+      },
+    }, options)).rejects.toMatchObject({ status: 409, code: 'RECEIPT_IDENTITY_MISMATCH' });
+    const receipt = {
+      protocolVersion: 1 as const, intentId: intent.intentId, identity, company: 'Fixture Co', role: 'Software Engineering Intern',
+      receiptId: 'receipt-123', submittedAt: now, evidence: {
+        source: 'confirmation_page' as const, pageUrl: 'https://boards.greenhouse.io/fixture/jobs/123', observedText: 'Fixture Co Software Engineering Intern',
+      },
+    };
+    await recordReceipt(db, worker.token, app.id, receipt, options);
+    await expect(recordReceipt(db, worker.token, app.id, { ...receipt, receiptId: 'receipt-456' }, options))
+      .rejects.toMatchObject({ status: 409 });
+    const bob = await paired('bob');
+    await expect(recordReceipt(db, bob.token, app.id, receipt, options)).rejects.toMatchObject({ status: 409 });
+  });
+  it('enforces immutable intent and receipt rows at the database boundary', async () => {
+    const { worker, app } = await prepared();
+    const lease = await claim(worker.token);
+    await db.update(applications).set({ state: 'ready', checkpoint: { stage: 'ready', sequence: 0 } }).where(eq(applications.id, app.id));
+    const identity = { ats: app.ats, tenant: app.tenant, requisition: app.requisition };
+    const intentId = randomUUID();
+    await beginSubmission(db, worker.token, app.id, {
+      protocolVersion: 1, intentId, fence: lease.fence, expectedRevision: lease.revision, identity,
+      company: 'Fixture Co', role: 'Software Engineering Intern', manifestHash: 'a'.repeat(64), artifactHashes: ['b'.repeat(64)],
+    }, options);
+    await recordReceipt(db, worker.token, app.id, {
+      protocolVersion: 1, intentId, identity, company: 'Fixture Co', role: 'Software Engineering Intern', receiptId: 'receipt-123',
+      submittedAt: now, evidence: { source: 'confirmation_page', pageUrl: 'https://boards.greenhouse.io/fixture/jobs/123', observedText: 'Fixture Co Software Engineering Intern' },
+    }, options);
+    await expect(db.update(applicationSubmissions).set({ role: 'Changed' }).where(eq(applicationSubmissions.intentId, intentId))).rejects.toThrow();
+    await expect(db.delete(applicationSubmissions).where(eq(applicationSubmissions.intentId, intentId))).rejects.toThrow();
+    await expect(db.update(applicationReceipts).set({ role: 'Changed' }).where(eq(applicationReceipts.intentId, intentId))).rejects.toThrow();
+    await expect(db.delete(applicationReceipts).where(eq(applicationReceipts.intentId, intentId))).rejects.toThrow();
+    const triggers = await db.all(sql`select name from sqlite_master where type = 'trigger' and name in
+      ('private_submission_identity_immutable', 'private_submission_no_delete', 'private_receipt_no_update', 'private_receipt_no_delete')`);
+    expect(triggers.map((row) => (row as { name: string }).name).sort()).toEqual([
+      'private_receipt_no_delete', 'private_receipt_no_update', 'private_submission_identity_immutable', 'private_submission_no_delete',
+    ]);
+  });
   it.each(['pair', 'list'] as const)('persists stale pending-grant revocation on %s after a credential change', async (operation) => {
     const grant = await createPairing(db, 'alice', { requestId: randomUUID(), expectedRevision: 0, label: 'Pending' }, options);
     const bob = await createPairing(db, 'bob', { requestId: randomUUID(), expectedRevision: 0, label: 'Other owner' }, options);

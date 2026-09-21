@@ -28,7 +28,9 @@ export async function recordWorkerEvent(
     }
     const app = await checkedLease(tx, worker, { applicationId, fence: command.fence, expectedRevision: command.expectedRevision }, now);
     if (app instanceof WorkerError) return app;
-    if (!canTransition(app.state, command.state)) fail(409, 'EXECUTION_DISABLED', 'Transition requires unavailable execution evidence.');
+    if (!canTransition(app.state, command.state, command.evidence ?? {})) {
+      fail(409, 'EXECUTION_DISABLED', 'Transition requires unavailable execution evidence.');
+    }
     const stage = isWaitingState(command.state) || isTerminalState(command.state) ? app.state : command.state;
     if (command.checkpoint.stage !== stage || command.checkpoint.sequence !== (app.checkpoint?.sequence ?? 0) + 1) {
       fail(409, 'CONFLICT', 'Checkpoint is not the next safe checkpoint.');

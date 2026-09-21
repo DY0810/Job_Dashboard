@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConfiguredJevActionSelector } from "./main.ts";
+import { createConfiguredJevActionSelector, hasVerifiedTailoredArtifact } from "./main.ts";
 import { privateStore } from "./storage.ts";
 
 const scope = { origin: "https://workie.example", ownerId: "synthetic-owner", workerId: "synthetic-worker" };
@@ -12,6 +13,18 @@ const config = {
   endpoint: null, privacy: "approved_remote", remoteProviderConsent: true,
   allowedProviders: ["typesafe:jev"], fallbackOrder: [], maxUsd: 10,
 };
+
+test("tailored artifact verification binds the output to the selected master and manifest", () => {
+  const resume = { documentId: "00000000-0000-4000-8000-000000000001", version: 2, sha256: "a".repeat(64) };
+  const artifact = { documentId: resume.documentId, version: resume.version, sourceHash: "c".repeat(64),
+    verificationManifestHash: "d".repeat(64), outputHash: resume.sha256 };
+  const valid = { documents: { resume }, tailoredArtifact: artifact, manifestHash: artifact.verificationManifestHash,
+    artifactHashes: [artifact.outputHash] };
+  assert.equal(hasVerifiedTailoredArtifact(valid), true);
+  assert.equal(hasVerifiedTailoredArtifact({ ...valid, manifestHash: "e".repeat(64) }), false);
+  assert.equal(hasVerifiedTailoredArtifact({ ...valid, tailoredArtifact: { ...artifact, version: 1 } }), false);
+  assert.equal(hasVerifiedTailoredArtifact({ ...valid, artifactHashes: [] }), false);
+});
 
 const directory = await mkdtemp(join(tmpdir(), "main-jev-"));
 try {

@@ -28,11 +28,14 @@ const DispatchResultSchema = z.union([QuestionDispatchSchema, z.strictObject({
     "needs_policy_decision", "needs_login", "needs_verification", "provider_unavailable",
     "retryable_failure", "blocked_unsupported", "failed", "skipped"]),
   reasonCode: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/).nullable(),
+  evidence: z.strictObject({ artifactVerified: z.boolean().optional(), formVerified: z.boolean().optional(), submitPermit: z.boolean().optional() }).optional(),
+}), z.strictObject({
+  state: z.enum(["submitted", "submission_unknown"]), reasonCode: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/), durable: z.literal(true),
 })]);
 type DispatchResult = z.infer<typeof DispatchResultSchema>;
 export type StageDispatchContext = { signal: AbortSignal; chooseAction?: JevActionSelector };
 export type StageDispatch = (lease: Lease, guard: LeaseGuard, context: StageDispatchContext) => Promise<DispatchResult>;
-export type WorkerSetup = (transport: WorkerTransport, signal: AbortSignal) => Promise<{ chooseAction?: JevActionSelector }>;
+export type WorkerSetup = (transport: WorkerTransport, signal: AbortSignal) => Promise<{ chooseAction?: JevActionSelector; dispatch?: StageDispatch }>;
 export const unsupportedStage: StageDispatch = async () => ({
   state: "blocked_unsupported", reasonCode: "adapter_unavailable",
 });
@@ -62,10 +65,15 @@ export async function runWorker(options: {
   let journal: z.infer<typeof JournalSchema>;
   let transport: WorkerTransport;
   let chooseAction = options.chooseAction;
+  let dispatch = options.dispatch ?? unsupportedStage;
   try {
     signal.throwIfAborted();
     transport = typeof options.transport === "function" ? await options.transport() : options.transport;
-    if (options.configure) chooseAction = (await options.configure(transport, signal)).chooseAction ?? chooseAction;
+    if (options.configure) {
+      const configured = await options.configure(transport, signal);
+      chooseAction = configured.chooseAction ?? chooseAction;
+      dispatch = configured.dispatch ?? dispatch;
+    }
     signal.throwIfAborted();
     journal = JournalSchema.parse(await store.read("checkpoint") ?? {
       version: 1, scope, pending: null, acknowledged: null,
@@ -168,7 +176,7 @@ export async function runWorker(options: {
       if (!SAFE_STAGES.includes(lease.state as typeof SAFE_STAGES[number])) throw new Error("INVALID_STAGE");
       options.status?.("active");
       const result = DispatchResultSchema.parse(await abortable(
-        guard.boundary(() => (options.dispatch ?? unsupportedStage)(lease, guard, { signal, chooseAction })), signal,
+        guard.boundary(() => dispatch(lease, guard, { signal, chooseAction })), signal,
       ));
       guard.check();
       if ("kind" in result) {
@@ -188,7 +196,15 @@ export async function runWorker(options: {
         });
         continue;
       }
-      if (!canTransition(lease.state, result.state)) throw new Error("EXECUTION_DISABLED");
+      if ("durable" in result && result.durable) {
+        // Submission intent/receipt already fenced the server-side state. An old lease
+        // cannot emit a second event after that external boundary.
+        guard.revoke("DURABLY_CHECKPOINTED");
+        active = null;
+        options.status?.("waiting");
+        continue;
+      }
+      if (!canTransition(lease.state, result.state, "evidence" in result ? result.evidence ?? {} : {})) throw new Error("EXECUTION_DISABLED");
       await exclusive(async () => {
         guard.check();
         const stage = SAFE_STAGES.includes(result.state as typeof SAFE_STAGES[number]) ? result.state : lease.state;
@@ -196,6 +212,7 @@ export async function runWorker(options: {
           protocolVersion: WORKER_PROTOCOL_VERSION, eventId: randomUUID(), fence: lease.fence,
           expectedRevision: lease.revision, state: result.state,
           checkpoint: { stage, sequence: (lease.checkpoint?.sequence ?? 0) + 1 }, reasonCode: result.reasonCode,
+          ...( "evidence" in result && result.evidence ? { evidence: result.evidence } : {}),
         });
         journal = { ...journal, pending: { applicationId: lease.applicationId, event } };
         await guard.boundary(() => store.write("checkpoint", journal));

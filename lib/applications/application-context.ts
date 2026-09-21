@@ -1,0 +1,180 @@
+import 'server-only';
+import { and, eq } from 'drizzle-orm';
+import { z } from 'zod';
+import { driver, type ReadDb } from '../db/index.ts';
+import { postings, postingSources } from '../db/schema.ts';
+import type { PrivateDb } from '../private-db/index.ts';
+import { applications, applicationRuns, discoveryManifests, discoveryTargets, documents } from '../private-db/schema.ts';
+import { ApplicationContextSchema, ApplicationContextRequestSchema, type ApplicationContext } from './application-context-protocol.ts';
+import { withWorker, type WorkerOptions, WorkerError, type WorkerTx, type WorkerRow } from './worker-store.ts';
+import { checkedLease } from './leases.ts';
+import { getPolicy, getProfile } from './stores.ts';
+import { hashValue } from './stores.ts';
+import { getDiscoveryCorpus } from './discovery-corpus.ts';
+import { resolveApplicationIdentity } from './application-identity.ts';
+import { officialContentHash } from './discovery-source.ts';
+import { parseOfficialRequirements } from './official-requirements.ts';
+
+type Fact = { state: string; value: unknown };
+const factValue = <T>(fact: Fact | undefined): T | null => fact?.state === 'confirmed' ? fact.value as T : null;
+const listFact = (fact: Fact | undefined) => {
+  const values = factValue<unknown[]>(fact);
+  return { state: fact?.state === 'declined' ? 'declined' as const : values?.length ? 'confirmed' as const : 'unknown' as const,
+    values: values?.filter((value): value is string => typeof value === 'string') ?? [] };
+};
+const label = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+export type ApplicationContextOptions = WorkerOptions & { corpus?: () => ReadDb | Promise<ReadDb> };
+
+function profileFacts(profile: Awaited<ReturnType<typeof getProfile>>['profile']) {
+  const schools = profile.education.schools;
+  const countries = listFact(profile.preferences.countries);
+  const authorization = profile.authorization.countries.flatMap((item) => {
+    const right = factValue<boolean>(item.rightToWork);
+    return right === true ? ['authorized'] : right === false ? ['not_authorized'] : [];
+  });
+  const authorizationState = authorization.length && profile.authorization.countries.every((item) => item.rightToWork.state === 'confirmed')
+    ? 'confirmed' as const : 'unknown' as const;
+  const pay = factValue<{ amount: number; currency: string; period: string }>(profile.preferences.payFloor);
+  const payPeriod = pay?.period === 'hour' || pay?.period === 'year' ? pay.period : null;
+  return {
+    countries,
+    degreeLevels: listFact({ state: schools.some((school) => school.level.state === 'declined') ? 'declined' : 'confirmed',
+      value: schools.flatMap((school) => factValue<string>(school.level) ? [factValue<string>(school.level)!] : []) }),
+    majors: listFact({ state: schools.some((school) => school.major.state === 'declined') ? 'declined' : 'confirmed',
+      value: schools.flatMap((school) => factValue<string>(school.major) ? [factValue<string>(school.major)!] : []) }),
+    availableTerms: listFact({ state: profile.availability.windows.length ? 'confirmed' : 'unknown',
+      value: profile.availability.windows.flatMap((window) => factValue<string>(window.term) ? [factValue<string>(window.term)!] : []) }),
+    workAuthorization: { state: authorizationState, values: authorization },
+    pay: { state: pay ? 'confirmed' as const : 'unknown' as const, currency: pay?.currency ?? null,
+      amount: pay?.amount ?? null, period: payPeriod },
+  };
+}
+
+function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['profile'], authorized: string[]) {
+  const answers: Record<string, string | boolean> = {};
+  const first = factValue<string>(profile.identity.legalFirstName) ?? factValue<string>(profile.identity.preferredName);
+  const last = factValue<string>(profile.identity.legalLastName);
+  const email = factValue<string>(profile.identity.personalEmail) ?? factValue<string>(profile.identity.schoolEmail);
+  if (first) answers.first_name = first;
+  if (last) answers.last_name = last;
+  if (email) answers.email = email;
+  if (authorized.includes('authorized')) {
+    answers.authorized = 'Yes'; answers.work_authorization = 'Yes';
+  } else if (authorized.includes('not_authorized')) {
+    answers.authorized = 'No'; answers.work_authorization = 'No';
+  }
+  return answers;
+}
+
+async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicationId: string; fence: number; expectedRevision: number }, now: number, options: ApplicationContextOptions): Promise<ApplicationContext> {
+  const [owned] = await tx.select().from(applications).where(and(eq(applications.ownerId, worker.ownerId), eq(applications.id, lease.applicationId)));
+  if (!owned || owned.workerId !== worker.id) throw new WorkerError(404, 'NOT_FOUND', 'Application not found.');
+  const checked = await checkedLease(tx, worker, { applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.expectedRevision }, now);
+  if (checked instanceof WorkerError) throw checked;
+  const [run] = await tx.select().from(applicationRuns).where(and(eq(applicationRuns.ownerId, worker.ownerId), eq(applicationRuns.id, checked.runId), eq(applicationRuns.workerId, worker.id)));
+  if (!run) throw new WorkerError(409, 'LEASE_LOST', 'Application run is unavailable.');
+  const policy = await getPolicy(tx, worker.ownerId, now);
+  if (!policy.enabled || policy.revision !== run.policyRevision || policy.policyVersion !== run.policyVersion || policy.policyHash !== run.policyHash) {
+    throw new WorkerError(403, 'POLICY_CHANGED', 'Application policy is no longer active.');
+  }
+  if (!checked.snapshotManifestId || !checked.snapshotTargetKey) throw new WorkerError(409, 'CONTEXT_UNAVAILABLE', 'Application snapshot is unavailable.');
+  const [target] = await tx.select().from(discoveryTargets).where(and(
+    eq(discoveryTargets.ownerId, worker.ownerId), eq(discoveryTargets.runId, checked.runId),
+    eq(discoveryTargets.manifestId, checked.snapshotManifestId), eq(discoveryTargets.targetKey, checked.snapshotTargetKey),
+  ));
+  const [manifest] = await tx.select().from(discoveryManifests).where(and(
+    eq(discoveryManifests.ownerId, worker.ownerId), eq(discoveryManifests.id, checked.snapshotManifestId),
+  ));
+  if (!target || !manifest || manifest.state !== 'ready' || hashValue(manifest.artifact) !== manifest.hash) {
+    throw new WorkerError(409, 'CONTEXT_UNAVAILABLE', 'Application snapshot is not ready.');
+  }
+  const candidate = manifest.artifact.candidates[target.candidateIndex];
+  if (!candidate || manifest.artifact.schemaVersion !== 2 || hashValue(candidate) !== target.candidateHash || candidate.disposition !== 'candidate' ||
+      !candidate.identity || candidate.identity.ats !== checked.ats || candidate.identity.tenant !== checked.tenant ||
+      candidate.identity.requisition !== checked.requisition || !candidate.officialUrl || !candidate.postings.length ||
+      !candidate.officialPostingId || !candidate.officialContentHash) {
+    throw new WorkerError(409, 'IDENTITY_MISMATCH', 'Application context does not match the frozen role.');
+  }
+  const corpus = await (options.corpus?.() ?? getDiscoveryCorpus());
+  const [official] = await driver(corpus).select({
+    postingId: postings.id, canonicalUrl: postings.canonicalUrl, company: postings.company, title: postings.title,
+    country: postings.country, location: postings.location, description: postings.description, sourceFields: postings.sourceFields,
+    paid: postings.paid,
+  }).from(postings).where(eq(postings.id, candidate.officialPostingId)).limit(1).all();
+  const officialSources = official ? await driver(corpus).select({
+    source: postingSources.source, sourceUrl: postingSources.sourceUrl, publisherId: postingSources.publisherId,
+  }).from(postingSources).where(eq(postingSources.postingId, candidate.officialPostingId)).all() : [];
+  const officialResolution = official ? resolveApplicationIdentity(official.canonicalUrl, officialSources) : null;
+  if (!official || !official.description?.trim() || official.description.length > 100_000 ||
+      officialResolution?.identity?.ats !== candidate.identity.ats ||
+      officialResolution?.identity?.tenant !== candidate.identity.tenant ||
+      officialResolution?.identity?.requisition !== candidate.identity.requisition ||
+      officialResolution?.officialUrl !== candidate.officialUrl) {
+    throw new WorkerError(409, 'IDENTITY_MISMATCH', 'Official posting identity changed.');
+  }
+  if (officialContentHash({
+    canonicalUrl: official.canonicalUrl, company: official.company, title: official.title,
+    country: official.country, location: official.location, description: official.description,
+    sourceFields: official.sourceFields,
+  }) !== candidate.officialContentHash) {
+    throw new WorkerError(409, 'CONTEXT_UNAVAILABLE', 'Official posting content changed.');
+  }
+  const profileResponse = await getProfile(tx, worker.ownerId);
+  const profile = profileResponse.profile;
+  const facts = profileFacts(profile);
+  const parsedRequirements = parseOfficialRequirements({
+    sourceUrl: candidate.officialUrl, company: official.company, title: official.title,
+    country: official.country, location: official.location, description: official.description,
+    sourceFields: official.sourceFields, paid: official.paid,
+  });
+  const requirements = { ...parsedRequirements, excerpts: [...new Set([...parsedRequirements.excerpts, ...candidate.reasons])].slice(0, 32) };
+  const answers = applicationAnswers(profile, facts.workAuthorization.values);
+  const masters = profile.documentsProvider.masters
+    .map((master) => ({ master, role: factValue<string>(master.role), ref: factValue<{ documentId: string; version: number }>(master.document) }))
+    .filter((item): item is { master: typeof item.master; role: string | null; ref: { documentId: string; version: number } } => item.ref !== null);
+  masters.sort((a, b) => Number(label(official.title).includes(label(b.role ?? ''))) - Number(label(official.title).includes(label(a.role ?? ''))));
+  const documentsByKey: Record<string, ApplicationContext['documents'][string]> = {};
+  const selected = masters[0];
+  if (selected) {
+    const [document] = await tx.select().from(documents).where(and(
+      eq(documents.ownerId, worker.ownerId), eq(documents.id, selected.ref.documentId), eq(documents.version, selected.ref.version),
+      eq(documents.state, 'available'), eq(documents.safetyCheck, 'passed'),
+    ));
+    if (document?.sha256) documentsByKey.resume = {
+      documentId: document.id, version: document.version, sha256: document.sha256, size: document.size, mime: document.mime as 'application/pdf' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      path: `/api/worker/applications/${checked.id}/documents/${document.id}`,
+    };
+  }
+  return ApplicationContextSchema.parse({
+    protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
+    policyRevision: run.policyRevision, identity: candidate.identity, company: official.company, role: official.title,
+    applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
+    tailoredArtifact: null, manifestHash: null, artifactHashes: [], createdAt: now,
+  });
+}
+
+export async function applicationContext(
+  db: PrivateDb, token: string, applicationId: string, input: unknown, options: ApplicationContextOptions = {},
+) {
+  const command = ApplicationContextRequestSchema.parse(input);
+  if (command.applicationId !== applicationId) throw new WorkerError(400, 'INVALID_INPUT', 'Application context ID mismatch.');
+  return withWorker(db, token, options, async (tx, worker, now) => ownedContext(tx, worker, command, now, options));
+}
+
+export async function applicationDocumentOwner(
+  db: PrivateDb, token: string, applicationId: string, documentId: string, options: WorkerOptions = {},
+) {
+  if (!z.uuid().safeParse(applicationId).success || !z.uuid().safeParse(documentId).success) {
+    throw new WorkerError(400, 'INVALID_INPUT', 'Invalid document path.');
+  }
+  return withWorker(db, token, options, async (tx, worker) => {
+    const [app] = await tx.select({ id: applications.id }).from(applications).where(and(
+      eq(applications.ownerId, worker.ownerId), eq(applications.id, applicationId), eq(applications.workerId, worker.id),
+    ));
+    const [document] = await tx.select().from(documents).where(and(
+      eq(documents.ownerId, worker.ownerId), eq(documents.id, documentId), eq(documents.state, 'available'), eq(documents.safetyCheck, 'passed'),
+    ));
+    if (!app || !document || !document.sha256) throw new WorkerError(404, 'NOT_FOUND', 'Document not found.');
+    return document;
+  });
+}

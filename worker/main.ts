@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { credentials, nativeCredentialBackend, type CredentialBackend, type WorkerScope } from "./credentials.ts";
@@ -9,11 +9,19 @@ import { controlOrigin, workerTransport, TransportError } from "./transport.ts";
 import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, ScopeSchema } from "./pairing.ts";
 import { readMaskedGrant } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
+import { createBrowserRuntime } from "./browser.ts";
+import { ashby } from "./ats/ashby.ts";
+import { greenhouse } from "./ats/greenhouse.ts";
+import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
+import { screenApplication } from "./screening.ts";
+import { AtsError } from "./ats/protocol.ts";
+import type { StageDispatch } from "./runtime.ts";
 import { createJevActionSelector, type JevActionSelector } from "./jev.ts";
 import {
   createTypesafeProvider, ProviderError, TYPESAFE_ENDPOINT, typesafeBudgetLedger,
 } from "./providers.ts";
 import type { ProviderConfig } from "../lib/applications/provider-protocol.ts";
+import type { ApplicationContext } from "../lib/applications/application-context-protocol.ts";
 import type { PrivateStore } from "./storage.ts";
 
 const ERROR_CODES = new Set([
@@ -48,6 +56,13 @@ export function createConfiguredJevActionSelector(
     endpoint: config.endpoint ?? TYPESAFE_ENDPOINT, fetchImpl,
   });
   return createJevActionSelector(provider);
+}
+
+export function hasVerifiedTailoredArtifact(context: Pick<ApplicationContext, "documents" | "tailoredArtifact" | "manifestHash" | "artifactHashes">) {
+  const resume = context.documents.resume, artifact = context.tailoredArtifact;
+  return Boolean(resume && artifact && artifact.documentId === resume.documentId && artifact.version === resume.version &&
+    artifact.outputHash === resume.sha256 && context.manifestHash === artifact.verificationManifestHash &&
+    context.artifactHashes.includes(artifact.outputHash));
 }
 
 export async function main(args = process.argv.slice(2)) {
@@ -134,7 +149,106 @@ export async function main(args = process.argv.slice(2)) {
         if (!selector) throw new ProviderError("PROVIDER_DISABLED");
         return selector(input, options);
       };
-      return { chooseAction };
+      const dispatch: StageDispatch = async (lease, guard, context) => {
+        let applicationContext;
+        try {
+          applicationContext = await control.applicationContext(lease.applicationId, {
+            protocolVersion: 1, applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
+          }, signal);
+          guard.check();
+        } catch (error) {
+          if (error instanceof TransportError && error.status === 409 && /NEEDS_DOCUMENT/.test(error.message)) {
+            return { state: "needs_document" as const, reasonCode: "resume_required" };
+          }
+          throw error;
+        }
+        const adapter = applicationContext.identity.ats === "greenhouse" ? greenhouse :
+          applicationContext.identity.ats === "ashby" ? ashby : undefined;
+        if (!adapter) return { state: "blocked_unsupported" as const, reasonCode: "adapter_unavailable" };
+        const identity = applicationContext.identity as { ats: "greenhouse" | "ashby"; tenant: string; requisition: string };
+        const requirement = screenApplication(applicationContext.facts, applicationContext.requirements);
+        if (lease.state === "screening") {
+          if (requirement.status === "blocked") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
+          if (requirement.status === "needs_question") return { state: "needs_answer" as const, reasonCode: "screening_question" };
+          return { state: "tailoring" as const, reasonCode: "screened" };
+        }
+        if (lease.state === "tailoring") {
+          if (!hasVerifiedTailoredArtifact(applicationContext)) {
+            return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
+          }
+          return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
+        }
+        const workDirectory = await mkdtemp(join(directory, "application-"));
+        let runtime: Awaited<ReturnType<typeof createBrowserRuntime>> | undefined;
+        let submissionStarted = false;
+        try {
+          const localDocuments: Record<string, string> = {};
+          for (const [key, document] of Object.entries(applicationContext.documents)) {
+            guard.check();
+            const bytes = await control.downloadDocument(lease.applicationId, document.documentId, document.path, signal);
+            if (bytes.length !== document.size || createHash("sha256").update(bytes).digest("hex") !== document.sha256) {
+              throw new Error("DOCUMENT_RECONCILIATION_FAILED");
+            }
+            const extension = document.mime === "application/pdf" ? ".pdf" : ".docx";
+            const path = join(workDirectory, `${key}${extension}`);
+            await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
+            localDocuments[key] = path;
+          }
+          if (!localDocuments.resume || !hasVerifiedTailoredArtifact(applicationContext)) {
+            return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
+          }
+          const application = {
+            identity, company: applicationContext.company, role: applicationContext.role,
+            applicationUrl: applicationContext.applicationUrl, answers: applicationContext.answers, documents: localDocuments,
+            manifestHash: applicationContext.manifestHash!, artifactHashes: applicationContext.artifactHashes,
+            submissionIntentId: lease.applicationId,
+          };
+          const hostname = new URL(application.applicationUrl).hostname;
+          runtime = await createBrowserRuntime({
+            userDataDir: join(directory, "browser", `${application.identity.ats}-${application.identity.tenant.replace(/[^A-Za-z0-9_-]/g, "_")}`),
+            approvedOrigins: [new URL(application.applicationUrl).origin], allowLoopback: /^127\./.test(hostname), headless: true,
+          });
+          if (lease.state === "filling") {
+            const result = await fillAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
+              requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal });
+            if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
+            if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
+            return { state: "ready" as const, reasonCode: "form_verified", evidence: { formVerified: true } };
+          }
+          const result = await runAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
+            requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, submission: {
+              begin: async ({ intentId, identity, company, role, manifestHash, artifactHashes }) => {
+                submissionStarted = true;
+                return control.submissionIntent(lease.applicationId, { protocolVersion: 1, intentId, fence: lease.fence,
+                  expectedRevision: lease.revision, identity, company, role, manifestHash, artifactHashes }, signal);
+              },
+              receipt: async ({ intentId, receipt, evidence }) => control.receipt(lease.applicationId, {
+                protocolVersion: 1, intentId, identity: receipt.identity, company: receipt.company, role: receipt.role,
+                receiptId: receipt.receiptId, submittedAt: receipt.submittedAt, evidence,
+              }, signal),
+            } });
+          if (result.state === "submitted" || result.state === "submission_unknown") {
+            return { state: result.state, reasonCode: result.reasons[0]?.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80) || "submission_unknown", durable: true };
+          }
+          if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
+          if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
+          return { state: "retryable_failure" as const, reasonCode: "application_failed" };
+        } catch (error) {
+          if (signal.aborted) throw error;
+          if (error instanceof AtsError && error.code === "PROVIDER_INSPECT_SELECTED") {
+            return { state: "needs_verification" as const, reasonCode: "provider_inspect_required" };
+          }
+          if (error instanceof AtsError && /REQUIRED_ANSWER|ANSWER_/.test(error.code)) {
+            return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
+          }
+          if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
+          return { state: "retryable_failure" as const, reasonCode: "ats_execution_failed" };
+        } finally {
+          if (runtime) await runtime.close().catch(() => {});
+          await rm(workDirectory, { recursive: true, force: true });
+        }
+      };
+      return { chooseAction, dispatch };
     };
     await runWorker({ scope, store, transport, configure: setup,
       signal: controller.signal, status: status => process.stdout.write(JSON.stringify({ status }) + "\n") });

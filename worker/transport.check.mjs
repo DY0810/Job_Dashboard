@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { workerTransport } from "./transport.ts";
+import { ReceiptResponseSchema, SubmissionIntentResponseSchema } from "../lib/applications/worker-protocol.ts";
 
 const token = "S".repeat(43);
 const poll = { protocolVersion: 1, serverTime: 1000, heartbeatMs: 20000, leaseMs: 120000, lease: null };
@@ -54,6 +55,61 @@ test("provider config uses the versioned worker contract and does not expose cre
   const result = await workerTransport({ origin, token, allowLoopback: true }).providerConfig();
   assert.equal(result.enabled, false);
   assert(!JSON.stringify(result).toLowerCase().includes("password"));
+});
+
+test("application context and document downloads stay bearer-bound and path-exact", async t => {
+  const appId = randomUUID(), documentId = randomUUID(), bytes = Buffer.from("synthetic-document");
+  const origin = await fixture(t, async (req, res) => {
+    assert.equal(req.headers.authorization, `Bearer ${token}`);
+    if (req.method === "POST") {
+      assert.equal(req.url, `/api/worker/applications/${appId}/context`);
+      return json(res, {
+        protocolVersion: 1, applicationId: appId, runId: randomUUID(), ownerId: "owner", policyRevision: 1,
+        identity: { ats: "greenhouse", tenant: "fixture", requisition: "123" }, company: "Fixture Co", role: "Intern",
+        applicationUrl: "https://boards.greenhouse.io/fixture/jobs/123", facts: {
+          countries: { state: "unknown", values: [] }, degreeLevels: { state: "unknown", values: [] }, majors: { state: "unknown", values: [] },
+          availableTerms: { state: "unknown", values: [] }, workAuthorization: { state: "unknown", values: [] },
+          pay: { state: "unknown", currency: null, amount: null, period: null },
+        }, requirements: { sourceUrl: "https://boards.greenhouse.io/fixture/jobs/123", officialDescription: "Fixture", excerpts: ["Fixture"], countries: [], degreeLevels: [], majors: [], terms: [], authorizationRequired: false, paid: null, payFloor: null },
+        answers: {}, documents: { resume: { documentId, version: 1, sha256: "0".repeat(64), size: bytes.length, mime: "application/pdf", path: `/api/worker/applications/${appId}/documents/${documentId}` } },
+        manifestHash: "1".repeat(64), artifactHashes: ["0".repeat(64)], createdAt: 1000,
+      });
+    }
+    assert.equal(req.method, "GET");
+    assert.equal(req.url, `/api/worker/applications/${appId}/documents/${documentId}`);
+    res.writeHead(200, { "content-type": "application/pdf", "content-length": String(bytes.length) }); res.end(bytes);
+  });
+  const client = workerTransport({ origin, token, allowLoopback: true });
+  const context = await client.applicationContext(appId, { protocolVersion: 1, applicationId: appId, fence: 1, expectedRevision: 1 });
+  assert.equal(context.documents.resume.documentId, documentId);
+  assert.deepEqual(await client.downloadDocument(appId, documentId, context.documents.resume.path), bytes);
+  await assert.rejects(client.downloadDocument(appId, documentId, `/api/worker/applications/${randomUUID()}/documents/${documentId}`), /INVALID_DOCUMENT/);
+});
+
+test("submission intent and receipt use owner-bound checkpoint routes", async t => {
+  const appId = randomUUID(), intentId = randomUUID(), requests = [];
+  const origin = await fixture(t, async (req, res) => {
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    requests.push({ path: req.url, body: JSON.parse(Buffer.concat(chunks).toString()), auth: req.headers.authorization });
+    if (req.url.endsWith("/submission-intent")) {
+      return json(res, { applicationId: appId, intentId, state: "submitting", revision: 3, fence: 4, replayed: false });
+    }
+    return json(res, { applicationId: appId, intentId, state: "submitted", revision: 4, replayed: false });
+  });
+  const client = workerTransport({ origin, token, allowLoopback: true });
+  const identity = { ats: "greenhouse", tenant: "fixture", requisition: "123" };
+  const intent = await client.submissionIntent(appId, {
+    protocolVersion: 1, intentId, fence: 2, expectedRevision: 2, identity, company: "Fixture Co", role: "Intern",
+    manifestHash: "a".repeat(64), artifactHashes: ["b".repeat(64)],
+  });
+  const receipt = await client.receipt(appId, {
+    protocolVersion: 1, intentId, identity, company: "Fixture Co", role: "Intern", receiptId: "receipt-123", submittedAt: 1000,
+    evidence: { source: "confirmation_page", pageUrl: "https://boards.greenhouse.io/fixture/jobs/123", observedText: "Fixture Co Intern" },
+  });
+  assert.deepEqual(SubmissionIntentResponseSchema.parse(intent), intent);
+  assert.deepEqual(ReceiptResponseSchema.parse(receipt), receipt);
+  assert.deepEqual(requests.map(({ path }) => path), [`/api/worker/applications/${appId}/submission-intent`, `/api/worker/applications/${appId}/receipt`]);
+  assert(requests.every(({ auth }) => auth === `Bearer ${token}`));
 });
 
 test("redirects, malformed/versioned/oversized bodies, slow streams and HTTP errors fail closed without secrets", async t => {

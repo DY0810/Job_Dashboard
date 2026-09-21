@@ -16,6 +16,8 @@ import { POST as pairRoute } from '../../app/api/worker/pair/route.ts';
 import { POST as pollRoute } from '../../app/api/worker/poll/route.ts';
 import { POST as heartbeatRoute } from '../../app/api/worker/heartbeat/route.ts';
 import { POST as providerConfigRoute } from '../../app/api/worker/provider-config/route.ts';
+import { POST as submissionIntentRoute } from '../../app/api/worker/applications/[id]/submission-intent/route.ts';
+import { POST as receiptRoute } from '../../app/api/worker/applications/[id]/receipt/route.ts';
 import { DELETE as revokeRoute } from '../../app/api/workers/[id]/route.ts';
 import { POST as createRunRoute } from '../../app/api/application-runs/route.ts';
 import { enqueueApplication } from './runs.ts';
@@ -98,7 +100,13 @@ beforeEach(async () => {
       else if (path === '/api/worker/heartbeat') response = await heartbeatRoute(request);
       else if (path === '/api/worker/provider-config') response = await providerConfigRoute(request);
       else if (path === '/api/application-runs') response = await createRunRoute(request);
-      else response = new Response(null, { status: 404 });
+      else {
+        const submission = path.match(/^\/api\/worker\/applications\/([^/]+)\/submission-intent$/);
+        const receipt = path.match(/^\/api\/worker\/applications\/([^/]+)\/receipt$/);
+        if (submission) response = await submissionIntentRoute(request, { params: Promise.resolve({ id: submission[1] }) });
+        else if (receipt) response = await receiptRoute(request, { params: Promise.resolve({ id: receipt[1] }) });
+        else response = new Response(null, { status: 404 });
+      }
       res.statusCode = response.status;
       for (const [key, value] of response.headers) if (key !== 'set-cookie') res.setHeader(key, value);
       const cookies = response.headers.getSetCookie();
@@ -168,6 +176,27 @@ describe('Phase 3 real route handlers over loopback with Better Auth 1.7.5', () 
       { authorization: `Bearer ${randomBytes(32).toString('base64url')}` })).status).toBe(401);
     expect((await http('/api/worker/provider-config', { protocolVersion: 2, providerProtocolVersion: 1 }, '',
       { authorization: `Bearer ${worker.token}` })).status).toBe(426);
+  });
+  it('persists a submission intent and exact receipt through authenticated worker routes', async () => {
+    const worker = await paired();
+    await running(worker.workerId);
+    const lease = p.PollResponseSchema.parse(await (await poll(worker.token)).json()).lease!;
+    await db.update(applications).set({ state: 'ready', checkpoint: { stage: 'ready', sequence: 0 } }).where(eq(applications.id, lease.applicationId));
+    const identity = { ats: lease.ats, tenant: lease.tenant, requisition: lease.requisition };
+    const intent = await http(`/api/worker/applications/${lease.applicationId}/submission-intent`, {
+      protocolVersion: 1, intentId: randomUUID(), fence: lease.fence, expectedRevision: lease.revision, identity,
+      company: 'Fixture Co', role: 'Synthetic Intern', manifestHash: 'a'.repeat(64), artifactHashes: ['b'.repeat(64)],
+    }, '', { authorization: `Bearer ${worker.token}` });
+    expect(intent.status).toBe(200);
+    const started = p.SubmissionIntentResponseSchema.parse(await intent.json());
+    const receipt = await http(`/api/worker/applications/${lease.applicationId}/receipt`, {
+      protocolVersion: 1, intentId: started.intentId, identity, company: 'Fixture Co', role: 'Synthetic Intern',
+      receiptId: 'receipt-123', submittedAt: Date.now(),
+      evidence: { source: 'confirmation_page', pageUrl: 'https://boards.greenhouse.io/fixture/jobs/123', observedText: 'Fixture Co Synthetic Intern' },
+    }, '', { authorization: `Bearer ${worker.token}` });
+    expect(receipt.status).toBe(200);
+    expect(p.ReceiptResponseSchema.parse(await receipt.json())).toMatchObject({ state: 'submitted', replayed: false });
+    expect((await db.select().from(applications).where(eq(applications.id, lease.applicationId)))[0]).toMatchObject({ state: 'submitted' });
   });
   it('ordinary logout leaves worker valid; actual reset consumes the token, deletes sessions, revokes workers and pauses leases', async () => {
     const worker = await paired();

@@ -63,9 +63,10 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
     expect(new Set(snapshot.candidates.map((c) => c.targetKey)).size).toBe(601);
     expect(snapshot.candidates.every((c) => c.disposition === 'candidate')).toBe(true);
     expect(snapshot.candidates.find((c) => c.identity?.requisition === '1')?.postings).toHaveLength(2);
-    expect(f.queries).toHaveLength(1);
+    expect(f.queries).toHaveLength(2);
     expect(f.queries[0]).toMatch(/json_group_array/i);
     expect(f.queries[0]).not.toMatch(/\boffset\b|description|source_fields/i);
+    expect(f.queries[1]).toMatch(/description|source_fields/i);
     expect(JSON.stringify(snapshot)).not.toContain('OMITTED');
     expect(snapshot.scope).toMatchObject({ pagination: false, publicGeographyCeiling: false, publicSeniorityCeiling: false });
     const publicRows = await listPostings(f.db, { ...policy().filters, page: 1, job: null }, NOW);
@@ -233,7 +234,7 @@ it('a commit during an active WAL SELECT cannot mix old identities with new sour
   // A view invokes the concurrent writer during the real SELECT; no production test hooks.
   f.connection.exec(`create view postings as select id, dedupe_key, canonical_url, posted_at, first_seen_run,
       company || substr('', 1, capture_barrier()) as company, title, country, location,
-      track, seniority, delisted_at, paid, pay_rate_min, pay_rate_max, pay_rate_period, pay_currency_symbol
+      description, source_fields, track, seniority, delisted_at, paid, pay_rate_min, pay_rate_max, pay_rate_period, pay_currency_symbol
       from postings_data;`);
   const first = await captureCandidateSnapshot(f.db, policy(), NOW);
   const saved = JSON.stringify(first);

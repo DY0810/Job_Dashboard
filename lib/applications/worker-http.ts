@@ -1,8 +1,9 @@
 import 'server-only';
+import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getAuth } from '../auth.ts';
-import { lookupApplicant, privateJson } from '../applicant-access.ts';
+import { lookupApplicant, privateJson, privateResponse } from '../applicant-access.ts';
 import { getPrivateDb } from '../private-db/index.ts';
 import { getDiscoveryCorpus } from './discovery-corpus.ts';
 import { rateLimit } from '../private-db/schema.ts';
@@ -14,7 +15,11 @@ import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing } f
 import { createRun, listRuns, commandRun, commandApplication } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent, submitIntent } from './events.ts';
+import { beginSubmission, recordReceipt } from './submissions.ts';
+import { applicationContext, applicationDocumentOwner } from './application-context.ts';
+import { documentStorageConfig, readDocumentObject } from './documents-storage.ts';
 import { getPolicy, getProfile } from './stores.ts';
+import { ApplicationContextSchema, ApplicationContextRequestSchema } from './application-context-protocol.ts';
 import { ProviderConfigRequestSchema, ProviderConfigSchema } from './provider-protocol.ts';
 
 async function limit(key: string, max: number) {
@@ -101,7 +106,7 @@ export async function browserWorkerEndpoint(request: Request, action: BrowserAct
     return privateJson(body, { headers });
   } catch (error) { return errorResponse(error, headers); }
 }
-export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent' | 'provider-config', id?: string) {
+export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent' | 'submission-intent' | 'receipt' | 'provider-config' | 'context', id?: string) {
   try {
     checkPath(request, id ? [id] : []);
     const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
@@ -126,6 +131,9 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       case 'heartbeat': body = p.PollResponseSchema.parse(await heartbeatWorker(db, token, p.HeartbeatRequestSchema.parse(raw), options)); break;
       case 'event': body = p.EventResponseSchema.parse(await recordWorkerEvent(db, token, id!, p.EventRequestSchema.parse(raw), options)); break;
       case 'submit-intent': body = await submitIntent(db, token, id!, p.SubmitIntentSchema.parse(raw), options); break;
+      case 'submission-intent': body = p.SubmissionIntentResponseSchema.parse(await beginSubmission(db, token, id!, p.SubmissionIntentSchema.parse(raw), options)); break;
+      case 'receipt': body = p.ReceiptResponseSchema.parse(await recordReceipt(db, token, id!, p.ReceiptCommandSchema.parse(raw), options)); break;
+      case 'context': body = ApplicationContextSchema.parse(await applicationContext(db, token, id!, ApplicationContextRequestSchema.parse(raw), options)); break;
       case 'provider-config': {
         ProviderConfigRequestSchema.parse(raw);
         body = await providerConfig(db, workerOwnerId!);
@@ -134,5 +142,21 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       }
     }
     return privateJson(body);
+  } catch (error) { return errorResponse(error); }
+}
+
+export async function workerDocumentEndpoint(request: Request, applicationId: string, documentId: string) {
+  try {
+    if (request.method !== 'GET' || new URL(request.url).search) throw new WorkerError(400, 'INVALID_INPUT', 'Invalid document request.');
+    const token = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1] ?? '';
+    const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
+    const worker = await withWorker(db, token, options, async (_tx, row) => ({ id: row.id }));
+    await limit(`private-worker:${worker.id}`, 120);
+    const document = await applicationDocumentOwner(db, token, applicationId, documentId, options);
+    const bytes = await readDocumentObject(documentStorageConfig(), document.objectKey);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    if (sha256 !== document.sha256 || bytes.length !== document.size) throw new WorkerError(503, 'DOCUMENT_CHANGED', 'Document bytes are unavailable.');
+    const headers = new Headers({ 'Content-Type': document.mime, 'Content-Length': String(bytes.length) });
+    return privateResponse(new Response(Buffer.from(bytes), { headers }));
   } catch (error) { return errorResponse(error); }
 }

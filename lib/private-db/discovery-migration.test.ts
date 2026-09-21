@@ -19,9 +19,11 @@ it('migrates private storage twice while retaining prior assignment and terminal
     'private_application_identity_immutable', 'private_application_run_assignment_immutable',
     'private_application_no_unsafe_requeue', 'private_application_event_no_update',
     'private_application_event_no_delete', 'private_worker_command_no_update',
+    'private_submission_identity_immutable', 'private_submission_no_delete',
+    'private_receipt_no_update', 'private_receipt_no_delete',
   ]) expect(triggers.map((row) => row.name)).toContain(name);
   expect(await db.all(sql`pragma foreign_key_check`)).toEqual([]);
-  expect(await db.all(sql`select * from __drizzle_migrations`)).toHaveLength(5);
+  expect(await db.all(sql`select * from __drizzle_migrations`)).toHaveLength(7);
 });
 
 it('upgrades populated Phase 3 tables without changing identities, events, leases or run state', async () => {

@@ -19,6 +19,7 @@ export type CandidatePosting = {
 export type DiscoveryCandidate = {
   targetKey: string; identity: OfficialIdentity | null;
   identityStatus: 'resolved' | 'unresolved' | 'conflict'; officialUrl: string | null;
+  officialPostingId: number | null; officialContentHash: string | null;
   aliases: string[]; postings: CandidatePosting[];
   disposition: 'candidate' | 'needs_question' | 'blocked'; reasons: string[];
 };
@@ -29,7 +30,12 @@ export type SnapshotScope = Pick<Policy, 'filters' | 'countries' | 'sourceRestri
   laterOfficialScreen: string[];
 };
 export type CandidateSnapshot = {
-  schemaVersion: 1; capturedAt: number; scope: SnapshotScope; postingCount: number; candidates: DiscoveryCandidate[];
+  schemaVersion: 2; capturedAt: number; scope: SnapshotScope; postingCount: number; candidates: DiscoveryCandidate[];
+};
+
+export type OfficialPostingContent = {
+  canonicalUrl: string; company: string; title: string; country: string | null; location: string | null;
+  description: string | null; sourceFields: unknown;
 };
 
 const sourceSchema = z.array(z.strictObject({
@@ -74,6 +80,9 @@ export async function captureLegacyPostings(db: ReadDb, postingIds: number[]): P
 const label = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 const identityKey = (identity: OfficialIdentity) => JSON.stringify([identity.ats, identity.tenant, identity.requisition]);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+export const officialContentHash = (content: OfficialPostingContent) => hash({
+  ...content, description: content.description ?? null, sourceFields: content.sourceFields ?? null,
+});
 
 function screen(candidate: DiscoveryCandidate, policy: Policy) {
   const blocked = new Set<string>(), questions = new Set<string>();
@@ -152,17 +161,40 @@ export async function captureCandidateSnapshot(db: ReadDb, policyInput: unknown,
     const resolution = resolveApplicationIdentity(group[0].canonicalUrl, group.flatMap((p) => [
       ...p.sources, { source: '', sourceUrl: p.canonicalUrl, publisherId: null },
     ]));
+    const officialPostingId = resolution.identity
+      ? group.find((posting) => [posting.canonicalUrl, ...posting.sources.map((source) => source.sourceUrl)].some((url) => {
+        const identity = resolveApplicationIdentity(url, []).identity;
+        return identity !== null && identityKey(identity) === identityKey(resolution.identity!);
+      }))?.postingId ?? null
+      : null;
     const candidate: DiscoveryCandidate = {
       targetKey: resolution.identity ? `official:${identityKey(resolution.identity)}` :
         `${resolution.status}:${hash(resolution.aliases)}`,
       identity: resolution.identity, identityStatus: resolution.status, officialUrl: resolution.officialUrl,
+      officialPostingId, officialContentHash: null,
       aliases: resolution.aliases, postings: group, disposition: 'candidate', reasons: resolution.reasons,
     };
     screen(candidate, policy);
     return candidate;
   });
+  const officialIds = candidates.flatMap((candidate) => candidate.officialPostingId === null ? [] : [candidate.officialPostingId]);
+  if (officialIds.length) {
+    const rows = await driver(db).select({
+      postingId: postings.id, canonicalUrl: postings.canonicalUrl, company: postings.company, title: postings.title,
+      country: postings.country, location: postings.location, description: postings.description, sourceFields: postings.sourceFields,
+    }).from(postings).where(inArray(postings.id, officialIds)).all();
+    assertBytes(rows);
+    const byId = new Map(rows.map((row) => [row.postingId, row]));
+    for (const candidate of candidates) {
+      const row = candidate.officialPostingId === null ? undefined : byId.get(candidate.officialPostingId);
+      if (row?.description?.trim()) candidate.officialContentHash = officialContentHash({
+        canonicalUrl: row.canonicalUrl, company: row.company, title: row.title,
+        country: row.country, location: row.location, description: row.description, sourceFields: row.sourceFields,
+      });
+    }
+  }
   const snapshot: CandidateSnapshot = {
-    schemaVersion: 1, capturedAt: now, postingCount: captured.length, candidates,
+    schemaVersion: 2, capturedAt: now, postingCount: captured.length, candidates,
     scope: {
       corpus: 'collected_postings', filters: policy.filters, countries: policy.countries,
       sourceRestrictions: policy.sourceRestrictions, targetRoles: policy.targetRoles,

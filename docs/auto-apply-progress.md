@@ -79,8 +79,34 @@ ambient secrets and every attempt owns a private scratch directory.
 | Environment boundary | Positive DOCX reference-render test skipped because this host's `soffice` wrapper has no LibreOffice binary; production fails closed when the renderer is unavailable |
 
 No real applicant documents, provider requests, ATS submissions, production
-writes or deployments were performed. Phase 8 remains the next implementation
-phase; this acceptance is not a claim that Auto Apply is release-ready.
+writes or deployments were performed. Phase 8 is now in progress; this
+acceptance is not a claim that Auto Apply is release-ready.
+
+## Phase 8 Progress
+
+September 21, 2026: the first controlled ATS slice is implemented in the local
+worker. `worker/browser.ts` owns a persistent Playwright context, blocks service
+workers, checks every approved-origin request and redirect, and rejects private
+DNS answers before continuing a request. `worker/ats/protocol.ts` is the shared
+field/receipt contract; the Greenhouse and Ashby adapters use explicit accessible
+labels, committed select/radio values, file upload reconciliation and exact
+receipt identity checks. `worker/screening.ts` makes country, degree, major,
+term, authorization and pay decisions deterministically. `worker/application-runner.ts`
+keeps submission deterministic while an optional Jev selector can rank only the
+currently observed non-submit actions. Discovery snapshots retain the
+authoritative posting row and an official-content hash; the authenticated worker
+context re-reads that row, rechecks ATS identity, and parses its exact description
+with deterministic rules before screening.
+
+| Accepted evidence | Result / reference |
+| --- | --- |
+| Controlled ATS fixtures | 2/2 PASS; `npm run test:ats` |
+| Safety cases | Egress block, wrong-role rejection and ineligible skip PASS |
+| Boundary | Local synthetic pages only; a master resume is deliberately rejected until a persisted tailored artifact and verification manifest exist; live ATS submissions remain outstanding |
+
+This is not live Greenhouse/Ashby support or release authorization. The browser
+runtime fails closed when its browser binary or approved origin is unavailable,
+and the current worker cannot advance from tailoring with a master resume alone.
 
 ## Current Phase 5 Execution
 
@@ -349,7 +375,7 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | ACCEPTED; 132 rendered cases and focused checks passed |
 | 6: Providers/cost | 1-5 | Provider: `worker/providers.ts`, settings/credential/budget modules | Mock protocols, untrusted output, reservation races, unknown cost and remote-fallback denial | NOT STARTED |
 | 7: Documents | 2, 5, 6 | Document runtime: `worker/documents/`, synthetic source/PDF fixtures and checks | Qualified PDF/DOCX, unchanged geometry/fonts/links, hostile inputs, parallel scratch isolation | ACCEPTED; pending commit |
-| 8: Greenhouse/Ashby | 1-7 | Browser/ATS: `worker/browser.ts`, `worker/screening.ts`, first adapters/fixtures | Full synthetic receipt flow, answer/intervention/restart, unknown-submit reconciliation, egress | NOT STARTED |
+| 8: Greenhouse/Ashby | 1-7 | Browser/ATS: `worker/browser.ts`, `worker/screening.ts`, first adapters/fixtures | Full synthetic receipt flow, answer/intervention/restart, unknown-submit reconciliation, egress | IN PROGRESS; local fixture slice |
 | 9: Lever/Jobvite | 8 | ATS: two adapter/fixture families, support evidence | Date/control/upload regressions, exact-role receipts, unsupported-version blocks | NOT STARTED |
 | 10: Workday/Oracle/iCIMS | 9 | ATS: three adapter/fixture families, support evidence | Segmented dates, parsed-fact reconciliation, account/terms/intervention rules | NOT STARTED |
 | 11: Applications/operations | 1-10 | UI/integration: applications/settings/navigation, worker commands and operating docs | Responsive light/dark/keyboard, principal-switch/cache, persisted controls, legacy regressions | NOT STARTED |

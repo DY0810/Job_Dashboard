@@ -8,11 +8,13 @@ import type { QuestionBatch, InterventionAck } from "../lib/applications/questio
 import {
   PairRequestSchema, PairResponseSchema, PollRequestSchema, PollResponseSchema,
   HeartbeatRequestSchema, EventRequestSchema, EventResponseSchema, WORKER_PROTOCOL_VERSION,
+  SubmissionIntentSchema, SubmissionIntentResponseSchema, ReceiptCommandSchema, ReceiptResponseSchema,
 } from "../lib/applications/worker-protocol.ts";
 import type { PairRequest, HeartbeatRequest, EventRequest } from "../lib/applications/worker-protocol.ts";
 import {
   ProviderConfigRequestSchema, ProviderConfigSchema,
 } from "../lib/applications/provider-protocol.ts";
+import { ApplicationContextRequestSchema, ApplicationContextSchema } from "../lib/applications/application-context-protocol.ts";
 
 export function controlOrigin(input: string, allowLoopback = false) {
   let url;
@@ -105,10 +107,53 @@ export function workerTransport(options: {
       post("/api/worker/provider-config", ProviderConfigRequestSchema.parse({
         ...version, providerProtocolVersion: 1,
       }), ProviderConfigSchema, signal),
+    applicationContext: (applicationId: string, input: z.input<typeof ApplicationContextRequestSchema>, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
+      return post(`/api/worker/applications/${applicationId}/context`,
+        ApplicationContextRequestSchema.parse(input), ApplicationContextSchema, signal);
+    },
+    downloadDocument: async (applicationId: string, documentId: string, path: string, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success || !z.uuid().safeParse(documentId).success) {
+        throw new TransportError("INVALID_DOCUMENT");
+      }
+      if (path !== `/api/worker/applications/${applicationId}/documents/${documentId}`) {
+        throw new TransportError("INVALID_DOCUMENT");
+      }
+      const deadline = AbortSignal.any([AbortSignal.timeout(timeout), ...(signal ? [signal] : [])]);
+      const response = await fetch(`${origin}${path}`, { method: "GET", redirect: "error", cache: "no-store", credentials: "omit",
+        headers: { Accept: "application/octet-stream", ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}) }, signal: deadline });
+      if (!response.ok) throw new TransportError(`HTTP_${response.status}`, response.status);
+      const length = Number(response.headers.get("content-length"));
+      if (!Number.isSafeInteger(length) || length < 1 || length > 10 * 1024 * 1024) throw new TransportError("INVALID_DOCUMENT");
+      const reader = response.body?.getReader();
+      if (!reader) throw new TransportError("INVALID_DOCUMENT");
+      const chunks: Uint8Array[] = []; let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 10 * 1024 * 1024) throw new TransportError("RESPONSE_LIMIT");
+          chunks.push(value);
+        }
+      } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+      if (size !== length) throw new TransportError("INVALID_DOCUMENT");
+      return Buffer.concat(chunks);
+    },
     event: (applicationId: string, input: EventRequest, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       return post(`/api/worker/applications/${applicationId}/events`,
         EventRequestSchema.parse(input), EventResponseSchema, signal, true);
+    },
+    submissionIntent: (applicationId: string, input: z.infer<typeof SubmissionIntentSchema>, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
+      return post(`/api/worker/applications/${applicationId}/submission-intent`,
+        SubmissionIntentSchema.parse(input), SubmissionIntentResponseSchema, signal, true);
+    },
+    receipt: (applicationId: string, input: z.infer<typeof ReceiptCommandSchema>, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
+      return post(`/api/worker/applications/${applicationId}/receipt`,
+        ReceiptCommandSchema.parse(input), ReceiptResponseSchema, signal, true);
     },
     questionBatch: (applicationId: string, input: QuestionBatch, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");

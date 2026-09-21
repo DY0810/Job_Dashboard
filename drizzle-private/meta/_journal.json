@@ -36,6 +36,20 @@
       "when": 1789982441149,
       "tag": "0004_question_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789998935435,
+      "tag": "0005_new_cable",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789999264653,
+      "tag": "0006_large_ikaris",
+      "breakpoints": true
     }
   ]
 }
