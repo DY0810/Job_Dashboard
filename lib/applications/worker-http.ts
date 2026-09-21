@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getAuth } from '../auth.ts';
 import { lookupApplicant, privateJson } from '../applicant-access.ts';
 import { getPrivateDb } from '../private-db/index.ts';
+import { getDiscoveryCorpus } from './discovery-corpus.ts';
 import { rateLimit } from '../private-db/schema.ts';
 import { assertExpectedApplicant, ApplicantPreconditionError } from './applicant-precondition.ts';
 import { readPrivateJson, PrivateInputError } from './private-http.ts';
@@ -94,7 +95,7 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
     let body: unknown;
     switch (action) {
       case 'pair': body = p.PairResponseSchema.parse(await pairWorker(db, p.PairRequestSchema.parse(raw), options)); break;
-      case 'poll': body = p.PollResponseSchema.parse(await pollWorker(db, token, p.PollRequestSchema.parse(raw), options)); break;
+      case 'poll': body = p.PollResponseSchema.parse(await pollWorker(db, token, p.PollRequestSchema.parse(raw), { ...options, corpus: getDiscoveryCorpus })); break;
       case 'heartbeat': body = p.PollResponseSchema.parse(await heartbeatWorker(db, token, p.HeartbeatRequestSchema.parse(raw), options)); break;
       case 'event': body = p.EventResponseSchema.parse(await recordWorkerEvent(db, token, id!, p.EventRequestSchema.parse(raw), options)); break;
       case 'submit-intent': body = await submitIntent(db, token, id!, p.SubmitIntentSchema.parse(raw), options); break;

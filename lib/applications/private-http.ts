@@ -9,7 +9,7 @@ import { ApplicantPreconditionError, assertExpectedApplicant } from './applicant
 
 export const MAX_PRIVATE_JSON = 128 * 1024;
 export class PrivateInputError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public code?: string) { super(message); }
 }
 export async function readPrivateJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') {
@@ -83,7 +83,8 @@ export async function privateEndpoint(
     return privateJson(await action(result.applicant.ownerId), { headers });
   } catch (error) {
     if (error instanceof PrivateInputError || error instanceof ApplicantPreconditionError) {
-      return privateJson({ error: error.message }, { status: error.status, headers });
+      return privateJson({ error: error.message, ...(error instanceof PrivateInputError && error.code ? { code: error.code } : {}) },
+        { status: error.status, headers });
     }
     return privateJson({ error: 'Private applicant storage unavailable.' }, { status: 503, headers });
   }

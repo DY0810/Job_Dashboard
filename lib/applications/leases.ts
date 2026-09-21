@@ -3,6 +3,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applications, workers } from '../private-db/schema.ts';
 import { isTerminalState, isWaitingState } from './state.ts';
+import { discoverWorkerRuns, discoveryClaimAllowed, type CorpusProvider } from './discovery.ts';
 import {
   PollRequestSchema, HeartbeatRequestSchema, LEASE_MS,
   type PollRequest, type HeartbeatRequest, type PollResponse, type LeaseRef,
@@ -22,8 +23,9 @@ export async function checkedLease(tx: WorkerTx, worker: WorkerRow, ref: LeaseRe
   }
   return app;
 }
-export async function pollWorker(db: PrivateDb, token: string, input: PollRequest, options: WorkerOptions = {}): Promise<PollResponse> {
+export async function pollWorker(db: PrivateDb, token: string, input: PollRequest, options: WorkerOptions & { corpus?: CorpusProvider } = {}): Promise<PollResponse> {
   PollRequestSchema.parse(input);
+  if (options.corpus) await discoverWorkerRuns(db, token, options.corpus, options);
   return withWorker(db, token, options, async (tx, worker, now) => {
     const active = await tx.select().from(applications).where(and(eq(applications.ownerId, worker.ownerId), sql`${applications.leaseUntil} is not null`));
     for (const app of active) {
@@ -57,9 +59,11 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
           sql`${applications.id} != ${app.id}`, sql`${applications.leaseUntil} is not null`,
         )).limit(1);
         if (busy) continue;
+        if (app.state !== 'submission_unknown' && !await discoveryClaimAllowed(tx, app, now)) continue;
         const state = app.state === 'queued' ? 'screening' : app.state === 'submitting' ? 'submission_unknown' : app.state;
         const claimed = one(await tx.update(applications).set({
           state, revision: app.revision + 1, fence: app.fence + 1, leaseUntil: now + LEASE_MS, leaseCheckedAt: now,
+          startedAt: app.startedAt ?? now,
         }).where(and(appScope(worker.ownerId, app.id), eq(applications.revision, app.revision), eq(applications.fence, app.fence))).returning());
         return { ...clockResponse(now), lease: await leaseOf(tx, claimed) };
       }

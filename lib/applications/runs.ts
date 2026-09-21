@@ -1,7 +1,7 @@
 import 'server-only';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
-import { applicationRuns, applications, workers } from '../private-db/schema.ts';
+import { applicationRuns, applications, discoveryManifests, workers } from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
 import { isTerminalState } from './state.ts';
 import {
@@ -11,7 +11,7 @@ import {
 } from './worker-protocol.ts';
 import {
   workerTransaction, currentWorker, nowAt, one, fail, randomUUID, replayCommand, saveCommand,
-  releaseApplication, appScope, WorkerError, type WorkerOptions, type ApplicationRow,
+  releaseApplication, appScope, WorkerError, type WorkerOptions, type ApplicationRow, type WorkerTx,
 } from './worker-store.ts';
 
 export const runSummary = ({ id, workerId, revision, state, createdAt }: typeof applicationRuns.$inferSelect): Run =>
@@ -49,6 +49,17 @@ export async function listRuns(db: PrivateDb, ownerId: string): Promise<RunList>
       .orderBy(desc(applications.createdAt)).limit(100)).map(applicationSummary),
   }));
 }
+export async function releaseRunApplications(tx: WorkerTx, ownerId: string, runId: string, state: 'paused' | 'stopped') {
+  for (const app of await tx.select().from(applications).where(and(eq(applications.ownerId, ownerId), eq(applications.runId, runId)))) {
+    if (isTerminalState(app.state)) continue;
+    const released = await releaseApplication(tx, app, state === 'paused' ? 'run_paused' : 'run_stopped');
+    if (state === 'stopped' && released.state !== 'submission_unknown') {
+      one(await tx.update(applications).set({ state: 'cancelled' }).where(and(
+        appScope(ownerId, app.id), eq(applications.revision, released.revision),
+      )).returning());
+    }
+  }
+}
 export async function commandRun(db: PrivateDb, ownerId: string, id: string, input: RunCommand, options: WorkerOptions = {}): Promise<Run> {
   const command = RunCommandSchema.parse(input), scope = `run:${id}`;
   const result = await workerTransaction(db, async (tx) => {
@@ -68,19 +79,19 @@ export async function commandRun(db: PrivateDb, ownerId: string, id: string, inp
       }
     }
     const state = command.action === 'resume' ? 'running' : command.action === 'pause' ? 'paused' : 'stopped';
-    const updated = one(await tx.update(applicationRuns).set({ state, revision: row.revision + 1 })
+    const incomplete = row.discoveryState === 'capturing' || row.discoveryState === 'staging';
+    const updated = one(await tx.update(applicationRuns).set({
+      state, revision: row.revision + 1,
+      ...(state === 'stopped' ? { captureToken: null, captureUntil: null,
+        ...(incomplete ? { discoveryState: 'abandoned' as const } : {}) } : {}),
+    })
       .where(and(eq(applicationRuns.ownerId, ownerId), eq(applicationRuns.id, id), eq(applicationRuns.revision, row.revision))).returning());
-    if (state !== 'running') {
-      for (const app of await tx.select().from(applications).where(and(eq(applications.ownerId, ownerId), eq(applications.runId, id)))) {
-        if (isTerminalState(app.state)) continue;
-        const released = await releaseApplication(tx, app, command.action === 'pause' ? 'run_paused' : 'run_stopped');
-        if (state === 'stopped' && released.state !== 'submission_unknown') {
-          one(await tx.update(applications).set({ state: 'cancelled' }).where(and(
-            appScope(ownerId, app.id), eq(applications.revision, released.revision),
-          )).returning());
-        }
-      }
+    if (state === 'stopped' && row.discoveryState === 'staging' && row.currentManifestId) {
+      one(await tx.update(discoveryManifests).set({ state: 'abandoned', revision: sql`${discoveryManifests.revision} + 1` })
+        .where(and(eq(discoveryManifests.ownerId, ownerId), eq(discoveryManifests.id, row.currentManifestId),
+          eq(discoveryManifests.runId, id), eq(discoveryManifests.state, 'staging'))).returning());
     }
+    if (state !== 'running') await releaseRunApplications(tx, ownerId, id, state);
     const acknowledgement = runSummary(updated);
     await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
     return acknowledgement;
@@ -128,11 +139,11 @@ export async function enqueueApplication(
     const now = nowAt(options);
     await tx.insert(applications).values({
       id: randomUUID(), ownerId, runId, workerId: run.workerId, ...identity, availableAt: now, createdAt: now,
-    }).onConflictDoNothing({ target: [applications.ownerId, applications.ats, applications.tenant, applications.requisition] });
+    }).onConflictDoNothing({ target: [applications.ownerId, applications.ats, applications.tenant, applications.requisition, applications.attempt] });
     const [row] = await tx.select().from(applications).where(and(
       eq(applications.ownerId, ownerId), eq(applications.ats, identity.ats),
       eq(applications.tenant, identity.tenant), eq(applications.requisition, identity.requisition),
-    ));
+    )).orderBy(desc(applications.attempt)).limit(1);
     return applicationSummary(one(row ? [row] : []));
   });
 }

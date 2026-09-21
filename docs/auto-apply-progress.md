@@ -1,6 +1,91 @@
 # Auto Apply Progress
 
-## Current Phase 3 Acceptance
+## Current Phase 4 Acceptance
+
+September 21, 2026: Phase 4 is parent-ACCEPTED after final verification and
+review closure. Phase 5 is READY, NOT STARTED; the full plan's Phases 5-12
+remain outstanding. This role is COMMIT ONLY from
+`53e96e34baf0fe78b048dbf72122232a0a1e90dd` on `DY/workie-auto-apply`.
+
+| Accepted evidence | Result / reference |
+| --- | --- |
+| Final gate | `logs/auto-apply-gate/phase4-final-gate.json` and `phase4-rendered-ready.json`; raw evidence in `logs/auto-apply-gate/phase4-final-ZugXqk/` |
+| Checks | 1,593 unit tests, 32 worker-runtime checks, build, types, lint and whitespace PASS |
+| Rendered regression | 32 discovery, 56 worker and 128 profile identities PASS; no errors, skips, retries or flakes; 156 screenshots reviewed |
+| Review closure | `logs/auto-apply-gate/phase4-review-fixes-ready.json`: both backend findings fixed; parent confirmed three-file and selector closure, no open findings |
+| Accepted build | `9qm9ixm50fULEEAPJN9ik` |
+| Accepted source | `007d1305974aaada9e77624fc6d9dfa8db6a736183cfda30bcf393dc4eefc6fd`; all 347 current hashes match `phase4-final-ZugXqk/source-after.json` before the two ledger edits |
+
+Earlier pending-acceptance fields and failed/interrupted runs remain historical;
+this explicit parent decision supersedes them. Evidence is local/synthetic only,
+not live ATS/provider/document-tailoring proof. Production is not enabled.
+No app-code edits, tests or builds are run by this commit role; retained evidence
+is not a new docs-inclusive run. Only these two ledgers change after the freeze.
+Keep `HANDOFF.md` untracked and exclude logs, environment files and databases.
+Receipt: ignored `logs/auto-apply-gate/phase4-commit.json`. No push, deploy,
+main changes, nested agents or cross-task messaging. Phase 5 needs a separate
+implementation assignment; Auto Apply is not complete.
+
+## Historical Phase 4 Execution
+
+The execution records below are preserved history, superseded by acceptance above.
+
+Current continuation: final reviewer and verifier were interrupted. The actual
+Next/Playwright children survived; their existing run is being adopted rather
+than duplicated. `phase4-final-R1eGaB` records 1,590 unit tests, 32 worker checks,
+types/lint and build `H9H_PKDMZOYQY-WsqneNc` passing, followed by discovery UI
+failures. This is not an accepted gate.
+
+| Current owner | Native agent | Remaining work |
+| --- | --- | --- |
+| Browser/UI gate | `01a0c315-4c43-7073-a898-8af1d27458f9` | Adopt test processes, diagnose rendered failures, verify fresh final build |
+| Backend review/fixes | `01a0c315-4f81-7090-8900-ff76c23d3aa1` | Finish Phase 4 review; test corpus replacement and fix confirmed defects |
+
+At most two workers; no messaging through `send_message_to_thread` or its
+variants, no real credentials/data, no production writes/deployments. Goal remains
+the full approved plan. Phases 5-12 are not started.
+
+Resumed September 21, 2026 after authoritative task inspection confirmed all three
+previous Phase 4 turns interrupted and no remaining Workie test process. Existing
+WIP is retained. Current execution uses at most two workers under the updated
+cost-conscious instructions; no model/provider or safety boundary changed.
+
+| Resumed lane | Native agent | Scope / next gate |
+| --- | --- | --- |
+| Source | `01a0c2dc-5527-7eb0-8a74-eda4543e4aee` | Missing snapshot/identity modules and focused checks |
+| Backend | `01a0c2dc-5787-7fa1-8885-8711c8360063` | Complete existing staging/import/attempt WIP and integration checks |
+
+Source lane completed 158 focused tests and lint. Its worker is closed; the UI
+lane is now `01a0c2fd-9b8e-7890-8c0a-6ff3814a012c`, leaving at most two workers.
+Parent resolved the remaining Jobvite path documentation gap on September 21:
+`jobs.jobvite.com/robots.txt` returned 404; a single public read of
+`https://jobs.jobvite.com/ookla/job/objCAfwq` returned the title
+`Ookla Careers - Software Engineer II` and the same canonical URL. This verifies
+the hosted URL shape only, not native API permissions or submission support.
+
+UI work follows the finalized contract. No source is currently accepted for
+Phase 4; the next required proof is all 601 requisitions captured once with
+restartable staging and owner-scoped import.
+
+Remote verification readback: GitHub run `35570311397`, workflow `verify`,
+commit `53e96e34baf0fe78b048dbf72122232a0a1e90dd`, created
+`2026-09-21T06:52:06Z`, completed successfully. This confirms the existing CI
+checks for Phase 3, not the uncommitted Phase 4 work or live submissions.
+
+Phase 3 was accepted, committed and pushed as
+`53e96e34baf0fe78b048dbf72122232a0a1e90dd`. Phase 4 is now IN PROGRESS,
+not accepted. The active goal remains the complete approved plan.
+
+| Lane | Native agent | Exclusive scope |
+| --- | --- | --- |
+| Corpus snapshot and identity | `01a0c2be-01de-7392-9c1c-fc7424aafdb6` | Read-only corpus snapshot, explicit filters, official identity parser |
+| Private discovery backend | `01a0c2be-031d-72b1-90a6-4bde42ceef4a` | Immutable staging, target/attempt history, cap backlog, legacy import, private migration |
+
+The source lane publishes `phase4-source-contract.json`; backend publishes
+`phase4-backend-contract.json` under ignored gate logs before UI integration.
+No production, corpus writes, submissions, credential use or service installation.
+
+## Historical Phase 3 Acceptance
 
 September 20, 2026 (Pacific): Phase 3 is parent-ACCEPTED by explicit authorization
 after final verification and review closure. Phase 4 is READY, NOT STARTED.
@@ -114,9 +199,9 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | 0: Discovery/setup | None | Branch/Setup: copied inputs, two workflow docs, `scripts/auto-apply-gate.mjs` | Source equality, exact install, baseline, harness self-check, independent review | ACCEPTED; qualified build passed; offline font-fetch limitation retained |
 | 1: Private storage/auth | 0 | Auth/storage: `lib/private-db/`, `drizzle-private/`, private Drizzle config, auth/access modules/routes | Two-user isolation, real async scratch transactions/migrations, auth/revocation/mail sink, corpus-cache separation | ACCEPTED; committed/pushed as d4e3a9c |
 | 2: Profile/policy/documents | 1 | Profile/documents: `app/profile/`, profile schemas, document/policy routes and private schema | All sections, revision/draft isolation, hostile upload checks, immutable masters, disabled policy default | ACCEPTED; committed/pushed as 3ed6861 |
-| 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | parent-ACCEPTED; final verification/review closure; commit authorized, no push |
-| 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | READY, NOT STARTED; separate assignment required |
-| 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | NOT STARTED |
+| 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | ACCEPTED; committed/pushed as 53e96e3 |
+| 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | parent-ACCEPTED; final verification/review closure; commit authorized, no push |
+| 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | READY, NOT STARTED; separate assignment required |
 | 6: Providers/cost | 1-5 | Provider: `worker/providers.ts`, settings/credential/budget modules | Mock protocols, untrusted output, reservation races, unknown cost and remote-fallback denial | NOT STARTED |
 | 7: Documents | 2, 5, 6 | Document runtime: `worker/documents/`, synthetic source/PDF fixtures and checks | Qualified PDF/DOCX, unchanged geometry/fonts/links, hostile inputs, parallel scratch isolation | NOT STARTED |
 | 8: Greenhouse/Ashby | 1-7 | Browser/ATS: `worker/browser.ts`, `worker/screening.ts`, first adapters/fixtures | Full synthetic receipt flow, answer/intervention/restart, unknown-submit reconciliation, egress | NOT STARTED |

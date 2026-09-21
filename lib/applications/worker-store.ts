@@ -3,7 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 import { getAuth } from '../auth.ts';
 import type { PrivateDb } from '../private-db/index.ts';
-import { account, applications, applicationRuns, user, workers, workerCommands, workerPairings } from '../private-db/schema.ts';
+import { account, applications, applicationRuns, discoveryManifests, manualApplicationMarks, user, workers, workerCommands, workerPairings } from '../private-db/schema.ts';
 import { hashValue, getPolicy } from './stores.ts';
 import { HEARTBEAT_MS, LEASE_MS, WORKER_PROTOCOL_VERSION, type Lease } from './worker-protocol.ts';
 
@@ -111,6 +111,17 @@ export async function liveRun(tx: WorkerTx, app: ApplicationRow, now: number) {
   if (!run) return false;
   if (app.state === 'submission_unknown') return true;
   if (run.state !== 'running') return false;
+  if (app.snapshotManifestId) {
+    const [manifest] = await tx.select({ state: discoveryManifests.state }).from(discoveryManifests).where(and(
+      eq(discoveryManifests.ownerId, app.ownerId), eq(discoveryManifests.id, app.snapshotManifestId),
+    ));
+    if (manifest?.state !== 'ready') return false;
+  }
+  const [manual] = await tx.select({ id: manualApplicationMarks.id }).from(manualApplicationMarks).where(and(
+    eq(manualApplicationMarks.ownerId, app.ownerId), eq(manualApplicationMarks.ats, app.ats),
+    eq(manualApplicationMarks.tenant, app.tenant), eq(manualApplicationMarks.requisition, app.requisition),
+  )).limit(1);
+  if (manual) return false;
   const policy = await getPolicy(tx, app.ownerId, now);
   return policy.enabled && policy.revision === run.policyRevision &&
     policy.policyVersion === run.policyVersion && policy.policyHash === run.policyHash;

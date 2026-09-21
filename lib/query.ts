@@ -30,7 +30,7 @@ import { DESIGN_TYPE, VISIBLE_SENIORITY, WINDOW_MS, bare, type Params } from './
  * parse as a date DISAPPEARS from the board. That is fail-closed on a column nothing guarantees
  * the format of; this degrades to plain `posted_at` instead.
  */
-const effectiveAt: SQL<number> = sql<number>`max(${postings.postedAt}, coalesce(unixepoch(${postings.firstSeenRun}) * 1000, 0))`;
+export const effectiveAt: SQL<number> = sql<number>`max(${postings.postedAt}, coalesce(unixepoch(${postings.firstSeenRun}) * 1000, 0))`;
 
 /** The table never selects `description` — ~2k full bodies is ~8MB the table cannot use. */
 const ROW = {
@@ -171,7 +171,7 @@ function visible(now: number): SQL[] {
 }
 
 /** What the reader asked for, as opposed to what they are allowed to see. */
-function userFilters(p: Params, now: number): SQL[] {
+export function userFilters(p: Omit<Params, 'page' | 'job'>, now: number): SQL[] {
   const parts: (SQL | undefined)[] = [];
 
   if (p.posted) parts.push(gte(effectiveAt, now - WINDOW_MS[p.posted]));

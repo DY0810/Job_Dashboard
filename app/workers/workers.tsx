@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Close } from '../icons';
 import { HEARTBEAT_MS } from '../../lib/applications/worker-protocol';
 import { WorkerControl, applicationActions, initialView, pairingStatus, workerStatus, type WorkerView } from './control';
+import DiscoveryStatus from './discovery-status';
 import styles from './workers.module.css';
 
 const label = (value: string) => value.replaceAll('_', ' ');
@@ -50,6 +51,7 @@ export default function Workers() {
   return <>
     <div className={styles.toolbar}>
       <h1>Workers</h1>
+      <Link href="/applications/import" prefetch={false}>Import browser marks</Link>
       {!view.locked && <span className={styles.muted}>{view.account?.email}</span>}
       <button type="button" className={styles.button} disabled={view.loading} onClick={() => void control.current?.refresh()}>
         Refresh status
@@ -165,6 +167,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
         </li>)}
       </ul>}
     </section>
+    <DiscoveryStatus ownerId={view.account!.ownerId} runs={runs} locked={view.locked} />
     <section className={styles.section} aria-labelledby="applications-heading">
       <h2 id="applications-heading">Application state</h2>
       {!view.runs?.applications.length ? <p className={styles.muted}>No applications.</p> :

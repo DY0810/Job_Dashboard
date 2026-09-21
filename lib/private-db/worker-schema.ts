@@ -54,12 +54,20 @@ export const applicationRuns = sqliteTable('private_application_run', {
   policyVersion: integer('policy_version').notNull(),
   policyHash: text('policy_hash').notNull(),
   createdAt: integer('created_at').notNull(),
+  discoveryState: text('discovery_state', { enum: ['idle', 'capturing', 'staging', 'ready', 'failed', 'abandoned'] }).notNull().default('idle'),
+  captureToken: text('capture_token'),
+  captureUntil: integer('capture_until'),
+  currentManifestId: text('current_manifest_id'),
+  lastAttemptAt: integer('last_attempt_at'),
+  lastScanAt: integer('last_scan_at'),
+  discoveryError: text('discovery_error'),
 }, (t) => [
   uniqueIndex('private_run_owner_id').on(t.ownerId, t.id),
   uniqueIndex('private_run_assignment').on(t.ownerId, t.id, t.workerId),
   foreignKey({ columns: [t.ownerId, t.workerId], foreignColumns: [workers.ownerId, workers.id] }),
   foreignKey({ columns: [t.ownerId, t.policyVersion], foreignColumns: [policyVersions.ownerId, policyVersions.version] }),
   check('private_run_state', sql`${t.state} in ('running','paused','stopped') and ${t.revision} > 0 and ${t.policyRevision} > 0`),
+  check('private_run_discovery_state', sql`${t.discoveryState} in ('idle','capturing','staging','ready','failed','abandoned')`),
 ]);
 export const applications = sqliteTable('private_application', {
   id: text('id').primaryKey(),
@@ -69,6 +77,13 @@ export const applications = sqliteTable('private_application', {
   ats: text('ats').notNull(),
   tenant: text('tenant').notNull(),
   requisition: text('requisition').notNull(),
+  attempt: integer('attempt').notNull().default(1),
+  previousApplicationId: text('previous_application_id'),
+  snapshotManifestId: text('snapshot_manifest_id'),
+  snapshotTargetKey: text('snapshot_target_key'),
+  snapshotHash: text('snapshot_hash'),
+  employerKey: text('employer_key'),
+  startedAt: integer('started_at'),
   state: text('state', { enum: APPLICATION_STATES }).notNull().default('queued'),
   revision: integer('revision').notNull().default(1),
   fence: integer('fence').notNull().default(0),
@@ -81,7 +96,8 @@ export const applications = sqliteTable('private_application', {
   createdAt: integer('created_at').notNull(),
 }, (t) => [
   uniqueIndex('private_application_owner_id').on(t.ownerId, t.id),
-  uniqueIndex('private_application_identity').on(t.ownerId, t.ats, t.tenant, t.requisition),
+  uniqueIndex('private_application_identity').on(t.ownerId, t.ats, t.tenant, t.requisition, t.attempt),
+  uniqueIndex('private_application_one_successor').on(t.ownerId, t.previousApplicationId),
   uniqueIndex('private_application_active_tenant').on(t.ownerId, t.ats, t.tenant).where(sql`${t.leaseUntil} is not null`),
   index('private_application_queue').on(t.ownerId, t.workerId, t.availableAt),
   foreignKey({ columns: [t.ownerId, t.runId, t.workerId], foreignColumns: [applicationRuns.ownerId, applicationRuns.id, applicationRuns.workerId] }),
@@ -89,6 +105,8 @@ export const applications = sqliteTable('private_application', {
   check('private_application_counters', sql`${t.revision} > 0 and ${t.fence} >= 0 and ${t.retries} between 0 and 3`),
   check('private_application_lease', sql`(${t.leaseUntil} is null and ${t.leaseCheckedAt} is null) or (${t.leaseUntil} is not null and ${t.leaseCheckedAt} is not null and ${t.fence} > 0 and ${t.leaseUntil} > ${t.leaseCheckedAt} and ${t.state} in ('screening','tailoring','filling','ready','submitting','submission_unknown'))`),
   check('private_application_checkpoint', sql`${t.checkpoint} is null or (json_valid(${t.checkpoint}) and length(${t.checkpoint}) <= 1024)`),
+  check('private_application_attempt', sql`typeof(${t.attempt}) = 'integer' and ${t.attempt} > 0 and ((${t.attempt} = 1 and ${t.previousApplicationId} is null) or (${t.attempt} > 1 and ${t.previousApplicationId} is not null))`),
+  check('private_application_snapshot', sql`(${t.snapshotManifestId} is null and ${t.snapshotTargetKey} is null and ${t.snapshotHash} is null) or (${t.snapshotManifestId} is not null and ${t.snapshotTargetKey} is not null and ${t.snapshotHash} is not null and length(${t.snapshotHash}) = 64)`),
 ]);
 export const applicationEvents = sqliteTable('private_application_event', {
   ownerId: text('owner_id').notNull(),

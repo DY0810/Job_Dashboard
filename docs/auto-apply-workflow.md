@@ -1,15 +1,26 @@
 # Auto Apply Task-Local Workflow
 
-Date: September 20, 2026. Scope: the approved plan's implementation, beginning
+Date: September 21, 2026. Scope: the approved plan's implementation, beginning
 with Phase 0 branch/setup and baseline. This file is the operating contract;
 `auto-apply-progress.md` is the single phase/evidence ledger. No repository ECC2
 configuration or state-store scripts were found during the Phase 0 scan.
 
-Current gate: Phase 3 parent-ACCEPTED; Phase 4 READY, NOT STARTED. The current
-role is Phase 3 COMMIT ONLY from `3ed686118c70fdc5f4fe4b7cab2598f7d5d6c4e7`
+Current gate: Phase 4 parent-ACCEPTED; Phase 5 READY, NOT STARTED. The current
+role is Phase 4 COMMIT ONLY from `53e96e34baf0fe78b048dbf72122232a0a1e90dd`
 on `DY/workie-auto-apply`; no push, main changes, rebase, merge or deployment.
 Accepted proof and historical records are in `auto-apply-progress.md`.
 Historical phase/role statements below do not authorize further implementation.
+
+Acceptance follows `logs/auto-apply-gate/phase4-final-gate.json` and
+`phase4-rendered-ready.json`: 1,593 units, 32 worker-runtime checks,
+32 discovery/56 worker/128 profile browser identities, build/types/lint PASS,
+156 screenshots reviewed, and parent-confirmed review/selector closure with
+no open findings. All 347 current hashes match accepted source
+`007d1305974aaada9e77624fc6d9dfa8db6a736183cfda30bcf393dc4eefc6fd`
+before editing only these two ledgers; verify all other hashes before commit.
+No app-code changes or test/build reruns in this role. Earlier pending gate
+fields remain historical. Proof is local/synthetic; production is not enabled
+and the full plan's Phases 5-12 remain outstanding.
 
 ## Objective And Inputs
 
@@ -43,15 +54,16 @@ Historical phase/role statements below do not authorize further implementation.
   deployment, service installation, or scheduler changes. GitHub Actions remains
   the sole production corpus writer; private state must use a separate database.
 - Phase 0 is committed/pushed as `88cea14`; Phase 1 as `d4e3a9c`; Phase 2 as
-  `3ed6861`. Phase 3 final verification and review closure are parent-accepted.
-  Commit only the reviewed Phase 3 WIP: `worker/`, `app/workers/`, worker/workers
-  and application-run APIs, minimal profile/sign-in navigation, worker
-  state/protocol/server modules and tests, worker integration/UI tests and
-  config, private worker schema/migration/metadata, package/lockfile keyring
-  dependency and scripts, `.env.example`, `docs/worker.md` and these two ledgers.
+  `3ed6861`; Phase 3 as `53e96e3`. Phase 4 is parent-accepted.
+  Stage only the current reviewed Phase 4 source/UI/discovery/API,
+  private migration/schema, two query exports, HTTP error-code update and tests,
+  plus these two ledgers; derive exact files from Git status, not a guessed list.
   Keep `HANDOFF.md` untracked/unstaged; exclude private inputs, logs, DBs and
-  all other environment files. No push: the next sync role owns branch sync.
-  Phase 4 is READY, NOT STARTED; discovery/identity requires its own assignment.
+  all environment files. Check the full staged diff for whitespace; commit as
+  DongYeop Lee <dongyeop0810@gmail.com> with a plain message and no AI/coauthor.
+  Record SHA/files/exclusions in ignored `logs/auto-apply-gate/phase4-commit.json`.
+  No push: the next sync role owns branch sync.
+  Phase 5 is READY, NOT STARTED; questions/bell requires its own assignment.
   No main/production release or submissions; release conventions grant no authority.
 
 ## Historical Setup Gate
