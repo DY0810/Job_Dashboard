@@ -15,11 +15,13 @@ import { GET as listWorkersRoute } from '../../app/api/workers/route.ts';
 import { POST as pairRoute } from '../../app/api/worker/pair/route.ts';
 import { POST as pollRoute } from '../../app/api/worker/poll/route.ts';
 import { POST as heartbeatRoute } from '../../app/api/worker/heartbeat/route.ts';
+import { POST as providerConfigRoute } from '../../app/api/worker/provider-config/route.ts';
 import { DELETE as revokeRoute } from '../../app/api/workers/[id]/route.ts';
 import { POST as createRunRoute } from '../../app/api/application-runs/route.ts';
 import { enqueueApplication } from './runs.ts';
 import { createEmptyPolicy } from './policy.ts';
 import { hashValue } from './stores.ts';
+import { ProviderConfigSchema } from './provider-protocol.ts';
 import * as p from './worker-protocol.ts';
 
 vi.mock('server-only', () => ({}));
@@ -94,6 +96,7 @@ beforeEach(async () => {
       else if (path === '/api/worker/pair') response = await pairRoute(request);
       else if (path === '/api/worker/poll') response = await pollRoute(request);
       else if (path === '/api/worker/heartbeat') response = await heartbeatRoute(request);
+      else if (path === '/api/worker/provider-config') response = await providerConfigRoute(request);
       else if (path === '/api/application-runs') response = await createRunRoute(request);
       else response = new Response(null, { status: 404 });
       res.statusCode = response.status;
@@ -153,6 +156,18 @@ describe('Phase 3 real route handlers over loopback with Better Auth 1.7.5', () 
       headers: { origin, cookie: bob.cookie, 'content-type': 'application/json', 'x-workie-applicant': bob.id }, body: JSON.stringify(fresh(1)) }),
     { params: Promise.resolve({ id: worker.workerId }) });
     expect(denied.status).toBe(404);
+  });
+  it('returns an owner-scoped provider config and fails closed before any provider credential is involved', async () => {
+    const worker = await paired();
+    const response = await http('/api/worker/provider-config', { protocolVersion: 1, providerProtocolVersion: 1 }, '',
+      { authorization: `Bearer ${worker.token}` });
+    expect(response.status).toBe(200);
+    const config = ProviderConfigSchema.parse(await response.json());
+    expect(config).toMatchObject({ ownerId: alice.id, enabled: false, provider: 'none', maxUsd: 0 });
+    expect((await http('/api/worker/provider-config', { protocolVersion: 1, providerProtocolVersion: 1 }, '',
+      { authorization: `Bearer ${randomBytes(32).toString('base64url')}` })).status).toBe(401);
+    expect((await http('/api/worker/provider-config', { protocolVersion: 2, providerProtocolVersion: 1 }, '',
+      { authorization: `Bearer ${worker.token}` })).status).toBe(426);
   });
   it('ordinary logout leaves worker valid; actual reset consumes the token, deletes sessions, revokes workers and pauses leases', async () => {
     const worker = await paired();

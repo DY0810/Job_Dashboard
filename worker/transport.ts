@@ -10,6 +10,9 @@ import {
   HeartbeatRequestSchema, EventRequestSchema, EventResponseSchema, WORKER_PROTOCOL_VERSION,
 } from "../lib/applications/worker-protocol.ts";
 import type { PairRequest, HeartbeatRequest, EventRequest } from "../lib/applications/worker-protocol.ts";
+import {
+  ProviderConfigRequestSchema, ProviderConfigSchema,
+} from "../lib/applications/provider-protocol.ts";
 
 export function controlOrigin(input: string, allowLoopback = false) {
   let url;
@@ -98,6 +101,10 @@ export function workerTransport(options: {
       post("/api/worker/poll", PollRequestSchema.parse(version), PollResponseSchema, signal),
     heartbeat: (lease: HeartbeatRequest["lease"], signal?: AbortSignal) =>
       post("/api/worker/heartbeat", HeartbeatRequestSchema.parse({ ...version, lease }), PollResponseSchema, signal),
+    providerConfig: (signal?: AbortSignal) =>
+      post("/api/worker/provider-config", ProviderConfigRequestSchema.parse({
+        ...version, providerProtocolVersion: 1,
+      }), ProviderConfigSchema, signal),
     event: (applicationId: string, input: EventRequest, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       return post(`/api/worker/applications/${applicationId}/events`,

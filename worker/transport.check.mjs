@@ -38,6 +38,24 @@ test("real loopback transport binds bearer to configured origin and exact routes
   assert.deepEqual(requests[1].body, { protocolVersion: 1, lease: null });
 });
 
+test("provider config uses the versioned worker contract and does not expose credentials", async t => {
+  const origin = await fixture(t, async (req, res) => {
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    assert.deepEqual(body, { protocolVersion: 1, providerProtocolVersion: 1 });
+    assert.equal(req.headers.authorization, `Bearer ${token}`);
+    json(res, {
+      providerProtocolVersion: 1, ownerId: "synthetic-owner", profileRevision: 2,
+      policyRevision: 3, policyVersion: 1, policyHash: null, enabled: false, provider: "none",
+      model: null, endpoint: null, privacy: "local_inference_only", remoteProviderConsent: false,
+      allowedProviders: [], fallbackOrder: [], maxUsd: 0,
+    });
+  });
+  const result = await workerTransport({ origin, token, allowLoopback: true }).providerConfig();
+  assert.equal(result.enabled, false);
+  assert(!JSON.stringify(result).toLowerCase().includes("password"));
+});
+
 test("redirects, malformed/versioned/oversized bodies, slow streams and HTTP errors fail closed without secrets", async t => {
   let mode = "redirect", calls = 0;
   const origin = await fixture(t, (req, res) => {

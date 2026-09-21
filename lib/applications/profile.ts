@@ -201,7 +201,7 @@ export const ProfileSections = {
       document: fact(docRef, 'document', null, 'document'),
     })),
     formatPolicy: choice(['preserve_exact', 'approved_template']),
-    provider: choice(['none', 'local', 'omniroute', 'remote']),
+    provider: choice(['none', 'local', 'omniroute', 'remote', 'typesafe_jev']),
     model: text(), endpoint: link(), allowedFallbackProviders: list(),
     privacy: choice(['local_inference_only', 'fully_local', 'approved_remote']),
     requestBudget: fact(money, 'money', 'currency_per_period', 'money'),

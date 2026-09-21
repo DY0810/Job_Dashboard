@@ -78,6 +78,38 @@ test("default dispatch releases waiting slot, emits no submitted state, and runs
   assert.equal((await store.read("checkpoint")).pending, null);
 });
 
+test("safe-stage dispatch receives the owner-selected Jev action selector", async () => {
+  const s = scope(), store = await storeFor(s), controller = new AbortController();
+  const chooseAction = async (input, options) => {
+    assert.equal(input.state.ats, "fixture");
+    assert.equal(options.signal.aborted, false);
+    assert.equal(options.isCurrent(["fill_name"]), true);
+    return { actionId: "fill_name", confidence: 1, probabilities: { fill_name: 1 }, model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 0 } };
+  };
+  let selected = false;
+  await runWorker({ scope: s, store, signal: controller.signal, chooseAction,
+    transport: { poll: async () => clockResponse(assignment(s)), heartbeat: async () => clockResponse(),
+      event: async (id, event) => {
+        controller.abort();
+        return { applicationId: id, eventId: event.eventId, revision: event.expectedRevision + 1,
+          state: event.state, replayed: false, lease: null, serverTime: Date.now() };
+      } },
+    dispatch: async (lease, guard, context) => {
+      assert.equal(context.signal.aborted, false);
+      assert.equal(context.chooseAction, chooseAction);
+      const decision = await context.chooseAction({
+        state: { company: "Synthetic", role: "role", ats: lease.ats, tenant: lease.tenant,
+          fields: [{ label: "Name", kind: "text" }], observedActions: ["fill_name"] },
+        actions: [{ id: "fill_name", label: "Fill the observed name field" }],
+      }, { signal: context.signal, isCurrent: ids => ids.length === 1 && ids[0] === "fill_name" });
+      assert.equal(decision.actionId, "fill_name");
+      selected = true;
+      guard.check();
+      return { state: "blocked_unsupported", reasonCode: "fixture" };
+    } });
+  assert.equal(selected, true);
+});
+
 test("checkpoint survives failed acknowledgement; restart replays same key before a new poll", async () => {
   const s = scope(), store = await storeFor(s), job = assignment(s);
   let first;

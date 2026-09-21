@@ -21,9 +21,7 @@ export class ProviderError extends Error {
 }
 
 const label = z.string().trim().min(1).max(200);
-const action = z.enum([
-  "question_detected", "field_focused", "login_complete", "verification_complete",
-]);
+const action = z.string().trim().regex(/^[a-z][a-z0-9:_-]{0,63}$/);
 const field = z.strictObject({
   label, kind: z.enum(["text", "textarea", "number", "date", "choice", "document", "boolean", "intervention"]),
   options: z.array(label).max(32).optional(),
@@ -33,7 +31,7 @@ const field = z.strictObject({
 export const ProviderStateSchema = z.strictObject({
   company: label, role: label, ats: z.string().trim().min(1).max(80), tenant: z.string().trim().min(1).max(80),
   fields: z.array(field).max(64), observedActions: z.array(action).max(16),
-});
+}).refine((value) => new Set(value.observedActions).size === value.observedActions.length, 'Duplicate observed actions.');
 export type ProviderState = z.infer<typeof ProviderStateSchema>;
 
 const sensitiveLabel = /\b(?:password|passcode|one[- ]time|otp|ssn|social security|tax id|credit card|routing number|bank account|resume|cover letter)\b/i;
@@ -268,7 +266,7 @@ export function createTypesafeProvider(options: {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   if (!fetchImpl) throw new ProviderError("FETCH_UNAVAILABLE");
   return {
-    async evaluate(stateInput: unknown, questionsInput: unknown): Promise<TypesafeResult> {
+    async evaluate(stateInput: unknown, questionsInput: unknown, callerSignal?: AbortSignal): Promise<TypesafeResult> {
       const policy = assertProviderPolicy(options.policy);
       const request = TypesafeRequestSchema.parse({ state: redactedProviderState(stateInput), model: TYPESAFE_MODEL, questions: questionsInput });
       const body = JSON.stringify(request);
@@ -280,11 +278,14 @@ export function createTypesafeProvider(options: {
       const id = await options.ledger.reserve(inputEstimate, maxInputTokensForUsd(policy.budget.maxUsd));
       let settled = false;
       try {
+        const requestSignal = callerSignal
+          ? AbortSignal.any([callerSignal, AbortSignal.timeout(10_000)])
+          : AbortSignal.timeout(10_000);
         let response: Response;
         try {
           response = await fetchImpl(endpoint, { method: "POST", redirect: "error", cache: "no-store",
             headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body,
-            signal: AbortSignal.timeout(10_000) });
+            signal: requestSignal });
         } catch { await options.ledger.settle(id, inputEstimate, 0, "network-error"); settled = true; throw new ProviderError("PROVIDER_NETWORK_UNAVAILABLE"); }
         if (!response.ok) {
           await options.ledger.settle(id, inputEstimate, 0, `http-${response.status}`); settled = true;

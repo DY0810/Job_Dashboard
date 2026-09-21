@@ -14,6 +14,8 @@ import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing } f
 import { createRun, listRuns, commandRun, commandApplication } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent, submitIntent } from './events.ts';
+import { getPolicy, getProfile } from './stores.ts';
+import { ProviderConfigRequestSchema, ProviderConfigSchema } from './provider-protocol.ts';
 
 async function limit(key: string, max: number) {
   const window = Math.floor(Date.now() / 60_000) * 60_000;
@@ -46,6 +48,28 @@ function checkPath(request: Request, ids: string[]) {
 }
 type BrowserAction = 'list-workers' | 'create-pairing' | 'revoke-pairing' | 'revoke-worker' |
   'list-runs' | 'create-run' | 'command-run' | 'command-application';
+
+const confirmed = <T>(fact: { state: string; value: T | null }) => fact.state === 'confirmed' ? fact.value : null;
+async function providerConfig(db: Parameters<typeof getProfile>[0], ownerId: string) {
+  const [profileResponse, policy] = await Promise.all([getProfile(db, ownerId), getPolicy(db, ownerId)]);
+  const profile = profileResponse.profile.documentsProvider;
+  const currentPolicy = policy.policy;
+  const selected = confirmed(profile.provider) === 'typesafe_jev';
+  const budget = confirmed(profile.requestBudget);
+  const maxUsd = selected && budget?.currency === 'USD' ? Math.min(10, budget.amount) : 0;
+  const enabled = selected && maxUsd > 0 && policy.enabled && currentPolicy.privacy === 'approved_remote' &&
+    currentPolicy.remoteProviderConsent && currentPolicy.allowedProviders.includes('typesafe:jev') && currentPolicy.fallbackOrder.length === 0;
+  return ProviderConfigSchema.parse({
+    providerProtocolVersion: 1, ownerId, profileRevision: profileResponse.revision,
+    policyRevision: policy.revision, policyVersion: policy.policyVersion, policyHash: policy.policyHash,
+    enabled, provider: selected ? 'typesafe_jev' : 'none',
+    model: selected ? (confirmed(profile.model) ?? 'jev-latest') : null,
+    endpoint: selected ? confirmed(profile.endpoint) : null,
+    privacy: currentPolicy.privacy, remoteProviderConsent: currentPolicy.remoteProviderConsent,
+    allowedProviders: currentPolicy.allowedProviders, fallbackOrder: currentPolicy.fallbackOrder, maxUsd,
+  });
+}
+
 export async function browserWorkerEndpoint(request: Request, action: BrowserAction, ...ids: string[]) {
   let headers: Headers | undefined;
   try {
@@ -77,16 +101,18 @@ export async function browserWorkerEndpoint(request: Request, action: BrowserAct
     return privateJson(body, { headers });
   } catch (error) { return errorResponse(error, headers); }
 }
-export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent', id?: string) {
+export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent' | 'provider-config', id?: string) {
   try {
     checkPath(request, id ? [id] : []);
     const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
     const token = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1] ?? '';
+    let workerOwnerId: string | undefined;
     if (action === 'pair') await limit('private-worker-pair', 30);
     else {
       // Authentication runs before allocating a bucket, so arbitrary tokens cannot grow it.
-      const workerId = await withWorker(db, token, options, async (_tx, worker) => worker.id);
-      await limit(`private-worker:${workerId}`, 120);
+      const worker = await withWorker(db, token, options, async (_tx, row) => ({ id: row.id, ownerId: row.ownerId }));
+      workerOwnerId = worker.ownerId;
+      await limit(`private-worker:${worker.id}`, 120);
     }
     const raw = await readPrivateJson(request, z.unknown());
     if (!raw || typeof raw !== 'object' || !('protocolVersion' in raw) || raw.protocolVersion !== p.WORKER_PROTOCOL_VERSION ||
@@ -100,6 +126,12 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       case 'heartbeat': body = p.PollResponseSchema.parse(await heartbeatWorker(db, token, p.HeartbeatRequestSchema.parse(raw), options)); break;
       case 'event': body = p.EventResponseSchema.parse(await recordWorkerEvent(db, token, id!, p.EventRequestSchema.parse(raw), options)); break;
       case 'submit-intent': body = await submitIntent(db, token, id!, p.SubmitIntentSchema.parse(raw), options); break;
+      case 'provider-config': {
+        ProviderConfigRequestSchema.parse(raw);
+        body = await providerConfig(db, workerOwnerId!);
+        body = ProviderConfigSchema.parse(body);
+        break;
+      }
     }
     return privateJson(body);
   } catch (error) { return errorResponse(error); }

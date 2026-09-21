@@ -15,6 +15,7 @@ import {
   PairResponseSchema, EventResponseSchema,
 } from "../lib/applications/worker-protocol.ts";
 import { InterventionPollSchema, InterventionPageSchema } from "../lib/applications/question-protocol.ts";
+import { ProviderConfigRequestSchema, ProviderConfigSchema } from "../lib/applications/provider-protocol.ts";
 
 const ownerId = "synthetic-cli-owner";
 const clock = () => ({ protocolVersion: 1, serverTime: Date.now(), heartbeatMs: 20000, leaseMs: 120000 });
@@ -28,6 +29,15 @@ async function fixture(t, handler) {
         assert.equal(req.headers.cookie, undefined);
         InterventionPollSchema.parse(await body(req));
         return json(res, InterventionPageSchema, { questionProtocolVersion: 1, commands: [] });
+      }
+      if (req.url === "/api/worker/provider-config") {
+        assert.match(req.headers.authorization ?? "", /^Bearer [A-Za-z0-9_-]{43}$/);
+        assert.equal(req.headers.cookie, undefined);
+        ProviderConfigRequestSchema.parse(await body(req));
+        return json(res, ProviderConfigSchema, { providerProtocolVersion: 1, ownerId, profileRevision: 0,
+          policyRevision: 0, policyVersion: 0, policyHash: null, enabled: false, provider: "none",
+          model: null, endpoint: null, privacy: "local_inference_only", remoteProviderConsent: false,
+          allowedProviders: [], fallbackOrder: [], maxUsd: 0 });
       }
       return handler(req, res);
     }).catch(error => { errors.push(error); res.destroy(); });
