@@ -15,6 +15,13 @@
       "when": 1789954227396,
       "tag": "0001_profile_policy_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789967080676,
+      "tag": "0002_worker_control",
+      "breakpoints": true
     }
   ]
 }

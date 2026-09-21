@@ -166,6 +166,7 @@ function AuthForm({ mode }: { mode: Mode }) {
           <div className="flex flex-wrap gap-3">
             <Link href="/" className="chip">Jobs</Link>
             <Link href="/profile" prefetch={false} className="chip">Profile</Link>
+            <Link href="/workers" prefetch={false} className="chip">Workers</Link>
             <button className="chip" type="button" disabled={busy} onClick={signOut}>Sign out</button>
           </div>
         </div>

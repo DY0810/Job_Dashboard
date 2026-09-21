@@ -1,0 +1,193 @@
+import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import { z } from "zod";
+import {
+  HEARTBEAT_MS, WORKER_PROTOCOL_VERSION, EventRequestSchema, EventResponseSchema,
+  PollResponseSchema,
+} from "../lib/applications/worker-protocol.ts";
+import type { Lease, EventRequest } from "../lib/applications/worker-protocol.ts";
+import { SAFE_STAGES, canTransition } from "../lib/applications/state.ts";
+import { createLeaseGuard, systemClock } from "./guard.ts";
+import type { ClockSample, LeaseGuard } from "./guard.ts";
+import { ScopeSchema, sameScope } from "./pairing.ts";
+import type { WorkerScope } from "./credentials.ts";
+import type { PrivateStore } from "./storage.ts";
+import { TransportError } from "./transport.ts";
+import type { WorkerTransport } from "./transport.ts";
+
+const JournalSchema = z.strictObject({
+  version: z.literal(1), scope: ScopeSchema,
+  pending: z.strictObject({ applicationId: z.uuid(), event: EventRequestSchema }).nullable(),
+  acknowledged: EventResponseSchema.nullable(),
+});
+const DispatchResultSchema = z.strictObject({
+  state: z.enum(["screening", "tailoring", "filling", "ready", "needs_answer", "needs_document",
+    "needs_policy_decision", "needs_login", "needs_verification", "provider_unavailable",
+    "retryable_failure", "blocked_unsupported", "failed", "skipped"]),
+  reasonCode: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/).nullable(),
+});
+type DispatchResult = z.infer<typeof DispatchResultSchema>;
+export type StageDispatch = (lease: Lease, guard: LeaseGuard) => Promise<DispatchResult>;
+export const unsupportedStage: StageDispatch = async () => ({
+  state: "blocked_unsupported", reasonCode: "adapter_unavailable",
+});
+
+async function untilAborted<T>(action: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) { void action.catch(() => {}); throw new Error("STOPPED"); }
+  let abort: () => void = () => {};
+  const stopped = new Promise<never>((_, reject) => {
+    abort = () => reject(new Error("STOPPED"));
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try { return await Promise.race([action, stopped]); }
+  finally { signal.removeEventListener("abort", abort); }
+}
+
+export async function runWorker(options: {
+  scope: WorkerScope; store: PrivateStore;
+  transport: WorkerTransport | (() => Promise<WorkerTransport>); signal: AbortSignal;
+  dispatch?: StageDispatch; clock?: () => ClockSample;
+  status?: (status: "idle" | "active" | "waiting" | "reconciliation-required" | "stopped") => void;
+}) {
+  const { scope, store } = options;
+  const clock = options.clock ?? systemClock;
+  const shutdown = new AbortController();
+  const signal = AbortSignal.any([options.signal, shutdown.signal]);
+  let active: { lease: Lease; guard: LeaseGuard } | null = null;
+  let fatal: unknown;
+  let queue: Promise<unknown> = Promise.resolve();
+  const exclusive = <T>(action: () => Promise<T>): Promise<T> => {
+    const next = queue.then(action);
+    queue = next.catch(() => {});
+    return next;
+  };
+  const stop = () => active?.guard.revoke("STOPPED");
+  const unlock = await store.lock();
+  signal.addEventListener("abort", stop);
+  let journal: z.infer<typeof JournalSchema>;
+  let transport: WorkerTransport;
+  try {
+    signal.throwIfAborted();
+    transport = typeof options.transport === "function" ? await options.transport() : options.transport;
+    signal.throwIfAborted();
+    journal = JournalSchema.parse(await store.read("checkpoint") ?? {
+      version: 1, scope, pending: null, acknowledged: null,
+    });
+    sameScope(scope, journal.scope);
+  } catch (error) {
+    await unlock();
+    signal.removeEventListener("abort", stop);
+    throw error;
+  }
+  const fail = (error: unknown) => {
+    fatal ??= error;
+    active?.guard.revoke("LEASE_LOST");
+    shutdown.abort();
+  };
+  async function acknowledge(applicationId: string, event: EventRequest) {
+    const response = EventResponseSchema.parse(await transport.event(applicationId, event, signal));
+    if (response.applicationId !== applicationId || response.eventId !== event.eventId ||
+      response.state !== event.state || response.revision !== event.expectedRevision + 1) {
+      throw new Error("INVALID_ACKNOWLEDGEMENT");
+    }
+    journal = { ...journal, pending: null, acknowledged: { ...response, lease: null } };
+    await store.write("checkpoint", journal);
+    // Even a current acknowledgement never extends mutation authority here. Poll for a fresh fence.
+    active?.guard.revoke("CHECKPOINTED");
+    active = null;
+  }
+  const watchdog = setInterval(() => {
+    try { active?.guard.check(); } catch (error) { fail(error); }
+  }, 1000);
+  const heartbeats = (async () => {
+    while (!signal.aborted) {
+      await delay(HEARTBEAT_MS, undefined, { signal });
+      await exclusive(async () => {
+        if (signal.aborted) return;
+        active?.guard.check();
+        const started = clock();
+        const lease = active?.lease;
+        const response = PollResponseSchema.parse(await transport.heartbeat(lease ? {
+          applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
+        } : null, signal));
+        if (!active) {
+          if (response.lease) throw new Error("UNEXPECTED_ASSIGNMENT");
+          return;
+        }
+        if (!response.lease || JSON.stringify(response.lease.checkpoint) !== JSON.stringify(active.lease.checkpoint)) {
+          throw new Error("LEASE_LOST");
+        }
+        active.guard.renew(response.lease, response.serverTime, started);
+        active.lease = response.lease;
+      });
+    }
+  })().catch(error => { if (!signal.aborted) fail(error); });
+  try {
+    if (journal.pending) {
+      // No external action is replayed: only the exact previously persisted checkpoint request.
+      const { applicationId, event } = journal.pending;
+      try { await exclusive(() => acknowledge(applicationId, event)); }
+      catch (error) {
+        if (!(error instanceof TransportError) || error.status !== 409) throw error;
+        // A stale, never-accepted checkpoint gives no authority. Keep a diagnostic, then re-poll.
+        await store.write("rejected-checkpoint", journal);
+        journal = { ...journal, pending: null };
+        await store.write("checkpoint", journal);
+      }
+    }
+    while (!signal.aborted) {
+      await exclusive(async () => {
+        if (signal.aborted) return;
+        const started = clock();
+        const response = PollResponseSchema.parse(await transport.poll(signal));
+        if (signal.aborted) return;
+        if (!response.lease) { options.status?.("idle"); return; }
+        active = { lease: response.lease,
+          guard: createLeaseGuard(response.lease, scope, response.serverTime, started, clock) };
+      });
+      if (signal.aborted) break;
+      const current = active as { lease: Lease; guard: LeaseGuard } | null;
+      if (!current) { await delay(HEARTBEAT_MS, undefined, { signal }); continue; }
+      const { lease, guard } = current;
+      if (lease.mode === "reconcile" || ["submitting", "submission_unknown"].includes(lease.state)) {
+        guard.revoke("RECONCILIATION_ONLY");
+        active = null;
+        options.status?.("reconciliation-required");
+        await delay(HEARTBEAT_MS, undefined, { signal });
+        continue;
+      }
+      if (!SAFE_STAGES.includes(lease.state as typeof SAFE_STAGES[number])) throw new Error("INVALID_STAGE");
+      options.status?.("active");
+      const result = DispatchResultSchema.parse(await untilAborted(
+        guard.boundary(() => (options.dispatch ?? unsupportedStage)(lease, guard)), signal,
+      ));
+      guard.check();
+      if (!canTransition(lease.state, result.state)) throw new Error("EXECUTION_DISABLED");
+      await exclusive(async () => {
+        guard.check();
+        const stage = SAFE_STAGES.includes(result.state as typeof SAFE_STAGES[number]) ? result.state : lease.state;
+        const event = EventRequestSchema.parse({
+          protocolVersion: WORKER_PROTOCOL_VERSION, eventId: randomUUID(), fence: lease.fence,
+          expectedRevision: lease.revision, state: result.state,
+          checkpoint: { stage, sequence: (lease.checkpoint?.sequence ?? 0) + 1 }, reasonCode: result.reasonCode,
+        });
+        journal = { ...journal, pending: { applicationId: lease.applicationId, event } };
+        await guard.boundary(() => store.write("checkpoint", journal));
+        await acknowledge(lease.applicationId, event);
+        options.status?.("waiting");
+      });
+    }
+  } catch (error) {
+    if (!signal.aborted) fatal ??= error;
+  } finally {
+    (active as { lease: Lease; guard: LeaseGuard } | null)?.guard.revoke("STOPPED");
+    shutdown.abort();
+    clearInterval(watchdog);
+    await heartbeats;
+    await queue;
+    await unlock();
+    signal.removeEventListener("abort", stop);
+    options.status?.("stopped");
+  }
+  if (fatal) throw fatal;
+}

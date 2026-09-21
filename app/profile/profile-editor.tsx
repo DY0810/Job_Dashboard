@@ -297,6 +297,7 @@ export default function ProfileEditor() {
   }
   return <>
     <div className={styles.toolbar}><h1 className={styles.title}>Applicant profile</h1>
+      <Link href="/workers" prefetch={false}>Workers</Link>
       {!locked && writer && <p role="status" aria-live="polite" className={styles.muted}>
         {writer.status === 'saved' ? `Saved / revision ${snapshot?.revision}` : writer.status === 'saving' ? 'Saving...' :
           writer.status === 'conflict' ? 'Conflict / review required' : writer.status === 'paused' ? 'Saving paused' : 'Changes pending'}

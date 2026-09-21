@@ -5,8 +5,9 @@ with Phase 0 branch/setup and baseline. This file is the operating contract;
 `auto-apply-progress.md` is the single phase/evidence ledger. No repository ECC2
 configuration or state-store scripts were found during the Phase 0 scan.
 
-Current gate: Phase 2 parent-ACCEPTED; Phase 3 READY, NOT STARTED. The current
-role is Phase 2 COMMIT ONLY from `d4e3a9c` on `DY/workie-auto-apply`; no push.
+Current gate: Phase 3 parent-ACCEPTED; Phase 4 READY, NOT STARTED. The current
+role is Phase 3 COMMIT ONLY from `3ed686118c70fdc5f4fe4b7cab2598f7d5d6c4e7`
+on `DY/workie-auto-apply`; no push, main changes, rebase, merge or deployment.
 Accepted proof and historical records are in `auto-apply-progress.md`.
 Historical phase/role statements below do not authorize further implementation.
 
@@ -41,15 +42,16 @@ Historical phase/role statements below do not authorize further implementation.
 - No production ingestion/mirroring, real database migrations, provisioning,
   deployment, service installation, or scheduler changes. GitHub Actions remains
   the sole production corpus writer; private state must use a separate database.
-- Phase 0 is committed/pushed as `88cea14`; Phase 1 as `d4e3a9c`. Phase 2 final
-  verification and review closure are parent-accepted. Commit only Phase 2
-  `app/profile/`, profile/document/policy APIs, `lib/applications/`, private
-  document/schema/migration/metadata/test changes, encrypted drafts,
-  `tests/profile-ui/` and its config, Next trace config, package/lockfile,
-  `.env.example`, the sign-in Profile link, and these two workflow/progress docs.
+- Phase 0 is committed/pushed as `88cea14`; Phase 1 as `d4e3a9c`; Phase 2 as
+  `3ed6861`. Phase 3 final verification and review closure are parent-accepted.
+  Commit only the reviewed Phase 3 WIP: `worker/`, `app/workers/`, worker/workers
+  and application-run APIs, minimal profile/sign-in navigation, worker
+  state/protocol/server modules and tests, worker integration/UI tests and
+  config, private worker schema/migration/metadata, package/lockfile keyring
+  dependency and scripts, `.env.example`, `docs/worker.md` and these two ledgers.
   Keep `HANDOFF.md` untracked/unstaged; exclude private inputs, logs, DBs and
   all other environment files. No push: the next sync role owns branch sync.
-  Phase 3 is READY, NOT STARTED; worker security requires its own assignment.
+  Phase 4 is READY, NOT STARTED; discovery/identity requires its own assignment.
   No main/production release or submissions; release conventions grant no authority.
 
 ## Historical Setup Gate
@@ -223,7 +225,7 @@ unclear write ownership. Future phases remain NOT STARTED until assigned.
 No shared skill extraction is justified yet; consider it only after this
 workflow is reused and its eval contract stabilizes.
 
-## Accepted Phase 2 Boundary
+## Historical Accepted Phase 2 Boundary
 
 The parent's September 20, 2026 (Pacific) acceptance follows the independent
 `logs/auto-apply-gate/phase2-final-verification.json` PASS. Do not alter its
@@ -255,3 +257,30 @@ restart/sleep recovery. Require synthetic process/transaction proof before
 acceptance; no worker, ATS submission, document generation or overall Auto Apply
 completion is claimed. No push/main/deploy, nested agents or
 `send_message_to_thread` in any namespace/wrapper.
+
+## Accepted Phase 3 Boundary
+
+September 20, 2026 (Pacific): explicit parent acceptance follows PASS in
+`logs/auto-apply-gate/phase3-rendered-ready.json` and the raw
+`logs/auto-apply-gate/phase3-final-NdxNJU/` evidence. Parent inspected all 317
+source hashes, raw 56-worker/128-profile browser results, final 1,487 unit and
+32 worker checks, build/types/lint/whitespace, Noether's security closure after
+two queue fixes, Cicero's UI/quality closure and the final selector-only diff
+with all 14 titles/assertions unchanged. Earlier failures and report fields
+awaiting acceptance remain historical and are not rewritten.
+
+Accepted build: `Kj7UpmcEl8DIGH6KHrsOK`; source SHA-256:
+`4d9f3a0f210d32ee2158334653d6f3e317e661baeb4e1ed13dc5d27da9912247`.
+Compare against `phase3-final-NdxNJU/source-before.json`, allowing only the two
+ledger docs to differ. Stage exact approved files and check staged whitespace.
+No app-source edits, tests, builds or production actions in this commit role.
+Use DongYeop Lee's authorized identity without AI/coauthor trailers; record SHA,
+file list and clean exclusions in ignored `logs/auto-apply-gate/phase3-commit.json`.
+Keep `HANDOFF.md` untracked, and exclude logs, actual env files and databases.
+
+Phase 4 is READY, NOT STARTED: read `plans/auto-apply.md` Phase 4 and
+`logs/auto-apply-gate/phase4-parent-handoff.md`; its implementation and branch
+sync need separate authorization. This acceptance is synthetic/local Phase 3
+proof, not full Auto Apply completion. ATS/provider/document tailoring and
+later release gates remain outstanding. No push/main/rebase/merge/deploy,
+nested agents or `send_message_to_thread` in any namespace/wrapper.

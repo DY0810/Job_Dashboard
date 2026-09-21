@@ -20,6 +20,9 @@
     "db:private:generate": "drizzle-kit generate --config=drizzle-private.config.ts",
     "db:private:migrate": "node --conditions=react-server scripts/private-migrate.ts",
     "test": "vitest run",
+    "worker": "node worker/main.ts",
+    "test:worker": "node --test worker/*.check.mjs",
+    "test:worker:keyring": "node worker/qualify-keyring.mjs",
     "status": "node scripts/status.ts",
     "backfill:locations": "node scripts/backfill-locations.ts",
     "merge:duplicates": "node scripts/merge-duplicates.ts",
@@ -29,6 +32,7 @@
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.5",
     "@libsql/client": "^0.17.4",
+    "@napi-rs/keyring": "2.1.0",
     "@vercel/blob": "2.8.0",
     "better-auth": "1.7.5",
     "better-sqlite3": "^13.0.3",

@@ -121,3 +121,4 @@ export const policyCommands = sqliteTable('private_policy_command', {
 ]);
 
 export { documents, documentUploadGrants } from './document-schema.ts';
+export { workerPairings, workers, applicationRuns, applications, applicationEvents, workerCommands } from './worker-schema.ts';

@@ -1,5 +1,72 @@
 # Auto Apply Progress
 
+## Current Phase 3 Acceptance
+
+September 20, 2026 (Pacific): Phase 3 is parent-ACCEPTED by explicit authorization
+after final verification and review closure. Phase 4 is READY, NOT STARTED.
+This is Phase 3 COMMIT ONLY from `3ed686118c70fdc5f4fe4b7cab2598f7d5d6c4e7`
+on `DY/workie-auto-apply`; no push, main changes, merge, rebase or deployment.
+
+| Accepted proof | Result / reference |
+| --- | --- |
+| Final gate | `logs/auto-apply-gate/phase3-rendered-ready.json`; raw evidence in `logs/auto-apply-gate/phase3-final-NdxNJU/` |
+| Checks | 1,487 unit/integration tests and 32 worker checks PASS; build, types, lint and whitespace PASS; two unchanged lint warnings |
+| Rendered regression | 56 worker and 128 profile identities PASS; no failures, skips, retries or flakes |
+| Review closure | Parent-confirmed Noether security closure after two queue fixes; Cicero UI/quality closure; parent reviewed final selector-only diff with all 14 titles/assertions unchanged |
+| Accepted build | `Kj7UpmcEl8DIGH6KHrsOK` |
+| Accepted source | `4d9f3a0f210d32ee2158334653d6f3e317e661baeb4e1ed13dc5d27da9912247`; 317 hashes in `phase3-final-NdxNJU/source-before.json` |
+
+The report's earlier `phaseAccepted: false` and pending parent-review text remain
+historical; acceptance is this subsequent explicit parent decision. The commit
+role verified all 317 hashes before editing only these two ledger docs; retained
+checks are not a new docs-inclusive run. No tests or builds are rerun here.
+Proof is synthetic/local, not live ATS, provider or document-tailoring evidence.
+Phase 3 acceptance does not complete Auto Apply.
+
+Next: read `plans/auto-apply.md` Phase 4 and
+`logs/auto-apply-gate/phase4-parent-handoff.md`. Implementation and working-branch
+sync require separate authorization. Keep `HANDOFF.md` untracked, and logs,
+actual environment files and databases out of the commit. The ignored receipt
+is `logs/auto-apply-gate/phase3-commit.json`. No nested agents or
+`send_message_to_thread` in any namespace/wrapper.
+
+## Historical Phase 3 Execution
+
+The interrupted execution and earlier Phase 2 handoff below are preserved history,
+superseded by the current acceptance record above.
+
+Execution has resumed under the active goal to finish the full approved plan.
+Phase 3 is IN PROGRESS, not accepted. Fresh owners continue the existing WIP;
+no prior Workie test/server process remains.
+
+| Resumed lane | Native agent | Gate |
+| --- | --- | --- |
+| Server | `01a0c26b-0b2e-7301-9244-4006be6f2c04` | Finish retry/revocation checks and server contract |
+| Runtime | `01a0c26b-18c6-72a1-94aa-6dcaf4965cc7` | Worker/CLI recovery and process-level checks |
+| UI | `01a0c26b-1a71-7ef0-a51c-14fb06200057` | Source/controller checks, then integration browser gate |
+
+The prior execution was interrupted before verification or acceptance. All three
+listed agent IDs are no longer available to the native agent manager. The process
+check found no remaining Workie test/server process; unrelated servers were left
+untouched. Phase 3 WIP is preserved and uncommitted. On continuation, read the
+`phase3-*-contract-feedback.json` files, finish each lane, then run independent
+integration, security, quality and rendered-UI checks before committing.
+
+Phase 2 was accepted, committed and pushed as
+`3ed686118c70fdc5f4fe4b7cab2598f7d5d6c4e7` on `DY/workie-auto-apply`.
+Phase 3 is now IN PROGRESS, not accepted. Main and production remain unchanged.
+The historical Phase 2 handoff below is superseded by this current record.
+
+| Lane | Native agent | Exclusive scope |
+| --- | --- | --- |
+| Server | `01a0c253-c763-7fe0-82de-166638a55347` | Shared worker protocol/state, private worker schema/migration, pairing/run/worker routes and tests |
+| Runtime | `01a0c254-3016-7493-b084-58b973daa953` | `worker/`, keychain dependency and package scripts, worker operating docs |
+
+Server publishes `logs/auto-apply-gate/phase3-protocol-contract.json` before
+runtime/UI integration. No competing schema/package owners. Tests use synthetic
+private data and loopback services only; no real keychain enumeration, application
+submissions, production migrations, service installation or deployment.
+
 Execution began: September 20, 2026.
 Current gate: Phase 2 ACCEPTED by explicit parent authorization after independent
 final verification and review closure PASS. Phase 3 READY, NOT STARTED.
@@ -46,9 +113,9 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | --- | --- | --- | --- | --- |
 | 0: Discovery/setup | None | Branch/Setup: copied inputs, two workflow docs, `scripts/auto-apply-gate.mjs` | Source equality, exact install, baseline, harness self-check, independent review | ACCEPTED; qualified build passed; offline font-fetch limitation retained |
 | 1: Private storage/auth | 0 | Auth/storage: `lib/private-db/`, `drizzle-private/`, private Drizzle config, auth/access modules/routes | Two-user isolation, real async scratch transactions/migrations, auth/revocation/mail sink, corpus-cache separation | ACCEPTED; committed/pushed as d4e3a9c |
-| 2: Profile/policy/documents | 1 | Profile/documents: `app/profile/`, profile schemas, document/policy routes and private schema | All sections, revision/draft isolation, hostile upload checks, immutable masters, disabled policy default | ACCEPTED; final verification/review closure; commit authorized, no push |
-| 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | READY, NOT STARTED; separate assignment required |
-| 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | NOT STARTED |
+| 2: Profile/policy/documents | 1 | Profile/documents: `app/profile/`, profile schemas, document/policy routes and private schema | All sections, revision/draft isolation, hostile upload checks, immutable masters, disabled policy default | ACCEPTED; committed/pushed as 3ed6861 |
+| 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | parent-ACCEPTED; final verification/review closure; commit authorized, no push |
+| 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | READY, NOT STARTED; separate assignment required |
 | 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | NOT STARTED |
 | 6: Providers/cost | 1-5 | Provider: `worker/providers.ts`, settings/credential/budget modules | Mock protocols, untrusted output, reservation races, unknown cost and remote-fallback denial | NOT STARTED |
 | 7: Documents | 2, 5, 6 | Document runtime: `worker/documents/`, synthetic source/PDF fixtures and checks | Qualified PDF/DOCX, unchanged geometry/fonts/links, hostile inputs, parallel scratch isolation | NOT STARTED |
