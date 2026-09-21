@@ -13,10 +13,10 @@ An exact metadata-only lookup succeeded for service `Workie TypeSafe API`,
 account `dongyeop0810@gmail.com`, in `~/Library/Keychains/login.keychain-db`.
 No password retrieval flags were used; no key value was read or displayed.
 The item exists, but its contents and TypeSafe authentication are not yet tested.
-This manually created item is not yet wired to Workie's worker credential scope.
-The $10 spending guard is not
-implemented or verified yet; record this as authorization, not enforced quota.
-No TypeSafe paid calls have been made by this task. On September 21, 2026, the
+The Phase 6 provider helper now uses this exact service/account; no production
+worker path invokes it yet. The cumulative $10 spending guard is implemented
+and synthetic-tested; no TypeSafe paid calls have been made by this task.
+On September 21, 2026, the
 user explicitly approved sending redacted form labels and action choices to
 TypeSafe for their own account, excluding passwords, OTPs and sensitive answers.
 This is not permission to send full profiles, resumes, filled identity values
@@ -29,12 +29,33 @@ official API documentation. Add secure provider-key entry through the worker's
 keychain path; the existing hidden pairing-grant prompt is not an API-key prompt.
 Do not request the key in chat or place it in command arguments, URLs or logs.
 
+## Phase 6 Acceptance
+
+September 21, 2026: the scoped Jev provider contract is ACCEPTED on
+`DY/workie-auto-apply`. `worker/providers.ts` validates the TypeSafe request and
+versioned response contract, redacts state before dispatch, binds the approved
+owner and endpoint, reads the exact local keychain item without displaying its
+value, bounds response bodies, and accounts conservatively for reserved and
+reported input usage. The separate file-backed ledger prevents concurrent
+reservations from exceeding the approved cumulative USD 10 allowance.
+
+| Accepted evidence | Result / reference |
+| --- | --- |
+| Provider checks | 9/9 PASS; `worker/providers.check.mjs` |
+| Full worker gate | 51/51 PASS on pinned Node 22.23.2 |
+| Source checks | TypeScript, focused ESLint and `git diff --check` PASS |
+| Network scope | Synthetic mock only; no TypeSafe request, production database write, ATS submission, SMTP send or deployment |
+
+This acceptance is only the Jev decision-provider slice. Runtime invocation,
+provider settings UI, OmniRoute/local/BYOK adapters, live credential
+authentication, and later document/application phases remain outstanding.
+
 ## Current Phase 5 Execution
 
 Objective: finish the entire approved Auto Apply plan, not only discovery.
 Phase 4 is accepted, committed and pushed as
-`669483c3b3bec3b5b696023e2c59ae30844e5ac8`. Phase 5 is now ACCEPTED;
-Phases 6-12 remain not started.
+`669483c3b3bec3b5b696023e2c59ae30844e5ac8`. Phase 5 and the scoped Phase 6
+provider contract are now ACCEPTED; Phases 7-12 remain not started.
 
 | Current owner | Native agent | Scope |
 | --- | --- | --- |
