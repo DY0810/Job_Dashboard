@@ -19,6 +19,7 @@ vi.mock('@libsql/client', async (original) => {
 let dir: string;
 const opened: PrivateDb[] = [];
 const now = new Date('2026-09-20T12:34:56.789Z');
+const migrationCount = JSON.parse(readFileSync(new URL('../../drizzle-private/meta/_journal.json', import.meta.url), 'utf8')).entries.length;
 const person = (id: string) => ({
   id, name: id, email: `${id}@example.test`, emailVerified: false, createdAt: now, updatedAt: now,
 });
@@ -198,7 +199,7 @@ describe('private migrations, adapter schema, and real async libSQL', () => {
     const reopened = open();
     await migratePrivateDb(reopened);
     expect(await reopened.select().from(schema.user)).toEqual([expect.objectContaining(person('one'))]);
-    expect(await reopened.all(sql`select * from __drizzle_migrations`)).toHaveLength(1);
+    expect(await reopened.all(sql`select * from __drizzle_migrations`)).toHaveLength(migrationCount);
   });
 
   it('runs the explicit migration CLI from another cwd only against its configured scratch target', async () => {
@@ -206,6 +207,7 @@ describe('private migrations, adapter schema, and real async libSQL', () => {
     const run = (url?: string) => spawnSync(process.execPath, ['--conditions=react-server', script], {
       cwd: dir,
       encoding: 'utf8',
+      timeout: 10_000,
       env: {
         NODE_ENV: 'test',
         PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
@@ -221,9 +223,9 @@ describe('private migrations, adapter schema, and real async libSQL', () => {
     expect(run(url).status).toBe(0);
     expect(run(url).status).toBe(0);
     const db = open('cli.db');
-    expect(await db.all(sql`select * from __drizzle_migrations`)).toHaveLength(1);
+    expect(await db.all(sql`select * from __drizzle_migrations`)).toHaveLength(migrationCount);
     expect(await db.select().from(schema.user)).toEqual([]);
-  });
+  }, 35_000);
 
   it('matches pinned Better Auth fields and preserves millisecond dates and numeric rate limits', async () => {
     const db = open();

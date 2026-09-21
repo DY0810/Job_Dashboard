@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // Adapted from Better Auth v1.7.5's generated SQLite snapshot (core fields only):
 // https://github.com/better-auth/better-auth/blob/v1.7.5/packages/cli/test/__snapshots__/auth-schema-sqlite.txt
@@ -60,3 +60,64 @@ export const rateLimit = sqliteTable('private_rate_limit', {
   check('private_rate_limit_count_check', sql`typeof(${table.count}) = 'integer' and ${table.count} >= 0`),
   check('private_rate_limit_last_request_check', sql`typeof(${table.lastRequest}) = 'integer' and ${table.lastRequest} >= 0`),
 ]);
+
+export const profileVersions = sqliteTable('private_profile_version', {
+  ownerId: text('owner_id').notNull().references(() => user.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull(),
+  requestId: text('request_id').notNull(),
+  requestHash: text('request_hash').notNull(),
+  profile: text('profile', { mode: 'json' }).notNull(),
+  createdAt: integer('created_at').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.ownerId, t.revision] }),
+  uniqueIndex('private_profile_request_unique').on(t.ownerId, t.requestId),
+  check('private_profile_revision_check', sql`typeof(${t.revision}) = 'integer' and ${t.revision} > 0`),
+  check('private_profile_json_check', sql`json_valid(${t.profile}) and length(cast(${t.profile} as blob)) <= 131072`),
+]);
+export const profileHeads = sqliteTable('private_profile_head', {
+  ownerId: text('owner_id').primaryKey().references(() => user.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull(),
+}, (t) => [
+  foreignKey({ columns: [t.ownerId, t.revision], foreignColumns: [profileVersions.ownerId, profileVersions.revision] }),
+]);
+export const policyVersions = sqliteTable('private_policy_version', {
+  ownerId: text('owner_id').notNull().references(() => user.id, { onDelete: 'restrict' }),
+  version: integer('version').notNull(),
+  hash: text('hash').notNull(),
+  policy: text('policy', { mode: 'json' }).notNull(),
+  createdAt: integer('created_at').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.ownerId, t.version] }),
+  check('private_policy_version_check', sql`typeof(${t.version}) = 'integer' and ${t.version} > 0`),
+  check('private_policy_json_check', sql`json_valid(${t.policy}) and length(cast(${t.policy} as blob)) <= 131072`),
+]);
+export const policyHeads = sqliteTable('private_policy_head', {
+  ownerId: text('owner_id').primaryKey().references(() => user.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull(),
+  policyVersion: integer('policy_version').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+  acceptedPolicyVersion: integer('accepted_policy_version'),
+  acceptedPolicyHash: text('accepted_policy_hash'),
+  acceptedAt: integer('accepted_at'),
+}, (t) => [
+  foreignKey({ columns: [t.ownerId, t.policyVersion], foreignColumns: [policyVersions.ownerId, policyVersions.version] }),
+  foreignKey({ columns: [t.ownerId, t.acceptedPolicyVersion], foreignColumns: [policyVersions.ownerId, policyVersions.version] }),
+  check('private_policy_head_revision_check', sql`typeof(${t.revision}) = 'integer' and ${t.revision} > 0`),
+  check('private_policy_enabled_check', sql`${t.enabled} in (0, 1)`),
+  check('private_policy_acceptance_check', sql`(${t.enabled} = 0 and ${t.acceptedPolicyVersion} is null and ${t.acceptedPolicyHash} is null and ${t.acceptedAt} is null) or (${t.enabled} = 1 and ${t.acceptedPolicyVersion} = ${t.policyVersion} and ${t.acceptedPolicyHash} is not null and ${t.acceptedAt} is not null)`),
+]);
+export const policyCommands = sqliteTable('private_policy_command', {
+  ownerId: text('owner_id').notNull().references(() => user.id, { onDelete: 'restrict' }),
+  requestId: text('request_id').notNull(),
+  requestHash: text('request_hash').notNull(),
+  revision: integer('revision').notNull(),
+  acknowledgement: text('acknowledgement', { mode: 'json' }).notNull(),
+  createdAt: integer('created_at').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.ownerId, t.requestId] }),
+  uniqueIndex('private_policy_command_revision_unique').on(t.ownerId, t.revision),
+  check('private_policy_command_revision_check', sql`typeof(${t.revision}) = 'integer' and ${t.revision} > 0`),
+  check('private_policy_ack_json_check', sql`json_valid(${t.acknowledgement})`),
+]);
+
+export { documents, documentUploadGrants } from './document-schema.ts';

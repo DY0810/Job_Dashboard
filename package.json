@@ -29,15 +29,20 @@
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.5",
     "@libsql/client": "^0.17.4",
+    "@vercel/blob": "2.8.0",
     "better-auth": "1.7.5",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
+    "fflate": "0.8.2",
     "next": "15.5.25",
     "nodemailer": "^9.1.1",
+    "pdf-lib": "1.17.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "rss-parser": "^3.13.0",
+    "sax": "1.6.1",
     "server-only": "0.0.1",
+    "yauzl": "3.4.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -49,6 +54,7 @@
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/sax": "1.2.7",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "15.5.25",

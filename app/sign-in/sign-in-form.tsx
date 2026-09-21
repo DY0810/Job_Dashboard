@@ -165,6 +165,7 @@ function AuthForm({ mode }: { mode: Mode }) {
           <p className="break-words">{applicant.email}</p>
           <div className="flex flex-wrap gap-3">
             <Link href="/" className="chip">Jobs</Link>
+            <Link href="/profile" prefetch={false} className="chip">Profile</Link>
             <button className="chip" type="button" disabled={busy} onClick={signOut}>Sign out</button>
           </div>
         </div>

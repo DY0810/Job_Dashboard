@@ -1,10 +1,12 @@
 # Auto Apply Progress
 
 Execution began: September 20, 2026.
-Current gate: Phase 1 ACCEPTED by explicit parent authorization after independent
-security/quality PASS and recovered final verification PASS. Phase 2 READY,
-NOT STARTED. Phase 0 was committed and pushed as `88cea14`.
-This role may commit Phase 1 only; NO PUSH (the next sync role owns that step).
+Current gate: Phase 2 ACCEPTED by explicit parent authorization after independent
+final verification and review closure PASS. Phase 3 READY, NOT STARTED.
+This role is Phase 2 COMMIT ONLY from `d4e3a9c`; no push.
+Phase 0 was committed/pushed as `88cea14`;
+Phase 1 was committed/pushed as `d4e3a9c` on `DY/workie-auto-apply`.
+Further implementation or branch sync requires a separate parent assignment.
 Main changes, deployment, production enablement, live pilots and employer
 submissions are not authorized. Historical pending/failure statements below
 remain evidence of earlier attempts, not current status.
@@ -43,9 +45,9 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | Phase | Dependencies | Implementation role / write surface | Required gate | Status |
 | --- | --- | --- | --- | --- |
 | 0: Discovery/setup | None | Branch/Setup: copied inputs, two workflow docs, `scripts/auto-apply-gate.mjs` | Source equality, exact install, baseline, harness self-check, independent review | ACCEPTED; qualified build passed; offline font-fetch limitation retained |
-| 1: Private storage/auth | 0 | Auth/storage: `lib/private-db/`, `drizzle-private/`, private Drizzle config, auth/access modules/routes | Two-user isolation, real async scratch transactions/migrations, auth/revocation/mail sink, corpus-cache separation | ACCEPTED; recovered proof below; commit authorized, no push |
-| 2: Profile/policy/documents | 1 | Profile/documents: `app/profile/`, profile schemas, document/policy routes and private schema | All sections, revision/draft isolation, hostile upload checks, immutable masters, disabled policy default | READY, NOT STARTED; next implementation assignment |
-| 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | NOT STARTED |
+| 1: Private storage/auth | 0 | Auth/storage: `lib/private-db/`, `drizzle-private/`, private Drizzle config, auth/access modules/routes | Two-user isolation, real async scratch transactions/migrations, auth/revocation/mail sink, corpus-cache separation | ACCEPTED; committed/pushed as d4e3a9c |
+| 2: Profile/policy/documents | 1 | Profile/documents: `app/profile/`, profile schemas, document/policy routes and private schema | All sections, revision/draft isolation, hostile upload checks, immutable masters, disabled policy default | ACCEPTED; final verification/review closure; commit authorized, no push |
+| 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | READY, NOT STARTED; separate assignment required |
 | 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | NOT STARTED |
 | 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | NOT STARTED |
 | 6: Providers/cost | 1-5 | Provider: `worker/providers.ts`, settings/credential/budget modules | Mock protocols, untrusted output, reservation races, unknown cost and remote-fallback denial | NOT STARTED |
@@ -485,6 +487,24 @@ Current-code report before recovery:
 Phase 1 remains NOT ACCEPTED; phases 2-12 remain NOT STARTED. Do not substitute
 the earlier corrective revision's 28-case pass for the interrupted final run.
 
+## Phase 2 Active Assignments
+
+Phase 1 subsequently passed recovered verification and was committed/pushed as
+`d4e3a9cc83a4cecabd606fb39d6ce25a7fd83fed`. Its acceptance record supersedes
+the historical interrupted-run status above.
+
+| Lane | Native Agent | Exclusive Scope | Handoff |
+| --- | --- | --- | --- |
+| Profile/policy backend | `01a0c191-465a-79b2-82a9-602915ce5229` | Profile/policy schemas, stores, routes, draft-key route, root private schema/migrations, package files | `logs/auto-apply-gate/phase2-profile-contract.json`, then `phase2-backend-ready.json` |
+| Document backend | `01a0c191-47de-76b2-8689-256db5e576b3` | Document schema module, grants, storage, validation, routes and tests | `phase2-doc-schema-ready.json`, `phase2-doc-contract.json`, then `phase2-documents-ready.json` |
+| Profile UI | `01a0c191-48b3-7390-a8d0-8f626017dd3a` | Profile/policy/document screens, encrypted draft lifecycle, rendered tests | `phase2-ui-code-ready.json` |
+
+All handoffs above are under ignored `logs/auto-apply-gate/`. Backend owns all
+schema generation and dependency installation; document and UI lanes consume
+its published contracts without competing edits. UI publishes source readiness
+before any final build. No current lane may commit, push, enable production
+submissions, use real applicant data, or call cross-task messaging.
+
 ## Accepted Phase 1 Proof And Handoff
 
 The parent explicitly accepted Phase 1 after independent security PASS
@@ -513,3 +533,75 @@ historical logs are preserved. Phase 2 owns profiles/policies/documents; Phase 3
 owns worker-security revocation. Reuse the private migration and auth API contracts
 in the workflow. Keep `HANDOFF.md` untracked and exclude logs, databases and
 secrets. Commit only the authorized Phase 1 surfaces; no push in this role.
+
+## Phase 2 Resume After Interruption
+
+Resumed September 20, 2026, local Pacific time. Branch remains at `d4e3a9c`;
+Phase 2 changes are uncommitted. Prior integration/review workers were shut down
+by the interruption. No worktree test/server process was found on resume.
+
+The compiled parser baseline reproduced a real failure: every synthetic file,
+valid or invalid, remained quarantined/deferred. Its `passed:true` meant the
+baseline reproduction completed, not that document validation worked.
+`phase2-parser-baseline-proof.log` is not a feature acceptance result.
+
+| Resumed lane | Native agent | Work and gate |
+| --- | --- | --- |
+| Applicant precondition | `01a0c1df-a365-77a3-baa9-d2eeb7216577` | Finish partially written `x-workie-applicant` rejection guard and real-session tests; preserve authenticated ownership |
+| UI review corrections | `01a0c1df-a585-7cb3-aa0f-6b8c88944062` | Policy retry/current-head/disable recovery, nullable controls, cross-field errors and consumed-upload reconciliation |
+| Production parser/build | `01a0c1df-a72f-7570-b4f1-b941fcf4f4b9` | Static parser runtime/trace fix and actual compiled plus isolated-package proof |
+| Security recheck | `01a0c1df-a9e8-7e21-904d-7b4746ab8b0b` | Read-only review of stable Phase 2 trust boundaries; prior interrupted review had no final result |
+
+UI review has seven open P2 findings, assigned to the UI lane above:
+historical policy acknowledgements displayed as current; POST retries discarding
+newer edits; uncertain requests preventing disable; optional address clearing
+producing invalid null; no nullable pay-floor reset; unrendered entry/section
+validation errors; and retries sending bytes to already-consumed upload grants.
+The all-sections and policy fixtures also need to match actual backend validation.
+
+Final build follows both principal and UI-fix source-ready markers. Review closure,
+full suite, exact rendered test matrix and compiled parser verification are required
+before Phase 2 acceptance, commit or working-branch sync. No production actions.
+
+## Accepted Phase 2 Proof And Handoff
+
+September 20, 2026 (Pacific): the parent explicitly accepted Phase 2 and authorized
+this commit-only role. `logs/auto-apply-gate/phase2-final-verification.json` records
+`status: "PASS"`, `passed: true`, and no blockers; its earlier
+`phaseAccepted: false` / `parentAcceptance: "pending"` remain unchanged.
+Acceptance comes from the subsequent parent authorization, not a rewritten report.
+
+| Proof | Accepted result / qualification |
+| --- | --- |
+| Final independent checks | 1,406/1,406 tests in 53 files; types and whitespace PASS; lint: zero errors, two unchanged `tick`/`idle` warnings |
+| Compiled UI | 128/128 identities: 32 cases x mobile390/desktop1440 x light/dark; zero skips, failures, retries or flakes; mocked profile/document APIs |
+| UI validator / visuals | 13 negative checks; 144 nonblank native-size captures, ten representative captures visually reviewed, not all tiles or a full accessibility audit |
+| Retained parser HTTP proof | Compiled `phase2-parser-production-8QwXFA/summary.json` and isolated-package `phase2-parser-production-gR3Cos/summary.json`, both under the ignored gate: 21 cases each, seven available downloads and 14 rejections |
+| Review closure | Parent-reported PASS: Huygens full security; Sartre ZIP closure (`01a0c1fc-b539`); Faraday seven UI fixes (`01a0c1ef-f6a5`); Aristotle bounded tests/CSS review (`01a0c23a`) |
+
+Final build: `jBCMvyfH_MA6ppWp2H8dm`; accepted source SHA-256:
+`46f590d4afd3738b285019d64f3f23b4067f7ac3d197199456dcd100db800836`.
+The 263-file manifest is `logs/auto-apply-gate/phase2-ui-rendered-build.json`.
+Parser HTTP proofs used prior build `9a_Fe5h66hiHF_Bya8uEM`, not a final-build
+rerun. Five compiled document routes are byte-identical; sorted trace lists and
+parser/native files match, with generated module-ID/order differences qualified
+in the report. Only three mobile CSS rules and test/harness files changed since
+that parser source. This is same-backend-component evidence, not live-service proof.
+
+The final verifier recorded unchanged source/build hashes, stopped sessions and
+listeners, removed synthetic scratch, no corpus creation and preserved historical
+evidence. Its initial fixture-write sandbox failure and normal no-index exit-code
+correction remain recorded; the corrected full run passed without source edits.
+No tests or builds are rerun by this commit role. Only these two acceptance docs
+change after verification; retained proof is not a docs-inclusive rerun.
+
+Phase 3 is READY, NOT STARTED. Its assigned owner must reread plan Phase 3
+(R7/R5, D4/D7), preserve authenticated ownership, versioned profile/policy
+contracts and immutable document masters, and implement pairing/worker revocation,
+fences and durable checkpoints with synthetic isolation proof. Auto Apply is not
+finished; worker, ATS, document-generation and release gates remain outstanding.
+Commit only the authorized Phase 2 surfaces plus these two docs; keep `HANDOFF.md`
+untracked and exclude logs, databases and real environment files. Record the
+commit SHA/files/exclusions in ignored `logs/auto-apply-gate/phase2-commit.json`.
+No push, main changes, deployment, real applicants, submissions, nested agents or
+`send_message_to_thread` in any namespace/wrapper.

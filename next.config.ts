@@ -6,6 +6,17 @@ const nextConfig: NextConfig = {
   // qualified with Turbopack (vercel/next.js#82881); keep both file and HTTP clients.
   // better-sqlite3 is a native addon: it must be required at runtime, not bundled.
   serverExternalPackages: ['better-sqlite3'],
+  // The parser is a static Node worker, outside webpack's module graph.
+  outputFileTracingIncludes: {
+    // libsql selects its installed native package with a computed require().
+    '/api/**': ['./node_modules/@libsql/*/package.json', './node_modules/@libsql/*/*.node'],
+    '/api/documents{,/**}': [
+      './lib/applications/documents-parse-worker.mjs',
+      './node_modules/pdf-lib/**', './node_modules/@pdf-lib/**',
+      './node_modules/pako/**', './node_modules/tslib/**',
+      './node_modules/yauzl/**', './node_modules/pend/**', './node_modules/sax/**',
+    ],
+  },
   // A stray lockfile up the directory tree (outside this repo) makes Turbopack guess the
   // wrong workspace root. Pin it explicitly so builds are deterministic regardless.
   turbopack: {

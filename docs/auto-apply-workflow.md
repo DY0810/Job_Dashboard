@@ -5,9 +5,10 @@ with Phase 0 branch/setup and baseline. This file is the operating contract;
 `auto-apply-progress.md` is the single phase/evidence ledger. No repository ECC2
 configuration or state-store scripts were found during the Phase 0 scan.
 
-Current gate: Phase 1 parent-ACCEPTED; Phase 2 READY, NOT STARTED. The current
-role is Phase 1 COMMIT ONLY from `88cea14` on `DY/workie-auto-apply`; no push.
+Current gate: Phase 2 parent-ACCEPTED; Phase 3 READY, NOT STARTED. The current
+role is Phase 2 COMMIT ONLY from `d4e3a9c` on `DY/workie-auto-apply`; no push.
 Accepted proof and historical records are in `auto-apply-progress.md`.
+Historical phase/role statements below do not authorize further implementation.
 
 ## Objective And Inputs
 
@@ -40,13 +41,15 @@ Accepted proof and historical records are in `auto-apply-progress.md`.
 - No production ingestion/mirroring, real database migrations, provisioning,
   deployment, service installation, or scheduler changes. GitHub Actions remains
   the sole production corpus writer; private state must use a separate database.
-- Phase 0 is committed/pushed as `88cea14`; Phase 1 security, quality and
-  recovered verification are parent-accepted. Commit only Phase 1 auth/storage,
-  sign-in UI, migrations, auth UI tests/config, package/lockfile, Next config,
-  `.env.example`, and these two workflow/progress documents.
+- Phase 0 is committed/pushed as `88cea14`; Phase 1 as `d4e3a9c`. Phase 2 final
+  verification and review closure are parent-accepted. Commit only Phase 2
+  `app/profile/`, profile/document/policy APIs, `lib/applications/`, private
+  document/schema/migration/metadata/test changes, encrypted drafts,
+  `tests/profile-ui/` and its config, Next trace config, package/lockfile,
+  `.env.example`, the sign-in Profile link, and these two workflow/progress docs.
   Keep `HANDOFF.md` untracked/unstaged; exclude private inputs, logs, DBs and
   all other environment files. No push: the next sync role owns branch sync.
-  Phase 2 is ready for its next assignment; worker security belongs to Phase 3.
+  Phase 3 is READY, NOT STARTED; worker security requires its own assignment.
   No main/production release or submissions; release conventions grant no authority.
 
 ## Historical Setup Gate
@@ -219,3 +222,36 @@ and applicant facts out. Stop dependent work on a failed acceptance gate or
 unclear write ownership. Future phases remain NOT STARTED until assigned.
 No shared skill extraction is justified yet; consider it only after this
 workflow is reused and its eval contract stabilizes.
+
+## Accepted Phase 2 Boundary
+
+The parent's September 20, 2026 (Pacific) acceptance follows the independent
+`logs/auto-apply-gate/phase2-final-verification.json` PASS. Do not alter its
+earlier pending-acceptance fields or historical failures. It records 1,406 tests,
+128 compiled UI identities, types/lint/whitespace and cleanup; the progress
+ledger records review closure and exact evidence qualifications.
+
+Build `jBCMvyfH_MA6ppWp2H8dm` and source
+`46f590d4afd3738b285019d64f3f23b4067f7ac3d197199456dcd100db800836`
+are frozen by `logs/auto-apply-gate/phase2-ui-rendered-build.json`.
+UI APIs are mocked. Prior compiled/isolated 21-case parser proofs use build
+`9a_Fe5h66hiHF_Bya8uEM`; final verification established matching backend
+components with qualified generated trace differences, not a parser rerun.
+This does not establish live private storage, real applicant or production proof.
+
+For this role, compare all application/test/config hashes to that manifest,
+allowing only the two acceptance docs to differ; inspect exact status/diff and
+whitespace, then stage only the authorized files. Do not rerun tests/builds or
+change code. Keep `HANDOFF.md` untracked and logs, DBs and real env files excluded.
+Use the authorized DongYeop Lee identity, a plain commit message without coauthor,
+and an ignored `logs/auto-apply-gate/phase2-commit.json` SHA/files/exclusions receipt.
+Do not refresh old manifests to imply a new docs-inclusive test run.
+
+Phase 3 remains READY, NOT STARTED. A separately assigned owner reads plan
+Phase 3 and its R7/R5/D4/D7 references, then preserves Phase 1 authentication
+and Phase 2 owner-scoped revisions, policy defaults, encrypted draft isolation
+and immutable masters while adding pairing, worker revocation, fences and
+restart/sleep recovery. Require synthetic process/transaction proof before
+acceptance; no worker, ATS submission, document generation or overall Auto Apply
+completion is claimed. No push/main/deploy, nested agents or
+`send_message_to_thread` in any namespace/wrapper.
