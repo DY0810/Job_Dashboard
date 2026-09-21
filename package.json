@@ -22,6 +22,7 @@
     "test": "vitest run",
     "worker": "node worker/main.ts",
     "test:worker": "node --test worker/*.check.mjs",
+    "test:documents": "node --test worker/documents/check.mjs",
     "test:worker:keyring": "node worker/qualify-keyring.mjs",
     "status": "node scripts/status.ts",
     "backfill:locations": "node scripts/backfill-locations.ts",

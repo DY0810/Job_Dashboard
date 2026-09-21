@@ -58,12 +58,37 @@ invocation. Provider settings UI, OmniRoute/local/BYOK adapters, live
 credential authentication, and later document/application phases remain
 outstanding.
 
+## Phase 7 Acceptance
+
+September 21, 2026: the portable document runtime is implemented on
+`DY/workie-auto-apply`. Each source gets a versioned hash/anchor/frozen-text
+manifest; edits require confirmed evidence IDs and the original master hash.
+DOCX edits preserve the OOXML package and, when a reference PDF is supplied,
+qualify the source before editing and compare the rendered output's page,
+geometry, font and link signatures. Fixed-PDF editing is intentionally limited
+to printable-ASCII literals with unchanged byte width, extracted text and font
+resources; unsupported PDFs fail closed. Active PDF links are read from parsed
+Link annotations, not raw URI text matches. Python subprocesses receive no
+ambient secrets and every attempt owns a private scratch directory.
+
+| Accepted evidence | Result / reference |
+| --- | --- |
+| Document checks | 5/5 substantive PASS; `npm run test:documents` |
+| Hostile/parallel behavior | Evidence binding, overflow/stale-master rejection and concurrent scratch isolation PASS |
+| Source checks | TypeScript, focused ESLint, Python compile and `git diff --check` PASS |
+| Environment boundary | Positive DOCX reference-render test skipped because this host's `soffice` wrapper has no LibreOffice binary; production fails closed when the renderer is unavailable |
+
+No real applicant documents, provider requests, ATS submissions, production
+writes or deployments were performed. Phase 8 remains the next implementation
+phase; this acceptance is not a claim that Auto Apply is release-ready.
+
 ## Current Phase 5 Execution
 
 Objective: finish the entire approved Auto Apply plan, not only discovery.
 Phase 4 is accepted, committed and pushed as
-`669483c3b3bec3b5b696023e2c59ae30844e5ac8`. Phase 5 and the scoped Phase 6
-provider/runtime integration are now ACCEPTED; Phases 7-12 remain not started.
+`669483c3b3bec3b5b696023e2c59ae30844e5ac8`. Phase 5, the scoped Phase 6
+provider/runtime integration, and Phase 7 are now ACCEPTED; Phases 8-12 remain
+not started.
 
 | Current owner | Native agent | Scope |
 | --- | --- | --- |
@@ -323,7 +348,7 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | parent-ACCEPTED; final verification/review closure; commit authorized, no push |
 | 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | ACCEPTED; 132 rendered cases and focused checks passed |
 | 6: Providers/cost | 1-5 | Provider: `worker/providers.ts`, settings/credential/budget modules | Mock protocols, untrusted output, reservation races, unknown cost and remote-fallback denial | NOT STARTED |
-| 7: Documents | 2, 5, 6 | Document runtime: `worker/documents/`, synthetic source/PDF fixtures and checks | Qualified PDF/DOCX, unchanged geometry/fonts/links, hostile inputs, parallel scratch isolation | NOT STARTED |
+| 7: Documents | 2, 5, 6 | Document runtime: `worker/documents/`, synthetic source/PDF fixtures and checks | Qualified PDF/DOCX, unchanged geometry/fonts/links, hostile inputs, parallel scratch isolation | ACCEPTED; pending commit |
 | 8: Greenhouse/Ashby | 1-7 | Browser/ATS: `worker/browser.ts`, `worker/screening.ts`, first adapters/fixtures | Full synthetic receipt flow, answer/intervention/restart, unknown-submit reconciliation, egress | NOT STARTED |
 | 9: Lever/Jobvite | 8 | ATS: two adapter/fixture families, support evidence | Date/control/upload regressions, exact-role receipts, unsupported-version blocks | NOT STARTED |
 | 10: Workday/Oracle/iCIMS | 9 | ATS: three adapter/fixture families, support evidence | Segmented dates, parsed-fact reconciliation, account/terms/intervention rules | NOT STARTED |
