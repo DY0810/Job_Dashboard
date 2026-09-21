@@ -3,13 +3,13 @@ import type { Page } from 'playwright';
 import type { BrowserRuntime } from '../browser.ts';
 
 export const AtsIdentitySchema = z.strictObject({
-  ats: z.enum(['greenhouse', 'ashby']), tenant: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
+  ats: z.enum(['greenhouse', 'ashby', 'lever', 'jobvite', 'workday', 'oracle', 'icims']), tenant: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
   requisition: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
 });
 export type AtsIdentity = z.infer<typeof AtsIdentitySchema>;
 export const AtsFieldSchema = z.strictObject({
   key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), label: z.string().trim().min(1).max(160),
-  kind: z.enum(['text', 'email', 'select', 'radio', 'checkbox', 'file']), required: z.boolean(),
+  kind: z.enum(['text', 'email', 'date', 'select', 'radio', 'checkbox', 'file']), required: z.boolean(),
   name: z.string().regex(/^[a-zA-Z0-9_.-]{1,100}$/).optional(),
   options: z.array(z.string().trim().min(1).max(120)).max(32).optional(),
 });
@@ -28,6 +28,7 @@ export type AtsValue = string | boolean;
 export type AtsApplication = {
   identity: AtsIdentity; company: string; role: string; applicationUrl: string;
   answers: Record<string, AtsValue>; documents: Record<string, string>;
+  accountPolicy?: 'skip_new_accounts' | 'existing_only' | 'allow_new_with_consent';
   manifestHash?: string; artifactHashes?: string[]; submissionIntentId?: string;
 };
 

@@ -15,6 +15,12 @@ import { greenhouse } from "./ats/greenhouse.ts";
 import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
 import { screenApplication } from "./screening.ts";
 import { AtsError } from "./ats/protocol.ts";
+import { AtsIdentitySchema, type AtsApplication } from "./ats/protocol.ts";
+import { lever } from "./ats/lever.ts";
+import { jobvite } from "./ats/jobvite.ts";
+import { workday } from "./ats/workday.ts";
+import { oracle } from "./ats/oracle.ts";
+import { icims } from "./ats/icims.ts";
 import type { StageDispatch } from "./runtime.ts";
 import { createJevActionSelector, type JevActionSelector } from "./jev.ts";
 import {
@@ -37,6 +43,7 @@ const ERROR_CODES = new Set([
   "PROVIDER_LEDGER_INVALID", "PROVIDER_LEDGER_LOCKED", "PROVIDER_BUDGET_EXCEEDED", "PROVIDER_NETWORK_UNAVAILABLE",
   "PROVIDER_INVALID_RESPONSE", "PROVIDER_RESPONSE_TOO_LARGE", "PROVIDER_REQUEST_TOO_LARGE", "PROVIDER_USAGE_INVALID",
   "PROVIDER_RESERVATION_MISSING", "INVALID_PROVIDER_ENDPOINT", "FETCH_UNAVAILABLE",
+  "ACCOUNT_CREATION_BLOCKED",
 ]);
 
 export function createConfiguredJevActionSelector(
@@ -69,8 +76,8 @@ export function hasVerifiedTailoredArtifact(context: Pick<ApplicationContext, "d
 export async function main(args = process.argv.slice(2)) {
   if (process.versions.node.split(".")[0] !== "22") throw new Error("NODE_22_REQUIRED");
   if (!["darwin", "linux"].includes(process.platform)) throw new Error("UNSUPPORTED_PLATFORM");
-  if (args.length !== 1 || !["pair", "start", "status"].includes(args[0])) {
-    process.stdout.write("Usage: npm run worker -- pair|start|status\n");
+  if (args.length !== 1 || !["pair", "start", "status", "stop", "recover"].includes(args[0])) {
+    process.stdout.write("Usage: npm run worker -- pair|start|status|stop|recover\n");
     return;
   }
   const allowLoopback = process.env.WORKIE_WORKER_ALLOW_LOOPBACK === "1";
@@ -108,6 +115,26 @@ export async function main(args = process.argv.slice(2)) {
       sameScope(scope, parsed.scope);
       // Local status does not consult the keychain or falsely claim online/server validity.
       process.stdout.write(JSON.stringify({ ...scope, status: parsed.status, online: "not-checked" }) + "\n");
+      return;
+    }
+    if (args[0] === "stop") {
+      const lock = await store.read("lock") as { pid?: number } | null;
+      if (!lock) {
+        process.stdout.write(JSON.stringify({ ...scope, status: "not-running" }) + "\n");
+        return;
+      }
+      if (!Number.isSafeInteger(lock.pid) || lock.pid! <= 0) throw new Error("WORKER_LOCKED");
+      try { process.kill(lock.pid!, "SIGTERM"); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw new Error("WORKER_LOCKED");
+      }
+      process.stdout.write(JSON.stringify({ ...scope, status: "stop-requested" }) + "\n");
+      return;
+    }
+    if (args[0] === "recover") {
+      const unlock = await store.lock();
+      await unlock();
+      process.stdout.write(JSON.stringify({ ...scope, status: "recovered" }) + "\n");
       return;
     }
     if (args[0] === "pair") {
@@ -163,10 +190,10 @@ export async function main(args = process.argv.slice(2)) {
           }
           throw error;
         }
-        const adapter = applicationContext.identity.ats === "greenhouse" ? greenhouse :
-          applicationContext.identity.ats === "ashby" ? ashby : undefined;
+        const adapters = { greenhouse, ashby, lever, jobvite, workday, oracle, icims } as const;
+        const adapter = adapters[applicationContext.identity.ats as keyof typeof adapters];
         if (!adapter) return { state: "blocked_unsupported" as const, reasonCode: "adapter_unavailable" };
-        const identity = applicationContext.identity as { ats: "greenhouse" | "ashby"; tenant: string; requisition: string };
+        const identity = AtsIdentitySchema.parse(applicationContext.identity);
         const requirement = screenApplication(applicationContext.facts, applicationContext.requirements);
         if (lease.state === "screening") {
           if (requirement.status === "blocked") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
@@ -197,7 +224,7 @@ export async function main(args = process.argv.slice(2)) {
           if (!localDocuments.resume || !hasVerifiedTailoredArtifact(applicationContext)) {
             return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
           }
-          const application = {
+          const application: AtsApplication = {
             identity, company: applicationContext.company, role: applicationContext.role,
             applicationUrl: applicationContext.applicationUrl, answers: applicationContext.answers, documents: localDocuments,
             manifestHash: applicationContext.manifestHash!, artifactHashes: applicationContext.artifactHashes,

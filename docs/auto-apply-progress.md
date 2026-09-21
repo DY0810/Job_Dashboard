@@ -12,12 +12,13 @@ The user saved the key in the local login Keychain on September 21, 2026.
 An exact metadata-only lookup succeeded for service `Workie TypeSafe API`,
 account `dongyeop0810@gmail.com`, in `~/Library/Keychains/login.keychain-db`.
 No password retrieval flags were used; no key value was read or displayed.
-The item exists, but its contents and TypeSafe authentication are not yet tested.
-The default macOS provider read now uses the shell-free `/usr/bin/security`
-command with a five-second timeout; the first non-interactive read returned
-`PROVIDER_CREDENTIAL_UNAVAILABLE` without making a provider request, so no
-TypeSafe budget was spent. A foreground macOS Keychain authorization is still
-needed before live authentication can be verified.
+The item exists and the local worker reads it through the shell-free
+`/usr/bin/security` command with a five-second timeout. A foreground synthetic
+canary completed on September 21, 2026 and returned `jev-1.13.0` with 401 input
+tokens and 32 output tokens. Its state and labels were synthetic; no applicant,
+resume, filled identity value or employer data crossed the provider boundary.
+This verifies the configured credential path and provider contract only, not a
+production run or an employer submission.
 The Phase 6 provider helper and local worker path now use this exact
 service/account. The worker invokes Jev only when the owner-scoped policy
 explicitly enables `typesafe_jev`, refreshes that policy before each decision,
@@ -56,12 +57,11 @@ can select only the current observed actions.
 | Provider checks | 9/9 PASS; `worker/providers.check.mjs` |
 | Full worker gate | 57/57 PASS on pinned Node 22.23.2 |
 | Source checks | TypeScript, focused ESLint and `git diff --check` PASS |
-| Network scope | Synthetic mock only; no TypeSafe request, production database write, ATS submission, SMTP send or deployment |
+| Network scope | Synthetic TypeSafe canary only; no applicant/employer data, production database write, ATS submission, SMTP send or deployment |
 
 This acceptance covers the Jev decision-provider slice and its local worker
-invocation. Provider settings UI, OmniRoute/local/BYOK adapters, live
-credential authentication, and later document/application phases remain
-outstanding.
+invocation. OmniRoute/local/BYOK adapters, live employer-form qualification and
+live submission remain outstanding.
 
 ## Phase 7 Acceptance
 
@@ -113,13 +113,34 @@ This is not live Greenhouse/Ashby support or release authorization. The browser
 runtime fails closed when its browser binary or approved origin is unavailable,
 and the current worker cannot advance from tailoring with a master resume alone.
 
+## Controlled ATS And Operations Acceptance
+
+September 21, 2026: the guarded runtime surfaces on `DY/workie-auto-apply` now
+cover five additional ATS families, private application/receipt visibility,
+settings and worker recovery controls. Every adapter uses observed accessible
+controls, reconciles uploaded documents and fields, binds the exact role/tenant
+receipt, and fails closed for unsupported account creation or browser egress.
+
+| Accepted evidence | Result / reference |
+| --- | --- |
+| Existing ATS fixtures | 4/4 PASS; `npm run test:ats` |
+| Additional ATS fixtures | 2/2 PASS; `npm run test:e2e` covers Lever, Jobvite, Workday, Oracle and iCIMS |
+| Source/runtime checks | Node 22 TypeScript, lint, build, whitespace, worker and document checks PASS; lint retains two pre-existing warnings |
+| Scope | Local synthetic forms and provider canary only; no live employer read, application submission, production write or deployment |
+
+This is an implementation and verification checkpoint, not universal ATS
+support or release authorization. Live tenant qualification, CAPTCHA/MFA/login
+intervention, real receipt delivery and a user-controlled production pilot are
+still required.
+
 ## Current Phase 5 Execution
 
 Objective: finish the entire approved Auto Apply plan, not only discovery.
 Phase 4 is accepted, committed and pushed as
 `669483c3b3bec3b5b696023e2c59ae30844e5ac8`. Phase 5, the scoped Phase 6
-provider/runtime integration, and Phase 7 are now ACCEPTED; Phases 8-12 remain
-not started.
+provider/runtime integration, and Phase 7 are accepted. Controlled Phase 8-11
+slices and the Phase 12 verification workflow are present on the current branch;
+production release authorization remains outstanding.
 
 | Current owner | Native agent | Scope |
 | --- | --- | --- |
@@ -378,17 +399,18 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | ACCEPTED; committed/pushed as 53e96e3 |
 | 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | parent-ACCEPTED; final verification/review closure; commit authorized, no push |
 | 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | ACCEPTED; 132 rendered cases and focused checks passed |
-| 6: Providers/cost | 1-5 | Provider: `worker/providers.ts`, settings/credential/budget modules | Mock protocols, untrusted output, reservation races, unknown cost and remote-fallback denial | NOT STARTED |
+| 6: Providers/cost | 1-5 | Provider: `worker/providers.ts`, settings/credential/budget modules | Mock protocols, untrusted output, reservation races, unknown cost and remote-fallback denial | ACCEPTED; Jev slice and synthetic canary |
 | 7: Documents | 2, 5, 6 | Document runtime: `worker/documents/`, synthetic source/PDF fixtures and checks | Qualified PDF/DOCX, unchanged geometry/fonts/links, hostile inputs, parallel scratch isolation | ACCEPTED; pending commit |
-| 8: Greenhouse/Ashby | 1-7 | Browser/ATS: `worker/browser.ts`, `worker/screening.ts`, first adapters/fixtures | Full synthetic receipt flow, answer/intervention/restart, unknown-submit reconciliation, egress | IN PROGRESS; local fixture slice |
-| 9: Lever/Jobvite | 8 | ATS: two adapter/fixture families, support evidence | Date/control/upload regressions, exact-role receipts, unsupported-version blocks | NOT STARTED |
-| 10: Workday/Oracle/iCIMS | 9 | ATS: three adapter/fixture families, support evidence | Segmented dates, parsed-fact reconciliation, account/terms/intervention rules | NOT STARTED |
-| 11: Applications/operations | 1-10 | UI/integration: applications/settings/navigation, worker commands and operating docs | Responsive light/dark/keyboard, principal-switch/cache, persisted controls, legacy regressions | NOT STARTED |
-| 12: Release gate | 0-11 | Verification/docs: `tests/auto-apply/`, verify CI, support/config/recovery/rollback docs | All ten acceptance items; full worker/document/browser tests; independent release authorization | NOT STARTED |
+| 8: Greenhouse/Ashby | 1-7 | Browser/ATS: `worker/browser.ts`, `worker/screening.ts`, first adapters/fixtures | Full synthetic receipt flow, answer/intervention/restart, unknown-submit reconciliation, egress | ACCEPTED; synthetic fixture slice |
+| 9: Lever/Jobvite | 8 | ATS: two adapter/fixture families, support evidence | Date/control/upload regressions, exact-role receipts, unsupported-version blocks | ACCEPTED; synthetic fixture slice |
+| 10: Workday/Oracle/iCIMS | 9 | ATS: three adapter/fixture families, support evidence | Segmented dates, parsed-fact reconciliation, account/terms/intervention rules | ACCEPTED; synthetic fixture slice |
+| 11: Applications/operations | 1-10 | UI/integration: applications/settings/navigation, worker commands and operating docs | Responsive light/dark/keyboard, principal-switch/cache, persisted controls, legacy regressions | ACCEPTED; local/private surfaces |
+| 12: Release gate | 0-11 | Verification/docs: `tests/auto-apply/`, verify CI, support/config/recovery/rollback docs | All ten acceptance items; full worker/document/browser tests; independent release authorization | CHECKPOINT PASSED; release authorization outstanding |
 
 Jev remains an optional typed provider in Phase 6 and is not a release
-dependency. Seven ATS application families and both document paths remain
-UNIMPLEMENTED/UNVERIFIED.
+dependency. All seven listed ATS families are fixture-tested, but none is
+live-read-tested or live-submit-verified; both document paths still require a
+real persisted tailored artifact before an application can advance.
 Package/lockfile, private schema, shared UI headers and CI have one integration
 owner at a time. The parent operator assigns independent verification,
 anti-pattern and code-quality reviewers after each implementation handoff.

@@ -39,6 +39,10 @@ export function createJevActionSelector(provider: JevDecisionProvider): JevActio
   return async (input, options = {}) => {
     const selection = JevActionSelectionSchema.parse(input);
     const ids = selection.actions.map((action) => action.id);
+    if (ids.length === 1) {
+      if (options.isCurrent && !options.isCurrent(ids)) throw new ProviderError("PROVIDER_DECISION_STALE");
+      return { actionId: ids[0], confidence: 1, probabilities: { [ids[0]]: 1 }, model: "deterministic", usage: { input_tokens: 0, output_tokens: 0 } };
+    }
     const criteria = Object.fromEntries(selection.actions.map((action) => [action.id, action.label]));
     const result = await provider.evaluate(selection.state, {
       select_action: {

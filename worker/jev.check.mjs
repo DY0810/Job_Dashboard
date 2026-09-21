@@ -61,3 +61,11 @@ test("selection input rejects action lists that do not match the observed state"
   const select = createJevActionSelector({ evaluate: async () => result });
   await assert.rejects(select({ state, actions: [{ id: "run_shell", label: "Untrusted action" }] }), /State actions must match/);
 });
+
+test("a single observed action is deterministic and does not spend provider budget", async () => {
+  let called = false;
+  const select = createJevActionSelector({ evaluate: async () => { called = true; return result; } });
+  const decision = await select({ state: { ...state, observedActions: ["fill_name"] }, actions: [actions[0]] });
+  assert.deepEqual(decision, { actionId: "fill_name", confidence: 1, probabilities: { fill_name: 1 }, model: "deterministic", usage: { input_tokens: 0, output_tokens: 0 } });
+  assert.equal(called, false);
+});

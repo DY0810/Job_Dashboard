@@ -226,3 +226,32 @@ test("actual CLI rejects piped grants without registering or writing a credentia
   assert.match(result.stderr, /TTY_REQUIRED/);
   assert.deepEqual(result.vault.items, []);
 });
+
+test("stop requests the running worker and recover clears only a dead lock", { timeout: 10000 }, async t => {
+  const scope = await fixture(t, async (req, res) => {
+    const input = await body(req);
+    if (req.url === "/api/worker/poll") {
+      PollRequestSchema.parse(input);
+      return json(res, PollResponseSchema, { ...clock(), lease: null });
+    }
+    assert.fail(`Unexpected worker request: ${req.url}`);
+  });
+  const seeded = await seed(scope);
+  let stopPromise;
+  const started = cli(t, scope, "start", { items: seeded.items }, (output) => {
+    if (!stopPromise && output.includes('"idle"')) stopPromise = cli(t, scope, "stop");
+  });
+  for (let attempt = 0; !stopPromise && attempt < 200; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
+  assert(stopPromise, "stop command was not started");
+  const stop = await stopPromise;
+  const result = await started;
+  assert.equal(stop.code, 0, stop.stderr);
+  assert.equal(JSON.parse(stop.stdout).status, "stop-requested");
+  assert.equal(result.code, 0, result.stderr);
+
+  await seeded.store.write("lock", { pid: 999999999, nonce: "dead" });
+  const recovered = await cli(t, scope, "recover");
+  assert.equal(recovered.code, 0, recovered.stderr);
+  assert.equal(JSON.parse(recovered.stdout).status, "recovered");
+  assert.equal(await seeded.store.read("lock"), null);
+});

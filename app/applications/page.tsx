@@ -19,6 +19,7 @@ export default function ApplicationsPage() {
         <Link href="/profile" prefetch={false}>Profile</Link>
         <span aria-current="page">Applications</span>
         <Link href="/workers" prefetch={false}>Workers</Link>
+        <Link href="/settings" prefetch={false}>Settings</Link>
         <Link href="/sign-in" prefetch={false}>Account</Link>
       </nav>
       <ThemeToggle />

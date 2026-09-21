@@ -5,18 +5,16 @@ Codex session. Closing a client does not stop it. Host sleep or disconnect is
 not continuous operation: a lost heartbeat, unsafe clock, expired lease, or
 revocation closes mutation authority. Nothing is installed as a service.
 
-The worker currently has a qualified synthetic Greenhouse/Ashby browser slice,
-an owner-approved TypeSafe Jev action selector, and immutable PDF/DOCX artifact
+The worker currently has qualified synthetic Greenhouse/Ashby, Lever, Jobvite,
+Workday, Oracle Candidate Experience and iCIMS browser fixtures, an
+owner-approved TypeSafe Jev action selector, and immutable PDF/DOCX artifact
 verification. A master resume alone is not treated as tailored: the application
 stays at `needs_document` until a real edited artifact and verification manifest
 are persisted. Jev only chooses among current redacted action IDs; it does not
-write answers, edit documents, submit forms, or authorize an action.
-
-Lever, Jobvite, Workday, Oracle Candidate Experience and iCIMS identities are
-recognized during discovery but intentionally stop at `blocked_unsupported` /
-`adapter_unavailable`. They do not fall through to generic browser automation.
-The Greenhouse/Ashby fixtures are synthetic; live employer forms, provider
-requests, and real application submissions remain unverified.
+write answers, edit documents, submit forms, or authorize an action. iCIMS
+account creation and unapproved browser egress fail closed. All ATS fixtures are
+synthetic; live employer forms, provider requests and real submissions remain
+unverified.
 
 ## Runtime And Credentials
 
@@ -46,8 +44,10 @@ different purpose reference and never enter stage inputs.
 
 The TypeSafe key is read only by the paired local worker from the exact
 `Workie TypeSafe API` / `dongyeop0810@gmail.com` keychain entry when Jev is
-enabled. Keychain qualification loads the native binding only; it does not prove
-that the entry can be read or that a live provider request will authenticate.
+enabled. On September 21, 2026, a live synthetic canary read that entry and
+received `jev-1.13.0` with 401 input tokens and 32 output tokens; its state and
+labels were synthetic and no applicant, resume or employer data was sent. This
+does not qualify a production run or any employer submission.
 
 Official sources checked:
 
@@ -74,6 +74,24 @@ npm run worker -- start
 `start` runs in the foreground of that terminal. Closing the Workie page or
 another client is independent; closing the worker's own terminal may stop it.
 The CLI does not detach itself, install a daemon, or provision an always-on host.
+`stop` sends a graceful signal to the PID recorded by the private worker lock;
+it does not cancel an external action already in flight. `recover` acquires and
+releases the same lock so an abandoned dead-process lock can be cleaned up;
+an active or ambiguous lock fails closed.
+
+For a local install, use Node 22 and keep the checkout separate from the worker
+data directory:
+
+```sh
+nvm use 22
+npm ci
+export WORKIE_WORKER_DIRECTORY="$HOME/.local/share/workie-worker"
+npm run worker -- status
+npm run worker -- start
+# another terminal, same non-secret environment:
+npm run worker -- stop
+npm run worker -- recover
+```
 
 Create the grant in authenticated Workie, then paste it into the CLI's hidden
 TTY stdin prompt. Never put the grant in a shell command, URL, environment
@@ -200,7 +218,24 @@ MockTimers in one test; process heartbeats and suspension use real time.
 `test:worker:keyring` only loads the native binding and inspects its declared
 export/method surface. No entry constructor or credential operation runs.
 The scripts do not prove real keychain persistence, Linux/Windows qualification,
-24/7 laptop availability, live TypeSafe authentication, or any live submission.
+24/7 laptop availability or any live employer submission. The separate live
+synthetic canary above is not a substitute for a configured production pilot.
+
+## Backup, Rollback And Retention
+
+Back up only the private worker directory and the matching OS-keychain entries;
+never copy the keychain secret into a dotfile, archive, shell history or cloud
+drive. Keep one encrypted offline backup before upgrades and delete old backups
+according to the host's retention policy. A restored directory must stay paired
+to the same origin, owner and worker identity; otherwise re-pair after revoking
+the old worker.
+
+To roll back the application safely, disable the owner policy in Workie, stop
+the worker, preserve the directory and private database, then run the previous
+worker version with the same data directory. Rollback must not delete questions,
+artifacts, submission intents or receipts. A `submission_unknown` record is
+reconciled read-only before any future safe work; it is never submitted again
+just because the worker version changed.
 
 ## Private Operations View
 

@@ -113,9 +113,12 @@ export default function Applications() {
         {!applications.length ? <p className={styles.muted}>Start a run from Workers after enabling a policy.</p> :
           <ul className={styles.applications} aria-label="Application history">
             {applications.map((app) => <li key={app.id}>
-              <div className={styles.row}><strong>{app.ats} / {app.tenant} / {app.requisition}</strong><span>{label(app.state)}</span></div>
+              <div className={styles.row}><strong>{app.company ?? 'Company pending official context'}</strong><span>{label(app.state)}</span></div>
+              <div className={styles.row}><span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>{app.ats} / {app.tenant}</span></div>
               <div className={styles.row}><span className={styles.muted}>Application {short(app.id)} / run {short(app.runId)} / revision {app.revision}</span>
                 {app.checkpoint && <span className={styles.muted}>Checkpoint: {app.checkpoint.stage}</span>}</div>
+              <div className={styles.row}><span className={styles.muted}>Provider: worker-local configuration / cost: not reported</span>
+                {app.receiptId && <span>Receipt {app.receiptId}{app.submittedAt ? ` / ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
               {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
             </li>)}
           </ul>}

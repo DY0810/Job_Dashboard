@@ -21,3 +21,23 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run build
+
+  auto-apply-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install isolated Chromium for synthetic browser fixtures
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:worker
+      - run: npm run test:worker:keyring
+      - run: npm run test:documents
+      - run: npm run test:ats
+      - run: npm run test:e2e

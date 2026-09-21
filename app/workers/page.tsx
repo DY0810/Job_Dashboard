@@ -19,6 +19,7 @@ export default function WorkersPage() {
         <Link href="/profile" prefetch={false}>Profile</Link>
         <Link href="/applications" prefetch={false}>Applications</Link>
         <span aria-current="page">Workers</span>
+        <Link href="/settings" prefetch={false}>Settings</Link>
         <Link href="/sign-in" prefetch={false}>Account</Link>
       </nav>
       <ThemeToggle />

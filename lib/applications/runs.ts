@@ -1,7 +1,7 @@
 import 'server-only';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
-import { applicationRuns, applications, discoveryManifests, workers } from '../private-db/schema.ts';
+import { applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, workers } from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
 import { isTerminalState } from './state.ts';
 import {
@@ -16,8 +16,11 @@ import {
 
 export const runSummary = ({ id, workerId, revision, state, createdAt }: typeof applicationRuns.$inferSelect): Run =>
   ({ id, workerId, revision, state, createdAt });
-export const applicationSummary = ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint }: ApplicationRow): ApplicationSummary =>
-  ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint });
+export const applicationSummary = ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint }: ApplicationRow,
+  meta: { company?: string | null; role?: string | null; receiptId?: string | null; submittedAt?: number | null } = {}): ApplicationSummary =>
+  ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint,
+    company: meta.company ?? null, role: meta.role ?? null, receiptId: meta.receiptId ?? null, submittedAt: meta.submittedAt ?? null,
+    provider: null, costUsd: null });
 
 export async function createRun(db: PrivateDb, ownerId: string, input: RunCreate, options: WorkerOptions = {}): Promise<Run> {
   const command = RunCreateSchema.parse(input);
@@ -45,8 +48,15 @@ export async function listRuns(db: PrivateDb, ownerId: string): Promise<RunList>
     ownerId,
     runs: (await tx.select().from(applicationRuns).where(eq(applicationRuns.ownerId, ownerId))
       .orderBy(desc(applicationRuns.createdAt)).limit(100)).map(runSummary),
-    applications: (await tx.select().from(applications).where(eq(applications.ownerId, ownerId))
-      .orderBy(desc(applications.createdAt)).limit(100)).map(applicationSummary),
+    applications: (await tx.select({ app: applications, submission: applicationSubmissions, receipt: applicationReceipts })
+      .from(applications)
+      .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
+      .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)))
+      .where(eq(applications.ownerId, ownerId)).orderBy(desc(applications.createdAt)).limit(100))
+      .map(({ app, submission, receipt }) => applicationSummary(app, {
+        company: submission?.company ?? receipt?.company, role: submission?.role ?? receipt?.role,
+        receiptId: receipt?.receiptId, submittedAt: receipt?.submittedAt,
+      })),
   }));
 }
 export async function releaseRunApplications(tx: WorkerTx, ownerId: string, runId: string, state: 'paused' | 'stopped') {

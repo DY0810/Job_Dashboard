@@ -71,6 +71,9 @@ export const RunSchema = z.strictObject({
 export const ApplicationSummarySchema = z.strictObject({
   id: uuid, runId: uuid, workerId: uuid, ats: identity, tenant: identity, requisition: identity,
   state: ApplicationStateSchema, revision, reasonCode: name.nullable(), checkpoint: CheckpointSchema.nullable(),
+  company: z.string().trim().min(1).max(200).nullable().optional(), role: z.string().trim().min(1).max(300).nullable().optional(),
+  receiptId: z.string().regex(/^[A-Za-z0-9_-]{1,120}$/).nullable().optional(), submittedAt: timestamp.nullable().optional(),
+  provider: z.string().trim().min(1).max(100).nullable().optional(), costUsd: z.number().finite().nonnegative().nullable().optional(),
 });
 export const RunListSchema = z.strictObject({
   ownerId: z.string(), runs: z.array(RunSchema), applications: z.array(ApplicationSummarySchema),
