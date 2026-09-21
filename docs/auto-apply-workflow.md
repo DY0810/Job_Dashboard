@@ -5,6 +5,10 @@ with Phase 0 branch/setup and baseline. This file is the operating contract;
 `auto-apply-progress.md` is the single phase/evidence ledger. No repository ECC2
 configuration or state-store scripts were found during the Phase 0 scan.
 
+Current gate: Phase 1 parent-ACCEPTED; Phase 2 READY, NOT STARTED. The current
+role is Phase 1 COMMIT ONLY from `88cea14` on `DY/workie-auto-apply`; no push.
+Accepted proof and historical records are in `auto-apply-progress.md`.
+
 ## Objective And Inputs
 
 - Implement only the phase assigned by the parent operator, prove it with
@@ -36,16 +40,20 @@ configuration or state-store scripts were found during the Phase 0 scan.
 - No production ingestion/mirroring, real database migrations, provisioning,
   deployment, service installation, or scheduler changes. GitHub Actions remains
   the sole production corpus writer; private state must use a separate database.
-- Phase 0 independent verification and review closure are parent-accepted.
-  The parent explicitly authorized only the four-file commit:
-  `plans/auto-apply.md`, `docs/auto-apply-progress.md`,
-  `docs/auto-apply-workflow.md`, and `scripts/auto-apply-gate.mjs`.
-  Keep `HANDOFF.md` untracked/unstaged; never stage private inputs, logs, DBs
-  or environment files. No push, production release or submissions.
-  Phase 1 is READY, NOT STARTED; implementation requires a separate assignment.
-  Repository release conventions do not themselves authorize a release.
+- Phase 0 is committed/pushed as `88cea14`; Phase 1 security, quality and
+  recovered verification are parent-accepted. Commit only Phase 1 auth/storage,
+  sign-in UI, migrations, auth UI tests/config, package/lockfile, Next config,
+  `.env.example`, and these two workflow/progress documents.
+  Keep `HANDOFF.md` untracked/unstaged; exclude private inputs, logs, DBs and
+  all other environment files. No push: the next sync role owns branch sync.
+  Phase 2 is ready for its next assignment; worker security belongs to Phase 3.
+  No main/production release or submissions; release conventions grant no authority.
 
-## Repeatable Checks
+## Historical Setup Gate
+
+This unchanged Phase 0 runner is NOT the accepted combined Phase 1 invocation.
+Its deny-loopback tests cannot run the HTTP fixture, and its `full` command
+still requires future scripts. The qualified Phase 1 commands are below.
 
 The plain Node runner uses fixed command/argv lists with `shell: false`. It
 prints each package script body and real exit/signal result, records raw output
@@ -138,6 +146,60 @@ mkdir -p logs/auto-apply-gate/home logs/auto-apply-gate/tmp logs/auto-apply-gate
   /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny file-write*) (allow file-write* (subpath "/Users/dyl/.codex/worktrees/workie-auto-apply/Workie") (literal "/dev/null"))' \
   npm ci
 ```
+
+## Accepted Phase 1 Checks
+
+Authoritative proof: `logs/auto-apply-gate/phase1-recovered-NfBWjH/final-report.json`;
+exact argv, sanitized environment and sandbox policies: the same directory's
+`commands-results.json`. Use Node `v22.23.2` and the exact lockfile. Phase 1
+added dependencies/scripts; the Phase 0 installation description above is historical.
+
+| Check | Actual invocation / boundary |
+| --- | --- |
+| Full current Vitest inventory | `npm test -- --passWithNoTests=false --reporter=default --reporter=json --outputFile=<scratch>/full-test.json`: 1,311 tests, 46 files, no skips; qualified loopback HTTP allowed, external TEST-NET socket denied with EPERM |
+| Types / lint | `node node_modules/typescript/bin/tsc --noEmit --incremental false`; `npm run lint` |
+| Build | `npm run build`: Next 15 default webpack, no Turbopack flag; normal network for public Google Fonts, no private config |
+| UI report negatives | `node tests/auth-ui/validate-report.mjs --self-test`: 12 malformed/incomplete reports plus actual `.only` rejection |
+| Rendered UI | `node tests/auth-ui/run.mjs`: actual Playwright runner, 14 cases x 2 projects; simulated auth, ephemeral loopback Next server, children stopped |
+
+The UI runner requires the completed `.next` build, matching
+`logs/auto-apply-gate/phase1-build-ready.json`, source-input hashes and matching
+Chromium at `logs/auto-apply-gate/playwright`. It rejects stale source/build
+markers and local `.env` files. These ignored artifacts are not shipped in Git;
+after source changes, rebuild and publish matching proof before rerunning it.
+The acceptance-doc edits also change the recorded source inventory; retained
+proof establishes the accepted application revision, not a fresh docs-inclusive run.
+Loopback permission is host-wide, not per-port isolation; use only owned fixture
+ports, never personal local services. This does not relax the old setup runner.
+Missing `test:worker`, `test:documents`, `test:e2e` remain NOT RUN; the auth UI
+runner is not a substitute for those future suites. Cloud DB/SMTP are unverified.
+
+## Phase 2 Integration Contracts
+
+- Private storage: `openPrivateDb(config, guards?)`, lazy `getPrivateDb()`,
+  async `PrivateDb` with `$client.close()`, explicit `migratePrivateDb(db)`.
+  Imports/get/open never migrate; no corpus fallback. Schema exports `user`,
+  `session`, `account`, `verification`, `rateLimit` match pinned Better Auth
+  1.7.5; `drizzle-private/0000_private_auth.sql` is the initial migration.
+- `npm run db:private:generate` generates only, without DB credentials.
+  `npm run db:private:migrate` invokes Node with `--conditions=react-server`;
+  explicit private URL is required, failures are sanitized, client closes.
+  Keep async transaction semantics, separate database identity, local `0600`
+  files and private parent directory. Vercel requires HTTPS; remote TLS targets
+  require a private token. No real migration is authorized by this contract.
+- Auth: `getAuth()` is lazy; `requireApplicant(requestOrHeaders)` returns
+  `{ ownerId, email, name }` or a denial `Response`. Derive every private DAL
+  owner from this guard, never client input. `lookupApplicant` uses the SDK
+  HTTP limiter with cookie cache/refresh disabled and checks current allowlist,
+  verified email and matching session owner. Missing session is 401, forbidden
+  access 403, invalid/unavailable configuration 503.
+- `/api/auth/applicant` returns that guarded identity; browser auth actions use
+  `handleAuthRequest`'s endpoint allowlist, same-origin mutation and bounded JSON
+  guards. Preserve private/no-store responses and upstream deletion cookies.
+  Reset invalidates sessions; do not reintroduce dynamic reset callback buckets
+  or the removed revoke-other-sessions endpoint. Mail uses the explicitly
+  selected sender and duration-bound Next `after()`, not a durable SMTP outbox.
+  Phase 3 must implement worker revocation without blocking session deletion.
 
 ## Lanes And Handoff
 

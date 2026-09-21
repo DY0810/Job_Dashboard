@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --turbopack -H 127.0.0.1",
-    "build": "next build --turbopack",
+    "dev": "next dev -H 127.0.0.1",
+    "build": "next build",
     "start": "next start -H 127.0.0.1",
     "lint": "eslint",
     "ingest": "node scripts/ingest.ts",
@@ -17,6 +17,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
+    "db:private:generate": "drizzle-kit generate --config=drizzle-private.config.ts",
+    "db:private:migrate": "node --conditions=react-server scripts/private-migrate.ts",
     "test": "vitest run",
     "status": "node scripts/status.ts",
     "backfill:locations": "node scripts/backfill-locations.ts",
@@ -25,7 +27,9 @@
     "claim:refresh": "node --env-file-if-exists=.env.local scripts/claim-refresh.ts"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "1.7.5",
     "@libsql/client": "^0.17.4",
+    "better-auth": "1.7.5",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
     "next": "15.5.25",
@@ -33,10 +37,12 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "rss-parser": "^3.13.0",
+    "server-only": "0.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",

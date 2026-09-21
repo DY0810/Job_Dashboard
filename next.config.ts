@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 import path from "node:path";
 
 const nextConfig: NextConfig = {
+  // Next 15 dev/build use default webpack until libSQL native-loader tracing is
+  // qualified with Turbopack (vercel/next.js#82881); keep both file and HTTP clients.
   // better-sqlite3 is a native addon: it must be required at runtime, not bundled.
   serverExternalPackages: ['better-sqlite3'],
   // A stray lockfile up the directory tree (outside this repo) makes Turbopack guess the
@@ -18,6 +20,14 @@ const nextConfig: NextConfig = {
   async headers() {
     const edge = { key: 'Vercel-CDN-Cache-Control', value: 'max-age=300, stale-while-revalidate=1500' };
     return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+        ],
+      },
       { source: '/', headers: [edge] },
       { source: '/api/postings/:id', headers: [edge] },
     ];

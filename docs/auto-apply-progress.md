@@ -1,14 +1,13 @@
 # Auto Apply Progress
 
-Updated: September 20, 2026.
-Current gate: Phase 0 ACCEPTED by the parent after independent verification
-and review closure. Phase 1 is READY, NOT STARTED.
-Parent accepted 1,246 tests, typecheck/lint, harness self-test, focused 24 tests,
-and an actual production build with network enabled solely to obtain normal
-public Google Fonts. The offline baseline still FAILS on the denied Archivo
-font download by design; future full suites remain NOT RUN because absent.
-Only the four-file Phase 0 commit is authorized. No push, deployment,
-production enablement, live pilot or employer submission is authorized.
+Execution began: September 20, 2026.
+Current gate: Phase 1 ACCEPTED by explicit parent authorization after independent
+security/quality PASS and recovered final verification PASS. Phase 2 READY,
+NOT STARTED. Phase 0 was committed and pushed as `88cea14`.
+This role may commit Phase 1 only; NO PUSH (the next sync role owns that step).
+Main changes, deployment, production enablement, live pilots and employer
+submissions are not authorized. Historical pending/failure statements below
+remain evidence of earlier attempts, not current status.
 
 ## Baseline And Source Integrity
 
@@ -44,8 +43,8 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | Phase | Dependencies | Implementation role / write surface | Required gate | Status |
 | --- | --- | --- | --- | --- |
 | 0: Discovery/setup | None | Branch/Setup: copied inputs, two workflow docs, `scripts/auto-apply-gate.mjs` | Source equality, exact install, baseline, harness self-check, independent review | ACCEPTED; qualified build passed; offline font-fetch limitation retained |
-| 1: Private storage/auth | 0 | Auth/storage: `lib/private-db/`, `drizzle-private/`, private Drizzle config, auth/access modules/routes | Two-user isolation, real async scratch transactions/migrations, auth/revocation/mail sink, corpus-cache separation | READY; NOT STARTED |
-| 2: Profile/policy/documents | 1 | Profile/documents: `app/profile/`, profile schemas, document/policy routes and private schema | All sections, revision/draft isolation, hostile upload checks, immutable masters, disabled policy default | NOT STARTED |
+| 1: Private storage/auth | 0 | Auth/storage: `lib/private-db/`, `drizzle-private/`, private Drizzle config, auth/access modules/routes | Two-user isolation, real async scratch transactions/migrations, auth/revocation/mail sink, corpus-cache separation | ACCEPTED; recovered proof below; commit authorized, no push |
+| 2: Profile/policy/documents | 1 | Profile/documents: `app/profile/`, profile schemas, document/policy routes and private schema | All sections, revision/draft isolation, hostile upload checks, immutable masters, disabled policy default | READY, NOT STARTED; next implementation assignment |
 | 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | NOT STARTED |
 | 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | NOT STARTED |
 | 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | NOT STARTED |
@@ -158,7 +157,9 @@ No schema/protocol/support-matrix implementation version exists yet.
 Existing test output labels such as `production-link-audit` and
 `refresh-request-done` are mocked fixture events, not live operations.
 
-## Next-Step Contract
+## Historical Phase 0 Next-Step Contract
+
+Superseded by the current header and accepted Phase 1 proof below.
 
 1. Parent acceptance and review closure are complete. The authorized commit
    contains only `plans/auto-apply.md`, `docs/auto-apply-progress.md`,
@@ -238,7 +239,7 @@ Parent Acceptance.
   package/lockfile and preserved-input hashes unchanged. No app edits, nested
   agents, cross-task messages, commits, pushes, credentials or production actions.
 
-## Parent Acceptance
+## Historical Phase 0 Parent Acceptance
 
 - September 20, 2026: parent independently accepted Phase 0 after verification
   and review closure; Phase 1 is READY, NOT STARTED.
@@ -258,3 +259,257 @@ Parent Acceptance.
 - Parent explicitly authorized the four-file commit listed above on
   `DY/workie-auto-apply`, from HEAD
   `a68c3fadeca161c6d44ca337ba073ffea50a9e13`; no push.
+
+## Phase 1 Lane A: Private Storage
+
+September 20, 2026: explicit Phase 1 lane-A assignment implemented; independent
+parent acceptance remains pending. Starting/ending HEAD:
+`88cea14e13865474a248ce8673befc1be9d2f394` on `DY/workie-auto-apply`.
+Historical Phase 0 status/authorization text above is not rewritten by this lane.
+
+- Owned changes: `lib/private-db/{config,index,schema}.ts`, storage/HTTP tests;
+  `drizzle-private/0000_private_auth.sql` and metadata;
+  `drizzle-private.config.ts`, `scripts/private-migrate.ts`, package/lockfile,
+  `.env.example`, this lane-A record, and ignored readiness/evidence files.
+- APIs match the agreed contract: `PrivateDb` has the async libSQL API and
+  `$client.close()`; `openPrivateDb(config, guards?)`, lazy `getPrivateDb()`,
+  explicit async `migratePrivateDb(db)`, sanitized `PrivateConfigurationError`.
+  Schema exports `user`, `session`, `account`, `verification`, `rateLimit`.
+- Explicit private config in local/hosted modes; no corpus fallback. Validation
+  precedes any client/file creation, resolving symlinks, dangling links,
+  hard-link identity, case aliases and symlink/`..` corpus paths. HTTPS/libSQL
+  aliases of the corpus host are rejected. URLs cannot carry embedded tokens,
+  credentials, fragments or TLS-disable query parameters. Plain HTTP is only
+  accepted for explicit numeric-loopback fixtures; Vercel requires HTTPS.
+  Remote TLS targets require `WORKIE_PRIVATE_DATABASE_AUTH_TOKEN`.
+- New local files use `0600`; existing group/other-readable files are rejected.
+  Operators must select a private parent directory. Import/get/open never
+  migrate. Only `db:private:migrate` opens a configured target and migrates it;
+  `db:private:generate` has no database credentials and only generates files.
+- Auth dates use `timestamp_ms`, emailVerified is boolean, lastRequest is a
+  plain numeric integer; string IDs, session/email/rate-key uniqueness,
+  cascading parent FKs and boolean/rate-number checks are active.
+  Verification identifiers have a nonunique index. No future worker tables/hooks.
+- Sources read: architecture and Phase 1 only; R1/R5/R6 corpus drivers,
+  migrations, push/pull and refresh-cache workflow; D1/D2 v1.7.5 Drizzle/rate
+  docs; pinned official CLI `auth-schema-sqlite.txt` generated snapshot and
+  generator; installed Better Auth `getAuthTables`, adapter types/source,
+  Drizzle libSQL driver/migrator and libSQL/Hrana sources. The schema adapts the
+  pinned snapshot's core fields, with runtime date defaults and numeric
+  rate-limit fields from installed types. Drizzle Kit generated SQL/metadata;
+  no Better Auth CLI import of live app configuration was performed.
+- Exact pinned installs used the workflow's isolated HOME/npm config/cache and
+  existing Node `v22.23.2`: scoped `npm install --save-exact better-auth@1.7.5
+  @better-auth/drizzle-adapter@1.7.5 server-only@0.0.1`. npm initially hoisted
+  newer Zod; a scoped `zod@4.4.3` install restored the application version,
+  leaving auth's required versions nested. Root manifest range preserved.
+  Structured lock comparison proves every preexisting package version is
+  unchanged and no prior package was removed; package/lock dependencies agree.
+
+| Check | Result / Evidence |
+| --- | --- |
+| Tests first | Initial missing-module failure; subsequent relative-file, file-permission and symlink/`..` regressions observed failing before their fixes |
+| `node scripts/auto-apply-gate.mjs phase 1 lib/private-db/index.test.ts` | PASS: 35 tests, `tsc --noEmit`, lint (only two baseline warnings), diff check; `logs/auto-apply-gate/phase-eETD47/results.json` |
+| Real file libSQL | Fresh and existing-state migration, repeat/reopen preservation, async commit/rollback across awaits, date round-trips, parent FKs and constraints passed |
+| Migration CLI | Missing config exits 1 without a file; explicit scratch URL twice exits 0; recorded migration and empty auth table verified |
+| Corpus boundary | Scratch push/pull/cache checks pass; private file bytes/rows unchanged, restored corpus has no private tables, actual cache paths archived/inspected without private canary |
+| HTTP fixture | 1 test PASS: real SDK HTTP requests, migration/commit/rollback to a loopback Hrana v2 fixture backed by scratch libSQL; `logs/auto-apply-gate/phase1-db-http-tests.json` |
+| Network qualification | Loopback-only sandbox allowed the fixture; external `192.0.2.1:9` returned `EPERM` |
+| Private generation rerun | PASS: Drizzle Kit 0.31.10 reports no schema changes |
+| Existing corpus files | `git diff --exit-code HEAD -- lib/db drizzle drizzle.config.ts scripts/push-remote.ts scripts/pull-remote.ts .github/workflows/refresh.yml` PASS |
+
+HTTP verification uses the same clean environment as the workflow, with the
+following sandbox network rules instead of its tests-deny-all rule:
+
+```text
+(deny network*)
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-bind (local ip "localhost:*"))
+```
+
+File writes remained restricted to this worktree and `/dev/null`. The test
+binds only its own ephemeral `127.0.0.1` port. This is host-wide loopback
+permission, not per-port isolation. Run `node node_modules/vitest/vitest.mjs
+run lib/private-db/http.test.ts` with that qualified profile; it is local
+protocol evidence, **not a real Turso service test**. The unchanged Phase 0
+harness denies test loopback, so the parent must explicitly account for this
+fixture when running the final combined gate, not silently skip it.
+
+Readiness: `logs/auto-apply-gate/phase1-db-ready.json`. No API signature drift.
+Lane B edits were preserved; no `.next` build, nested agents, cross-task
+messaging, commits, pushes, real credentials/mail/model calls, production
+ingestion/mirroring/migrations, provisioning or deployment occurred.
+Never use `send_message_to_thread` in any namespace/wrapper for handoff.
+
+## Phase 1 Bounded Integration: Migration Path
+
+- September 20, 2026; `DY/workie-auto-apply` at `88cea14`.
+  Turbopack treated the migration directory `new URL(..., import.meta.url)`
+  as an unresolved asset even though migrations are explicit-only.
+- `lib/private-db/index.ts` now imports `dirname`/`join` and resolves
+  `join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'drizzle-private')`,
+  matching the public DB pattern. No migration trigger or DB semantics changed.
+  The existing CLI test now invokes the absolute script from a scratch cwd,
+  checking missing config, repeat migrations and the configured scratch target.
+- Node `v22.23.2`, sanitized HOME/TMP/npm config, scratch WORKIE_DB, no local
+  environment files. Storage/auth/mail: 56 tests PASS with all network denied;
+  HTTP fixture: 1 test PASS with loopback-only networking. External TEST-NET
+  probe returned EPERM. `tsc --noEmit --incremental false`, focused ESLint and
+  `git diff --check` PASS. Build-only network permission follows Phase 0 solely
+  for normal public Google Fonts; fonts and dependencies were not edited.
+- Actual `npm run build` before: exit 1, migration-directory resolution error
+  plus `@libsql/hrana-client/LICENSE:1:5` ECMAScript parse error. After: exit 1,
+  only the same LICENSE parse error remains. Build is NOT passing.
+- Exact commands, sanitized environment, policies and results:
+  `logs/auto-apply-gate/phase1-integration-Y1NNn0/{commands,results}.json`;
+  before/after build logs: `before-build.log`, `build.log` in that directory.
+  Other WIP and the original root are preserved. No full future integration
+  scripts, production services/data, real mail/models/ATS, credentials,
+  cross-task messages, nested agents, commits or pushes. Phase NOT ACCEPTED;
+  remaining build error and independent review require follow-up.
+
+## Phase 1 Bounded Integration: Server Externalization Check
+
+- No build fix retained. Checked official Next v15.5.25
+  `serverExternalPackages.mdx` and `crates/next-core/src/next_server/{context,resolve}.rs`
+  in `vercel/next.js`, plus installed libSQL exports and native loader.
+  Next already auto-externalizes `@libsql/client` and `libsql`; generated server
+  chunks confirm the client is external. Externals are still dependency-traced.
+  The native loader's dynamic `require('@libsql/' + target)` is the suspected
+  overbroad trace path to Hrana's LICENSE, not an application import of a license.
+- Two actual clean `npm run build` experiments failed with the identical
+  `@libsql/hrana-client/LICENSE:1:5` parse error: adding only
+  `@libsql/hrana-client`, then explicitly listing `@libsql/client` and `libsql`.
+  Restored `next.config.ts` exactly; `lib/private-db/index.ts` was not edited.
+  No license exclusions, dependency changes, tracing bypasses or client fallbacks.
+- Node 22.23.2, exact installed dependencies, clean environment from
+  `verification-K5dFOm/commands.json`, scratch HOME/TMP/WORKIE_DB, no `.env` files:
+  56 offline storage/auth/mail tests PASS; one loopback HTTP test PASS;
+  `tsc --noEmit --incremental false`, focused ESLint and `git diff --check` PASS.
+  Build-only network permission used the existing Google Fonts build recipe.
+- Bounded production start on `127.0.0.1:59422` exited 1 with
+  `production-start-no-build-id`; PID 71459 exited and no server was retained.
+  `/sign-in` 200 and `/api/auth/applicant` 503 remain UNVERIFIED because there is
+  no successful production build. Phase remains NOT ACCEPTED.
+- Reproducible checks and full commands/results/logs:
+  `logs/auto-apply-gate/phase1-build-boundary/verify.mjs`,
+  `{commands,results}.json` and `build.log` (Hrana-only attempt),
+  `explicit-native-build-{commands,results}.json`, `explicit-native-build.log`,
+  `checks-{commands,results}.json`, and `production-server.log`.
+  Original root, cache headers, corpus behavior and other workers' changes
+  preserved. No nested agents, cross-task messages, commits/pushes, credentials,
+  SMTP/model/ATS calls or production actions.
+
+## Phase 1 Review-Fix Coordination
+
+Parent gate: NOT ACCEPTED. Last committed/pushed revision remains `88cea14`.
+Phase 2 and later implementation have not started. The original main checkout,
+production configuration and real applicant data remain outside the write scope.
+
+Independent security and code-quality reviews identified these required fixes:
+
+- Dynamic reset callback paths create distinct rate-limit buckets.
+- The unused revoke-other-sessions endpoint can miss sessions after 100 rows.
+- Generic auth success bodies discard upstream cookie-deletion headers.
+- The private applicant lookup bypasses the SDK HTTP limiter.
+- Reset-token removal prevents a valid unfinished reset from surviving reload.
+- Expired verification callbacks can display a conflicting success message.
+- Private authentication pages need HTTP frame protection.
+- The Turbopack native dependency trace still prevents a production build.
+
+Active, non-overlapping assignments:
+
+| Lane | Native Agent ID | Write Surface | Handoff |
+| --- | --- | --- | --- |
+| Backend fixes | `01a0c151-5e71-71c2-9859-45f92b9c4cd5` | Auth services, access guard, auth routes and backend tests | `logs/auto-apply-gate/phase1-backend-fixes-ready.json` |
+| UI fixes/tests | `01a0c151-617f-7983-a597-410c0e1833ad` | Sign-in UI, rendered auth tests and auth Playwright config | `logs/auto-apply-gate/phase1-ui-code-ready.json` |
+| Build/headers | `01a0c151-64b5-7fb2-b48c-aa6ed6d7caeb` | Private driver import boundary, Next config, package files, browser dependency | `logs/auto-apply-gate/phase1-build-ready.json` |
+
+UI publishes source readiness before awaiting the build. The final build follows
+both source-readiness markers; UI browser checks then use that completed build.
+No overlapping builds or personal browser profiles. These markers are not phase
+acceptance: combined verification, review closure, commit and branch sync remain.
+
+The existing web Drizzle facade accepts a supplied Client and uses the same
+constructor as the root facade. The build lane is qualifying this smaller
+boundary correction without losing native file/HTTP support. Plain external
+package additions already failed and must not be replayed as an untested fix.
+
+Toolchain discovery for later phases found bundled Python 3.12.14 with pypdf
+6.10.0, pdfplumber 0.11.9 and Pillow 12.3.0; Poppler 26.03.0 and a local Docker
+29.6.2 daemon are available. The LibreOffice launcher is broken and browser
+binaries were not installed at inspection. These are prerequisite observations,
+not document-fidelity, sandbox-isolation or ATS-submission proof.
+
+Never call `send_message_to_thread` in any namespace or wrapper. Read-only task
+inspection, native completion/wait, and these handoffs are the coordination paths.
+
+## Phase 1 Final Regression And Runtime Recovery
+
+The backend security recheck passed after removal of dynamic reset callbacks and
+the unused incomplete session-revocation endpoint, preserved deletion cookies,
+HTTP-limited applicant lookup, and actual frame/no-store headers. The standard
+Next 15 webpack dev/build path replaced the verified failing Turbopack path;
+native file and HTTP private clients remain supported.
+
+Code review then required a same-mode reset-token race fix and stricter UI
+coverage validation. Current source includes request-generation/lifetime/live-URL
+guards and an exact 14-case, two-project report validator, plus the three
+EOF-only whitespace corrections. Negative tests reproduced eight old-build
+failures and rejected twelve incomplete reports plus an actual `.only` suite.
+The earlier 89-test filtered build check included nonexistent filters and is
+not full coverage; the 1,311-test, 46-file inventory supersedes that evidence.
+
+The final current-source build and 1,311-test suite passed, but its last UI run
+was interrupted after 14 mobile passes when generated dependencies, Chromium,
+build output and npm cache disappeared. The strict validator rejected this
+partial run; `phase1-build-ready.json` was marked `buildReady:false`.
+No phase acceptance or feature commit followed the interrupted run.
+
+Read-only inspection identified the completed `Audit laptop storage` task as
+the cleanup source. It had separate user approval and finished before recovery.
+Its instructions do not authorize any further deletion here. Workie source,
+package lock, user handoff and saved test evidence remain intact.
+
+Recovery assignments:
+
+- `01a0c17f-333d-7021-a903-8e4d731c0a37`: restore exact locked dependencies and
+  matching Chromium only, then rerun full tests/types/lint/build/strict 28-case UI
+  verification with fresh evidence. No source changes or cloud/private actions.
+- `01a0c17f-3460-7733-bd1b-6f559efe443f`: read-only closure review of the latest
+  reset-lifetime and test-harness corrections.
+
+Current-code report before recovery:
+`logs/auto-apply-gate/phase1-final-corrective/final-report.json`.
+Phase 1 remains NOT ACCEPTED; phases 2-12 remain NOT STARTED. Do not substitute
+the earlier corrective revision's 28-case pass for the interrupted final run.
+
+## Accepted Phase 1 Proof And Handoff
+
+The parent explicitly accepted Phase 1 after independent security PASS
+(`01a0c163-0af2...`, parent-supplied identifier), final quality PASS
+(`01a0c17f-3460-7733-bd1b-6f559efe443f`) and recovered verification PASS.
+The report's `phaseAccepted:false` records the verifier's earlier boundary;
+acceptance comes from this subsequent parent assignment, not a rewritten report.
+
+| Proof | Accepted result / source |
+| --- | --- |
+| Authoritative recovered gate | `logs/auto-apply-gate/phase1-recovered-NfBWjH/final-report.json`: 1,311 tests / 46 files, zero failed/skipped/todo; types, lint and build PASS |
+| Rendered UI / validator | Strict 28 PASS: 14 identities each at mobile390/desktop1440; 12 negative reports and actual `.only` rejected; `logs/auto-apply-gate/phase1-ui-HfJvVQ/summary.json` |
+| Source / invocation provenance | Recovered directory: `build-inputs.json`, `commands-results.json`, `evidence-sha256.json`; source hash `659794b5e00955ad5b4292b93ecb90b39b11c77d4414f8e2fac549fdbf6fee91`, build `7-3EkFctvZVvDeAE5VkSK` |
+| Cleanup / warnings | No remaining processes/listener or unexpected corpus DB; two baseline unused-variable warnings plus two historical ignored-fixture warnings, not new app warnings |
+
+Proof is local/synthetic: real scratch libSQL transactions/migrations and
+loopback SDK HTTP, with simulated auth responses in rendered UI. Real cloud
+DB and SMTP remain UNVERIFIED. Next 15 default webpack build passed with normal
+public-font network access after Turbopack native-loader tracing failed.
+The unchanged setup gate still denies test loopback and requires absent future
+full scripts; it did NOT produce this combined Phase 1 PASS. Use the qualified
+invocations and limitations in `auto-apply-workflow.md`.
+
+Only this ledger and the workflow receive acceptance edits after verification;
+historical logs are preserved. Phase 2 owns profiles/policies/documents; Phase 3
+owns worker-security revocation. Reuse the private migration and auth API contracts
+in the workflow. Keep `HANDOFF.md` untracked and exclude logs, databases and
+secrets. Commit only the authorized Phase 1 surfaces; no push in this role.
