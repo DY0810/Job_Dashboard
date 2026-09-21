@@ -14,39 +14,30 @@ import type { WorkerScope } from "./credentials.ts";
 import type { PrivateStore } from "./storage.ts";
 import { TransportError } from "./transport.ts";
 import type { WorkerTransport } from "./transport.ts";
+import { QuestionBatchSchema } from "../lib/applications/question-protocol.ts";
+import { questionClient, QuestionDispatchSchema, abortable, type FocusObserver } from "./question-client.ts";
 
 const JournalSchema = z.strictObject({
   version: z.literal(1), scope: ScopeSchema,
   pending: z.strictObject({ applicationId: z.uuid(), event: EventRequestSchema }).nullable(),
   acknowledged: EventResponseSchema.nullable(),
 });
-const DispatchResultSchema = z.strictObject({
+const DispatchResultSchema = z.union([QuestionDispatchSchema, z.strictObject({
   state: z.enum(["screening", "tailoring", "filling", "ready", "needs_answer", "needs_document",
     "needs_policy_decision", "needs_login", "needs_verification", "provider_unavailable",
     "retryable_failure", "blocked_unsupported", "failed", "skipped"]),
   reasonCode: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/).nullable(),
-});
+})]);
 type DispatchResult = z.infer<typeof DispatchResultSchema>;
 export type StageDispatch = (lease: Lease, guard: LeaseGuard) => Promise<DispatchResult>;
 export const unsupportedStage: StageDispatch = async () => ({
   state: "blocked_unsupported", reasonCode: "adapter_unavailable",
 });
 
-async function untilAborted<T>(action: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) { void action.catch(() => {}); throw new Error("STOPPED"); }
-  let abort: () => void = () => {};
-  const stopped = new Promise<never>((_, reject) => {
-    abort = () => reject(new Error("STOPPED"));
-    signal.addEventListener("abort", abort, { once: true });
-  });
-  try { return await Promise.race([action, stopped]); }
-  finally { signal.removeEventListener("abort", abort); }
-}
-
 export async function runWorker(options: {
   scope: WorkerScope; store: PrivateStore;
   transport: WorkerTransport | (() => Promise<WorkerTransport>); signal: AbortSignal;
-  dispatch?: StageDispatch; clock?: () => ClockSample;
+  dispatch?: StageDispatch; clock?: () => ClockSample; observeFocus?: FocusObserver;
   status?: (status: "idle" | "active" | "waiting" | "reconciliation-required" | "stopped") => void;
 }) {
   const { scope, store } = options;
@@ -85,7 +76,7 @@ export async function runWorker(options: {
     shutdown.abort();
   };
   async function acknowledge(applicationId: string, event: EventRequest) {
-    const response = EventResponseSchema.parse(await transport.event(applicationId, event, signal));
+    const response = EventResponseSchema.parse(await abortable(transport.event(applicationId, event, signal), signal));
     if (response.applicationId !== applicationId || response.eventId !== event.eventId ||
       response.state !== event.state || response.revision !== event.expectedRevision + 1) {
       throw new Error("INVALID_ACKNOWLEDGEMENT");
@@ -107,9 +98,9 @@ export async function runWorker(options: {
         active?.guard.check();
         const started = clock();
         const lease = active?.lease;
-        const response = PollResponseSchema.parse(await transport.heartbeat(lease ? {
+        const response = PollResponseSchema.parse(await abortable(transport.heartbeat(lease ? {
           applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
-        } : null, signal));
+        } : null, signal), signal));
         if (!active) {
           if (response.lease) throw new Error("UNEXPECTED_ASSIGNMENT");
           return;
@@ -122,7 +113,11 @@ export async function runWorker(options: {
       });
     }
   })().catch(error => { if (!signal.aborted) fail(error); });
+  const questions = questionClient({ scope, store, transport, signal, observeFocus: options.observeFocus });
+  let interventions = Promise.resolve();
   try {
+    await questions.recoverBatch();
+    await questions.recoverIntervention();
     if (journal.pending) {
       // No external action is replayed: only the exact previously persisted checkpoint request.
       const { applicationId, event } = journal.pending;
@@ -135,11 +130,19 @@ export async function runWorker(options: {
         await store.write("checkpoint", journal);
       }
     }
+    // Independent of dispatch and its lease mutex, after exact pending recovery.
+    interventions = (async () => {
+      if (!transport.interventions) return; // Existing compiled control-v1 transports remain usable.
+      while (!signal.aborted) {
+        await questions.pollInterventions();
+        await delay(HEARTBEAT_MS, undefined, { signal });
+      }
+    })().catch(error => { if (!signal.aborted) fail(error); });
     while (!signal.aborted) {
       await exclusive(async () => {
         if (signal.aborted) return;
         const started = clock();
-        const response = PollResponseSchema.parse(await transport.poll(signal));
+        const response = PollResponseSchema.parse(await abortable(transport.poll(signal), signal));
         if (signal.aborted) return;
         if (!response.lease) { options.status?.("idle"); return; }
         active = { lease: response.lease,
@@ -158,10 +161,27 @@ export async function runWorker(options: {
       }
       if (!SAFE_STAGES.includes(lease.state as typeof SAFE_STAGES[number])) throw new Error("INVALID_STAGE");
       options.status?.("active");
-      const result = DispatchResultSchema.parse(await untilAborted(
+      const result = DispatchResultSchema.parse(await abortable(
         guard.boundary(() => (options.dispatch ?? unsupportedStage)(lease, guard)), signal,
       ));
       guard.check();
+      if ("kind" in result) {
+        await exclusive(async () => {
+          guard.check();
+          const batch = QuestionBatchSchema.parse({
+            expectedProfileRevision: result.expectedProfileRevision, company: result.company,
+            role: result.role, questions: result.questions,
+            questionProtocolVersion: 1, eventId: randomUUID(), fence: lease.fence,
+            expectedRevision: lease.revision,
+            checkpoint: { stage: lease.state, sequence: (lease.checkpoint?.sequence ?? 0) + 1 },
+          });
+          await questions.register(lease.applicationId, batch, () => guard.check());
+          guard.revoke("CHECKPOINTED");
+          active = null;
+          options.status?.("waiting");
+        });
+        continue;
+      }
       if (!canTransition(lease.state, result.state)) throw new Error("EXECUTION_DISABLED");
       await exclusive(async () => {
         guard.check();
@@ -184,6 +204,7 @@ export async function runWorker(options: {
     shutdown.abort();
     clearInterval(watchdog);
     await heartbeats;
+    await interventions;
     await queue;
     await unlock();
     signal.removeEventListener("abort", stop);

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SignInForm } from './sign-in-form';
+import { NotificationBell } from '../notification-bell';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
@@ -18,6 +19,7 @@ export default function SignInPage() {
           <Link href="/">Jobs</Link>
           <span aria-current="page">Account</span>
         </nav>
+        <NotificationBell />
       </header>
       <section className="mx-auto w-full max-w-sm py-8">
         <SignInForm />

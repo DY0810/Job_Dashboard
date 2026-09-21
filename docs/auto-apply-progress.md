@@ -1,5 +1,96 @@
 # Auto Apply Progress
 
+## TypeSafe Authorization
+
+September 21, 2026: the user requested Jev integration, installed the TypeSafe
+skill, reported having an API key, and approved a $10 budget. Interpret this as
+USD 10 total for Workie's TypeSafe integration/testing, including retries, not a
+recurring daily allowance or approval for other paid providers. This supersedes
+the earlier optional-Jev exclusion for implementation scope.
+
+The user saved the key in the local login Keychain on September 21, 2026.
+An exact metadata-only lookup succeeded for service `Workie TypeSafe API`,
+account `dongyeop0810@gmail.com`, in `~/Library/Keychains/login.keychain-db`.
+No password retrieval flags were used; no key value was read or displayed.
+The item exists, but its contents and TypeSafe authentication are not yet tested.
+This manually created item is not yet wired to Workie's worker credential scope.
+The $10 spending guard is not
+implemented or verified yet; record this as authorization, not enforced quota.
+No TypeSafe paid calls have been made by this task. On September 21, 2026, the
+user explicitly approved sending redacted form labels and action choices to
+TypeSafe for their own account, excluding passwords, OTPs and sensitive answers.
+This is not permission to send full profiles, resumes, filled identity values
+or arbitrary page content. Bind the approval to the authenticated applicant
+before use; it does not authorize disclosure for the second applicant.
+Synthetic tests need no personal data.
+
+Use the installed `/Users/dyl/.agents/skills/typesafe-ai/SKILL.md` and current
+official API documentation. Add secure provider-key entry through the worker's
+keychain path; the existing hidden pairing-grant prompt is not an API-key prompt.
+Do not request the key in chat or place it in command arguments, URLs or logs.
+
+## Current Phase 5 Execution
+
+Objective: finish the entire approved Auto Apply plan, not only discovery.
+Phase 4 is accepted, committed and pushed as
+`669483c3b3bec3b5b696023e2c59ae30844e5ac8`. Phase 5 is now ACCEPTED;
+Phases 6-12 remain not started.
+
+| Current owner | Native agent | Scope |
+| --- | --- | --- |
+| Question DAL (Astra) | `01a0c356-a0b3-7a31-9b7b-c686a1517ff2` | Missing store and transaction tests; authoritative answer-update availability |
+| HTTP/runtime integration (Astra) | `01a0c364-1654-78c0-b73a-ca37575869b0` | Private routes, worker question transport and durable intervention polling |
+
+The bounded UI assignment completed and closed: 11 unit tests, scoped types/lint
+passed, and the final rendered gate passed all 132 browser cases across
+mobile390/desktop1440 and light/dark themes. The gate used the existing synthetic
+question fixture and a seeded isolated `workie.db`; it did not touch production
+data. Receipt: `logs/auto-apply-gate/phase5-inbox-ui-final-node22/results.json`.
+
+September 21 resume: previous Phase 5 workers were confirmed interrupted and
+unavailable; no active test processes remained. Protocol/schema/migration and
+most client UI survived, but `questions.ts`, API routes and worker integration
+were still absent. Complete the DAL first, then add HTTP/intervention integration.
+The narrower UI role consumes server `canAnswer`, never infers authorization.
+Saved-answer updates must affect eligible unsent work without changing submitted
+history; merely retaining an unsendable newer draft is not completion.
+
+Phase 5 integration is complete: the question DAL, private routes, worker
+question/intervention transport, encrypted draft recovery and notification bell
+are covered by focused tests and the rendered gate. Contract revision 2 carries
+current profile/policy revisions, scope hash and fact versions on `ReviewCommand`;
+resolved document updates load only owned available document choices.
+
+### Phase 5 Acceptance
+
+| Accepted evidence | Result / reference |
+| --- | --- |
+| Rendered browser gate | 132/132 PASS; four viewport/theme projects; `logs/auto-apply-gate/phase5-inbox-ui-final3/results.json` |
+| Production build | `npm run build` PASS on Node 22; two pre-existing `lib/auto-apply.test.ts` unused-variable warnings remain |
+| Source checks | Focused Vitest/HTTP/runtime/worker checks, TypeScript, ESLint and whitespace checks PASS |
+| Scope | Synthetic/local only; no TypeSafe call, ATS submission, SMTP, production database write, deployment or credential use |
+
+The browser gate initially exposed stale-bundle and fixture-timing defects; the
+final run was repeated from a fresh production build after the wait assertions
+and isolated database setup were corrected. Phase 5 is accepted; this does not
+claim the full Auto Apply plan is complete.
+
+Two workers maximum. Shared working contract currently lives at
+`phase5-contract.json` (coordination artifact, exclude from the eventual source
+commit or move under ignored gate logs). UI questions: `phase5-ui-contract-queries.json`.
+Backend owns schemas/migrations; UI owns icon dependency and header edits. Both
+must finish focused checks and freeze before the independent final build/browser
+gate. Never use `send_message_to_thread` or wrappers. No production enablement,
+real applicant data, credentials, ATS submissions, model calls or scheduler changes.
+Only verified working-branch commits/pushes are authorized.
+
+Accepted Phase 4 evidence: `phase4-final-ZugXqk`, source
+`007d1305974aaada9e77624fc6d9dfa8db6a736183cfda30bcf393dc4eefc6fd`;
+1,593 unit tests, 32 worker checks, 32 discovery + 56 worker + 128 profile browser
+cases. All passed with types/lint/build and process cleanup; the two baseline
+lint warnings remain. Parent verified the current 347-file source hash inventory
+and raw browser counts. No live submission or production deployment is claimed.
+
 ## Current Phase 4 Acceptance
 
 September 21, 2026: Phase 4 is parent-ACCEPTED after final verification and
@@ -201,7 +292,7 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | 2: Profile/policy/documents | 1 | Profile/documents: `app/profile/`, profile schemas, document/policy routes and private schema | All sections, revision/draft isolation, hostile upload checks, immutable masters, disabled policy default | ACCEPTED; committed/pushed as 3ed6861 |
 | 3: Pairing/worker | 1-2 | Worker: `worker/main.ts`, state/lease/pairing modules and worker routes | Grants/fences/revocation, process restart/sleep, safe checkpoints, independent waiting work | ACCEPTED; committed/pushed as 53e96e3 |
 | 4: Discovery/identity | 1-3 | Discovery: application discovery/run targets, approved shared query extraction, legacy-import flow | 601 jobs, overlap/restart, immutable identities, backlog/caps, confirmed manual suppression | parent-ACCEPTED; final verification/review closure; commit authorized, no push |
-| 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | READY, NOT STARTED; separate assignment required |
+| 5: Questions/bell | 1-4 | Inbox: questions/waiters, inbox/answer routes, `app/notification-bell.tsx`, approved headers | Atomic/idempotent scoped resume, reload/offline drafts, no shared-cache leaks, accessible bell | ACCEPTED; 132 rendered cases and focused checks passed |
 | 6: Providers/cost | 1-5 | Provider: `worker/providers.ts`, settings/credential/budget modules | Mock protocols, untrusted output, reservation races, unknown cost and remote-fallback denial | NOT STARTED |
 | 7: Documents | 2, 5, 6 | Document runtime: `worker/documents/`, synthetic source/PDF fixtures and checks | Qualified PDF/DOCX, unchanged geometry/fonts/links, hostile inputs, parallel scratch isolation | NOT STARTED |
 | 8: Greenhouse/Ashby | 1-7 | Browser/ATS: `worker/browser.ts`, `worker/screening.ts`, first adapters/fixtures | Full synthetic receipt flow, answer/intervention/restart, unknown-submit reconciliation, egress | NOT STARTED |
@@ -210,8 +301,9 @@ Roles are assignments/contracts, not evidence that another agent was spawned.
 | 11: Applications/operations | 1-10 | UI/integration: applications/settings/navigation, worker commands and operating docs | Responsive light/dark/keyboard, principal-switch/cache, persisted controls, legacy regressions | NOT STARTED |
 | 12: Release gate | 0-11 | Verification/docs: `tests/auto-apply/`, verify CI, support/config/recovery/rollback docs | All ten acceptance items; full worker/document/browser tests; independent release authorization | NOT STARTED |
 
-Optional Jev work is excluded and is not a release dependency. Seven ATS
-application families and both document paths remain UNIMPLEMENTED/UNVERIFIED.
+Jev remains an optional typed provider in Phase 6 and is not a release
+dependency. Seven ATS application families and both document paths remain
+UNIMPLEMENTED/UNVERIFIED.
 Package/lockfile, private schema, shared UI headers and CI have one integration
 owner at a time. The parent operator assigns independent verification,
 anti-pattern and code-quality reviewers after each implementation handoff.

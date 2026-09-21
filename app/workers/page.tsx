@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ThemeToggle } from '../theme-toggle';
 import Workers from './workers';
+import { NotificationBell } from '../notification-bell';
 import styles from './workers.module.css';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,7 @@ export default function WorkersPage() {
         <Link href="/sign-in" prefetch={false}>Account</Link>
       </nav>
       <ThemeToggle />
+      <NotificationBell />
     </header>
     <Workers />
   </main>;

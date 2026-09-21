@@ -28,6 +28,7 @@ async function limit(key: string, max: number) {
   }).returning({ count: rateLimit.count });
   if (row.count > max) throw new WorkerError(429, 'RATE_LIMITED', 'Too many requests. Retry next minute.');
 }
+export { limit as limitWorkerRequests };
 function errorResponse(error: unknown, headers?: HeadersInit) {
   let status = 503, code = 'UNAVAILABLE', message = 'Private worker storage unavailable.';
   if (error instanceof WorkerError) { status = error.status; code = error.code; message = error.message; }

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ThemeToggle } from '../../theme-toggle';
 import ImportMarks from './import-marks';
+import { NotificationBell } from '../../notification-bell';
 import styles from '../../workers/workers.module.css';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,7 @@ export default function ImportPage() {
         <span aria-current="page">Import</span>
       </nav>
       <ThemeToggle />
+      <NotificationBell />
     </header>
     <ImportMarks />
   </main>;

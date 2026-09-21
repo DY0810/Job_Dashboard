@@ -25,6 +25,7 @@ import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
 import { Chevron, ExternalLink } from "./icons";
 import { ThemeToggle } from "./theme-toggle";
+import { NotificationBell } from "./notification-bell";
 import { AppliedCheckbox } from "./applied-checkbox";
 
 /**
@@ -267,6 +268,7 @@ function NotConfigured() {
       <header className="flex shrink-0 flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <span className="w-wide text-[11px] text-fg-dim">not configured</span>
+        <NotificationBell />
       </header>
       <div className="prose max-w-lg py-12">
         <p>No database is configured for this deployment.</p>
@@ -409,6 +411,7 @@ export default async function Page({
           {/* Runs the real cycle where the pipeline lives; on Vercel it re-pulls the last push. */}
           <RefreshButton hosted={Boolean(process.env.VERCEL)} />
           <ThemeToggle />
+          <NotificationBell />
         </div>
       </header>
 

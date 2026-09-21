@@ -48,10 +48,11 @@ export async function unlockDraftKey(raw: string): Promise<CryptoKey> {
 
 type Envelope = {
   version: 1; ownerId: string; schemaVersion: number; keyVersion: string;
-  baseRevision: number; nonce: string; ciphertext: string;
+  baseRevision: number; nonce: string; ciphertext: string; purpose?: 'inbox';
 };
 const aad = (e: Omit<Envelope, 'nonce' | 'ciphertext'>) => new TextEncoder().encode(JSON.stringify([
   e.version, e.ownerId, e.schemaVersion, e.keyVersion, e.baseRevision,
+  ...(e.purpose ? [e.purpose] : []),
 ]));
 
 export class DraftVault {
@@ -70,8 +71,9 @@ export class DraftVault {
     slot?: string,
     private readonly encrypt = (key: CryptoKey, nonce: Uint8Array<ArrayBuffer>, data: Uint8Array<ArrayBuffer>, additionalData: Uint8Array<ArrayBuffer>) =>
       crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData }, key, data),
+    private readonly purpose: 'profile' | 'inbox' = 'profile',
   ) {
-    this.prefix = `workie:profile-draft:${encodeURIComponent(ownerId)}:${schemaVersion}:`;
+    this.prefix = `workie:${purpose}-draft:${encodeURIComponent(ownerId)}:${schemaVersion}:`;
     this.slot = slot?.startsWith(this.prefix) ? slot : `${this.prefix}${crypto.randomUUID()}`;
   }
 
@@ -87,6 +89,7 @@ export class DraftVault {
     const header = {
       version: 1 as const, ownerId: this.ownerId, schemaVersion: this.schemaVersion,
       keyVersion: this.keyVersion, baseRevision: snapshot.revision,
+      ...(this.purpose === 'inbox' ? { purpose: 'inbox' as const } : {}),
     };
     try {
       const nonce = crypto.getRandomValues(new Uint8Array(12));
@@ -106,6 +109,7 @@ export class DraftVault {
     if (this.disposed || !this.key || !slot.startsWith(this.prefix)) throw new Error('Draft is locked');
     const e: Envelope = JSON.parse(this.storage.getItem(slot) ?? 'null');
     if (!e || e.version !== 1 || e.ownerId !== this.ownerId || e.schemaVersion !== this.schemaVersion ||
+        (e.purpose ?? 'profile') !== this.purpose ||
         e.keyVersion !== this.keyVersion || !Number.isSafeInteger(e.baseRevision) || e.baseRevision < 0 ||
         typeof e.nonce !== 'string' || typeof e.ciphertext !== 'string' || bytes(e.nonce).length !== 12) {
       throw new Error('Draft cannot be authenticated');

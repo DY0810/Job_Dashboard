@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import ProfileEditor from './profile-editor';
 import styles from './profile.module.css';
+import { NotificationBell } from '../notification-bell';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
@@ -17,6 +18,7 @@ export default function ProfilePage() {
         <span aria-current="page">Profile</span>
         <Link href="/sign-in" prefetch={false}>Account</Link>
       </nav>
+      <NotificationBell />
     </header>
     <ProfileEditor />
   </main>;

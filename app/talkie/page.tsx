@@ -4,6 +4,7 @@ import { TURSO_ENV, getDb, needsTurso } from '@/lib/db';
 import { listNotes, listWeeks, weekKey, weekLabel, weekRange } from '@/lib/notes';
 import { Calendar } from '../icons';
 import { Board } from './board';
+import { NotificationBell } from '../notification-bell';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +35,7 @@ export default async function Talkie({
 
   return (
     <main className="min-h-dvh px-4 pb-16">
-      <header className="flex items-baseline gap-6 border-b border-rule py-2">
+      <header className="flex flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-rule py-2">
         <h1 className="w-wide text-[13px] font-medium">Workie</h1>
         <nav className="flex gap-4" aria-label="Track">
           <Link href="/" className="w-wide pb-1 text-[11px] text-fg-dim hover:text-fg">design</Link>
@@ -56,6 +57,7 @@ export default async function Talkie({
             ))}
           </div>
         </details>
+        <NotificationBell />
       </header>
       <Board key={week} notes={notes} canWrite={week === current} week={week} />
     </main>

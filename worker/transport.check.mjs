@@ -116,8 +116,8 @@ test("checkpoint retries have a finite total deadline and do not retry authoriza
     state: "blocked_unsupported", checkpoint: { stage: "screening", sequence: 1 }, reasonCode: "adapter_unavailable" };
   const started = performance.now();
   await assert.rejects(client.event(randomUUID(), request), /NETWORK_UNAVAILABLE/);
-  assert.equal(calls, 3);
-  assert(performance.now() - started < 2000);
+  assert.equal(calls, 1);
+  assert(performance.now() - started < 1000);
   for (status of [401, 403, 409, 426, 429]) {
     const before = calls;
     await assert.rejects(client.event(randomUUID(), request), error => error.message === `HTTP_${status}`);

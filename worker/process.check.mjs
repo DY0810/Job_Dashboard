@@ -26,6 +26,12 @@ test("child survives client exit; real heartbeat, revocation, disconnect, SIGTER
     if (req.headers.authorization !== `Bearer ${"F".repeat(43)}`) { res.writeHead(401); res.end(); return; }
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString());
+    if (req.url === "/api/worker/interventions") {
+      assert.deepEqual(body, { questionProtocolVersion: 1 });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ questionProtocolVersion: 1, commands: [] }));
+      return;
+    }
     const now = Date.now();
     let lease = null;
     if (req.url === "/api/worker/poll") {

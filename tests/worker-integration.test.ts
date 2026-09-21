@@ -24,6 +24,7 @@ import { POST as pollRoute } from '../app/api/worker/poll/route.ts';
 import { POST as heartbeatRoute } from '../app/api/worker/heartbeat/route.ts';
 import { POST as eventRoute } from '../app/api/worker/applications/[id]/events/route.ts';
 import { POST as createRunRoute } from '../app/api/application-runs/route.ts';
+import { POST as interventionRoute } from '../app/api/worker/interventions/route.ts';
 import { credentials, type CredentialBackend } from '../worker/credentials.ts';
 import { pairWorker, WorkerCredentialSchema } from '../worker/pairing.ts';
 import { privateStore } from '../worker/storage.ts';
@@ -50,6 +51,7 @@ const routes: Record<string, (request: Request) => Promise<Response>> = {
   'POST /api/worker/poll': pollRoute,
   'POST /api/worker/heartbeat': heartbeatRoute,
   'POST /api/application-runs': createRunRoute,
+  'POST /api/worker/interventions': interventionRoute,
 };
 async function http(path: string, body?: unknown, owner?: Applicant, method = body === undefined ? 'GET' : 'POST') {
   return fetch(`${origin}${path}`, {
@@ -238,7 +240,7 @@ it('real handlers + transport/runtime recover exact registration/events and rele
   const restartAt = exchanges.length, stop = controller();
   await runWorker({ scope: worker.scope, store: worker.store, transport, clock, signal: stop.signal,
     status: status => { if (status === 'waiting') stop.abort(); } });
-  const restarted = exchanges.slice(restartAt);
+  const restarted = exchanges.slice(restartAt).filter(exchange => exchange.path !== '/api/worker/interventions');
   expect(restarted.map(exchange => exchange.path)).toEqual([eventPath(first.id), '/api/worker/poll', eventPath(second.id)]);
   expect(restarted[0].body).toBe(attempts[0].body);
   expect(p.EventResponseSchema.parse(restarted[0].response)).toMatchObject({ replayed: true, lease: null });

@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  QuestionBatchSchema, QuestionBatchResultSchema, InterventionPollSchema,
+  InterventionPageSchema, InterventionAckSchema, FocusResultSchema,
+} from "../lib/applications/question-protocol.ts";
+import type { QuestionBatch, InterventionAck } from "../lib/applications/question-protocol.ts";
 import {
   PairRequestSchema, PairResponseSchema, PollRequestSchema, PollResponseSchema,
   HeartbeatRequestSchema, EventRequestSchema, EventResponseSchema, WORKER_PROTOCOL_VERSION,
@@ -37,6 +43,7 @@ export function workerTransport(options: {
   ): Promise<T> {
     const payload = JSON.stringify(body);
     if (Buffer.byteLength(payload) > 128 * 1024) throw new TransportError("REQUEST_LIMIT");
+    const deadline = AbortSignal.any([AbortSignal.timeout(timeout), ...(signal ? [signal] : [])]);
     // Only idempotent checkpoint events retry automatically, with the same serialized body/key.
     for (let attempt = 0; ; attempt++) {
       try {
@@ -47,7 +54,7 @@ export function workerTransport(options: {
             ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
           },
           body: payload,
-          signal: AbortSignal.any([AbortSignal.timeout(timeout), ...(signal ? [signal] : [])]),
+          signal: deadline,
         });
         const reader = response.body?.getReader();
         try {
@@ -67,15 +74,19 @@ export function workerTransport(options: {
             chunks.push(value);
           }
           let parsed;
-          try { parsed = schema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
+          try { parsed = schema.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)))); }
           catch { throw new TransportError("INVALID_RESPONSE"); }
           if (!parsed.success) throw new TransportError("INVALID_RESPONSE");
           return parsed.data;
-        } finally { await reader?.cancel().catch(() => {}); }
+        } finally {
+          if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+        }
       } catch (error) {
         const safe = error instanceof TransportError ? error : new TransportError(signal?.aborted ? "STOPPED" : "NETWORK_UNAVAILABLE");
-        if (!checkpoint || attempt >= 2 || signal?.aborted ||
+        if (!checkpoint || attempt >= 2 || deadline.aborted ||
           !(safe.message === "NETWORK_UNAVAILABLE" || safe.status >= 500)) throw safe;
+        try { await delay(100 * 2 ** attempt, undefined, { signal: deadline }); }
+        catch { throw safe; }
       }
     }
   }
@@ -91,6 +102,18 @@ export function workerTransport(options: {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       return post(`/api/worker/applications/${applicationId}/events`,
         EventRequestSchema.parse(input), EventResponseSchema, signal, true);
+    },
+    questionBatch: (applicationId: string, input: QuestionBatch, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
+      return post(`/api/worker/applications/${applicationId}/questions`,
+        QuestionBatchSchema.parse(input), QuestionBatchResultSchema, signal, true);
+    },
+    interventions: (signal?: AbortSignal) =>
+      post("/api/worker/interventions", InterventionPollSchema.parse({ questionProtocolVersion: 1 }), InterventionPageSchema, signal),
+    ackIntervention: (id: string, input: InterventionAck, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(id).success) throw new TransportError("INVALID_INTERVENTION");
+      return post(`/api/worker/interventions/${id}/ack`,
+        InterventionAckSchema.parse(input), FocusResultSchema, signal, true);
     },
   };
 }

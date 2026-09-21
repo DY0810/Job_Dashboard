@@ -14,6 +14,7 @@ import {
   PairRequestSchema, PollRequestSchema, EventRequestSchema, PollResponseSchema,
   PairResponseSchema, EventResponseSchema,
 } from "../lib/applications/worker-protocol.ts";
+import { InterventionPollSchema, InterventionPageSchema } from "../lib/applications/question-protocol.ts";
 
 const ownerId = "synthetic-cli-owner";
 const clock = () => ({ protocolVersion: 1, serverTime: Date.now(), heartbeatMs: 20000, leaseMs: 120000 });
@@ -21,7 +22,15 @@ async function fixture(t, handler) {
   const directory = await mkdtemp(join(tmpdir(), "worker-cli-"));
   const errors = [];
   const server = createServer((req, res) => {
-    Promise.resolve(handler(req, res)).catch(error => { errors.push(error); res.destroy(); });
+    Promise.resolve().then(async () => {
+      if (req.url === "/api/worker/interventions") {
+        assert.match(req.headers.authorization ?? "", /^Bearer [A-Za-z0-9_-]{43}$/);
+        assert.equal(req.headers.cookie, undefined);
+        InterventionPollSchema.parse(await body(req));
+        return json(res, InterventionPageSchema, { questionProtocolVersion: 1, commands: [] });
+      }
+      return handler(req, res);
+    }).catch(error => { errors.push(error); res.destroy(); });
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {

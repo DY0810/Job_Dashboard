@@ -26,8 +26,9 @@ type DocumentSummary = z.infer<typeof summarySchema>;
 type Grant = z.infer<typeof grantSchema>;
 type PendingUpload = { requestId: string; grant?: Grant; attempted?: boolean; uploadedDoc?: DocumentSummary };
 
-export default function DocumentsPane({ api, ownerId, signal, onDocuments }: {
+export default function DocumentsPane({ api, ownerId, signal, onDocuments, idPrefix = 'document' }: {
   api: PrivateApi; ownerId: string; signal: AbortSignal; onDocuments: (documents: DocumentOption[]) => void;
+  idPrefix?: string;
 }) {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [storage, setStorage] = useState<'local' | 'blob' | 'unconfigured' | null>(null);
@@ -166,18 +167,18 @@ export default function DocumentsPane({ api, ownerId, signal, onDocuments }: {
     </p>}
     <form onSubmit={upload} aria-label="Upload document">
       <fieldset disabled={busy} className={styles.fields} style={{ border: 0, padding: 0 }}>
-        <div className={styles.field}><label htmlFor="document-file">PDF or DOCX (up to 10 MB)</label>
-          <input ref={fileInput} id="document-file" type="file" disabled={pending.current?.attempted} accept={`.pdf,.docx,${pdf},${docx}`} onChange={(e) => {
+        <div className={styles.field}><label htmlFor={`${idPrefix}-file`}>PDF or DOCX (up to 10 MB)</label>
+          <input ref={fileInput} id={`${idPrefix}-file`} type="file" disabled={pending.current?.attempted} accept={`.pdf,.docx,${pdf},${docx}`} onChange={(e) => {
             edit(); setFile(e.target.files?.[0] ?? null);
           }} /></div>
-        <div className={styles.field}><label htmlFor="document-kind">Document kind</label>
-          <select id="document-kind" value={kind} disabled={pending.current?.attempted} onChange={(e) => { edit(); setKind(z.enum(kinds).parse(e.target.value)); }}>
+        <div className={styles.field}><label htmlFor={`${idPrefix}-kind`}>Document kind</label>
+          <select id={`${idPrefix}-kind`} value={kind} disabled={pending.current?.attempted} onChange={(e) => { edit(); setKind(z.enum(kinds).parse(e.target.value)); }}>
             {kinds.map((value) => <option value={value} key={value}>{labelFor(value)}</option>)}
           </select></div>
-        <div className={styles.field}><label htmlFor="document-role">Target role</label>
-          <input id="document-role" value={role} disabled={pending.current?.attempted} maxLength={100} onChange={(e) => { edit(); setRole(e.target.value); }} /></div>
-        <div className={styles.field}><label htmlFor="document-parent">Previous version / associated master</label>
-          <select id="document-parent" value={parentId} disabled={pending.current?.attempted} onChange={(e) => { edit(); setParentId(e.target.value); }}>
+        <div className={styles.field}><label htmlFor={`${idPrefix}-role`}>Target role</label>
+          <input id={`${idPrefix}-role`} value={role} disabled={pending.current?.attempted} maxLength={100} onChange={(e) => { edit(); setRole(e.target.value); }} /></div>
+        <div className={styles.field}><label htmlFor={`${idPrefix}-parent`}>Previous version / associated master</label>
+          <select id={`${idPrefix}-parent`} value={parentId} disabled={pending.current?.attempted} onChange={(e) => { edit(); setParentId(e.target.value); }}>
             <option value="">New document</option>
             {documents.filter((d) => d.state === 'available').map((d) => <option key={d.id} value={d.id}>{d.name} / v{d.version} / {labelFor(d.kind)}</option>)}
           </select></div>

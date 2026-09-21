@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "incremental": false },
+  "include": ["../../next-env.d.ts", "../../app/notification-bell.tsx", "../../app/inbox/**/*.ts", "../../app/inbox/**/*.tsx", "./**/*.ts"],
+  "exclude": ["../../node_modules"]
+}
