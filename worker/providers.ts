@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { z } from "zod";
 import { nativeCredentialBackend, type CredentialBackend, type WorkerScope } from "./credentials.ts";
 import type { PrivateStore } from "./storage.ts";
@@ -14,6 +16,7 @@ const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const RESERVATION_TTL_MS = 10 * 60_000;
 const LEDGER_NAME = "typesafe-budget";
+const execFileAsync = promisify(execFile);
 
 export class ProviderError extends Error {
   readonly code: string;
@@ -85,10 +88,20 @@ export async function readTypesafeApiKey(
   address: { service: string; account: string } = { service: TYPESAFE_KEYCHAIN_SERVICE, account: TYPESAFE_KEYCHAIN_ACCOUNT },
 ) {
   if (scope.ownerId !== approvedOwnerId) throw new ProviderError("PROVIDER_OWNER_UNBOUND");
-  const get = backend ?? await nativeCredentialBackend();
   let value: string | null;
-  try { value = get(address.service, address.account, { linux: { store: "secret-service" } }).getPassword(); }
-  catch { throw new ProviderError("PROVIDER_CREDENTIAL_UNAVAILABLE"); }
+  try {
+    if (!backend && process.platform === "darwin") {
+      // The native synchronous Keychain call can wait forever for an unavailable UI prompt.
+      // `security` keeps the lookup shell-free and gives the worker a finite failure path.
+      const result = await execFileAsync("/usr/bin/security", [
+        "find-generic-password", "-s", address.service, "-a", address.account, "-w",
+      ], { encoding: "utf8", timeout: 5_000, maxBuffer: 16_384, windowsHide: true });
+      value = result.stdout.replace(/\r?\n$/, "");
+    } else {
+      const get = backend ?? await nativeCredentialBackend();
+      value = get(address.service, address.account, { linux: { store: "secret-service" } }).getPassword();
+    }
+  } catch { throw new ProviderError("PROVIDER_CREDENTIAL_UNAVAILABLE"); }
   if (!value || Buffer.byteLength(value) > 16_384) throw new ProviderError("PROVIDER_CREDENTIAL_MISSING");
   return value;
 }

@@ -13,6 +13,11 @@ An exact metadata-only lookup succeeded for service `Workie TypeSafe API`,
 account `dongyeop0810@gmail.com`, in `~/Library/Keychains/login.keychain-db`.
 No password retrieval flags were used; no key value was read or displayed.
 The item exists, but its contents and TypeSafe authentication are not yet tested.
+The default macOS provider read now uses the shell-free `/usr/bin/security`
+command with a five-second timeout; the first non-interactive read returned
+`PROVIDER_CREDENTIAL_UNAVAILABLE` without making a provider request, so no
+TypeSafe budget was spent. A foreground macOS Keychain authorization is still
+needed before live authentication can be verified.
 The Phase 6 provider helper and local worker path now use this exact
 service/account. The worker invokes Jev only when the owner-scoped policy
 explicitly enables `typesafe_jev`, refreshes that policy before each decision,
