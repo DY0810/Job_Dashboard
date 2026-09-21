@@ -10,9 +10,10 @@ export const ApplicationRunResultSchema = z.strictObject({
 });
 export type ApplicationRunResult = z.infer<typeof ApplicationRunResultSchema> & { receipt: AtsReceipt | null };
 
-function providerState(input: AtsApplication, labels: string[], actions: readonly string[]) {
+function providerState(labels: string[], actions: readonly string[]) {
   return {
-    company: input.company, role: input.role, ats: input.identity.ats, tenant: input.identity.tenant,
+    // Jev only needs the redacted form shape and current actions; employer identity is not needed for this choice.
+    company: '[redacted]', role: '[redacted]', ats: 'candidate-form', tenant: 'redacted',
     fields: labels.map((label) => ({ label, kind: 'text' as const, options: undefined })), observedActions: [...actions],
   };
 }
@@ -25,7 +26,7 @@ async function observeAndFill(input: {
   const observation = await adapter.observe(runtime, application, signal);
   if (input.chooseAction) {
     const actions = observation.actions.map((id) => ({ id, label: id === 'fill' ? 'Fill confirmed application fields' : 'Inspect current application fields' }));
-    const selected = await input.chooseAction({ state: providerState(application, observation.fields.map((field) => field.label), observation.actions), actions }, {
+    const selected = await input.chooseAction({ state: providerState(observation.fields.map((field) => field.label), observation.actions), actions }, {
       signal, isCurrent: (ids) => ids.length === observation.actions.length && ids.every((id, index) => id === observation.actions[index]),
     });
     if (!observation.actions.includes(selected.actionId as typeof observation.actions[number])) throw new AtsError('PROVIDER_INVALID_DECISION');

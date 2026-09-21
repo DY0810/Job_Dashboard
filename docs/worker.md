@@ -10,11 +10,13 @@ Workday, Oracle Candidate Experience and iCIMS browser fixtures, an
 owner-approved TypeSafe Jev action selector, and immutable PDF/DOCX artifact
 verification. A master resume alone is not treated as tailored: the application
 stays at `needs_document` until a real edited artifact and verification manifest
-are persisted. Jev only chooses among current redacted action IDs; it does not
-write answers, edit documents, submit forms, or authorize an action. iCIMS
-account creation and unapproved browser egress fail closed. All ATS fixtures are
-synthetic; live employer forms, provider requests and real submissions remain
-unverified.
+are persisted. Jev receives only redacted form shape and current action IDs; it
+does not write answers, edit documents, submit forms, or authorize an action. A
+choice below the 0.75 confidence floor, a stale observation, or a provider fault
+becomes resumable `provider_unavailable` state, and the worker can continue with
+the next application. iCIMS account creation and unapproved browser egress fail
+closed. All ATS fixtures are synthetic; live employer forms, provider requests
+and real submissions remain unverified.
 
 ## Runtime And Credentials
 
@@ -166,7 +168,9 @@ Do not run one worker identity in two data directories/hosts.
 Ctrl-C or SIGTERM closes the local guard and stops the worker; a crashed worker
 loses the server lease. Restart with `start` to reconcile durable checkpoints.
 Network/protocol/credential faults exit visibly instead of running an
-unbounded retry loop. Retain the same data directory and keychain for recovery.
+unbounded retry loop. Provider and Jev decision faults are checkpointed as
+`provider_unavailable` for explicit recovery; they do not authorize a fallback
+action. Retain the same data directory and keychain for recovery.
 
 Pause/resume/skip/cancel/emergency-stop and credential revocation are durable
 server controls, not claims made by this local CLI. Revoke the worker in

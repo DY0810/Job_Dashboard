@@ -69,3 +69,10 @@ test("a single observed action is deterministic and does not spend provider budg
   assert.deepEqual(decision, { actionId: "fill_name", confidence: 1, probabilities: { fill_name: 1 }, model: "deterministic", usage: { input_tokens: 0, output_tokens: 0 } });
   assert.equal(called, false);
 });
+
+test("low-confidence choices fail closed before a browser action", async () => {
+  const select = createJevActionSelector({ evaluate: async () => ({
+    ...result, answers: { select_action: { ...result.answers.select_action, confidence: 0.74 } },
+  }) });
+  await assert.rejects(select({ state, actions }), /PROVIDER_LOW_CONFIDENCE/);
+});

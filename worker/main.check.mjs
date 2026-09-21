@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConfiguredJevActionSelector, hasVerifiedTailoredArtifact } from "./main.ts";
+import { createConfiguredJevActionSelector, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
+import { ProviderError } from "./providers.ts";
 import { privateStore } from "./storage.ts";
+import { runWorker } from "./runtime.ts";
 
 const scope = { origin: "https://workie.example", ownerId: "synthetic-owner", workerId: "synthetic-worker" };
 const config = {
@@ -66,3 +69,35 @@ try {
 } finally {
   await rm(directory, { recursive: true, force: true });
 }
+
+test("provider failures checkpoint as resumable state and do not block the next application", async () => {
+  const localScope = { ...scope, workerId: randomUUID() };
+  const localDirectory = await mkdtemp(join(tmpdir(), "main-provider-continuation-"));
+  const store = await privateStore(localDirectory, localScope);
+  const assignment = () => ({ applicationId: randomUUID(), runId: randomUUID(), workerId: localScope.workerId,
+    ownerId: localScope.ownerId, policyRevision: 1, ats: "fixture", tenant: "tenant", requisition: "role",
+    state: "screening", revision: 1, fence: 1, leaseUntil: Date.now() + 120_000, checkpoint: null, mode: "safe" });
+  const first = assignment(), second = assignment(), jobs = [first, second], events = [], controller = new AbortController();
+  try {
+    await runWorker({ scope: localScope, store, signal: controller.signal,
+      transport: {
+        poll: async () => ({ protocolVersion: 1, serverTime: Date.now(), heartbeatMs: 20_000, leaseMs: 120_000, lease: jobs.shift() ?? null }),
+        heartbeat: async () => ({ protocolVersion: 1, serverTime: Date.now(), heartbeatMs: 20_000, leaseMs: 120_000, lease: null }),
+        event: async (applicationId, event) => {
+          events.push(event);
+          if (events.length === 2) controller.abort();
+          return { applicationId, eventId: event.eventId, revision: event.expectedRevision + 1,
+            state: event.state, replayed: false, lease: null, serverTime: Date.now() };
+        },
+      },
+      dispatch: async (lease) => lease.applicationId === first.applicationId
+        ? providerFailureResult(new ProviderError("PROVIDER_LOW_CONFIDENCE"))
+        : { state: "blocked_unsupported", reasonCode: "fixture" },
+    });
+    assert.deepEqual(events.map((event) => [event.state, event.reasonCode]), [
+      ["provider_unavailable", "provider_low_confidence"], ["blocked_unsupported", "fixture"],
+    ]);
+  } finally {
+    await rm(localDirectory, { recursive: true, force: true });
+  }
+});

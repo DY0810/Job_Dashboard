@@ -49,8 +49,10 @@ value, bounds response bodies, and accounts conservatively for reserved and
 reported input usage. The separate file-backed ledger prevents concurrent
 reservations from exceeding the approved cumulative USD 10 allowance.
 `worker/main.ts` obtains owner-scoped provider policy after the worker lock and
-passes a cancellable, policy-refreshing selector into safe-stage dispatch; Jev
-can select only the current observed actions.
+passes a cancellable, policy-refreshing selector into safe-stage dispatch. Jev
+receives only redacted form shape and current observed actions; selections below
+the 0.75 confidence floor fail closed as `provider_unavailable`, as do provider
+faults, without blocking unrelated queued applications.
 
 | Accepted evidence | Result / reference |
 | --- | --- |
@@ -98,7 +100,7 @@ labels, committed select/radio values, file upload reconciliation and exact
 receipt identity checks. `worker/screening.ts` makes country, degree, major,
 term, authorization and pay decisions deterministically. `worker/application-runner.ts`
 keeps submission deterministic while an optional Jev selector can rank only the
-currently observed non-submit actions. Discovery snapshots retain the
+currently observed non-submit actions from redacted form shape. Discovery snapshots retain the
 authoritative posting row and an official-content hash; the authenticated worker
 context re-reads that row, rechecks ATS identity, and parses its exact description
 with deterministic rules before screening.

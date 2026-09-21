@@ -4,6 +4,7 @@ import { ProviderError, ProviderStateSchema, type TypesafeResult } from "./provi
 const actionId = z.string().trim().regex(/^[a-z][a-z0-9:_-]{0,63}$/);
 const actionLabel = z.string().trim().min(1).max(300);
 const observedAction = z.strictObject({ id: actionId, label: actionLabel });
+export const JEV_ACTION_MIN_CONFIDENCE = 0.75;
 
 export const JevActionSelectionSchema = z.strictObject({
   state: ProviderStateSchema,
@@ -28,7 +29,7 @@ export type JevDecisionProvider = {
 };
 export type JevActionSelector = (
   input: JevActionSelection,
-  options?: { signal?: AbortSignal; isCurrent?: (actionIds: readonly string[]) => boolean },
+  options?: { signal?: AbortSignal; isCurrent?: (actionIds: readonly string[]) => boolean; minConfidence?: number },
 ) => Promise<JevActionDecision>;
 
 /**
@@ -56,6 +57,11 @@ export function createJevActionSelector(provider: JevDecisionProvider): JevActio
     if (!answer || answer.type !== "choice" || !ids.includes(answer.choice)) {
       throw new ProviderError("PROVIDER_INVALID_DECISION");
     }
+    const minConfidence = options.minConfidence ?? JEV_ACTION_MIN_CONFIDENCE;
+    if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) {
+      throw new ProviderError("PROVIDER_POLICY_INVALID");
+    }
+    if (answer.confidence < minConfidence) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
     return {
       actionId: answer.choice,
       confidence: answer.confidence,

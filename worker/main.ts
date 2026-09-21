@@ -42,7 +42,7 @@ const ERROR_CODES = new Set([
   "PROVIDER_OWNER_UNBOUND", "PROVIDER_CREDENTIAL_UNAVAILABLE", "PROVIDER_CREDENTIAL_MISSING",
   "PROVIDER_LEDGER_INVALID", "PROVIDER_LEDGER_LOCKED", "PROVIDER_BUDGET_EXCEEDED", "PROVIDER_NETWORK_UNAVAILABLE",
   "PROVIDER_INVALID_RESPONSE", "PROVIDER_RESPONSE_TOO_LARGE", "PROVIDER_REQUEST_TOO_LARGE", "PROVIDER_USAGE_INVALID",
-  "PROVIDER_RESERVATION_MISSING", "INVALID_PROVIDER_ENDPOINT", "FETCH_UNAVAILABLE",
+  "PROVIDER_RESERVATION_MISSING", "PROVIDER_LOW_CONFIDENCE", "PROVIDER_POLICY_INVALID", "INVALID_PROVIDER_ENDPOINT", "FETCH_UNAVAILABLE",
   "ACCOUNT_CREATION_BLOCKED",
 ]);
 
@@ -63,6 +63,14 @@ export function createConfiguredJevActionSelector(
     endpoint: config.endpoint ?? TYPESAFE_ENDPOINT, fetchImpl,
   });
   return createJevActionSelector(provider);
+}
+
+export function providerFailureResult(error: unknown) {
+  if (!(error instanceof ProviderError)) return null;
+  return {
+    state: "provider_unavailable" as const,
+    reasonCode: error.code.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80),
+  };
 }
 
 export function hasVerifiedTailoredArtifact(context: Pick<ApplicationContext, "documents" | "tailoredArtifact" | "manifestHash" | "artifactHashes">) {
@@ -265,6 +273,8 @@ export async function main(args = process.argv.slice(2)) {
           if (error instanceof AtsError && error.code === "PROVIDER_INSPECT_SELECTED") {
             return { state: "needs_verification" as const, reasonCode: "provider_inspect_required" };
           }
+          const providerFailure = providerFailureResult(error);
+          if (providerFailure) return providerFailure;
           if (error instanceof AtsError && /REQUIRED_ANSWER|ANSWER_/.test(error.code)) {
             return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
           }
