@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
-import { documents, profileVersions, policyVersions, policyHeads, user } from '../private-db/schema.ts';
+import { documents, profileVersions, policyVersions, policyHeads, user, workerPairings, workers } from '../private-db/schema.ts';
 import { createEmptyProfile, EducationSchema, EmploymentSchema, AuthorizationSchema, DisclosureSchema,
   PreciseDateSchema, ProfileSchema, effectiveProfile, profileEnablementIssues, type Profile } from './profile.ts';
 import { createEmptyPolicy, PolicySchema } from './policy.ts';
@@ -253,6 +253,19 @@ describe('explicit, version-bound policy commands', () => {
     const filters = { ...createEmptyPolicy().filters, level: ['senior+'] };
     expect(PolicySchema.safeParse({ ...createEmptyPolicy(), filters }).success).toBe(false);
     expect(PolicySchema.safeParse({ ...createEmptyPolicy(), filters: { ...filters, tab: 'design', basis: 'employed' } }).success).toBe(true);
+  });
+  it('reports only a recent, non-revoked worker as available', async () => {
+    const pairingId = requestId(), workerId = requestId(), now = Date.now();
+    await db.insert(workerPairings).values({ id: pairingId, ownerId: 'one', grantHash: 'g'.repeat(64), credentialBinding: 'b'.repeat(64),
+      label: 'Synthetic worker', requestId: requestId(), expiresAt: now + 60_000 });
+    await db.insert(workers).values({ id: workerId, ownerId: 'one', pairingId, tokenHash: 't'.repeat(64), credentialBinding: 'b'.repeat(64),
+      registrationId: 'registration', registrationHash: 'r'.repeat(64), label: 'Synthetic worker', protocolVersion: 1,
+      workerVersion: 'test', capabilities: ['control-v1'], createdAt: now, lastSeenAt: now });
+    expect((await getPolicy(db, 'one', now)).runnerAvailable).toBe(true);
+    await db.update(workers).set({ lastSeenAt: now - 60_001 }).where(eq(workers.id, workerId));
+    expect((await getPolicy(db, 'one', now)).runnerAvailable).toBe(false);
+    await db.update(workers).set({ lastSeenAt: now, revokedAt: now }).where(eq(workers.id, workerId));
+    expect((await getPolicy(db, 'one', now)).runnerAvailable).toBe(false);
   });
   it('requires saved-hash acceptance, disables on expansion, and preserves original acknowledgements', async () => {
     await saveProfile(db, 'one', { expectedRevision: 0, requestId: requestId(), profile: applicant() });

@@ -17,6 +17,7 @@ export default function WorkersPage() {
       <nav aria-label="Account">
         <Link href="/" prefetch={false}>Jobs</Link>
         <Link href="/profile" prefetch={false}>Profile</Link>
+        <Link href="/applications" prefetch={false}>Applications</Link>
         <span aria-current="page">Workers</span>
         <Link href="/sign-in" prefetch={false}>Account</Link>
       </nav>

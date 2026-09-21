@@ -16,9 +16,11 @@ const config = {
 
 test("tailored artifact verification binds the output to the selected master and manifest", () => {
   const resume = { documentId: "00000000-0000-4000-8000-000000000001", version: 2, sha256: "a".repeat(64) };
-  const artifact = { documentId: resume.documentId, version: resume.version, sourceHash: "c".repeat(64),
-    verificationManifestHash: "d".repeat(64), outputHash: resume.sha256 };
-  const valid = { documents: { resume }, tailoredArtifact: artifact, manifestHash: artifact.verificationManifestHash,
+  const source = { ...resume, documentId: "b".repeat(8) + "-" + "b".repeat(4) + "-4" + "b".repeat(3) + "-8" + "b".repeat(3) + "-" + "b".repeat(12) };
+  const output = { ...resume, documentId: "c".repeat(8) + "-" + "c".repeat(4) + "-4" + "c".repeat(3) + "-8" + "c".repeat(3) + "-" + "c".repeat(12) };
+  const artifact = { documentId: output.documentId, version: output.version, sourceDocumentId: source.documentId,
+    sourceVersion: source.version, sourceHash: source.sha256, verificationManifestHash: "d".repeat(64), outputHash: output.sha256 };
+  const valid = { documents: { resume: output, resumeMaster: source }, tailoredArtifact: artifact, manifestHash: artifact.verificationManifestHash,
     artifactHashes: [artifact.outputHash] };
   assert.equal(hasVerifiedTailoredArtifact(valid), true);
   assert.equal(hasVerifiedTailoredArtifact({ ...valid, manifestHash: "e".repeat(64) }), false);

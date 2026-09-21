@@ -95,5 +95,5 @@ export type PolicyCommand = z.infer<typeof PolicyCommandSchema>;
 export type PolicyResponse = {
   revision: number; policy: Policy; enabled: boolean; policyVersion: number;
   policyHash: string | null; acceptedPolicyVersion: number | null; acceptedPolicyHash: string | null;
-  acceptedAt: string | null; runnerAvailable: false;
+  acceptedAt: string | null; runnerAvailable: boolean;
 };

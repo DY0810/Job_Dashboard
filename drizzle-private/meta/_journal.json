@@ -50,6 +50,13 @@
       "when": 1789999264653,
       "tag": "0006_large_ikaris",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790008780345,
+      "tag": "0007_silent_shiver_man",
+      "breakpoints": true
     }
   ]
 }

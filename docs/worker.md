@@ -1,15 +1,22 @@
-# Standalone Worker (Phase 3)
+# Standalone Worker
 
 The worker is a Node 22 process, not a Workie browser tab, Vercel request, or
 Codex session. Closing a client does not stop it. Host sleep or disconnect is
 not continuous operation: a lost heartbeat, unsafe clock, expired lease, or
 revocation closes mutation authority. Nothing is installed as a service.
 
-**No ATS adapter or provider is implemented.** The shipped stage dispatcher
-checkpoints `blocked_unsupported` with `adapter_unavailable` and releases the
-execution slot. It never submits, calls a model, launches a browser, or reports
-an employer receipt. Phase 8 must supply qualified code, not an executable path
-or a user-supplied hook. Phase 6 can reuse the plain credential functions.
+The worker currently has a qualified synthetic Greenhouse/Ashby browser slice,
+an owner-approved TypeSafe Jev action selector, and immutable PDF/DOCX artifact
+verification. A master resume alone is not treated as tailored: the application
+stays at `needs_document` until a real edited artifact and verification manifest
+are persisted. Jev only chooses among current redacted action IDs; it does not
+write answers, edit documents, submit forms, or authorize an action.
+
+Lever, Jobvite, Workday, Oracle Candidate Experience and iCIMS identities are
+recognized during discovery but intentionally stop at `blocked_unsupported` /
+`adapter_unavailable`. They do not fall through to generic browser automation.
+The Greenhouse/Ashby fixtures are synthetic; live employer forms, provider
+requests, and real application submissions remain unverified.
 
 ## Runtime And Credentials
 
@@ -36,6 +43,11 @@ keychain. There is no plaintext backup, environment-token option, token URL,
 command-argument secret, credential enumeration, or volatile fallback. Store
 failure stops pairing before registration. Provider credentials must use a
 different purpose reference and never enter stage inputs.
+
+The TypeSafe key is read only by the paired local worker from the exact
+`Workie TypeSafe API` / `dongyeop0810@gmail.com` keychain entry when Jev is
+enabled. Keychain qualification loads the native binding only; it does not prove
+that the entry can be read or that a live provider request will authenticate.
 
 Official sources checked:
 
@@ -103,15 +115,17 @@ an observed scheduler gap over 30 seconds, backward monotonic time, heartbeat
 failure, changed binding, or lease expiry closes the guard. A 1-second watchdog
 and checks before/after awaited operations detect these conditions.
 
-Future compiled adapters receive `lease` and `guard`:
+Compiled adapters receive `lease` and `guard`:
 
 - `guard.boundary(() => operation())` checks before and after awaited work.
 - `guard.mutate(() => operation())` also refuses reconciliation-only work.
 - Pass `guard.signal` to cancellable browser/provider operations.
 - Invoke the guard for **each** mutation, including after every awaited lookup;
   wrapping a whole multi-action callback is not sufficient.
-- No guard is a submit permit. Phase 3 has no submit path. Future irreversible
-  actions require fresh server intent plus manifest and receipt-specific guards.
+- No guard is a submit permit. Irreversible actions require fresh server intent
+  plus manifest and receipt-specific guards. The current ATS runner persists
+  submission intent and accepts only an exact-role receipt; an upload or
+  successful click is not a submission receipt.
 
 Checkpoints contain only stage/sequence/event metadata, not answers, files or
 credentials. The worker writes and fsyncs a 0600 temporary file, atomically
@@ -186,4 +200,13 @@ MockTimers in one test; process heartbeats and suspension use real time.
 `test:worker:keyring` only loads the native binding and inspects its declared
 export/method surface. No entry constructor or credential operation runs.
 The scripts do not prove real keychain persistence, Linux/Windows qualification,
-24/7 laptop availability, or any live submission.
+24/7 laptop availability, live TypeSafe authentication, or any live submission.
+
+## Private Operations View
+
+`/applications` is an authenticated, force-dynamic view over the owner-scoped
+run and application endpoints. It shows current state, checkpoint, reason code,
+worker heartbeat status and policy status. It intentionally shows the frozen
+ATS identity (`ats / tenant / requisition`) because the summary endpoint does
+not claim a mutable posting title. Use `/workers` for durable run controls and
+the notification bell for private questions and interventions.

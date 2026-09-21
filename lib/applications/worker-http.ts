@@ -17,10 +17,12 @@ import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent, submitIntent } from './events.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { applicationContext, applicationDocumentOwner } from './application-context.ts';
+import { createArtifactIntent, uploadArtifact } from './artifacts.ts';
 import { documentStorageConfig, readDocumentObject } from './documents-storage.ts';
 import { getPolicy, getProfile } from './stores.ts';
 import { ApplicationContextSchema, ApplicationContextRequestSchema } from './application-context-protocol.ts';
 import { ProviderConfigRequestSchema, ProviderConfigSchema } from './provider-protocol.ts';
+import { ArtifactIntentSchema, ArtifactIntentResponseSchema, ArtifactUploadResponseSchema } from './artifact-protocol.ts';
 
 async function limit(key: string, max: number) {
   const window = Math.floor(Date.now() / 60_000) * 60_000;
@@ -106,7 +108,7 @@ export async function browserWorkerEndpoint(request: Request, action: BrowserAct
     return privateJson(body, { headers });
   } catch (error) { return errorResponse(error, headers); }
 }
-export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent' | 'submission-intent' | 'receipt' | 'provider-config' | 'context', id?: string) {
+export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent' | 'submission-intent' | 'receipt' | 'provider-config' | 'context' | 'artifact-intent', id?: string) {
   try {
     checkPath(request, id ? [id] : []);
     const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
@@ -134,6 +136,7 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       case 'submission-intent': body = p.SubmissionIntentResponseSchema.parse(await beginSubmission(db, token, id!, p.SubmissionIntentSchema.parse(raw), options)); break;
       case 'receipt': body = p.ReceiptResponseSchema.parse(await recordReceipt(db, token, id!, p.ReceiptCommandSchema.parse(raw), options)); break;
       case 'context': body = ApplicationContextSchema.parse(await applicationContext(db, token, id!, ApplicationContextRequestSchema.parse(raw), options)); break;
+      case 'artifact-intent': body = ArtifactIntentResponseSchema.parse(await createArtifactIntent(db, token, id!, ArtifactIntentSchema.parse(raw), options)); break;
       case 'provider-config': {
         ProviderConfigRequestSchema.parse(raw);
         body = await providerConfig(db, workerOwnerId!);
@@ -142,6 +145,17 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       }
     }
     return privateJson(body);
+  } catch (error) { return errorResponse(error); }
+}
+
+export async function workerArtifactUploadEndpoint(request: Request, applicationId: string, artifactId: string) {
+  try {
+    checkPath(request, [applicationId, artifactId]);
+    const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
+    const token = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1] ?? '';
+    const worker = await withWorker(db, token, options, async (_tx, row) => ({ id: row.id }));
+    await limit(`private-worker:${worker.id}`, 120);
+    return privateJson(ArtifactUploadResponseSchema.parse(await uploadArtifact(db, token, applicationId, artifactId, request, options)));
   } catch (error) { return errorResponse(error); }
 }
 

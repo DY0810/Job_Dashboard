@@ -1,12 +1,13 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gte, isNull, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
-import { documents, profileHeads, profileVersions, policyHeads, policyVersions, policyCommands } from '../private-db/schema.ts';
+import { documents, profileHeads, profileVersions, policyHeads, policyVersions, policyCommands, workers } from '../private-db/schema.ts';
 import { createEmptyProfile, ProfileSchema, ProfileSaveSchema, profileEnablementIssues, type Profile, type ProfileResponse, type ProfileSave } from './profile.ts';
 import { createEmptyPolicy, PolicySchema, PolicySaveSchema, PolicyCommandSchema, type PolicyResponse, type PolicySave, type PolicyCommand } from './policy.ts';
 import { readDraftKeyConfig } from './draft-key.ts';
 import { PrivateInputError } from './private-http.ts';
+import { HEARTBEAT_MS } from './worker-protocol.ts';
 
 type Db = Pick<PrivateDb, 'select' | 'insert' | 'update'>;
 async function transaction<T>(db: PrivateDb, run: Parameters<PrivateDb['transaction']>[0]): Promise<T> {
@@ -145,12 +146,16 @@ export async function saveProfile(db: PrivateDb, ownerId: string, input: Profile
 
 export async function getPolicy(db: Db, ownerId: string, now = Date.now()): Promise<PolicyResponse> {
   owner(ownerId);
+  const [runner] = await db.select({ id: workers.id }).from(workers).where(and(
+    eq(workers.ownerId, ownerId), isNull(workers.revokedAt), gte(workers.lastSeenAt, now - HEARTBEAT_MS * 3),
+  )).limit(1);
+  const runnerAvailable = Boolean(runner);
   const [row] = await db.select().from(policyHeads).innerJoin(policyVersions,
     and(eq(policyHeads.ownerId, policyVersions.ownerId), eq(policyHeads.policyVersion, policyVersions.version)))
     .where(eq(policyHeads.ownerId, ownerId));
   if (!row) return {
     revision: 0, policy: createEmptyPolicy(), enabled: false, policyVersion: 0, policyHash: null,
-    acceptedPolicyVersion: null, acceptedPolicyHash: null, acceptedAt: null, runnerAvailable: false,
+    acceptedPolicyVersion: null, acceptedPolicyHash: null, acceptedAt: null, runnerAvailable,
   };
   const head = row.private_policy_head;
   const saved = row.private_policy_version;
@@ -161,7 +166,7 @@ export async function getPolicy(db: Db, ownerId: string, now = Date.now()): Prom
   return {
     revision: head.revision, policyVersion: saved.version, policyHash: saved.hash, policy, enabled,
     acceptedPolicyVersion: head.acceptedPolicyVersion, acceptedPolicyHash: head.acceptedPolicyHash,
-    acceptedAt: head.acceptedAt === null ? null : new Date(head.acceptedAt).toISOString(), runnerAvailable: false,
+    acceptedAt: head.acceptedAt === null ? null : new Date(head.acceptedAt).toISOString(), runnerAvailable,
   };
 }
 

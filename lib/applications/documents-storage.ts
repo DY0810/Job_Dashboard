@@ -3,7 +3,7 @@ import { constants, lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { open, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable } from 'node:stream';
-import { get, del } from '@vercel/blob';
+import { get, del, put } from '@vercel/blob';
 
 export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 export class DocumentError extends Error {
@@ -96,8 +96,13 @@ export async function boundedDocumentBytes(stream: ReadableStream<Uint8Array> | 
 }
 export async function writeDocumentObject(storage: DocumentStorage, key: string, bytes: Uint8Array) {
   assertDocumentKey(key);
-  if (storage.mode !== 'local') throw new DocumentError(503, 'Local document storage is unavailable.');
   if (bytes.length > MAX_DOCUMENT_BYTES) throw new DocumentError(413, 'Document exceeds the byte limit.');
+  if (storage.mode === 'blob') {
+    await put(key, Buffer.from(bytes), { access: 'private', addRandomSuffix: false, allowOverwrite: true,
+      contentType: 'application/octet-stream', token: storage.token, abortSignal: AbortSignal.timeout(8_000) });
+    return;
+  }
+  if (storage.mode !== 'local') throw new DocumentError(503, 'Local document storage is unavailable.');
   checkDirectory(storage.directory, true);
   const path = join(storage.directory, key.slice('documents/'.length));
   const file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);

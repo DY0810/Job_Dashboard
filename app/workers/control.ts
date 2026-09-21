@@ -15,7 +15,7 @@ const PolicyResponseSchema = z.strictObject({
   revision: z.number().int().nonnegative(), policy: PolicySchema, enabled: z.boolean(),
   policyVersion: z.number().int().nonnegative(), policyHash: z.string().nullable(),
   acceptedPolicyVersion: z.number().nullable(), acceptedPolicyHash: z.string().nullable(),
-  acceptedAt: z.string().nullable(), runnerAvailable: z.literal(false),
+  acceptedAt: z.string().nullable(), runnerAvailable: z.boolean(),
 });
 type Kind = 'pairing' | 'worker' | 'run' | 'application';
 type Command = {

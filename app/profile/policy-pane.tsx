@@ -12,7 +12,7 @@ const responseSchema = z.object({
   revision: z.number().int().nonnegative(), policy: PolicySchema, enabled: z.boolean(),
   policyVersion: z.number().int().nonnegative(), policyHash: z.string().nullable(),
   acceptedPolicyVersion: z.number().nullable(), acceptedPolicyHash: z.string().nullable(),
-  acceptedAt: z.string().nullable(), runnerAvailable: z.literal(false),
+  acceptedAt: z.string().nullable(), runnerAvailable: z.boolean(),
 });
 const metadata = z.toJSONSchema(PolicySchema) as FieldMeta;
 
@@ -123,7 +123,7 @@ export default function PolicyPane({ api, profileSaved }: { api: PrivateApi; pro
       pending.current = null; setUncertain(false); setAccepted(false);
       setNotice(response.revision > work.ack.revision
         ? `Earlier request acknowledged. Current policy version ${response.policyVersion}: ${response.enabled ? 'enabled intent' : 'Auto Apply disabled'}.`
-        : response.enabled ? `Policy version ${response.policyVersion} accepted. Runner not connected.` : `Policy version ${response.policyVersion} saved. Auto Apply disabled.`);
+        : response.enabled ? `Policy version ${response.policyVersion} accepted. ${response.runnerAvailable ? 'Runner online.' : 'Runner offline.'}` : `Policy version ${response.policyVersion} saved. Auto Apply disabled.`);
     } catch (e) {
       if (!current()) return;
       setError(e instanceof ProfileSaveError ? e.message : 'Policy request failed. Retry the same request.');
@@ -166,7 +166,7 @@ export default function PolicyPane({ api, profileSaved }: { api: PrivateApi; pro
   }, [saved]);
   return <section className={styles.section} id="auto-apply-policy" aria-labelledby="policy-heading">
     <div className={styles.row}><h2 id="policy-heading">Auto Apply policy</h2>
-      <span className={styles.muted}>{saved?.enabled ? 'Enabled intent' : 'Disabled'} / Runner not connected (Phase 3)</span>
+      <span className={styles.muted}>{saved?.enabled ? 'Enabled intent' : 'Disabled'} / {saved?.runnerAvailable ? 'Runner online' : 'Runner offline'}</span>
     </div>
     {!draft ? error ? <button className={styles.button} disabled={busy} onClick={() => void load()}>Retry loading policy</button> :
       <p className={styles.muted} role="status">Loading policy...</p> :

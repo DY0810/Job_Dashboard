@@ -181,7 +181,7 @@ test('run create replay shows the newer stopped head and controls persist across
   expect(fixture.writes[0].body).toEqual(fixture.writes[1].body);
   await page.reload();
   await expect(run(page).getByText('stopped', { exact: true })).toBeVisible();
-  await expect(page.getByText('Policy intent enabled / Execution disabled / Runner unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('Policy intent enabled / Execution available', { exact: true })).toBeVisible();
 });
 
 for (const target of ['same', 'different'] as const) {

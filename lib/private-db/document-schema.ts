@@ -5,7 +5,7 @@ import { user } from './schema.ts';
 export const documents = sqliteTable('private_document', {
   id: text('id').primaryKey(),
   ownerId: text('owner_id').notNull().references(() => user.id, { onDelete: 'restrict' }),
-  kind: text('kind', { enum: ['resume_master', 'resume_source', 'transcript', 'certificate', 'supporting'] }).notNull(),
+  kind: text('kind', { enum: ['resume_master', 'resume_source', 'resume_artifact', 'transcript', 'certificate', 'supporting'] }).notNull(),
   name: text('name').notNull(),
   role: text('role'),
   parentId: text('parent_id'),
@@ -29,7 +29,7 @@ export const documents = sqliteTable('private_document', {
   index('private_document_owner_state_idx').on(t.ownerId, t.state),
   foreignKey({ columns: [t.ownerId, t.parentId], foreignColumns: [t.ownerId, t.id] }),
   foreignKey({ columns: [t.ownerId, t.masterId], foreignColumns: [t.ownerId, t.id] }),
-  check('private_document_kind_check', sql`${t.kind} in ('resume_master','resume_source','transcript','certificate','supporting')`),
+  check('private_document_kind_check', sql`${t.kind} in ('resume_master','resume_source','resume_artifact','transcript','certificate','supporting')`),
   check('private_document_state_check', sql`${t.state} in ('pending','quarantined','available','rejected','expired')`),
   check('private_document_safety_check', sql`${t.safetyCheck} in ('pending','passed','rejected','deferred')`),
   check('private_document_storage_check', sql`${t.storage} in ('local','blob')`),

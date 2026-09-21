@@ -165,6 +165,9 @@ function validateRequest(manifest: TemplateManifest, requestInput: unknown, sour
     seen.add(item.anchorId);
     const target = byId.get(item.anchorId);
     if (!target) throw new DocumentRuntimeError('ANCHOR_NOT_FOUND');
+    if (normalized(item.replacement) === normalized(target.text)) {
+      throw new DocumentRuntimeError('NO_SUBSTANTIVE_EDIT');
+    }
     if (item.replacement.length > target.maxChars || /[\r\n]/.test(item.replacement)) {
       throw new DocumentRuntimeError('EDIT_OVERFLOW');
     }

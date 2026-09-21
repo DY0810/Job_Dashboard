@@ -15,6 +15,9 @@ import {
   ProviderConfigRequestSchema, ProviderConfigSchema,
 } from "../lib/applications/provider-protocol.ts";
 import { ApplicationContextRequestSchema, ApplicationContextSchema } from "../lib/applications/application-context-protocol.ts";
+import {
+  ArtifactIntentSchema, ArtifactIntentResponseSchema, ArtifactUploadHeaderSchema, ArtifactUploadResponseSchema,
+} from "../lib/applications/artifact-protocol.ts";
 
 export function controlOrigin(input: string, allowLoopback = false) {
   let url;
@@ -111,6 +114,34 @@ export function workerTransport(options: {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       return post(`/api/worker/applications/${applicationId}/context`,
         ApplicationContextRequestSchema.parse(input), ApplicationContextSchema, signal);
+    },
+    artifactIntent: (applicationId: string, input: z.input<typeof ArtifactIntentSchema>, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
+      return post(`/api/worker/applications/${applicationId}/artifacts`, ArtifactIntentSchema.parse(input), ArtifactIntentResponseSchema, signal);
+    },
+    uploadArtifact: async (applicationId: string, artifactId: string, path: string, input: z.input<typeof ArtifactUploadHeaderSchema>,
+      bytes: Uint8Array, mime: string, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success || !z.uuid().safeParse(artifactId).success ||
+          path !== `/api/worker/applications/${applicationId}/artifacts/${artifactId}/upload` || bytes.length > 10 * 1024 * 1024) {
+        throw new TransportError("INVALID_ARTIFACT");
+      }
+      const header = ArtifactUploadHeaderSchema.parse(input);
+      const deadline = AbortSignal.any([AbortSignal.timeout(timeout), ...(signal ? [signal] : [])]);
+      let response: Response;
+      try {
+        response = await fetch(`${origin}${path}`, { method: "POST", redirect: "error", cache: "no-store", credentials: "omit",
+          headers: { "Content-Type": mime, "Content-Length": String(bytes.length),
+            "x-workie-protocol-version": String(header.protocolVersion), "x-workie-request-id": header.requestId,
+            "x-workie-fence": String(header.fence), "x-workie-revision": String(header.expectedRevision),
+            ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}) }, body: Buffer.from(bytes), signal: deadline });
+      } catch { throw new TransportError(signal?.aborted ? "STOPPED" : "NETWORK_UNAVAILABLE"); }
+      if (!response.ok) throw new TransportError(`HTTP_${response.status}`, response.status);
+      const body = await response.text();
+      if (Buffer.byteLength(body) > 128 * 1024) throw new TransportError("RESPONSE_LIMIT");
+      let parsed;
+      try { parsed = ArtifactUploadResponseSchema.safeParse(JSON.parse(body)); } catch { parsed = { success: false } as const; }
+      if (!parsed.success) throw new TransportError("INVALID_RESPONSE");
+      return parsed.data;
     },
     downloadDocument: async (applicationId: string, documentId: string, path: string, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success || !z.uuid().safeParse(documentId).success) {

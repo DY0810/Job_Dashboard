@@ -422,7 +422,7 @@ test('saving policy stays disabled; enable accepts its saved version exactly onc
   expect(fixture.policyWrites.map((w) => w.method)).toEqual(['PATCH']);
   await page.getByLabel('Accept policy version 1').check();
   await page.getByRole('button', { name: 'Enable Auto Apply', exact: true }).click();
-  await expect(page.getByText('Policy version 1 accepted. Runner not connected.')).toBeVisible();
+  await expect(page.getByText('Policy version 1 accepted. Runner offline.')).toBeVisible();
   expect(fixture.policyWrites[1]).toMatchObject({ method: 'POST', body: { action: 'enable', acceptedPolicyHash: 'a'.repeat(64) } });
   await page.getByRole('button', { name: 'Disable Auto Apply', exact: true }).click();
   await expect(page.getByText('Policy version 1 saved. Auto Apply disabled.')).toBeVisible();
@@ -475,7 +475,7 @@ test('historical policy enable acknowledgement cannot override a newer disabled 
   await expect(page.locator('#auto-apply-policy')).toContainText('Earlier request acknowledged. Current policy version 1: Auto Apply disabled.');
   expect(fixture.policyWrites[1]).toEqual(original);
   expect(fixture.policyGets).toBeGreaterThan(reads);
-  await expect(page.getByText('Enabled intent / Runner not connected (Phase 3)', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Enabled intent / Runner offline', { exact: true })).toHaveCount(0);
   await sectionScreenshot(page, info, page.locator('#auto-apply-policy'), 'historical-policy-disabled');
 });
 
@@ -589,7 +589,7 @@ for (const missing of ['actions', 'destinations', 'countries'] as const) {
     await expect(page.getByText('A newer version exists. Review before saving.', { exact: true })).toBeVisible();
     expect(fixture.policy.enabled).toBe(false);
     expect(fixture.policy.revision).toBe(1);
-    await expect(page.getByText('Enabled intent / Runner not connected (Phase 3)', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Enabled intent / Runner offline', { exact: true })).toHaveCount(0);
   });
 }
 

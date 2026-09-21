@@ -57,6 +57,7 @@ test('DOCX edits reject missing evidence, overflow and stale masters before invo
   await assert.rejects(tailorDocument({ bytes, mime: DOCX, manifest, request: base }), /EDIT_OVERFLOW/);
   await assert.rejects(tailorDocument({ bytes, mime: DOCX, manifest, request: { ...base, masterHash: 'a'.repeat(64) } }), /MASTER_HASH_MISMATCH/);
   await assert.rejects(tailorDocument({ bytes, mime: DOCX, manifest, request: { ...base, edits: [{ ...base.edits[0], replacement: 'Build SDKs', evidenceIds: [crypto.randomUUID()] }] } }), /UNCONFIRMED_EVIDENCE/);
+  await assert.rejects(tailorDocument({ bytes, mime: DOCX, manifest, request: { ...base, edits: [{ ...base.edits[0], replacement: 'Build APIs' }] } }), /NO_SUBSTANTIVE_EDIT/);
 });
 
 test('DOCX tailoring rejects a source that does not match its reference PDF', { skip: !hasSoffice }, async () => {

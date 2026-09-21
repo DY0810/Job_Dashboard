@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { createEmptyPolicy, PolicySchema } from '../../lib/applications/policy';
+import { InboxPageSchema } from '../../lib/applications/question-protocol';
 import { isTerminalState } from '../../lib/applications/state';
 import {
   ApplicationCommandSchema, ApplicationSummarySchema, PairingCreateSchema, PairingGrantSchema,
@@ -31,7 +32,7 @@ export class WorkerFixture {
     revision: 2, policy: PolicySchema.parse({ ...createEmptyPolicy(), actions: ['read_jobs'],
       destinations: ['employer.example.test'], countries: ['US'] }),
     enabled: true, policyVersion: 1, policyHash: 'a'.repeat(64), acceptedPolicyVersion: 1,
-    acceptedPolicyHash: 'a'.repeat(64), acceptedAt: '2026-09-20T12:00:00.000Z', runnerAvailable: false as const,
+    acceptedPolicyHash: 'a'.repeat(64), acceptedAt: '2026-09-20T12:00:00.000Z', runnerAvailable: false,
   };
   requests: Request[] = [];
   loseNext = false;
@@ -69,6 +70,13 @@ export class WorkerFixture {
     if (request.owner !== this.owner) return error(403, 'PRINCIPAL_CHANGED');
     if (this.authStatus !== 200) return error(this.authStatus, 'AUTH_REQUIRED');
     if (method === 'GET') {
+      if (path === '/api/profile/draft-key') return { status: 200, json: {
+        ownerId: this.owner, keyVersion: '1', key: btoa('s'.repeat(32)),
+      } };
+      if (path === '/api/inbox') return reply(InboxPageSchema, {
+        ownerId: this.owner, unread: 0, unresolved: 0, waitingApplications: 0,
+        serverTime: this.now, items: [], nextCursor: null,
+      });
       if (this.failHead) return error(503, 'UNAVAILABLE');
       if (path === '/api/workers') return reply(WorkerListSchema, {
         ownerId: this.owner, serverTime: this.now, workers: this.workers, pairings: this.pairings,

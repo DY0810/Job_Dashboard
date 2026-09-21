@@ -41,7 +41,8 @@ export const ApplicationDocumentSchema = z.strictObject({
 });
 
 export const TailoredArtifactSchema = z.strictObject({
-  documentId: uuid, version: z.number().int().positive().safe(), sourceHash: hash,
+  documentId: uuid, version: z.number().int().positive().safe(), sourceDocumentId: uuid,
+  sourceVersion: z.number().int().positive().safe(), sourceHash: hash,
   verificationManifestHash: hash, outputHash: hash,
 });
 

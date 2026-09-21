@@ -95,7 +95,7 @@ async function eligible(tx: WorkerTx, app: ApplicationRow, ctx: Context) {
     await liveRun(tx, app, ctx.now) && await workerAvailable(tx, app, ctx);
 }
 const documentPermission = (kind: typeof documents.$inferSelect['kind']) =>
-  kind === 'resume_master' || kind === 'resume_source' ? 'resume' : kind === 'supporting' ? null : kind;
+  kind === 'resume_master' || kind === 'resume_source' || kind === 'resume_artifact' ? 'resume' : kind === 'supporting' ? null : kind;
 function permitted(q: QuestionDescriptor, ctx: Context) {
   if (!ctx.policy.policy.actions.includes('fill_forms') || q.field.type === 'intervention') return false;
   if (q.field.type === 'document') return q.field.documentKinds.some(kind => {
@@ -145,8 +145,10 @@ async function answerValid(tx: WorkerTx, row: QuestionRow, value: AnswerValue, c
   ));
   if (!document) return false;
   const permission = documentPermission(document.kind);
+  const fieldKinds = document.kind === 'resume_artifact' ? ['resume_master', 'resume_source'] : [document.kind];
   return permission !== null && ctx.policy.policy.documentKinds.includes(permission) &&
-    field.documentKinds.includes(document.kind) && field.mimeTypes.includes(document.mime as typeof field.mimeTypes[number]) &&
+    fieldKinds.some((kind) => field.documentKinds.includes(kind as typeof field.documentKinds[number])) &&
+    field.mimeTypes.includes(document.mime as typeof field.mimeTypes[number]) &&
     document.size <= field.maxBytes;
 }
 const focusResult = (row: typeof questionInterventions.$inferSelect): FocusResult => ({

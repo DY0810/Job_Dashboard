@@ -59,9 +59,10 @@ export function createConfiguredJevActionSelector(
 }
 
 export function hasVerifiedTailoredArtifact(context: Pick<ApplicationContext, "documents" | "tailoredArtifact" | "manifestHash" | "artifactHashes">) {
-  const resume = context.documents.resume, artifact = context.tailoredArtifact;
-  return Boolean(resume && artifact && artifact.documentId === resume.documentId && artifact.version === resume.version &&
-    artifact.outputHash === resume.sha256 && context.manifestHash === artifact.verificationManifestHash &&
+  const output = context.documents.resume, source = context.documents.resumeMaster, artifact = context.tailoredArtifact;
+  return Boolean(output && source && artifact && artifact.documentId === output.documentId && artifact.version === output.version &&
+    artifact.sourceDocumentId === source.documentId && artifact.sourceVersion === source.version && artifact.sourceHash === source.sha256 &&
+    artifact.outputHash === output.sha256 && context.manifestHash === artifact.verificationManifestHash &&
     context.artifactHashes.includes(artifact.outputHash));
 }
 
@@ -173,10 +174,9 @@ export async function main(args = process.argv.slice(2)) {
           return { state: "tailoring" as const, reasonCode: "screened" };
         }
         if (lease.state === "tailoring") {
-          if (!hasVerifiedTailoredArtifact(applicationContext)) {
-            return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
-          }
-          return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
+          return hasVerifiedTailoredArtifact(applicationContext)
+            ? { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } }
+            : { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
         }
         const workDirectory = await mkdtemp(join(directory, "application-"));
         let runtime: Awaited<ReturnType<typeof createBrowserRuntime>> | undefined;

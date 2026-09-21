@@ -1,10 +1,10 @@
 import 'server-only';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { driver, type ReadDb } from '../db/index.ts';
 import { postings, postingSources } from '../db/schema.ts';
 import type { PrivateDb } from '../private-db/index.ts';
-import { applications, applicationRuns, discoveryManifests, discoveryTargets, documents } from '../private-db/schema.ts';
+import { applications, applicationArtifacts, applicationRuns, discoveryManifests, discoveryTargets, documents } from '../private-db/schema.ts';
 import { ApplicationContextSchema, ApplicationContextRequestSchema, type ApplicationContext } from './application-context-protocol.ts';
 import { withWorker, type WorkerOptions, WorkerError, type WorkerTx, type WorkerRow } from './worker-store.ts';
 import { checkedLease } from './leases.ts';
@@ -14,6 +14,7 @@ import { getDiscoveryCorpus } from './discovery-corpus.ts';
 import { resolveApplicationIdentity } from './application-identity.ts';
 import { officialContentHash } from './discovery-source.ts';
 import { parseOfficialRequirements } from './official-requirements.ts';
+import { ApplicationArtifactManifestSchema, artifactManifestHash } from './artifact-protocol.ts';
 
 type Fact = { state: string; value: unknown };
 const factValue = <T>(fact: Fact | undefined): T | null => fact?.state === 'confirmed' ? fact.value as T : null;
@@ -135,15 +136,56 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
   masters.sort((a, b) => Number(label(official.title).includes(label(b.role ?? ''))) - Number(label(official.title).includes(label(a.role ?? ''))));
   const documentsByKey: Record<string, ApplicationContext['documents'][string]> = {};
   const selected = masters[0];
+  let selectedDocument: typeof documents.$inferSelect | undefined;
   if (selected) {
     const [document] = await tx.select().from(documents).where(and(
       eq(documents.ownerId, worker.ownerId), eq(documents.id, selected.ref.documentId), eq(documents.version, selected.ref.version),
       eq(documents.state, 'available'), eq(documents.safetyCheck, 'passed'),
     ));
-    if (document?.sha256) documentsByKey.resume = {
+    selectedDocument = document;
+    if (document?.sha256) documentsByKey.resumeMaster = {
       documentId: document.id, version: document.version, sha256: document.sha256, size: document.size, mime: document.mime as 'application/pdf' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       path: `/api/worker/applications/${checked.id}/documents/${document.id}`,
     };
+  }
+  if (selectedDocument?.sha256) {
+    const [saved] = await tx.select({ artifact: applicationArtifacts, document: documents }).from(applicationArtifacts)
+      .innerJoin(documents, and(eq(documents.ownerId, applicationArtifacts.ownerId), eq(documents.id, applicationArtifacts.documentId)))
+      .where(and(eq(applicationArtifacts.ownerId, worker.ownerId), eq(applicationArtifacts.applicationId, checked.id),
+        eq(applicationArtifacts.sourceDocumentId, selectedDocument.id), eq(applicationArtifacts.sourceVersion, selectedDocument.version),
+        eq(applicationArtifacts.sourceHash, selectedDocument.sha256), eq(documents.state, 'available'), eq(documents.safetyCheck, 'passed')))
+      .orderBy(desc(applicationArtifacts.createdAt)).limit(1);
+    if (saved) {
+      let manifest: ReturnType<typeof ApplicationArtifactManifestSchema.parse>;
+      try { manifest = ApplicationArtifactManifestSchema.parse(saved.artifact.manifest); }
+      catch { throw new WorkerError(409, 'ARTIFACT_INVALID', 'Stored application artifact manifest is invalid.'); }
+      if (saved.artifact.manifestHash !== artifactManifestHash(manifest) || manifest.applicationId !== checked.id ||
+          manifest.source.documentId !== selectedDocument.id || manifest.source.version !== selectedDocument.version ||
+          manifest.source.sha256 !== selectedDocument.sha256 || manifest.output.sha256 !== saved.document.sha256 ||
+          manifest.output.size !== saved.document.size || manifest.output.mime !== saved.document.mime ||
+          saved.artifact.outputHash !== saved.document.sha256) {
+        throw new WorkerError(409, 'ARTIFACT_INVALID', 'Stored application artifact does not match its document.');
+      }
+      documentsByKey.resume = {
+        documentId: saved.document.id, version: saved.document.version, sha256: saved.document.sha256,
+        size: saved.document.size, mime: saved.document.mime as 'application/pdf' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        path: `/api/worker/applications/${checked.id}/documents/${saved.document.id}`,
+      };
+      documentsByKey.resumeMaster ??= {
+        documentId: selectedDocument.id, version: selectedDocument.version, sha256: selectedDocument.sha256,
+        size: selectedDocument.size, mime: selectedDocument.mime as 'application/pdf' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        path: `/api/worker/applications/${checked.id}/documents/${selectedDocument.id}`,
+      };
+      return ApplicationContextSchema.parse({
+        protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
+        policyRevision: run.policyRevision, identity: candidate.identity, company: official.company, role: official.title,
+        applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
+        tailoredArtifact: { documentId: saved.document.id, version: saved.document.version, sourceDocumentId: selectedDocument.id,
+          sourceVersion: selectedDocument.version, sourceHash: selectedDocument.sha256, verificationManifestHash: saved.artifact.manifestHash,
+          outputHash: saved.document.sha256 }, manifestHash: saved.artifact.manifestHash, artifactHashes: [saved.document.sha256], createdAt: now,
+      });
+    }
+    documentsByKey.resume = documentsByKey.resumeMaster;
   }
   return ApplicationContextSchema.parse({
     protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,

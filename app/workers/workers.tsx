@@ -77,6 +77,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
   const runs = view.runs?.runs ?? [];
   const grant = view.grant;
   const selectedWorker = workers.find((w) => w.id === selected && w.revokedAt === null);
+  const runnerAvailable = workers.some((worker) => workerStatus(worker, view.now) === 'Online');
   return <>
     {view.notice && <p role="status" className={styles.message}>{view.notice}</p>}
     {view.pending && <div className={styles.message} role="status">
@@ -130,7 +131,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
     <section className={styles.section} aria-labelledby="runs-heading">
       <h2 id="runs-heading">Runs</h2>
       <p className={styles.muted}>
-        {view.policy?.enabled ? 'Policy intent enabled' : 'Policy disabled'} / Execution disabled / Runner unavailable
+        {view.policy?.enabled ? 'Policy intent enabled' : 'Policy disabled'} / {runnerAvailable ? 'Execution available' : 'Runner offline'}
       </p>
       <form className={styles.form} onSubmit={(event) => { event.preventDefault(); void control.createRun(selected); }}>
         <label>Run worker
