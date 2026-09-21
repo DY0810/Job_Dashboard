@@ -345,7 +345,7 @@ export default function ProfileEditor() {
             <h2 id={`${key}-heading`}>{PROFILE_SECTION_LABELS[key]}</h2>
             {key === 'documentsProvider' && <>
               <DocumentsPane api={session.api} ownerId={session.ownerId} signal={session.abort.signal} onDocuments={setDocuments} />
-              <p className={styles.muted}>Provider connection: not configured / Phase 6. Metadata only.</p>
+              <p className={styles.muted}>Provider connection is checked by the paired worker. Keys stay in its OS keychain.</p>
             </>}
             <SectionFields meta={metadata.properties![key]} value={profile[key]} path={[key]} issues={issues} documents={documents}
               onChange={(value) => {

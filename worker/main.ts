@@ -7,7 +7,7 @@ import { credentials, nativeCredentialBackend, type CredentialBackend, type Work
 import { privateStore } from "./storage.ts";
 import { controlOrigin, workerTransport, TransportError } from "./transport.ts";
 import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, ScopeSchema } from "./pairing.ts";
-import { readMaskedGrant } from "./input.ts";
+import { readMaskedGrant, readMaskedSecret } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
 import { createBrowserRuntime } from "./browser.ts";
 import { ashby } from "./ats/ashby.ts";
@@ -21,14 +21,22 @@ import { jobvite } from "./ats/jobvite.ts";
 import { workday } from "./ats/workday.ts";
 import { oracle } from "./ats/oracle.ts";
 import { icims } from "./ats/icims.ts";
-import type { StageDispatch } from "./runtime.ts";
+import type { StageDispatch, StructuredGenerator } from "./runtime.ts";
+import type { StructuredGenerationResult } from "./providers.ts";
 import { createJevActionSelector, type JevActionSelector } from "./jev.ts";
 import {
-  createTypesafeProvider, ProviderError, TYPESAFE_ENDPOINT, typesafeBudgetLedger,
+  createStructuredProvider, createTypesafeProvider, ProviderError, StructuredTaskInputSchema, storeProviderApiKey,
+  typesafeBudgetLedger, structuredBudgetLedger,
 } from "./providers.ts";
-import type { ProviderConfig } from "../lib/applications/provider-protocol.ts";
+import type { StructuredProvider } from "./providers.ts";
+import {
+  BYOK_PROVIDER_ID, LOCAL_OLLAMA_PROVIDER_ID, OMNIROUTE_PROVIDER_ID, TYPESAFE_ENDPOINT,
+  type ProviderConfig,
+} from "../lib/applications/provider-protocol.ts";
 import type { ApplicationContext } from "../lib/applications/application-context-protocol.ts";
 import type { PrivateStore } from "./storage.ts";
+import { ApplicationArtifactManifestSchema, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
+import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 
 const ERROR_CODES = new Set([
   "NODE_22_REQUIRED", "UNSUPPORTED_PLATFORM", "CONFIGURATION_REQUIRED", "INVALID_ORIGIN",
@@ -43,7 +51,9 @@ const ERROR_CODES = new Set([
   "PROVIDER_LEDGER_INVALID", "PROVIDER_LEDGER_LOCKED", "PROVIDER_BUDGET_EXCEEDED", "PROVIDER_NETWORK_UNAVAILABLE",
   "PROVIDER_INVALID_RESPONSE", "PROVIDER_RESPONSE_TOO_LARGE", "PROVIDER_REQUEST_TOO_LARGE", "PROVIDER_USAGE_INVALID",
   "PROVIDER_RESERVATION_MISSING", "PROVIDER_LOW_CONFIDENCE", "PROVIDER_POLICY_INVALID", "INVALID_PROVIDER_ENDPOINT", "FETCH_UNAVAILABLE",
-  "ACCOUNT_CREATION_BLOCKED",
+  "PROVIDER_FALLBACK_UNSUPPORTED", "PROVIDER_UNKNOWN_COST", "PROVIDER_AUTH_UNAVAILABLE", "PROVIDER_QUOTA_EXCEEDED",
+  "PROVIDER_CREDENTIAL_INVALID", "PROVIDER_MODEL_INVALID", "PROVIDER_ID_INVALID", "LOCAL_PROVIDER_POLICY_INVALID", "LOCAL_PROVIDER_ENDPOINT_REQUIRED",
+  "REMOTE_PROVIDER_ENDPOINT_INVALID", "ACCOUNT_CREATION_BLOCKED",
 ]);
 
 export function createConfiguredJevActionSelector(
@@ -65,6 +75,43 @@ export function createConfiguredJevActionSelector(
   return createJevActionSelector(provider);
 }
 
+export function createStructuredActionSelector(provider: StructuredProvider): JevActionSelector {
+  return async (input, options = {}) => {
+    const ids = input.actions.map((item) => item.id);
+    if (ids.length === 1) {
+      if (options.isCurrent && !options.isCurrent(ids)) throw new ProviderError("PROVIDER_DECISION_STALE");
+      return { actionId: ids[0], confidence: 1, probabilities: { [ids[0]]: 1 }, model: "deterministic", usage: { input_tokens: 0, output_tokens: 0 } };
+    }
+    const result = await provider.generate(StructuredTaskInputSchema.parse({
+      task: "interpret_form", fields: input.state.fields, observedActions: ids,
+    }), { signal: options.signal });
+    if (options.isCurrent && !options.isCurrent(ids)) throw new ProviderError("PROVIDER_DECISION_STALE");
+    if (result.task !== "interpret_form" || !ids.includes(result.actionId)) throw new ProviderError("PROVIDER_INVALID_DECISION");
+    const minConfidence = options.minConfidence ?? 0.75;
+    if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) throw new ProviderError("PROVIDER_POLICY_INVALID");
+    if (result.confidence < minConfidence) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
+    return { actionId: result.actionId, confidence: result.confidence, probabilities: { [result.actionId]: 1 }, model: result.model, usage: result.usage };
+  };
+}
+
+export function createConfiguredStructuredProvider(
+  scope: WorkerScope, config: ProviderConfig, providerStore: PrivateStore, credentialBackend: CredentialBackend,
+  fetchImpl?: typeof fetch,
+) {
+  if (!config.enabled || !["local_ollama", "omniroute", "byok"].includes(config.provider)) return undefined;
+  const providerId = config.provider === "local_ollama" ? LOCAL_OLLAMA_PROVIDER_ID : config.provider === "omniroute" ? OMNIROUTE_PROVIDER_ID : BYOK_PROVIDER_ID;
+  const protocol = config.protocol === "ollama_native" || config.protocol === "openai_compatible" ? config.protocol : null;
+  const locality = config.locality === "local" || config.locality === "remote" ? config.locality : null;
+  if (!protocol || !locality || !config.endpoint || !config.model) throw new ProviderError("PROVIDER_POLICY_INVALID");
+  const provider = createStructuredProvider({
+    scope, approvedOwnerId: config.ownerId, providerId, protocol, locality, endpoint: config.endpoint, model: config.model,
+    policy: { enabled: config.enabled, privacy: config.privacy, remoteProviderConsent: config.remoteProviderConsent,
+      allowedProviders: config.allowedProviders, fallbackOrder: config.fallbackOrder, budget: { currency: "USD", ...config.budget } },
+    pricing: config.pricing, ledger: structuredBudgetLedger(providerStore), credentialBackend, credentialRequired: config.credential !== "none", fetchImpl,
+  });
+  return provider;
+}
+
 export function providerFailureResult(error: unknown) {
   if (!(error instanceof ProviderError)) return null;
   return {
@@ -81,11 +128,28 @@ export function hasVerifiedTailoredArtifact(context: Pick<ApplicationContext, "d
     context.artifactHashes.includes(artifact.outputHash));
 }
 
+type TailorGenerated = Extract<StructuredGenerationResult, { task: "tailor" }>;
+export function createApplicationArtifactManifest(input: {
+  applicationId: string; source: ApplicationContext["documents"][string];
+  template: Awaited<ReturnType<typeof createTemplateManifest>>; evidence: { id: string; confirmed: true; excerpt: string }[];
+  generated: TailorGenerated; tailored: Awaited<ReturnType<typeof tailorDocument>>;
+}) {
+  const request = { role: input.template.role, masterHash: input.template.sourceHash, evidence: input.evidence, edits: input.generated.edits };
+  const manifest = ApplicationArtifactManifestSchema.parse({
+    schemaVersion: 1, applicationId: input.applicationId,
+    source: { documentId: input.source.documentId, version: input.source.version, sha256: input.source.sha256 },
+    output: { sha256: input.tailored.sha256, mime: input.source.mime, size: input.tailored.bytes.length },
+    template: input.tailored.manifest, request, checks: input.tailored.checks,
+    tool: { name: "workie-document-runtime", version: "1" },
+  });
+  return { manifest, request };
+}
+
 export async function main(args = process.argv.slice(2)) {
   if (process.versions.node.split(".")[0] !== "22") throw new Error("NODE_22_REQUIRED");
   if (!["darwin", "linux"].includes(process.platform)) throw new Error("UNSUPPORTED_PLATFORM");
-  if (args.length !== 1 || !["pair", "start", "status", "stop", "recover"].includes(args[0])) {
-    process.stdout.write("Usage: npm run worker -- pair|start|status|stop|recover\n");
+  if (args.length !== 1 || !["pair", "start", "status", "stop", "recover", "set-provider-key"].includes(args[0])) {
+    process.stdout.write("Usage: npm run worker -- pair|start|status|stop|recover|set-provider-key\n");
     return;
   }
   const allowLoopback = process.env.WORKIE_WORKER_ALLOW_LOOPBACK === "1";
@@ -157,6 +221,15 @@ export async function main(args = process.argv.slice(2)) {
       } finally { await unlock(); }
       return;
     }
+    if (args[0] === "set-provider-key") {
+      const configuredProviderId = process.env.WORKIE_PROVIDER_ID;
+      const providerId = configuredProviderId === BYOK_PROVIDER_ID || configuredProviderId === OMNIROUTE_PROVIDER_ID ? configuredProviderId : null;
+      if (!providerId) throw new Error("PROVIDER_ID_INVALID");
+      const value = await readMaskedSecret(process.stdin, process.stderr, `API key for ${providerId} (hidden): `, undefined, controller.signal);
+      await storeProviderApiKey(scope, scope.ownerId, providerId, value, await nativeCredentialBackend());
+      process.stdout.write(JSON.stringify({ ...scope, status: "provider-key-saved", providerId }) + "\n");
+      return;
+    }
     const backend = await nativeCredentialBackend();
     const transport = async () => {
       const metadata = PairingMetadataSchema.parse(await store.read("pairing"));
@@ -176,14 +249,28 @@ export async function main(args = process.argv.slice(2)) {
         if (!(error instanceof TransportError) || error.status !== 404) throw error;
         return {};
       }
-      if (!providerConfig.enabled || providerConfig.provider !== "typesafe_jev") return {};
+      if (!providerConfig.enabled) return {};
       const providerStore = await privateStore(directory, { ...scope, workerId: `${scope.workerId}:provider` });
+      const configuredFor = (current: ProviderConfig): { chooseAction?: JevActionSelector; generate?: StructuredGenerator } | null => {
+        if (!current.enabled) return null;
+        if (current.provider === "typesafe_jev") {
+          const selector = createConfiguredJevActionSelector(scope, current, providerStore, backend);
+          return selector ? { chooseAction: selector } : null;
+        }
+        const provider = createConfiguredStructuredProvider(scope, current, providerStore, backend);
+        return provider ? { chooseAction: createStructuredActionSelector(provider), generate: provider.generate } : null;
+      };
       const chooseAction: JevActionSelector = async (input, options) => {
         const current = await control.providerConfig(options?.signal);
-        if (!current.enabled || current.provider !== "typesafe_jev") throw new ProviderError("PROVIDER_DISABLED");
-        const selector = createConfiguredJevActionSelector(scope, current, providerStore, backend);
-        if (!selector) throw new ProviderError("PROVIDER_DISABLED");
-        return selector(input, options);
+        const configured = configuredFor(current);
+        if (!configured?.chooseAction) throw new ProviderError("PROVIDER_DISABLED");
+        return configured.chooseAction(input, options);
+      };
+      const generate: StructuredGenerator = async (input, options) => {
+        const current = await control.providerConfig(options?.signal);
+        const configured = configuredFor(current);
+        if (!configured?.generate) throw new ProviderError("PROVIDER_DISABLED");
+        return configured.generate(input, options);
       };
       const dispatch: StageDispatch = async (lease, guard, context) => {
         let applicationContext;
@@ -209,9 +296,41 @@ export async function main(args = process.argv.slice(2)) {
           return { state: "tailoring" as const, reasonCode: "screened" };
         }
         if (lease.state === "tailoring") {
-          return hasVerifiedTailoredArtifact(applicationContext)
-            ? { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } }
-            : { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
+          if (hasVerifiedTailoredArtifact(applicationContext)) return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
+          const source = applicationContext.documents.resumeMaster;
+          if (!context.generate || !source) return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
+          try {
+            guard.check();
+            const bytes = await control.downloadDocument(lease.applicationId, source.documentId, source.path, signal);
+            if (bytes.length !== source.size || createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw new DocumentRuntimeError("DOCUMENT_RECONCILIATION_FAILED");
+            const template = await createTemplateManifest(bytes, source.mime, applicationContext.role);
+            const evidence = [...new Set(applicationContext.requirements.excerpts)].slice(0, 32).map((excerpt, index) => ({
+              id: artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256, excerpt, index }), confirmed: true as const, excerpt,
+            }));
+            const generated = await context.generate({ task: "tailor", role: template.role,
+              jobSummary: applicationContext.requirements.officialDescription.slice(0, 12_000),
+              evidence: evidence.map(({ id, excerpt }) => ({ id, excerpt })),
+              anchors: template.anchors.map(({ id, text, maxChars }) => ({ id, text, maxChars })),
+            }, { signal, runId: lease.runId });
+            if (generated.task !== "tailor" || generated.confidence < 0.75) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
+            const request = { role: template.role, masterHash: template.sourceHash, evidence, edits: generated.edits };
+            const tailored = await tailorDocument({ bytes, mime: source.mime, manifest: template, request });
+            const requestId = artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256, policyRevision: applicationContext.policyRevision });
+            const artifact = createApplicationArtifactManifest({ applicationId: lease.applicationId, source, template,
+              evidence, generated, tailored });
+            guard.check();
+            const intent = await control.artifactIntent(lease.applicationId, { protocolVersion: 1, requestId, fence: lease.fence,
+              expectedRevision: lease.revision, manifest: artifact.manifest }, signal);
+            await control.uploadArtifact(lease.applicationId, intent.artifactId, intent.uploadPath,
+              { protocolVersion: 1, requestId, fence: lease.fence, expectedRevision: lease.revision }, tailored.bytes, source.mime, signal);
+            return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
+          } catch (error) {
+            if (signal.aborted) throw error;
+            const providerFailure = providerFailureResult(error);
+            if (providerFailure) return providerFailure;
+            if (error instanceof DocumentRuntimeError) return { state: "needs_document" as const, reasonCode: "document_tailoring_unavailable" };
+            return { state: "retryable_failure" as const, reasonCode: "tailoring_failed" };
+          }
         }
         const workDirectory = await mkdtemp(join(directory, "application-"));
         let runtime: Awaited<ReturnType<typeof createBrowserRuntime>> | undefined;
@@ -285,7 +404,7 @@ export async function main(args = process.argv.slice(2)) {
           await rm(workDirectory, { recursive: true, force: true });
         }
       };
-      return { chooseAction, dispatch };
+      return { chooseAction, generate, dispatch };
     };
     await runWorker({ scope, store, transport, configure: setup,
       signal: controller.signal, status: status => process.stdout.write(JSON.stringify({ status }) + "\n") });

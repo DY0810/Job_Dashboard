@@ -7,7 +7,8 @@ revocation closes mutation authority. Nothing is installed as a service.
 
 The worker currently has qualified synthetic Greenhouse/Ashby, Lever, Jobvite,
 Workday, Oracle Candidate Experience and iCIMS browser fixtures, an
-owner-approved TypeSafe Jev action selector, and immutable PDF/DOCX artifact
+owner-approved structured provider contract (TypeSafe Jev, local Ollama,
+OmniRoute-compatible and BYOK adapters), and immutable PDF/DOCX artifact
 verification. A master resume alone is not treated as tailored: the application
 stays at `needs_document` until a real edited artifact and verification manifest
 are persisted. Jev receives only redacted form shape and current action IDs; it
@@ -15,8 +16,12 @@ does not write answers, edit documents, submit forms, or authorize an action. A
 choice below the 0.75 confidence floor, a stale observation, or a provider fault
 becomes resumable `provider_unavailable` state, and the worker can continue with
 the next application. iCIMS account creation and unapproved browser egress fail
-closed. All ATS fixtures are synthetic; live employer forms, provider requests
-and real submissions remain unverified.
+closed. TypeSafe is the only configured remote provider in the current owner
+policy. Local Ollama requires a numeric loopback endpoint; remote OmniRoute/BYOK
+requires explicit consent and trusted non-unknown pricing, so it stays disabled
+until those settings are persisted. Fallback execution and hosted encrypted
+credential envelopes are not implemented. All ATS fixtures are synthetic; live
+employer forms, provider requests and real submissions remain unverified.
 
 ## Runtime And Credentials
 
@@ -50,6 +55,22 @@ enabled. On September 21, 2026, a live synthetic canary read that entry and
 received `jev-1.13.0` with 401 input tokens and 32 output tokens; its state and
 labels were synthetic and no applicant, resume or employer data was sent. This
 does not qualify a production run or any employer submission.
+
+Compatible providers use the same schema-validated structured contract. The
+worker sends no tools, rejects truncated or malformed output, bounds requests
+and responses, and reserves request/run/day budget before dispatch. Use the
+following only for a paired local worker and never put the key in a command
+argument, URL, environment file or log:
+
+```sh
+export WORKIE_PROVIDER_ID=byok:compatible
+npm run worker -- set-provider-key
+```
+
+The hidden prompt stores the key in the OS keychain under the paired owner and
+worker scope. Set `WORKIE_PROVIDER_ID=omniroute:compatible` for that adapter.
+This command stores a credential only; the server-side provider policy and
+pricing/capability checks still decide whether a request may run.
 
 Official sources checked:
 

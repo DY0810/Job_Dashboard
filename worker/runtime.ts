@@ -17,6 +17,7 @@ import type { WorkerTransport } from "./transport.ts";
 import { QuestionBatchSchema } from "../lib/applications/question-protocol.ts";
 import { questionClient, QuestionDispatchSchema, abortable, type FocusObserver } from "./question-client.ts";
 import type { JevActionSelector } from "./jev.ts";
+import type { StructuredGenerationResult, StructuredTaskInput } from "./providers.ts";
 
 const JournalSchema = z.strictObject({
   version: z.literal(1), scope: ScopeSchema,
@@ -33,9 +34,10 @@ const DispatchResultSchema = z.union([QuestionDispatchSchema, z.strictObject({
   state: z.enum(["submitted", "submission_unknown"]), reasonCode: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/), durable: z.literal(true),
 })]);
 type DispatchResult = z.infer<typeof DispatchResultSchema>;
-export type StageDispatchContext = { signal: AbortSignal; chooseAction?: JevActionSelector };
+export type StructuredGenerator = (input: StructuredTaskInput, options?: { signal?: AbortSignal; runId?: string }) => Promise<StructuredGenerationResult>;
+export type StageDispatchContext = { signal: AbortSignal; chooseAction?: JevActionSelector; generate?: StructuredGenerator };
 export type StageDispatch = (lease: Lease, guard: LeaseGuard, context: StageDispatchContext) => Promise<DispatchResult>;
-export type WorkerSetup = (transport: WorkerTransport, signal: AbortSignal) => Promise<{ chooseAction?: JevActionSelector; dispatch?: StageDispatch }>;
+export type WorkerSetup = (transport: WorkerTransport, signal: AbortSignal) => Promise<{ chooseAction?: JevActionSelector; generate?: StructuredGenerator; dispatch?: StageDispatch }>;
 export const unsupportedStage: StageDispatch = async () => ({
   state: "blocked_unsupported", reasonCode: "adapter_unavailable",
 });
@@ -43,7 +45,7 @@ export const unsupportedStage: StageDispatch = async () => ({
 export async function runWorker(options: {
   scope: WorkerScope; store: PrivateStore;
   transport: WorkerTransport | (() => Promise<WorkerTransport>); signal: AbortSignal;
-  dispatch?: StageDispatch; chooseAction?: JevActionSelector; configure?: WorkerSetup;
+  dispatch?: StageDispatch; chooseAction?: JevActionSelector; generate?: StructuredGenerator; configure?: WorkerSetup;
   clock?: () => ClockSample; observeFocus?: FocusObserver;
   status?: (status: "idle" | "active" | "waiting" | "reconciliation-required" | "stopped") => void;
 }) {
@@ -65,6 +67,7 @@ export async function runWorker(options: {
   let journal: z.infer<typeof JournalSchema>;
   let transport: WorkerTransport;
   let chooseAction = options.chooseAction;
+  let generate = options.generate;
   let dispatch = options.dispatch ?? unsupportedStage;
   try {
     signal.throwIfAborted();
@@ -72,6 +75,7 @@ export async function runWorker(options: {
     if (options.configure) {
       const configured = await options.configure(transport, signal);
       chooseAction = configured.chooseAction ?? chooseAction;
+      generate = configured.generate ?? generate;
       dispatch = configured.dispatch ?? dispatch;
     }
     signal.throwIfAborted();
@@ -176,7 +180,7 @@ export async function runWorker(options: {
       if (!SAFE_STAGES.includes(lease.state as typeof SAFE_STAGES[number])) throw new Error("INVALID_STAGE");
       options.status?.("active");
       const result = DispatchResultSchema.parse(await abortable(
-        guard.boundary(() => dispatch(lease, guard, { signal, chooseAction })), signal,
+        guard.boundary(() => dispatch(lease, guard, { signal, chooseAction, generate })), signal,
       ));
       guard.check();
       if ("kind" in result) {

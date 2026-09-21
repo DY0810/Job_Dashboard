@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConfiguredJevActionSelector, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
+import { createApplicationArtifactManifest, createConfiguredJevActionSelector, createStructuredActionSelector, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
 import { ProviderError } from "./providers.ts";
 import { privateStore } from "./storage.ts";
 import { runWorker } from "./runtime.ts";
@@ -29,6 +29,48 @@ test("tailored artifact verification binds the output to the selected master and
   assert.equal(hasVerifiedTailoredArtifact({ ...valid, manifestHash: "e".repeat(64) }), false);
   assert.equal(hasVerifiedTailoredArtifact({ ...valid, tailoredArtifact: { ...artifact, version: 1 } }), false);
   assert.equal(hasVerifiedTailoredArtifact({ ...valid, artifactHashes: [] }), false);
+});
+
+test("structured selector stays inside the observed action set and fails closed on stale or weak decisions", async () => {
+  const input = {
+    state: { company: "[redacted]", role: "[redacted]", ats: "candidate-form", tenant: "redacted",
+      fields: [{ label: "Full name", kind: "text" }], observedActions: ["fill", "inspect"] },
+    actions: [{ id: "fill", label: "Fill confirmed fields" }, { id: "inspect", label: "Inspect the form" }],
+  };
+  let calls = 0;
+  const selector = createStructuredActionSelector({
+    generate: async (request, options) => {
+      calls++;
+      assert.equal(request.task, "interpret_form");
+      assert.deepEqual(request.observedActions, ["fill", "inspect"]);
+      assert.equal(options?.runId, undefined);
+      return { task: "interpret_form", actionId: "fill", confidence: 0.9, model: "synthetic", usage: { input_tokens: 10, output_tokens: 2 } };
+    },
+    check: async () => ({ checkedAt: new Date().toISOString(), protocol: "openai_compatible", model: "synthetic", locality: "remote", structuredOutput: true, tools: false, maxContextTokens: 100, maxOutputTokens: 10 }),
+  });
+  assert.equal((await selector(input)).actionId, "fill");
+  assert.equal(calls, 1);
+  await assert.rejects(selector(input, { isCurrent: () => false }), /PROVIDER_DECISION_STALE/);
+  await assert.rejects(selector(input, { minConfidence: 0.95 }), /PROVIDER_LOW_CONFIDENCE/);
+  const single = { ...input, state: { ...input.state, observedActions: ["fill"] }, actions: [input.actions[0]] };
+  assert.equal((await selector(single)).model, "deterministic");
+  assert.equal(calls, 3);
+  await assert.rejects(selector(single, { isCurrent: () => false }), /PROVIDER_DECISION_STALE/);
+});
+
+test("tailoring manifest binds the generated edits to the selected master and output", () => {
+  const applicationId = "00000000-0000-4000-8000-000000000010";
+  const source = { documentId: "00000000-0000-4000-8000-000000000011", version: 2, sha256: "a".repeat(64),
+    size: 10, mime: "application/pdf" };
+  const evidence = [{ id: "00000000-0000-4000-8000-000000000012", confirmed: true, excerpt: "Python" }];
+  const generated = { task: "tailor", confidence: 0.9, edits: [{ anchorId: "bullet-1", replacement: "Built Python tooling", evidenceIds: [evidence[0].id] }] };
+  const result = createApplicationArtifactManifest({ applicationId, source, template: { role: "Engineer", sourceHash: source.sha256 }, evidence,
+    generated, tailored: { bytes: new Uint8Array([1]), sha256: "b".repeat(64), format: "pdf", manifest: { role: "Engineer" },
+      checks: { pageCount: 1, linksPreserved: true, frozenTextPreserved: true, anchorsFit: true } } });
+  assert.equal(result.manifest.applicationId, applicationId);
+  assert.deepEqual(result.manifest.source, { documentId: source.documentId, version: source.version, sha256: source.sha256 });
+  assert.equal(result.manifest.output.sha256, "b".repeat(64));
+  assert.deepEqual(result.request.edits, generated.edits);
 });
 
 const directory = await mkdtemp(join(tmpdir(), "main-jev-"));

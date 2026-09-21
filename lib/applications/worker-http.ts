@@ -21,7 +21,10 @@ import { createArtifactIntent, uploadArtifact } from './artifacts.ts';
 import { documentStorageConfig, readDocumentObject } from './documents-storage.ts';
 import { getPolicy, getProfile } from './stores.ts';
 import { ApplicationContextSchema, ApplicationContextRequestSchema } from './application-context-protocol.ts';
-import { ProviderConfigRequestSchema, ProviderConfigSchema } from './provider-protocol.ts';
+import {
+  BYOK_PROVIDER_ID, LOCAL_OLLAMA_ENDPOINT, LOCAL_OLLAMA_PROVIDER_ID, OMNIROUTE_PROVIDER_ID,
+  ProviderConfigRequestSchema, ProviderConfigSchema, TYPESAFE_ENDPOINT, TYPESAFE_INPUT_PRICE_USD_PER_BILLION, TYPESAFE_PROVIDER_ID,
+} from './provider-protocol.ts';
 import { ArtifactIntentSchema, ArtifactIntentResponseSchema, ArtifactUploadResponseSchema } from './artifact-protocol.ts';
 
 async function limit(key: string, max: number) {
@@ -57,24 +60,50 @@ type BrowserAction = 'list-workers' | 'create-pairing' | 'revoke-pairing' | 'rev
   'list-runs' | 'create-run' | 'command-run' | 'command-application';
 
 const confirmed = <T>(fact: { state: string; value: T | null }) => fact.state === 'confirmed' ? fact.value : null;
-async function providerConfig(db: Parameters<typeof getProfile>[0], ownerId: string) {
-  const [profileResponse, policy] = await Promise.all([getProfile(db, ownerId), getPolicy(db, ownerId)]);
+export function buildProviderConfig(
+  ownerId: string,
+  profileResponse: Awaited<ReturnType<typeof getProfile>>,
+  policy: Awaited<ReturnType<typeof getPolicy>>,
+) {
   const profile = profileResponse.profile.documentsProvider;
   const currentPolicy = policy.policy;
-  const selected = confirmed(profile.provider) === 'typesafe_jev';
+  const selected = confirmed(profile.provider);
+  const provider = selected === 'typesafe_jev' ? 'typesafe_jev' : selected === 'local' ? 'local_ollama' :
+    selected === 'omniroute' ? 'omniroute' : selected === 'remote' ? 'byok' : 'none';
+  const providerId = provider === 'typesafe_jev' ? TYPESAFE_PROVIDER_ID : provider === 'local_ollama' ? LOCAL_OLLAMA_PROVIDER_ID :
+    provider === 'omniroute' ? OMNIROUTE_PROVIDER_ID : provider === 'byok' ? BYOK_PROVIDER_ID : null;
+  const local = provider === 'local_ollama';
+  const remote = provider !== 'none' && !local;
   const budget = confirmed(profile.requestBudget);
-  const maxUsd = selected && budget?.currency === 'USD' ? Math.min(10, budget.amount) : 0;
-  const enabled = selected && maxUsd > 0 && policy.enabled && currentPolicy.privacy === 'approved_remote' &&
-    currentPolicy.remoteProviderConsent && currentPolicy.allowedProviders.includes('typesafe:jev') && currentPolicy.fallbackOrder.length === 0;
+  const maxUsd = provider === 'typesafe_jev' && budget?.currency === 'USD' ? Math.min(10, budget.amount) : 0;
+  const endpoint = provider === 'typesafe_jev' ? (confirmed(profile.endpoint) ?? TYPESAFE_ENDPOINT) :
+    provider === 'local_ollama' ? (confirmed(profile.endpoint) ?? LOCAL_OLLAMA_ENDPOINT) : confirmed(profile.endpoint);
+  const model = provider === 'typesafe_jev' ? (confirmed(profile.model) ?? 'jev-latest') : confirmed(profile.model);
+  const protocol = provider === 'typesafe_jev' ? 'typesafe_systemone' : provider === 'local_ollama' ? 'ollama_native' : 'openai_compatible';
+  const locality = provider === 'none' ? 'none' : local ? 'local' : 'remote';
+  const pricing = provider === 'typesafe_jev'
+    ? { known: true, inputUsdPerMillion: TYPESAFE_INPUT_PRICE_USD_PER_BILLION / 1000, outputUsdPerMillion: 0 }
+    : local ? { known: true, inputUsdPerMillion: 0, outputUsdPerMillion: 0 } : { known: false, inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
+  const budgetConfig = { perRequestUsd: currentPolicy.budget.perRequest, perRunUsd: currentPolicy.budget.perRun,
+    perDayUsd: currentPolicy.budget.perDay, allowUnknownCost: false as const };
+  const policyReady = !!providerId && currentPolicy.allowedProviders.includes(providerId) && currentPolicy.fallbackOrder.length === 0;
+  const localPolicyReady = local && currentPolicy.privacy !== 'approved_remote' && !currentPolicy.remoteProviderConsent;
+  const remotePolicyReady = remote && currentPolicy.privacy === 'approved_remote' && currentPolicy.remoteProviderConsent;
+  const enabled = provider !== 'none' && !!model && !!endpoint && policy.enabled && policyReady &&
+    (localPolicyReady || remotePolicyReady) && (provider === 'typesafe_jev' ? maxUsd > 0 : local || pricing.known);
   return ProviderConfigSchema.parse({
     providerProtocolVersion: 1, ownerId, profileRevision: profileResponse.revision,
-    policyRevision: policy.revision, policyVersion: policy.policyVersion, policyHash: policy.policyHash,
-    enabled, provider: selected ? 'typesafe_jev' : 'none',
-    model: selected ? (confirmed(profile.model) ?? 'jev-latest') : null,
-    endpoint: selected ? confirmed(profile.endpoint) : null,
+    policyRevision: policy.revision, policyVersion: policy.policyVersion, policyHash: policy.policyHash, enabled, provider,
+    model: provider === 'none' ? null : model, endpoint: provider === 'none' ? null : endpoint,
     privacy: currentPolicy.privacy, remoteProviderConsent: currentPolicy.remoteProviderConsent,
     allowedProviders: currentPolicy.allowedProviders, fallbackOrder: currentPolicy.fallbackOrder, maxUsd,
+    protocol: provider === 'none' ? null : protocol, locality, credential: provider === 'none' || local ? 'none' : 'os_keychain',
+    budget: budgetConfig, pricing, capability: null,
   });
+}
+async function providerConfig(db: Parameters<typeof getProfile>[0], ownerId: string) {
+  const [profileResponse, policy] = await Promise.all([getProfile(db, ownerId), getPolicy(db, ownerId)]);
+  return buildProviderConfig(ownerId, profileResponse, policy);
 }
 
 export async function browserWorkerEndpoint(request: Request, action: BrowserAction, ...ids: string[]) {

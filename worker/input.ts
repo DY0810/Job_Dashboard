@@ -1,7 +1,9 @@
 import type { ReadStream, WriteStream } from "node:tty";
 
-export function readMaskedGrant(
-  input: ReadStream = process.stdin, output: Pick<WriteStream, "write"> = process.stderr, signal?: AbortSignal,
+export function readMaskedSecret(
+  input: ReadStream = process.stdin, output: Pick<WriteStream, "write"> = process.stderr,
+  prompt = "Secret (hidden): ", validate: (value: string) => Error | undefined = (value) => value ? undefined : new Error("INVALID_SECRET"),
+  signal?: AbortSignal, maxLength = 16_384, overflowCode = "INVALID_SECRET",
 ): Promise<string> {
   if (!input.isTTY || typeof input.setRawMode !== "function") return Promise.reject(new Error("TTY_REQUIRED"));
   if (signal?.aborted) return Promise.reject(new Error("STOPPED"));
@@ -33,16 +35,16 @@ export function readMaskedGrant(
       for (const char of chunk.toString()) {
         if (char === "\u0003" || char === "\u0004") { finish(new Error("STOPPED")); return; }
         if (char === "\r" || char === "\n") {
-          finish(/^[A-Za-z0-9_-]{43}$/.test(value) ? undefined : new Error("INVALID_GRANT"));
+          finish(validate(value));
           return;
         }
         if (char === "\u007f" || char === "\b") { value = value.slice(0, -1); continue; }
-        if (!/^[A-Za-z0-9_-]$/.test(char) || value.length >= 43) { finish(new Error("INVALID_GRANT")); return; }
+        if (char < " " || char === "\u007f" || value.length >= maxLength) { finish(new Error(overflowCode)); return; }
         value += char;
       }
     }
     try {
-      output.write("Pairing grant (hidden): ");
+      output.write(prompt);
       input.setRawMode(true);
       input.on("data", data);
       input.once("error", ended);
@@ -52,4 +54,11 @@ export function readMaskedGrant(
       input.resume();
     } catch { finish(new Error("INPUT_CLOSED")); }
   });
+}
+
+export function readMaskedGrant(
+  input: ReadStream = process.stdin, output: Pick<WriteStream, "write"> = process.stderr, signal?: AbortSignal,
+): Promise<string> {
+  return readMaskedSecret(input, output, "Pairing grant (hidden): ", value =>
+    /^[A-Za-z0-9_-]{43}$/.test(value) ? undefined : new Error("INVALID_GRANT"), signal, 43, "INVALID_GRANT");
 }

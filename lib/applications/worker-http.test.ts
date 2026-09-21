@@ -22,8 +22,10 @@ import { DELETE as revokeRoute } from '../../app/api/workers/[id]/route.ts';
 import { POST as createRunRoute } from '../../app/api/application-runs/route.ts';
 import { enqueueApplication } from './runs.ts';
 import { createEmptyPolicy } from './policy.ts';
+import { createEmptyProfile } from './profile.ts';
 import { hashValue } from './stores.ts';
 import { ProviderConfigSchema } from './provider-protocol.ts';
+import { buildProviderConfig } from './worker-http.ts';
 import * as p from './worker-protocol.ts';
 
 vi.mock('server-only', () => ({}));
@@ -176,6 +178,18 @@ describe('Phase 3 real route handlers over loopback with Better Auth 1.7.5', () 
       { authorization: `Bearer ${randomBytes(32).toString('base64url')}` })).status).toBe(401);
     expect((await http('/api/worker/provider-config', { protocolVersion: 2, providerProtocolVersion: 1 }, '',
       { authorization: `Bearer ${worker.token}` })).status).toBe(426);
+  });
+  it('defaults the TypeSafe endpoint without requiring a profile URL', () => {
+    const profile = createEmptyProfile();
+    profile.documentsProvider.provider = { ...profile.documentsProvider.provider, state: 'confirmed', value: 'typesafe_jev', confirmedAt: new Date().toISOString() };
+    profile.documentsProvider.requestBudget = { ...profile.documentsProvider.requestBudget, state: 'confirmed', value: { amount: 10, currency: 'USD', period: 'month' }, confirmedAt: new Date().toISOString() };
+    const policy = createEmptyPolicy();
+    Object.assign(policy, { privacy: 'approved_remote', remoteProviderConsent: true, allowedProviders: ['typesafe:jev'], fallbackOrder: [],
+      budget: { currency: 'USD', perRequest: 1, perRun: 1, perDay: 1, allowUnknownCost: false } });
+    const config = ProviderConfigSchema.parse(buildProviderConfig('synthetic-owner',
+      { ownerId: 'synthetic-owner', revision: 2, profile },
+      { revision: 3, policy, enabled: true, policyVersion: 1, policyHash: null, acceptedPolicyVersion: 1, acceptedPolicyHash: null, acceptedAt: null, runnerAvailable: true }));
+    expect(config).toMatchObject({ enabled: true, provider: 'typesafe_jev', model: 'jev-latest', endpoint: 'https://api.typesafe.ai/v1/systemone', maxUsd: 10 });
   });
   it('persists a submission intent and exact receipt through authenticated worker routes', async () => {
     const worker = await paired();

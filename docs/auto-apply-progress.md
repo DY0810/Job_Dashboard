@@ -38,6 +38,32 @@ official API documentation. Add secure provider-key entry through the worker's
 keychain path; the existing hidden pairing-grant prompt is not an API-key prompt.
 Do not request the key in chat or place it in command arguments, URLs or logs.
 
+## Structured Provider Runtime
+
+September 21, 2026: the worker now also contains one schema-validated
+structured-generation contract for tailoring, question classification and
+unfamiliar-form interpretation. Local Ollama is restricted to numeric loopback
+and fully local policy. OmniRoute-compatible and BYOK adapters require an
+explicit remote-consent policy, HTTPS public endpoints, a known price and an
+OS-keychain credential; unknown-cost remote routes fail closed. Provider output
+cannot call tools, choose files, supply form values, invent anchor/evidence IDs
+or authorize submission. Request, run and daily reservations are atomic, and
+provider failures remain resumable rather than enabling a fallback action.
+
+The `set-provider-key` worker command accepts a masked TTY value and stores it
+under the paired owner/worker/provider keychain address. Hosted encrypted
+credential envelopes, capability persistence/automatic checks, and fallback
+execution are deliberately not implemented. The current server configuration
+therefore enables only the TypeSafe Jev path and local-provider path when their
+explicit policy requirements are met.
+
+| Current evidence | Result / reference |
+| --- | --- |
+| Structured provider checks | 14/14 PASS; `worker/providers.check.mjs` |
+| Full worker gate | 75/75 PASS on pinned Node 22.23.2; `npm run test:worker` |
+| Redaction regression | Sensitive words are replaced in place; surrounding job text remains available to the structured task |
+| Scope | Synthetic/local only; no applicant data, live ATS submission, SMTP send, production write or deployment |
+
 ## Phase 6 Acceptance
 
 September 21, 2026: the scoped Jev provider and local-worker runtime

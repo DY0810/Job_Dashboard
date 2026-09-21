@@ -55,7 +55,7 @@ export default function Settings() {
   if (error) return <div><p className={styles.message} role="alert">{error}</p><Link href="/sign-in" prefetch={false}>Sign in</Link></div>;
   if (!account || !policy || !workers) return null;
 
-  const configured = policy.policy.allowedProviders.includes('typesafe:jev');
+  const configured = policy.policy.allowedProviders.length > 0;
   const online = workers.workers.filter((worker) => worker.online && worker.revokedAt === null);
   return <>
     <div className={styles.toolbar}>
@@ -65,8 +65,8 @@ export default function Settings() {
     <p className={styles.muted}>Execution stays disabled until the saved policy, paired worker, documents and provider checks all agree.</p>
     <section className={styles.section} aria-labelledby="provider-heading">
       <h2 id="provider-heading">Provider</h2>
-      <div className={styles.row}><strong>{configured ? 'TypeSafe Jev selected' : 'No remote provider selected'}</strong><span>{display(policy.policy.privacy)}</span></div>
-      <p className={styles.muted}>The Jev key is read only by the paired local worker from the OS keychain. This page never reads, stores or displays it.</p>
+    <div className={styles.row}><strong>{configured ? 'Provider policy configured' : 'No provider selected'}</strong><span>{display(policy.policy.privacy)}</span></div>
+    <p className={styles.muted}>Provider keys are read only by the paired worker from its OS keychain. This page never reads, stores or displays them.</p>
       <p><Link href="/profile" prefetch={false}>Edit provider and policy in Profile</Link></p>
     </section>
     <section className={styles.section} aria-labelledby="budget-heading">
