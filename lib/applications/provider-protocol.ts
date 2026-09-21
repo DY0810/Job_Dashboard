@@ -26,11 +26,12 @@ const pricing = z.strictObject({
   known: z.boolean(), inputUsdPerMillion: z.number().finite().min(0).max(100_000),
   outputUsdPerMillion: z.number().finite().min(0).max(100_000),
 }).default({ known: false, inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
-const capability = z.strictObject({
+export const ProviderCapabilitySchema = z.strictObject({
   checkedAt: z.iso.datetime(), protocol: providerProtocol, model: z.string().trim().min(1).max(100),
   locality, structuredOutput: z.boolean(), tools: z.literal(false),
   maxContextTokens: z.number().int().positive().nullable(), maxOutputTokens: z.number().int().positive().nullable(),
 }).nullable().default(null);
+export type ProviderCapability = z.infer<typeof ProviderCapabilitySchema>;
 
 export const ProviderConfigRequestSchema = z.strictObject({
   protocolVersion: z.literal(PROVIDER_PROTOCOL_VERSION),
@@ -47,6 +48,6 @@ export const ProviderConfigSchema = z.strictObject({
   remoteProviderConsent: z.boolean(), allowedProviders: z.array(provider).max(20),
   fallbackOrder: z.array(provider).max(20), maxUsd: z.number().finite().min(0).max(10),
   protocol: providerProtocol.nullable().default(null), locality: locality.default('none'),
-  credential: credential.default('none'), budget, pricing, capability,
+  credential: credential.default('none'), budget, pricing, capability: ProviderCapabilitySchema,
 });
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;

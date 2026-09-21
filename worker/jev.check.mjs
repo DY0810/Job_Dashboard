@@ -29,18 +29,20 @@ const result = {
 };
 
 test("Jev selects only a current observed action and receives labels, not values", async () => {
-  let request;
+  let request, requestOptions;
   const select = createJevActionSelector({
-    evaluate: async (sentState, questions) => {
+    evaluate: async (sentState, questions, _signal, options) => {
       request = { sentState, questions };
+      requestOptions = options;
       return result;
     },
   });
-  const decision = await select({ state, actions });
+  const decision = await select({ state, actions }, { runId: "synthetic-run" });
   assert.equal(decision.actionId, "upload_resume");
   assert.deepEqual(request.sentState, state);
   assert.deepEqual(Object.keys(request.questions.select_action.criteria), ["fill_name", "upload_resume"]);
   assert.match(request.questions.select_action.instructions, /Never invent/);
+  assert.deepEqual(requestOptions, { runId: "synthetic-run" });
 });
 
 test("Jev cannot invent actions or apply a stale observation", async () => {

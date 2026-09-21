@@ -5,8 +5,9 @@ import { z } from "zod";
 import { keychainAddress, nativeCredentialBackend, type CredentialBackend, type WorkerScope } from "./credentials.ts";
 import type { PrivateStore } from "./storage.ts";
 import {
-  TYPESAFE_ENDPOINT, TYPESAFE_INPUT_PRICE_USD_PER_BILLION, TYPESAFE_MODEL, TYPESAFE_PROVIDER_ID,
+  ProviderCapabilitySchema, TYPESAFE_ENDPOINT, TYPESAFE_INPUT_PRICE_USD_PER_BILLION, TYPESAFE_MODEL, TYPESAFE_PROVIDER_ID,
 } from "../lib/applications/provider-protocol.ts";
+import type { ProviderCapability } from "../lib/applications/provider-protocol.ts";
 export {
   BYOK_PROVIDER_ID, LOCAL_OLLAMA_ENDPOINT, LOCAL_OLLAMA_PROVIDER_ID, OMNIROUTE_PROVIDER_ID,
   TYPESAFE_ENDPOINT, TYPESAFE_INPUT_PRICE_USD_PER_BILLION, TYPESAFE_MODEL, TYPESAFE_PROVIDER_ID,
@@ -140,6 +141,10 @@ const noulAnswer = z.strictObject({ type: z.literal("noul"), noul: z.number().fi
 const scoreAnswer = z.strictObject({ type: z.literal("score"), score: z.number().finite(), legend: z.record(z.string(), z.string()), probabilities, confidence: z.number().finite().min(0).max(1) });
 export type ProviderAnswer = z.infer<typeof choiceAnswer> | z.infer<typeof noulAnswer> | z.infer<typeof scoreAnswer>;
 export type TypesafeResult = { model: string; answers: Record<string, ProviderAnswer>; usage: z.infer<typeof usage> };
+export type TypesafeProvider = {
+  evaluate(state: unknown, questions: unknown, signal?: AbortSignal, options?: { runId?: string }): Promise<TypesafeResult>;
+  check(signal?: AbortSignal): Promise<ProviderCapability>;
+};
 
 function responseFailure(): never { throw new ProviderError("PROVIDER_INVALID_RESPONSE"); }
 const VERSIONED_JEV_MODEL = /^jev-\d+\.\d+\.\d+$/;
@@ -286,8 +291,9 @@ export function createTypesafeProvider(options: {
   endpointAllowed(endpoint, options.allowLoopback === true);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   if (!fetchImpl) throw new ProviderError("FETCH_UNAVAILABLE");
-  return {
-    async evaluate(stateInput: unknown, questionsInput: unknown, callerSignal?: AbortSignal): Promise<TypesafeResult> {
+  const provider: TypesafeProvider = {
+    async evaluate(stateInput: unknown, questionsInput: unknown, callerSignal?: AbortSignal, requestOptions = {}): Promise<TypesafeResult> {
+      void requestOptions;
       const policy = assertProviderPolicy(options.policy);
       const request = TypesafeRequestSchema.parse({ state: redactedProviderState(stateInput), model: TYPESAFE_MODEL, questions: questionsInput });
       const body = JSON.stringify(request);
@@ -331,7 +337,15 @@ export function createTypesafeProvider(options: {
         throw error;
       }
     },
+    async check(signal) {
+      const result = await provider.evaluate({ company: "[redacted]", role: "[redacted]", ats: "capability-check", tenant: "redacted", fields: [], observedActions: ["capability_check"] }, {
+        capability_check: { type: "choice", instructions: "Choose whether this synthetic provider capability check is ready.", criteria: { ready: "The provider returned a valid structured judgment.", blocked: "The provider could not return a valid structured judgment." } },
+      }, signal, { runId: "capability-check" });
+      return ProviderCapabilitySchema.parse({ checkedAt: new Date().toISOString(), protocol: "typesafe_systemone", model: result.model,
+        locality: "remote", structuredOutput: true, tools: false, maxContextTokens: null, maxOutputTokens: null });
+    },
   };
+  return provider;
 }
 
 export const STRUCTURED_MAX_INPUT_TOKENS = 100_000;

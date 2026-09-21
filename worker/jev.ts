@@ -25,11 +25,11 @@ export type JevActionDecision = {
   usage: TypesafeResult["usage"];
 };
 export type JevDecisionProvider = {
-  evaluate(state: unknown, questions: unknown, signal?: AbortSignal): Promise<TypesafeResult>;
+  evaluate(state: unknown, questions: unknown, signal?: AbortSignal, options?: { runId?: string }): Promise<TypesafeResult>;
 };
 export type JevActionSelector = (
   input: JevActionSelection,
-  options?: { signal?: AbortSignal; isCurrent?: (actionIds: readonly string[]) => boolean; minConfidence?: number },
+  options?: { signal?: AbortSignal; runId?: string; isCurrent?: (actionIds: readonly string[]) => boolean; minConfidence?: number },
 ) => Promise<JevActionDecision>;
 
 /**
@@ -51,7 +51,7 @@ export function createJevActionSelector(provider: JevDecisionProvider): JevActio
         instructions: "Choose exactly one current observed action to inspect next. Never invent an action or perform it.",
         criteria,
       },
-    }, options.signal);
+    }, options.signal, { runId: options.runId });
     if (options.isCurrent && !options.isCurrent(ids)) throw new ProviderError("PROVIDER_DECISION_STALE");
     const answer = result.answers.select_action;
     if (!answer || answer.type !== "choice" || !ids.includes(answer.choice)) {

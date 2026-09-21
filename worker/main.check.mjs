@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApplicationArtifactManifest, createConfiguredJevActionSelector, createStructuredActionSelector, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
+import { createApplicationArtifactManifest, createConfiguredJevActionSelector, createStructuredActionSelector, ensureProviderCapability, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
 import { ProviderError } from "./providers.ts";
 import { privateStore } from "./storage.ts";
 import { runWorker } from "./runtime.ts";
@@ -43,12 +43,12 @@ test("structured selector stays inside the observed action set and fails closed 
       calls++;
       assert.equal(request.task, "interpret_form");
       assert.deepEqual(request.observedActions, ["fill", "inspect"]);
-      assert.equal(options?.runId, undefined);
+      if (options?.runId !== undefined) assert.equal(options.runId, "synthetic-run");
       return { task: "interpret_form", actionId: "fill", confidence: 0.9, model: "synthetic", usage: { input_tokens: 10, output_tokens: 2 } };
     },
     check: async () => ({ checkedAt: new Date().toISOString(), protocol: "openai_compatible", model: "synthetic", locality: "remote", structuredOutput: true, tools: false, maxContextTokens: 100, maxOutputTokens: 10 }),
   });
-  assert.equal((await selector(input)).actionId, "fill");
+  assert.equal((await selector(input, { runId: "synthetic-run" })).actionId, "fill");
   assert.equal(calls, 1);
   await assert.rejects(selector(input, { isCurrent: () => false }), /PROVIDER_DECISION_STALE/);
   await assert.rejects(selector(input, { minConfidence: 0.95 }), /PROVIDER_LOW_CONFIDENCE/);
@@ -56,6 +56,27 @@ test("structured selector stays inside the observed action set and fails closed 
   assert.equal((await selector(single)).model, "deterministic");
   assert.equal(calls, 3);
   await assert.rejects(selector(single, { isCurrent: () => false }), /PROVIDER_DECISION_STALE/);
+});
+
+test("provider capability checks are cached per owner-approved configuration", async () => {
+  const localDirectory = await mkdtemp(join(tmpdir(), "main-provider-capability-"));
+  const store = await privateStore(localDirectory, { ...scope, workerId: `${scope.workerId}:provider` });
+  const capabilityConfig = {
+    ...config, protocol: "typesafe_systemone", locality: "remote", credential: "os_keychain",
+    budget: { perRequestUsd: 1, perRunUsd: 1, perDayUsd: 1, allowUnknownCost: false },
+    pricing: { known: true, inputUsdPerMillion: 0.042, outputUsdPerMillion: 0 }, capability: null,
+  };
+  let checks = 0;
+  const checker = { check: async () => { checks++; return { checkedAt: new Date().toISOString(), protocol: "typesafe_systemone", model: "jev-1.13.0", locality: "remote", structuredOutput: true, tools: false, maxContextTokens: null, maxOutputTokens: null }; } };
+  try {
+    await ensureProviderCapability(capabilityConfig, checker, store);
+    await ensureProviderCapability(capabilityConfig, checker, store);
+    assert.equal(checks, 1);
+    await ensureProviderCapability({ ...capabilityConfig, model: "jev-next" }, checker, store);
+    assert.equal(checks, 2);
+  } finally {
+    await rm(localDirectory, { recursive: true, force: true });
+  }
 });
 
 test("tailoring manifest binds the generated edits to the selected master and output", () => {

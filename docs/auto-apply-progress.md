@@ -52,15 +52,21 @@ provider failures remain resumable rather than enabling a fallback action.
 
 The `set-provider-key` worker command accepts a masked TTY value and stores it
 under the paired owner/worker/provider keychain address. Hosted encrypted
-credential envelopes, capability persistence/automatic checks, and fallback
-execution are deliberately not implemented. The current server configuration
-therefore enables only the TypeSafe Jev path and local-provider path when their
-explicit policy requirements are met.
+credential envelopes and fallback execution remain deliberately unimplemented.
+The worker now runs a synthetic capability check on first use of a new provider
+configuration and caches only the schema-validated receipt locally for 24 hours;
+it never sends that check's state to the server or stores key material in the
+receipt. The current server configuration therefore enables only the TypeSafe
+Jev path and local-provider path when their explicit policy requirements are met.
+
+The action selector also carries the owning application `runId` into every
+chargeable structured-provider request, so run-level reservations are not
+collapsed into a generic worker bucket.
 
 | Current evidence | Result / reference |
 | --- | --- |
 | Structured provider checks | 14/14 PASS; `worker/providers.check.mjs` |
-| Full worker gate | 75/75 PASS on pinned Node 22.23.2; `npm run test:worker` |
+| Full worker gate | 76/76 PASS on pinned Node 22.23.2; `npm run test:worker` |
 | Redaction regression | Sensitive words are replaced in place; surrounding job text remains available to the structured task |
 | Scope | Synthetic/local only; no applicant data, live ATS submission, SMTP send, production write or deployment |
 
@@ -984,3 +990,26 @@ untracked and exclude logs, databases and real environment files. Record the
 commit SHA/files/exclusions in ignored `logs/auto-apply-gate/phase2-commit.json`.
 No push, main changes, deployment, real applicants, submissions, nested agents or
 `send_message_to_thread` in any namespace/wrapper.
+
+## Jev Follow-up Verification
+
+Phase and status: Jev workflow follow-up accepted on the working branch.
+Starting / ending revision: `733e38b` / `9cae1ff`.
+Files changed: provider capability schema, worker selector/run wiring, local
+capability receipt cache, focused checks and worker documentation.
+Documentation sections actually read: TypeSafe skill, live TypeSafe HTTP/API,
+State and Choice docs; plan Phase 6 and Phase 12; worker support/runtime docs.
+Commands and exact results: `npm test` 1,714/1,714; `npm run test:worker`
+76/76 on Node 22.23.2; `npx tsc --noEmit` PASS; `npm run build` PASS;
+`npm run lint` PASS with the two pre-existing `tick`/`idle` warnings; `git diff
+--check` PASS. A concurrent Node/type generation check was discarded and rerun
+after the build, because Next regenerates `.next/types` during `next build`.
+Fixture / live-read / live-submit evidence: synthetic Jev/provider/ATS checks
+only; no applicant data, live provider payload, employer read or submission.
+Schema, protocol and support-matrix versions: provider protocol 1; capability
+receipt is validated by `ProviderCapabilitySchema`.
+Open blockers and next phase: hosted encrypted credential envelopes, fallback
+execution, live tenant qualification and owner-authorized pilot remain open.
+Explicitly not performed: no production deployment, merge to `main`, real ATS
+submission, or additional paid TypeSafe call beyond the previously recorded
+synthetic canary.

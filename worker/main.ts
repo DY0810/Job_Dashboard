@@ -26,12 +26,12 @@ import type { StructuredGenerationResult } from "./providers.ts";
 import { createJevActionSelector, type JevActionSelector } from "./jev.ts";
 import {
   createStructuredProvider, createTypesafeProvider, ProviderError, StructuredTaskInputSchema, storeProviderApiKey,
-  typesafeBudgetLedger, structuredBudgetLedger,
+  typesafeBudgetLedger, structuredBudgetLedger, type TypesafeProvider,
 } from "./providers.ts";
 import type { StructuredProvider } from "./providers.ts";
 import {
   BYOK_PROVIDER_ID, LOCAL_OLLAMA_PROVIDER_ID, OMNIROUTE_PROVIDER_ID, TYPESAFE_ENDPOINT,
-  type ProviderConfig,
+  ProviderCapabilitySchema, type ProviderCapability, type ProviderConfig,
 } from "../lib/applications/provider-protocol.ts";
 import type { ApplicationContext } from "../lib/applications/application-context-protocol.ts";
 import type { PrivateStore } from "./storage.ts";
@@ -50,7 +50,7 @@ const ERROR_CODES = new Set([
   "PROVIDER_OWNER_UNBOUND", "PROVIDER_CREDENTIAL_UNAVAILABLE", "PROVIDER_CREDENTIAL_MISSING",
   "PROVIDER_LEDGER_INVALID", "PROVIDER_LEDGER_LOCKED", "PROVIDER_BUDGET_EXCEEDED", "PROVIDER_NETWORK_UNAVAILABLE",
   "PROVIDER_INVALID_RESPONSE", "PROVIDER_RESPONSE_TOO_LARGE", "PROVIDER_REQUEST_TOO_LARGE", "PROVIDER_USAGE_INVALID",
-  "PROVIDER_RESERVATION_MISSING", "PROVIDER_LOW_CONFIDENCE", "PROVIDER_POLICY_INVALID", "INVALID_PROVIDER_ENDPOINT", "FETCH_UNAVAILABLE",
+  "PROVIDER_RESERVATION_MISSING", "PROVIDER_LOW_CONFIDENCE", "PROVIDER_POLICY_INVALID", "PROVIDER_CAPABILITY_MISMATCH", "INVALID_PROVIDER_ENDPOINT", "FETCH_UNAVAILABLE",
   "PROVIDER_FALLBACK_UNSUPPORTED", "PROVIDER_UNKNOWN_COST", "PROVIDER_AUTH_UNAVAILABLE", "PROVIDER_QUOTA_EXCEEDED",
   "PROVIDER_CREDENTIAL_INVALID", "PROVIDER_MODEL_INVALID", "PROVIDER_ID_INVALID", "LOCAL_PROVIDER_POLICY_INVALID", "LOCAL_PROVIDER_ENDPOINT_REQUIRED",
   "REMOTE_PROVIDER_ENDPOINT_INVALID", "ACCOUNT_CREATION_BLOCKED",
@@ -60,8 +60,16 @@ export function createConfiguredJevActionSelector(
   scope: WorkerScope, config: ProviderConfig, providerStore: PrivateStore, credentialBackend: CredentialBackend,
   fetchImpl?: typeof fetch,
 ) {
+  const provider = createConfiguredJevProvider(scope, config, providerStore, credentialBackend, fetchImpl);
+  return provider ? createJevActionSelector(provider) : undefined;
+}
+
+export function createConfiguredJevProvider(
+  scope: WorkerScope, config: ProviderConfig, providerStore: PrivateStore, credentialBackend: CredentialBackend,
+  fetchImpl?: typeof fetch,
+): TypesafeProvider | undefined {
   if (!config.enabled || config.provider !== "typesafe_jev") return undefined;
-  const provider = createTypesafeProvider({
+  return createTypesafeProvider({
     scope, approvedOwnerId: config.ownerId,
     policy: {
       enabled: config.enabled, privacy: config.privacy,
@@ -72,7 +80,6 @@ export function createConfiguredJevActionSelector(
     ledger: typesafeBudgetLedger(providerStore), credentialBackend,
     endpoint: config.endpoint ?? TYPESAFE_ENDPOINT, fetchImpl,
   });
-  return createJevActionSelector(provider);
 }
 
 export function createStructuredActionSelector(provider: StructuredProvider): JevActionSelector {
@@ -84,7 +91,7 @@ export function createStructuredActionSelector(provider: StructuredProvider): Je
     }
     const result = await provider.generate(StructuredTaskInputSchema.parse({
       task: "interpret_form", fields: input.state.fields, observedActions: ids,
-    }), { signal: options.signal });
+    }), { signal: options.signal, runId: options.runId });
     if (options.isCurrent && !options.isCurrent(ids)) throw new ProviderError("PROVIDER_DECISION_STALE");
     if (result.task !== "interpret_form" || !ids.includes(result.actionId)) throw new ProviderError("PROVIDER_INVALID_DECISION");
     const minConfidence = options.minConfidence ?? 0.75;
@@ -92,6 +99,35 @@ export function createStructuredActionSelector(provider: StructuredProvider): Je
     if (result.confidence < minConfidence) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
     return { actionId: result.actionId, confidence: result.confidence, probabilities: { [result.actionId]: 1 }, model: result.model, usage: result.usage };
   };
+}
+
+const PROVIDER_CAPABILITY_CACHE = "provider-capability";
+const PROVIDER_CAPABILITY_TTL_MS = 24 * 60 * 60_000;
+const CapabilityCacheSchema = z.strictObject({
+  configHash: z.string().regex(/^[a-f0-9]{64}$/), checkedAt: z.iso.datetime(), capability: z.unknown(),
+});
+type CapabilityChecker = { check(signal?: AbortSignal): Promise<ProviderCapability> };
+
+function providerConfigHash(config: ProviderConfig) {
+  const withoutCapability = Object.fromEntries(Object.entries(config).filter(([key]) => key !== "capability"));
+  return createHash("sha256").update(JSON.stringify(withoutCapability)).digest("hex");
+}
+
+/** Cache the explicit synthetic check locally; a worker restart must not spend a new request for the same config. */
+export async function ensureProviderCapability(
+  config: ProviderConfig, provider: CapabilityChecker, store: PrivateStore, signal?: AbortSignal,
+) {
+  const configHash = providerConfigHash(config);
+  const cached = CapabilityCacheSchema.safeParse(await store.read(PROVIDER_CAPABILITY_CACHE));
+  if (cached.success && cached.data.configHash === configHash && Date.parse(cached.data.checkedAt) > Date.now() - PROVIDER_CAPABILITY_TTL_MS) {
+    return ProviderCapabilitySchema.parse(cached.data.capability);
+  }
+  const capability = ProviderCapabilitySchema.parse(await provider.check(signal));
+  if (!capability || capability.protocol !== config.protocol || capability.locality !== config.locality || !capability.structuredOutput || capability.tools) {
+    throw new ProviderError("PROVIDER_CAPABILITY_MISMATCH");
+  }
+  await store.write(PROVIDER_CAPABILITY_CACHE, { configHash, checkedAt: capability.checkedAt, capability });
+  return capability;
 }
 
 export function createConfiguredStructuredProvider(
@@ -251,24 +287,32 @@ export async function main(args = process.argv.slice(2)) {
       }
       if (!providerConfig.enabled) return {};
       const providerStore = await privateStore(directory, { ...scope, workerId: `${scope.workerId}:provider` });
-      const configuredFor = (current: ProviderConfig): { chooseAction?: JevActionSelector; generate?: StructuredGenerator } | null => {
+      const configuredFor = (current: ProviderConfig): { chooseAction?: JevActionSelector; generate?: StructuredGenerator; check?: CapabilityChecker } | null => {
         if (!current.enabled) return null;
         if (current.provider === "typesafe_jev") {
-          const selector = createConfiguredJevActionSelector(scope, current, providerStore, backend);
-          return selector ? { chooseAction: selector } : null;
+          const provider = createConfiguredJevProvider(scope, current, providerStore, backend);
+          return provider ? { chooseAction: createJevActionSelector(provider), check: provider } : null;
         }
         const provider = createConfiguredStructuredProvider(scope, current, providerStore, backend);
-        return provider ? { chooseAction: createStructuredActionSelector(provider), generate: provider.generate } : null;
+        return provider ? { chooseAction: createStructuredActionSelector(provider), generate: provider.generate, check: provider } : null;
+      };
+      const configuredForChecked = async (current: ProviderConfig, checkSignal?: AbortSignal) => {
+        const configured = configuredFor(current);
+        if (!configured) return null;
+        if (configured.check) await ensureProviderCapability(current, configured.check, providerStore, checkSignal);
+        return configured;
       };
       const chooseAction: JevActionSelector = async (input, options) => {
         const current = await control.providerConfig(options?.signal);
-        const configured = configuredFor(current);
+        const configured = input.actions.length > 1
+          ? await configuredForChecked(current, options?.signal)
+          : configuredFor(current);
         if (!configured?.chooseAction) throw new ProviderError("PROVIDER_DISABLED");
         return configured.chooseAction(input, options);
       };
       const generate: StructuredGenerator = async (input, options) => {
         const current = await control.providerConfig(options?.signal);
-        const configured = configuredFor(current);
+        const configured = await configuredForChecked(current, options?.signal);
         if (!configured?.generate) throw new ProviderError("PROVIDER_DISABLED");
         return configured.generate(input, options);
       };
@@ -364,13 +408,13 @@ export async function main(args = process.argv.slice(2)) {
           });
           if (lease.state === "filling") {
             const result = await fillAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
-              requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal });
+              requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId });
             if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
             if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
             return { state: "ready" as const, reasonCode: "form_verified", evidence: { formVerified: true } };
           }
           const result = await runAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
-            requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, submission: {
+            requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId, submission: {
               begin: async ({ intentId, identity, company, role, manifestHash, artifactHashes }) => {
                 submissionStarted = true;
                 return control.submissionIntent(lease.applicationId, { protocolVersion: 1, intentId, fence: lease.fence,

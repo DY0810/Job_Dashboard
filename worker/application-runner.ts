@@ -20,14 +20,14 @@ function providerState(labels: string[], actions: readonly string[]) {
 
 async function observeAndFill(input: {
   runtime: BrowserRuntime; adapter: AtsAdapter; application: AtsApplication;
-  chooseAction?: JevActionSelector; signal?: AbortSignal;
+  chooseAction?: JevActionSelector; signal?: AbortSignal; runId?: string;
 }): Promise<AtsObservation> {
   const { runtime, adapter, application, signal } = input;
   const observation = await adapter.observe(runtime, application, signal);
   if (input.chooseAction) {
     const actions = observation.actions.map((id) => ({ id, label: id === 'fill' ? 'Fill confirmed application fields' : 'Inspect current application fields' }));
     const selected = await input.chooseAction({ state: providerState(observation.fields.map((field) => field.label), observation.actions), actions }, {
-      signal, isCurrent: (ids) => ids.length === observation.actions.length && ids.every((id, index) => id === observation.actions[index]),
+      signal, runId: input.runId, isCurrent: (ids) => ids.length === observation.actions.length && ids.every((id, index) => id === observation.actions[index]),
     });
     if (!observation.actions.includes(selected.actionId as typeof observation.actions[number])) throw new AtsError('PROVIDER_INVALID_DECISION');
     if (selected.actionId !== 'fill') throw new AtsError('PROVIDER_INSPECT_SELECTED');
@@ -38,7 +38,7 @@ async function observeAndFill(input: {
 
 export async function fillAtsApplication(input: {
   runtime: BrowserRuntime; adapter: AtsAdapter; application: AtsApplication;
-  facts: ScreeningFacts; requirements: ScreeningRequirements; chooseAction?: JevActionSelector; signal?: AbortSignal;
+  facts: ScreeningFacts; requirements: ScreeningRequirements; chooseAction?: JevActionSelector; signal?: AbortSignal; runId?: string;
 }) {
   input.signal?.throwIfAborted();
   const decision = screenApplication(input.facts, input.requirements);
@@ -50,7 +50,7 @@ export async function fillAtsApplication(input: {
 
 export async function runAtsApplication(input: {
   runtime: BrowserRuntime; adapter: AtsAdapter; application: AtsApplication;
-  facts: ScreeningFacts; requirements: ScreeningRequirements; chooseAction?: JevActionSelector; signal?: AbortSignal;
+  facts: ScreeningFacts; requirements: ScreeningRequirements; chooseAction?: JevActionSelector; signal?: AbortSignal; runId?: string;
   submission?: {
     begin: (value: { intentId: string; identity: AtsApplication['identity']; company: string; role: string; manifestHash: string; artifactHashes: string[] }) => Promise<{ intentId: string }>;
     receipt: (value: { intentId: string; receipt: AtsReceipt; evidence: { source: 'confirmation_page'; pageUrl: string; observedText: string } }) => Promise<unknown>;
@@ -61,7 +61,7 @@ export async function runAtsApplication(input: {
   const decision = screenApplication(input.facts, input.requirements);
   if (decision.status === 'blocked') return { state: 'skipped', reasons: decision.reasons, receipt: null, reconciled: false };
   if (decision.status === 'needs_question') return { state: 'needs_answer', reasons: decision.reasons, receipt: null, reconciled: false };
-  await observeAndFill({ runtime, adapter, application, chooseAction: input.chooseAction, signal });
+  await observeAndFill({ runtime, adapter, application, chooseAction: input.chooseAction, signal, runId: input.runId });
   let submission: { intentId: string } | undefined;
   if (input.submission) {
     if (!application.manifestHash || !application.artifactHashes?.length) throw new AtsError('SUBMISSION_MANIFEST_MISSING');

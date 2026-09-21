@@ -58,7 +58,10 @@ does not qualify a production run or any employer submission.
 
 Compatible providers use the same schema-validated structured contract. The
 worker sends no tools, rejects truncated or malformed output, bounds requests
-and responses, and reserves request/run/day budget before dispatch. Use the
+and responses, and reserves request/run/day budget before dispatch. On first use
+of a new provider configuration it performs one synthetic capability check and
+stores the redacted receipt in the protected worker directory for 24 hours;
+configuration changes invalidate that cache. Use the
 following only for a paired local worker and never put the key in a command
 argument, URL, environment file or log:
 
