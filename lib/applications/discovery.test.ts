@@ -44,7 +44,7 @@ function addPostings(count: number, start = 1, sameTenant = false) {
     id: start + i, dedupeKey: `fixture-${start + i}`, canonicalUrl: `https://boards.greenhouse.io/${sameTenant ? 'shared' : `tenant${start + i}`}/jobs/${start + i}`,
     postedAt: new Date(now), firstSeenRun: 'synthetic', company: sameTenant ? 'Same Employer' : `Employer ${start + i}`,
     title: 'Software Engineer', companyNorm: `employer${start + i}`, titleNorm: 'software engineer', locationKey: 'US',
-    country: 'US', track: 'engineering' as const, paid: true,
+    country: 'US', track: 'engineering' as const, paid: true, description: 'Fixture description',
   }))).run();
 }
 async function policyFor(ownerId = 'alice', overrides: Partial<Policy> = {}) {

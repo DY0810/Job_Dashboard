@@ -37,7 +37,7 @@ function fixture(kind: 'sqlite' | 'libsql') {
       id, dedupeKey: `fixture-${id}`, canonicalUrl: url, postedAt: new Date(NOW), firstSeenRun: 'SEED_RUN',
       company: 'Acme', companyNorm: 'acme', title: 'Software Engineer', titleNorm: 'software engineer',
       locationKey: 'US', country: 'US', location: 'California', track: 'engineering',
-      seniority: 'entry', paid: true, ...over,
+      seniority: 'entry', paid: true, description: 'Fixture description', ...over,
     }).run();
     writer.insert(schema.postingSources).values({
       postingId: id, source: 'greenhouse', sourceUrl: url, publisherId: req, postedAt: new Date(NOW),
@@ -116,6 +116,13 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
     f.add(1);
     const result = await captureCandidateSnapshot(f.db, policy({ destinations: ['careers.example.test'] }), NOW);
     expect(result.candidates[0]).toMatchObject({ disposition: 'blocked', reasons: ['destination_restricted'] });
+  });
+
+  it('blocks resolved applications without official job content', async () => {
+    const f = fixture(kind);
+    f.add(1, { description: null });
+    const result = await captureCandidateSnapshot(f.db, policy(), NOW);
+    expect(result.candidates[0]).toMatchObject({ disposition: 'blocked', reasons: ['official_content_unavailable'] });
   });
 
   it('preserves paid/unpaid/unknown and does not invent dollar currency or annual conversion', async () => {

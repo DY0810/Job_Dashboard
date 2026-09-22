@@ -194,6 +194,10 @@ export async function captureCandidateSnapshot(db: ReadDb, policyInput: unknown,
         canonicalUrl: row.canonicalUrl, company: row.company, title: row.title,
         country: row.country, location: row.location, description: row.description, sourceFields: row.sourceFields,
       });
+      if (candidate.identityStatus === 'resolved' && !candidate.officialContentHash) {
+        candidate.disposition = 'blocked';
+        candidate.reasons = [...new Set([...candidate.reasons, 'official_content_unavailable'])].sort();
+      }
     }
   }
   const snapshot: CandidateSnapshot = {
