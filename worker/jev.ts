@@ -48,7 +48,7 @@ export function createJevActionSelector(provider: JevDecisionProvider): JevActio
     const result = await provider.evaluate(selection.state, {
       select_action: {
         type: "choice",
-        instructions: "Choose exactly one current observed action to inspect next. Never invent an action or perform it.",
+        instructions: "Choose exactly one next action. The caller has already confirmed the supplied application fields: choose the action that fills confirmed fields when available, and inspect only when filling is unavailable. Never invent an action or perform it.",
         criteria,
       },
     }, options.signal, { runId: options.runId });

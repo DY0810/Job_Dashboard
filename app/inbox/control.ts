@@ -50,7 +50,7 @@ export const pollingDelay = (failures: number) => Math.min(120_000, 15_000 * 2 *
 class RequestError extends Error {
   constructor(readonly status: number, readonly code = '') {
     super(code === 'PRINCIPAL_CHANGED' ? 'Account changed. Unlock the current account.' :
-      status === 401 ? 'Sign in to unlock your private inbox.' :
+      status === 401 ? 'Unlock Workie to view your private inbox.' :
         status === 403 ? 'Applicant access is not permitted. Check your account.' :
           status === 409 ? 'Question, policy or profile changed. Review the current question before answering.' :
             status === 429 ? 'Too many requests. Wait before retrying.' :

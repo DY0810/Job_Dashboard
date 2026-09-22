@@ -38,7 +38,7 @@ async function request(path: string, ownerId?: string) {
     signal: AbortSignal.timeout(15_000),
   });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(response.status === 401 ? 'Sign in to view private applications.' :
+  if (!response.ok) throw new Error(response.status === 401 ? 'Unlock Workie to view private applications.' :
     response.status === 403 ? 'Applicant access denied.' : 'Private application status is unavailable.');
   return body;
 }

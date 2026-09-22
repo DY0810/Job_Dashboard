@@ -504,7 +504,7 @@ test('offline and malformed/configuration/auth responses fail closed without inv
   expect(control.view.error).toContain('configuration');
   fixture.authStatus = 401;
   await control.refresh();
-  expect(control.view.error).toContain('Sign in');
+  expect(control.view.error).toContain('Unlock Workie');
   await control.createRun(workerId);
   expect(fixture.writes).toHaveLength(0);
 });

@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
@@ -43,7 +42,6 @@ export function ApplicantSwitcher() {
         </option>)}
       </select>
     </label>
-    <Link href="/sign-in?add=1" prefetch={false}>Add applicant</Link>
     {error && <span role="alert">{error}</span>}
   </div>;
 }

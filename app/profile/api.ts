@@ -11,7 +11,7 @@ export async function privateJson(path: string, init: RequestInit = {}, expected
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ProfileSaveError(
-      response.status === 401 ? 'Session expired. Sign in, then unlock your draft.' :
+      response.status === 401 ? 'Session expired. Unlock Workie, then unlock your draft.' :
         response.status === 403 ? 'Applicant access denied. Check the signed-in account.' :
           response.status === 503 ? 'Private service unavailable. Check configuration and retry.' :
             response.status === 409 ? 'A newer version exists. Review before saving.' :

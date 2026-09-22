@@ -1,6 +1,7 @@
 import 'server-only';
 import { z } from 'zod';
 import { getAuth, type ApplicantAuth } from '@/lib/auth';
+import { householdAuthConfigured, HouseholdAuthError, resolveHouseholdApplicant } from '@/lib/household-auth';
 
 export type Applicant = { ownerId: string; email: string; name: string };
 const applicantSession = z.object({
@@ -51,6 +52,9 @@ export async function lookupApplicant(
   providedAuth?: ApplicantAuth,
 ): Promise<{ applicant: Applicant; response: Response } | Response> {
   try {
+    if (householdAuthConfigured()) {
+      return { applicant: await resolveHouseholdApplicant(request), response: privateResponse(new Response(null)) };
+    }
     const auth = providedAuth ?? getAuth();
     if (request instanceof Request) {
       const denied = sameOriginMutation(request, auth.origin);
@@ -73,7 +77,8 @@ export async function lookupApplicant(
       return privateJson({ error: 'Applicant access is not permitted.' }, { status: 403, headers: response.headers });
     }
     return { applicant: { ownerId: user.id, email: user.email, name: user.name }, response };
-  } catch {
+  } catch (error) {
+    if (error instanceof HouseholdAuthError) return privateJson({ error: error.message }, { status: error.status });
     return applicantUnavailable();
   }
 }

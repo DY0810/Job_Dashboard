@@ -58,7 +58,7 @@ class RequestError extends Error {
     super(code === 'GRANT_UNAVAILABLE' ? 'Pairing already created; its secret is unavailable. Cancel the unused grant before creating another.' :
       code === 'PRINCIPAL_CHANGED' ? 'Account changed. Refresh the current applicant.' :
         code === 'AUTH_FORBIDDEN' ? 'Applicant access denied.' :
-          status === 401 ? 'Session expired. Sign in and refresh.' :
+          status === 401 ? 'Session expired. Unlock Workie and refresh.' :
             status === 503 ? 'Private service unavailable. Check configuration and retry.' :
               code === 'EXECUTION_DISABLED' ? 'Execution is disabled.' :
                 status === 409 ? 'State changed. Current state must be reviewed before another action.' :

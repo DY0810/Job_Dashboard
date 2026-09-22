@@ -47,7 +47,7 @@ class RequestError extends Error {
   constructor(readonly status: number, readonly code = '', readonly mutationRejected = false) {
     super(code === 'PRINCIPAL_CHANGED' ? 'Account changed. Check the current applicant.' :
       code === 'PREVIEW_EXPIRED' ? 'Preview expired. Preview browser marks again; your selection is retained.' :
-        status === 401 ? 'Session expired. Sign in, then check the applicant session.' :
+        status === 401 ? 'Session expired. Unlock Workie, then check the applicant session.' :
           status === 403 ? 'Applicant access denied. Check the signed-in account.' :
             status === 409 ? 'Import conflict. Review a new preview before confirming.' :
               status === 404 ? 'Preview or run no longer available.' :

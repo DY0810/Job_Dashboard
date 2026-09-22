@@ -1,6 +1,7 @@
 import 'server-only';
 import { getAuth, type ApplicantAuth } from '@/lib/auth';
 import { applicantUnavailable, lookupApplicant, privateJson, privateResponse, sameOriginMutation } from '@/lib/applicant-access';
+import { householdAuthConfigured } from '@/lib/household-auth';
 
 const publicPaths = new Set([
   '/sign-up/email', '/sign-in/email', '/sign-out', '/verify-email',
@@ -12,6 +13,7 @@ const MAX_AUTH_BODY = 16_384;
 
 export async function handleAuthRequest(request: Request, resolveAuth: () => ApplicantAuth = getAuth): Promise<Response> {
   try {
+    if (householdAuthConfigured()) return privateJson({ error: 'Not found.' }, { status: 404 });
     const auth = resolveAuth();
     const denied = sameOriginMutation(request, auth.origin);
     if (denied) return denied;

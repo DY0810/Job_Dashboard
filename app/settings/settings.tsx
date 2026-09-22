@@ -21,7 +21,7 @@ async function request(path: string, ownerId?: string) {
   if (ownerId) headers.set(EXPECTED_APPLICANT_HEADER, ownerId);
   const response = await fetch(path, { headers, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(15_000) });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(response.status === 401 ? 'Sign in to view private settings.' : 'Private settings are unavailable.');
+  if (!response.ok) throw new Error(response.status === 401 ? 'Unlock Workie to view private settings.' : 'Private settings are unavailable.');
   return body;
 }
 

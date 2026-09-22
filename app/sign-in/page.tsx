@@ -5,7 +5,7 @@ import { NotificationBell } from '../notification-bell';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
-  title: 'Sign in | Workie',
+  title: 'Household access | Workie',
   robots: { index: false, follow: false },
   referrer: 'no-referrer',
 };

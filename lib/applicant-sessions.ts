@@ -2,6 +2,12 @@ import 'server-only';
 import { z } from 'zod';
 import { getAuth, type ApplicantAuth } from '@/lib/auth';
 import { applicantUnavailable, lookupApplicant, privateJson } from '@/lib/applicant-access';
+import {
+  householdAuthConfigured,
+  HouseholdAuthError,
+  listHouseholdApplicants,
+  switchHouseholdApplicant,
+} from '@/lib/household-auth';
 
 const selection = z.strictObject({ ownerId: z.string().min(1).max(256) });
 const deviceSessions = z.array(z.object({
@@ -20,6 +26,14 @@ async function sessions(request: Request, auth: ApplicantAuth) {
 }
 
 export async function listApplicantSessions(request: Request, providedAuth?: ApplicantAuth): Promise<Response> {
+  if (householdAuthConfigured()) {
+    try { return privateJson({ applicants: await listHouseholdApplicants(request) }); }
+    catch (error) {
+      return error instanceof HouseholdAuthError
+        ? privateJson({ error: error.message }, { status: error.status })
+        : applicantUnavailable();
+    }
+  }
   const auth = providedAuth ?? getAuth();
   const current = await lookupApplicant(request, auth);
   if (current instanceof Response) return current;
@@ -35,6 +49,18 @@ export async function listApplicantSessions(request: Request, providedAuth?: App
 }
 
 export async function selectApplicantSession(request: Request, raw: unknown, providedAuth?: ApplicantAuth): Promise<Response> {
+  if (householdAuthConfigured()) {
+    const parsed = selection.safeParse(raw);
+    if (!parsed.success) return privateJson({ error: 'Invalid applicant selection.' }, { status: 400 });
+    try {
+      const result = await switchHouseholdApplicant(request, parsed.data.ownerId);
+      return privateJson(result.applicant, { headers: { 'Set-Cookie': result.cookie } });
+    } catch (error) {
+      return error instanceof HouseholdAuthError
+        ? privateJson({ error: error.message }, { status: error.status })
+        : applicantUnavailable();
+    }
+  }
   const auth = providedAuth ?? getAuth();
   const current = await lookupApplicant(request, auth);
   if (current instanceof Response) return current;

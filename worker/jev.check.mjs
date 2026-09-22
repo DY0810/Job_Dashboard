@@ -41,6 +41,7 @@ test("Jev selects only a current observed action and receives labels, not values
   assert.equal(decision.actionId, "upload_resume");
   assert.deepEqual(request.sentState, state);
   assert.deepEqual(Object.keys(request.questions.select_action.criteria), ["fill_name", "upload_resume"]);
+  assert.match(request.questions.select_action.instructions, /already confirmed/);
   assert.match(request.questions.select_action.instructions, /Never invent/);
   assert.deepEqual(requestOptions, { runId: "synthetic-run" });
 });
