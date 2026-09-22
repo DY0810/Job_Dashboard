@@ -36,6 +36,8 @@ jobs:
       - run: npm ci
       - name: Install isolated Chromium for synthetic browser fixtures
         run: npx playwright install --with-deps chromium
+      - name: Install PDF verification tools
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - run: npm run test:worker
       - run: npm run test:worker:keyring
       - run: npm run test:documents
