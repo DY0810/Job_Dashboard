@@ -66,6 +66,9 @@ export class WorkerFixture {
     if (path === '/api/auth/applicant') return this.authStatus === 200 ?
       { status: 200, json: { ownerId: this.owner, name: 'Synthetic', email: `${this.owner}@example.test` } } :
       error(this.authStatus, this.authStatus === 401 ? 'AUTH_REQUIRED' : 'UNAVAILABLE');
+    if (path === '/api/auth/applicants') return { status: 200, json: { applicants: [
+      { ownerId: this.owner, name: 'Synthetic', email: `${this.owner}@example.test`, active: true },
+    ] } };
     assert.notEqual(request.owner, null, 'Every private worker/policy request must carry the applicant precondition');
     if (request.owner !== this.owner) return error(403, 'PRINCIPAL_CHANGED');
     if (this.authStatus !== 200) return error(this.authStatus, 'AUTH_REQUIRED');

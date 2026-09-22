@@ -4,6 +4,7 @@ import { ThemeToggle } from '../theme-toggle';
 import Workers from './workers';
 import { NotificationBell } from '../notification-bell';
 import styles from './workers.module.css';
+import { ApplicantSwitcher } from '../applicant-switcher';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
@@ -24,6 +25,7 @@ export default function WorkersPage() {
       </nav>
       <ThemeToggle />
       <NotificationBell />
+      <ApplicantSwitcher />
     </header>
     <Workers />
   </main>;

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import ProfileEditor from './profile-editor';
 import styles from './profile.module.css';
 import { NotificationBell } from '../notification-bell';
+import { ApplicantSwitcher } from '../applicant-switcher';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ export default function ProfilePage() {
         <Link href="/sign-in" prefetch={false}>Account</Link>
       </nav>
       <NotificationBell />
+      <ApplicantSwitcher />
     </header>
     <ProfileEditor />
   </main>;

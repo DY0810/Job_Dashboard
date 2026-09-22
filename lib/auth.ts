@@ -1,6 +1,7 @@
 import 'server-only';
 import { betterAuth } from 'better-auth';
 import { APIError } from 'better-auth/api';
+import { multiSession } from 'better-auth/plugins';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { eq } from 'drizzle-orm';
 import { after } from 'next/server';
@@ -138,6 +139,7 @@ export function createAuth(config: AuthConfig, db: PrivateDb, dependencies: Auth
       autoSignInAfterVerification: false,
       sendVerificationEmail: async ({ user, url }) => deliver('verification', user.email, url),
     },
+    plugins: [multiSession({ maximumSessions: 2 })],
   });
   return Object.assign(auth, { isAllowedApplicant, origin: config.baseURL });
 }

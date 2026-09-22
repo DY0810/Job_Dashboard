@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { authClient } from '@/lib/auth-client';
 import type { Applicant } from '@/lib/applicant-access';
 import styles from './sign-in-form.module.css';
+import { ApplicantSwitcher } from '../applicant-switcher';
 
 type Mode = 'sign-in' | 'sign-up' | 'forgot' | 'verify' | 'reset';
 const titles: Record<Mode, string> = {
@@ -27,6 +28,7 @@ export function SignInForm() {
 function AuthForm({ mode }: { mode: Mode }) {
   const params = useSearchParams();
   const resetToken = params.get('token') ?? '';
+  const [adding, setAdding] = useState(params.get('add') === '1');
   const [applicant, setApplicant] = useState<Applicant | null>(null);
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -34,7 +36,7 @@ function AuthForm({ mode }: { mode: Mode }) {
   const [notice, setNotice] = useState('');
   const generation = useRef(0);
   const passwordMode = ['sign-in', 'sign-up', 'reset'].includes(mode);
-  const showAccount = applicant && mode !== 'reset';
+  const showAccount = applicant && mode !== 'reset' && !adding;
 
   useEffect(() => {
     setBusy(false);
@@ -91,7 +93,7 @@ function AuthForm({ mode }: { mode: Mode }) {
       const result = mode === 'sign-in'
         ? await authClient.signIn.email({ email, password })
         : mode === 'sign-up'
-          ? await authClient.signUp.email({ email, password, name: String(data.get('name') ?? '').trim(), callbackURL: '/sign-in' })
+          ? await authClient.signUp.email({ email, password, name: String(data.get('name') ?? '').trim(), callbackURL: adding ? '/sign-in?add=1' : '/sign-in' })
           : mode === 'forgot'
             ? await authClient.requestPasswordReset({ email, redirectTo: '/sign-in?mode=reset' })
             : mode === 'verify'
@@ -117,6 +119,10 @@ function AuthForm({ mode }: { mode: Mode }) {
         const account = await response.json();
         if (!isCurrent()) return;
         setApplicant(account);
+        setAdding(false);
+        const url = new URL(window.location.href);
+        url.searchParams.delete('add');
+        window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
       } else {
         setNotice(mode === 'reset' ? 'Password updated. Sign in with your new password.' : emailNotice);
         if (mode === 'reset') {
@@ -159,14 +165,16 @@ function AuthForm({ mode }: { mode: Mode }) {
   const linkError = params.has('error') ? 'This link is invalid or expired. Request another link.' : '';
   return (
     <div className={`${styles.form} min-w-0 text-sm`}>
-      <h1 className="mb-6 text-lg font-medium">{showAccount ? 'Account' : titles[mode]}</h1>
+      <h1 className="mb-6 text-lg font-medium">{showAccount ? 'Account' : adding && mode === 'sign-in' ? 'Add applicant' : titles[mode]}</h1>
       {checking ? <p role="status">Checking session...</p> : showAccount ? (
         <div className="grid gap-4">
           <p className="break-words">{applicant.email}</p>
+          <ApplicantSwitcher />
           <div className="flex flex-wrap gap-3">
             <Link href="/" className="chip">Jobs</Link>
             <Link href="/profile" prefetch={false} className="chip">Profile</Link>
             <Link href="/workers" prefetch={false} className="chip">Workers</Link>
+            <button className="chip" type="button" disabled={busy} onClick={() => setAdding(true)}>Add applicant</button>
             <button className="chip" type="button" disabled={busy} onClick={signOut}>Sign out</button>
           </div>
         </div>
@@ -205,10 +213,10 @@ function AuthForm({ mode }: { mode: Mode }) {
       {notice && !error && !linkError && <p role="status" className="mt-4 break-words">{notice}</p>}
       {!showAccount && !checking && (
         <nav aria-label="Sign-in options" className="mt-6 flex flex-wrap gap-x-4 gap-y-3 border-t border-rule pt-4 text-xs">
-          <Link href="/sign-in">Sign in</Link>
-          <Link href="/sign-in?mode=sign-up">Create account</Link>
-          <Link href="/sign-in?mode=forgot">Forgot password?</Link>
-          <Link href="/sign-in?mode=verify">Resend verification</Link>
+          <Link href={adding ? '/sign-in?add=1' : '/sign-in'}>Sign in</Link>
+          <Link href={adding ? '/sign-in?mode=sign-up&add=1' : '/sign-in?mode=sign-up'}>Create account</Link>
+          <Link href={adding ? '/sign-in?mode=forgot&add=1' : '/sign-in?mode=forgot'}>Forgot password?</Link>
+          <Link href={adding ? '/sign-in?mode=verify&add=1' : '/sign-in?mode=verify'}>Resend verification</Link>
         </nav>
       )}
     </div>

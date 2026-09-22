@@ -11,6 +11,7 @@ import { createAuth, readAuthConfig, type AuthConfig } from '@/lib/auth';
 import { handleAuthRequest } from '@/lib/auth-http';
 import { type AuthMail } from '@/lib/auth-mail';
 import { privateJson, privateResponse, requireApplicant } from '@/lib/applicant-access';
+import { listApplicantSessions, selectApplicantSession } from '@/lib/applicant-sessions';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '@/lib/private-db';
 import { account, rateLimit, session, user, verification } from '@/lib/private-db/schema';
 
@@ -184,6 +185,40 @@ describe('real Better Auth HTTP factory with migrated async libSQL and synthetic
     expect((await client.signOut()).error).toBeNull();
     expect((await requireApplicant(request('/applicant', undefined, cookie), auth) as Response).status).toBe(401);
     expect(paths).toEqual(['/api/auth/sign-up/email', '/api/auth/sign-in/email', '/api/auth/sign-out']);
+  });
+
+  it('keeps two applicant sessions and switches the active owner without exposing session tokens', async () => {
+    const alice = await enroll(emailA);
+    const bob = await enroll(emailB);
+    const cookies = new Map<string, string>();
+    const absorb = (response: Response) => {
+      for (const value of response.headers.getSetCookie()) {
+        const pair = value.split(';', 1)[0];
+        const name = pair.slice(0, pair.indexOf('='));
+        cookies.set(name, pair);
+      }
+    };
+    const cookie = () => [...cookies.values()].join('; ');
+    absorb(await handle('/sign-in/email', { email: emailA, password }, cookie()));
+    absorb(await handle('/sign-in/email', { email: emailB, password }, cookie()));
+    expect(await requireApplicant(request('/applicant', undefined, cookie()), auth)).toMatchObject({ ownerId: bob.id });
+
+    const listed = await listApplicantSessions(request('/api/auth/applicants', undefined, cookie()), auth);
+    expect(listed.status).toBe(200);
+    const listBody = await listed.json();
+    expect(listBody.applicants).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ownerId: alice.id, email: emailA, active: false }),
+      expect.objectContaining({ ownerId: bob.id, email: emailB, active: true }),
+    ]));
+    expect(JSON.stringify(listBody)).not.toContain('token');
+
+    const switched = await selectApplicantSession(
+      request('/api/auth/applicants', { ownerId: alice.id }, cookie()), { ownerId: alice.id }, auth,
+    );
+    expect(switched.status).toBe(200);
+    absorb(switched);
+    expect(await requireApplicant(request('/applicant', undefined, cookie()), auth)).toMatchObject({ ownerId: alice.id });
+    expect((await switched.json())).toEqual({ ownerId: alice.id, email: emailA, name: alice.name });
   });
 
   it('rechecks verification and the current allowlist for existing sessions and returning sign-ins', async () => {

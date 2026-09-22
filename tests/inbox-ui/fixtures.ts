@@ -53,6 +53,9 @@ export function fixture(initial = question()) {
     const reply = (json: unknown, status = 200) => ({ json, status });
     if (path === '/api/auth/applicant') return state.auth !== 200 ? reply({ code: 'AUTH_REQUIRED' }, state.auth) :
       reply({ ownerId: state.owner, email: 'synthetic@example.test', name: 'Synthetic' });
+    if (path === '/api/auth/applicants') return reply({ applicants: [
+      { ownerId: state.owner, email: 'synthetic@example.test', name: 'Synthetic', active: true },
+    ] });
     if (headers.get(EXPECTED_APPLICANT_HEADER) !== state.owner) return reply({ code: 'PRINCIPAL_CHANGED' }, 403);
     if (path === '/api/profile/draft-key') return reply({ ownerId: state.owner, keyVersion: state.keyVersion,
       key: btoa((state.keyVersion === '1' ? 's' : 'r').repeat(32)) });

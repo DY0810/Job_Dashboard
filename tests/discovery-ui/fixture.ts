@@ -41,6 +41,9 @@ export class DiscoveryFixture {
     if (path === '/api/auth/applicant') return {
       status: 200, json: { ownerId: this.owner, name: 'Fixture applicant', email: `${this.owner}@example.test` },
     };
+    if (path === '/api/auth/applicants') return { status: 200, json: { applicants: [
+      { ownerId: this.owner, name: 'Fixture applicant', email: `${this.owner}@example.test`, active: true },
+    ] } };
     if (headers.get('x-workie-applicant') !== this.owner) return {
       status: 403, json: { error: 'Applicant session changed. Unlock the current account.' },
     };

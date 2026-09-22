@@ -23,7 +23,8 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     if (url.origin === baseURL && request.method() === 'GET' &&
         (['/applications/import', '/workers'].includes(url.pathname) || url.pathname.startsWith('/_next/static/'))) return route.continue();
     if (url.origin !== baseURL || !url.pathname.startsWith('/api/')) return route.abort();
-    const discovery = url.pathname.includes('/import/') || url.pathname.endsWith('/discovery') || url.pathname === '/api/auth/applicant';
+    const discovery = url.pathname.includes('/import/') || url.pathname.endsWith('/discovery') ||
+      url.pathname === '/api/auth/applicant' || url.pathname === '/api/auth/applicants';
     if (url.pathname.endsWith('/discovery')) statusReads.get(page)!.push(url.pathname);
     try {
       const reply = await (discovery ? fixture : worker).handle(url.pathname, request.method(),

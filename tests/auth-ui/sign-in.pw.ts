@@ -28,6 +28,8 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/auth/applicant') {
       await route.fulfill({ status: 401, json: { error: 'Sign in required.' } });
+    } else if (path === '/api/auth/applicants') {
+      await route.fulfill({ status: 401, json: { error: 'Sign in required.' } });
     } else if (path === '/api/auth/get-session') {
       await route.fulfill({ json: null });
     } else {

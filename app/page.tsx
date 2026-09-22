@@ -26,6 +26,7 @@ import { BadgeChip, Filters, RowChip } from "./filters";
 import { Chevron, ExternalLink } from "./icons";
 import { ThemeToggle } from "./theme-toggle";
 import { NotificationBell } from "./notification-bell";
+import { ApplicantSwitcher } from "./applicant-switcher";
 import { AppliedCheckbox } from "./applied-checkbox";
 
 /**
@@ -412,6 +413,7 @@ export default async function Page({
           <RefreshButton hosted={Boolean(process.env.VERCEL)} />
           <ThemeToggle />
           <NotificationBell />
+          <ApplicantSwitcher />
         </div>
       </header>
 

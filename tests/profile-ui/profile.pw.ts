@@ -62,6 +62,13 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     if (url.pathname === '/api/auth/applicant') return route.fulfill({
       status: fixture.auth, headers, json: fixture.auth === 200 ? { ownerId: fixture.owner, name: 'Synthetic', email: 'synthetic@example.test' } : { error: 'Sign in required.' },
     });
+    if (url.pathname === '/api/auth/applicants') return route.fulfill({ headers, json: { applicants: [
+      { ownerId: fixture.owner, name: 'Synthetic', email: 'synthetic@example.test', active: true },
+    ] } });
+    if (url.pathname === '/api/inbox') return route.fulfill({ headers, json: {
+      ownerId: fixture.owner, unread: 0, unresolved: 0, waitingApplications: 0,
+      serverTime: Date.now(), items: [], nextCursor: null,
+    } });
     if (fixture.auth !== 200) return route.fulfill({ status: fixture.auth, headers, json: { error: 'Sign in required.' } });
     const expectedApplicant = request.headers()['x-workie-applicant'];
     if ((expectedApplicant !== undefined || !['GET', 'HEAD'].includes(request.method())) && expectedApplicant !== fixture.owner) {

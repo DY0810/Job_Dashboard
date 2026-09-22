@@ -4,6 +4,7 @@ import { NotificationBell } from '../notification-bell';
 import { ThemeToggle } from '../theme-toggle';
 import Applications from './applications';
 import styles from '../workers/workers.module.css';
+import { ApplicantSwitcher } from '../applicant-switcher';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
@@ -24,6 +25,7 @@ export default function ApplicationsPage() {
       </nav>
       <ThemeToggle />
       <NotificationBell />
+      <ApplicantSwitcher />
     </header>
     <Applications />
   </main>;
