@@ -46,7 +46,9 @@ function fixture(kind: 'sqlite' | 'libsql') {
   }
   return { db, writer, connection, queries, add };
 }
-const policy = (over: Partial<Policy> = {}): Policy => ({ ...createEmptyPolicy(), undisclosedPay: 'include', ...over });
+const policy = (over: Partial<Policy> = {}): Policy => ({
+  ...createEmptyPolicy(), destinations: ['job-boards.greenhouse.io'], undisclosedPay: 'include', ...over,
+});
 
 describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (kind) => {
   it('captures all 601 native requisitions plus duplicate evidence in one SELECT without offsets or bodies', async () => {
@@ -107,6 +109,13 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
       'blocked', 'needs_question', 'blocked', 'blocked', 'blocked', 'candidate',
     ]);
     expect(result.candidates.slice(0, 5).every((c) => c.reasons.length > 0)).toBe(true);
+  });
+
+  it('blocks resolved applications outside the explicitly approved destination hosts', async () => {
+    const f = fixture(kind);
+    f.add(1);
+    const result = await captureCandidateSnapshot(f.db, policy({ destinations: ['careers.example.test'] }), NOW);
+    expect(result.candidates[0]).toMatchObject({ disposition: 'blocked', reasons: ['destination_restricted'] });
   });
 
   it('preserves paid/unpaid/unknown and does not invent dollar currency or annual conversion', async () => {

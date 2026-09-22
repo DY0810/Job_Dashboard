@@ -88,6 +88,9 @@ function screen(candidate: DiscoveryCandidate, policy: Policy) {
   const blocked = new Set<string>(), questions = new Set<string>();
   if (candidate.identityStatus === 'conflict') blocked.add('official_identity_conflict');
   if (candidate.identityStatus === 'unresolved') questions.add('official_identity_unresolved');
+  if (candidate.officialUrl && !policy.destinations.includes(new URL(candidate.officialUrl).hostname.toLowerCase())) {
+    blocked.add('destination_restricted');
+  }
   if (policy.sourceRestrictions.length && !candidate.postings.some((p) =>
     p.sources.some((source) => policy.sourceRestrictions.includes(source.source)))) blocked.add('source_restricted');
   for (const p of candidate.postings) {
