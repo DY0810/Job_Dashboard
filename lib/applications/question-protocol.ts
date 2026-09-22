@@ -26,8 +26,8 @@ export const QuestionFieldSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('date'), ...base, units: z.null(), precision: z.enum(['year', 'month', 'day']),
     min: z.string().max(10).nullable(), max: z.string().max(10).nullable() }),
   z.strictObject({ type: z.literal('document'), ...base, ...unitless,
-    documentKinds: z.array(z.enum(['resume_master', 'resume_source', 'transcript', 'certificate', 'supporting'])).min(1).max(5),
-    mimeTypes: z.array(z.enum(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])).min(1).max(2),
+    documentKinds: z.array(z.enum(['resume_master', 'resume_source', 'transcript', 'certificate', 'supporting', 'portfolio', 'artwork'])).min(1).max(5),
+    mimeTypes: z.array(z.enum(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/png', 'image/jpeg'])).min(1).max(4),
     maxBytes: revision.max(10 * 1024 * 1024) }),
   z.strictObject({ type: z.literal('intervention'), ...base, ...unitless }),
 ]).superRefine((f, ctx) => {

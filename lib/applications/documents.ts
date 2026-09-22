@@ -4,6 +4,7 @@ import { and, desc, eq, lt, or, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PrivateDb } from '../private-db';
 import { documents, documentUploadGrants } from '../private-db/document-schema';
+import { DOCUMENT_KINDS, DOCUMENT_MIMES, allowedDocumentMimes } from './document-types';
 import { validateDocumentBytes } from './documents-validation';
 import {
   assertDocumentBlobUrl, boundedDocumentBytes, DocumentError, MAX_DOCUMENT_BYTES,
@@ -11,16 +12,25 @@ import {
 } from './documents-storage';
 
 export { DocumentError } from './documents-storage';
-export const DOCUMENT_MIMES = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] as const;
 const uploadInput = z.strictObject({
   requestId: z.uuid(),
-  kind: z.enum(['resume_master', 'resume_source', 'transcript', 'certificate', 'supporting']),
+  kind: z.enum(DOCUMENT_KINDS).exclude(['resume_artifact']),
   name: z.string().trim().min(1).max(180).refine((s) => !/[\/\\\x00-\x1f\x7f]/.test(s)),
   mime: z.enum(DOCUMENT_MIMES),
   size: z.number().int().min(1).max(MAX_DOCUMENT_BYTES),
   role: z.string().trim().min(1).max(100).optional(),
   parentId: z.uuid().optional(),
-}).refine((value) => value.name.toLowerCase().endsWith(value.mime === DOCUMENT_MIMES[0] ? '.pdf' : '.docx'));
+}).superRefine((value, context) => {
+  if (!allowedDocumentMimes(value.kind).includes(value.mime)) {
+    context.addIssue({ code: 'custom', path: ['mime'], message: 'Document type is not allowed for this kind.' });
+  }
+  const validFilename = value.mime === 'application/pdf' ? /\.pdf$/i.test(value.name) :
+    value.mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? /\.docx$/i.test(value.name) :
+      value.mime === 'image/png' ? /\.png$/i.test(value.name) : /\.jpe?g$/i.test(value.name);
+  if (!validFilename) {
+    context.addIssue({ code: 'custom', path: ['name'], message: 'Filename does not match document type.' });
+  }
+});
 type DocumentRow = typeof documents.$inferSelect;
 export type DocumentSummary = Pick<DocumentRow, 'id' | 'kind' | 'name' | 'role' | 'parentId' | 'masterId' |
   'version' | 'mime' | 'size' | 'sha256' | 'state' | 'safetyCheck'> & { createdAt: string; downloadUrl: string | null };

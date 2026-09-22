@@ -34,7 +34,7 @@ type Fixture = {
   documentError: boolean; errors: string[];
   policy: PolicyResponse; policyMode: 'ok' | 'offline' | 'lost'; policyGets: number;
   beforePolicyWrite?: () => Promise<void>; afterPolicyWrite?: () => Promise<void>;
-  documentListError: boolean; grantResponseLost: boolean; grantRequests: string[];
+  documentListError: boolean; grantResponseLost: boolean; grantRequests: string[]; grantBodies: Record<string, unknown>[];
   uploadMode: 'ok' | 'lost' | 'unknown' | 'rejected'; failListAfterUpload: boolean;
 };
 const fixtures = new WeakMap<Page, Fixture>();
@@ -44,7 +44,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     owner: ownerA, auth: 200, revision: 0, profile: fixtureProfile(), writes: [], mode: 'ok',
     policyWrites: [], documents: [], storage: 'local', uploads: 0, documentError: false, errors: [],
     policy: { ...savedPolicy(), revision: 0, policy: createEmptyPolicy(), policyVersion: 0, policyHash: null },
-    policyMode: 'ok', policyGets: 0, documentListError: false, grantResponseLost: false, grantRequests: [],
+    policyMode: 'ok', policyGets: 0, documentListError: false, grantResponseLost: false, grantRequests: [], grantBodies: [],
     uploadMode: 'ok', failListAfterUpload: false,
   };
   fixtures.set(page, fixture);
@@ -125,6 +125,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
       if (fixture.documentError) return route.fulfill({ status: 503, headers, json: { error: 'Storage unavailable.' } });
       const body = request.postDataJSON();
       fixture.grantRequests.push(body.requestId);
+      fixture.grantBodies.push(body);
       const prior = grants.get(body.requestId);
       if (prior) {
         if (JSON.stringify(prior.body) !== JSON.stringify(body) || prior.response.document.state !== 'pending') {
@@ -146,7 +147,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     const grant = [...grants.values()].find((grant) => url.pathname === grant.response.uploadUrl);
     if (grant && request.method() === 'PUT') {
       fixture.uploads++;
-      expect(request.headers()['content-type']).toBe('application/pdf');
+      expect(request.headers()['content-type']).toBe(grant.response.document.mime);
       const doc = grant.response.document;
       if (doc.state !== 'pending') return route.fulfill({ status: 409, headers, json: { error: 'Upload grant expired or already used.' } });
       if (fixture.uploadMode === 'unknown') return route.abort('failed');
@@ -432,12 +433,12 @@ test('saving policy stays disabled; enable accepts its saved version exactly onc
 test('private uploads retain input after error and quarantine is not availability', async ({ page }, info) => {
   await ready(page);
   const fixture = fixtures.get(page)!;
-  await page.getByLabel('PDF or DOCX (up to 10 MB)').setInputFiles({ name: 'synthetic-resume.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7\nUI FIXTURE ONLY\n%%EOF') });
+  await page.getByLabel('Upload file (up to 10 MB)').setInputFiles({ name: 'synthetic-resume.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7\nUI FIXTURE ONLY\n%%EOF') });
   await page.getByLabel('Target role', { exact: true }).fill('Synthetic engineer');
   fixture.documentError = true;
   await page.getByRole('button', { name: 'Upload document', exact: true }).click();
   await expect(page.getByText(/Your selection is retained/, { exact: false })).toBeVisible();
-  expect(await page.getByLabel('PDF or DOCX (up to 10 MB)').evaluate((input: HTMLInputElement) => input.files?.length)).toBe(1);
+  expect(await page.getByLabel('Upload file (up to 10 MB)').evaluate((input: HTMLInputElement) => input.files?.length)).toBe(1);
   fixture.documentError = false;
   await page.getByRole('button', { name: 'Retry upload', exact: true }).click();
   await expect(page.getByRole('cell', { name: /Quarantined/ })).toBeVisible();
@@ -449,13 +450,28 @@ test('private uploads retain input after error and quarantine is not availabilit
   await screenshot(page, info, 'document-available');
 });
 
+test('portfolio artwork accepts PNG and requests a portfolio upload grant', async ({ page }) => {
+  await ready(page);
+  const fixture = fixtures.get(page)!;
+  await page.getByLabel('Document kind', { exact: true }).selectOption('portfolio');
+  await expect(page.getByLabel('Upload file (up to 10 MB)')).toHaveAttribute('accept', 'application/pdf,image/png,image/jpeg');
+  await page.getByLabel('Upload file (up to 10 MB)').setInputFiles({
+    name: 'synthetic-portfolio.png', mimeType: 'image/png',
+    buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1]),
+  });
+  await page.getByRole('button', { name: 'Upload document', exact: true }).click();
+  await expect(page.getByRole('cell', { name: /Quarantined/ })).toBeVisible();
+  expect(fixture.grantBodies).toHaveLength(1);
+  expect(fixture.grantBodies[0]).toMatchObject({ kind: 'portfolio', mime: 'image/png', name: 'synthetic-portfolio.png' });
+});
+
 test('unconfigured storage is actionable and does not clear the selected file', async ({ page }) => {
   fixtures.get(page)!.storage = 'unconfigured';
   await ready(page);
-  await page.getByLabel('PDF or DOCX (up to 10 MB)').setInputFiles({ name: 'synthetic.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF synthetic') });
+  await page.getByLabel('Upload file (up to 10 MB)').setInputFiles({ name: 'synthetic.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF synthetic') });
   await expect(page.getByText('Document storage is not configured. Configure private local storage or Vercel Blob before uploading.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Upload document', exact: true })).toBeDisabled();
-  expect(await page.getByLabel('PDF or DOCX (up to 10 MB)').evaluate((input: HTMLInputElement) => input.files?.length)).toBe(1);
+  expect(await page.getByLabel('Upload file (up to 10 MB)').evaluate((input: HTMLInputElement) => input.files?.length)).toBe(1);
 });
 
 test('historical policy enable acknowledgement cannot override a newer disabled head', async ({ page }, info) => {
@@ -663,11 +679,11 @@ test('weekly onsite and remote days show the exact section error with keyboard f
 });
 
 async function chooseDocument(page: Page) {
-  await page.getByLabel('PDF or DOCX (up to 10 MB)').setInputFiles({
+  await page.getByLabel('Upload file (up to 10 MB)').setInputFiles({
     name: 'synthetic-resume.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7\nUI FIXTURE ONLY\n%%EOF'),
   });
 }
-const selectedFiles = (page: Page) => page.getByLabel('PDF or DOCX (up to 10 MB)').evaluate((input: HTMLInputElement) => input.files?.length);
+const selectedFiles = (page: Page) => page.getByLabel('Upload file (up to 10 MB)').evaluate((input: HTMLInputElement) => input.files?.length);
 
 for (const retry of ['Retry upload', 'Refresh documents'] as const) {
   test(`successful PUT and failed list refresh reconcile through ${retry} without reusing a consumed grant`, async ({ page }, info) => {

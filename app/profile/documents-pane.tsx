@@ -4,16 +4,15 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { z } from 'zod';
 import { ProfileSaveError } from '@/lib/profile-drafts';
 import { EXPECTED_APPLICANT_HEADER } from '@/lib/applications/applicant-precondition';
+import { DOCUMENT_KINDS, DOCUMENT_MIMES, allowedDocumentMimes, documentMimeForFilename } from '@/lib/applications/document-types';
 import type { PrivateApi } from './api';
 import { labelFor, type DocumentOption } from './fields';
 import styles from './profile.module.css';
 
-const kinds = ['resume_master', 'resume_source', 'transcript', 'certificate', 'supporting'] as const;
-const pdf = 'application/pdf';
-const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const kinds = ['resume_master', 'resume_source', 'transcript', 'certificate', 'supporting', 'portfolio', 'artwork'] as const;
 const summarySchema = z.object({
-  id: z.uuid(), kind: z.enum(kinds), name: z.string(), role: z.string().nullable(), parentId: z.uuid().nullable(),
-  masterId: z.uuid(), version: z.number().int().positive(), mime: z.enum([pdf, docx]), size: z.number().nonnegative(),
+  id: z.uuid(), kind: z.enum(DOCUMENT_KINDS), name: z.string(), role: z.string().nullable(), parentId: z.uuid().nullable(),
+  masterId: z.uuid(), version: z.number().int().positive(), mime: z.enum(DOCUMENT_MIMES), size: z.number().nonnegative(),
   sha256: z.string().nullable(), state: z.enum(['pending', 'quarantined', 'available', 'rejected', 'expired']),
   safetyCheck: z.enum(['pending', 'passed', 'rejected', 'deferred']), createdAt: z.string(), downloadUrl: z.string().nullable().optional(),
 });
@@ -81,9 +80,10 @@ export default function DocumentsPane({ api, ownerId, signal, onDocuments, idPre
   async function upload(event: FormEvent) {
     event.preventDefault();
     if (!file || busy) return;
-    const extension = file.name.toLowerCase().split('.').pop();
-    const mime = extension === 'pdf' ? pdf : extension === 'docx' ? docx : '';
-    if (!mime || (file.type && file.type !== mime)) { setError('Choose a PDF or DOCX file with a matching content type.'); return; }
+    const mime = documentMimeForFilename(file.name);
+    if (!mime || !allowedDocumentMimes(kind).includes(mime) || (file.type && file.type !== mime)) {
+      setError('Choose a supported file with a matching content type.'); return;
+    }
     if (file.size === 0 || file.size > 10 * 1024 * 1024) { setError('Choose a nonempty file no larger than 10 MB.'); return; }
     setBusy(true); setError(''); setStatus('Requesting private upload...');
     pending.current ??= { requestId: crypto.randomUUID() };
@@ -167,12 +167,12 @@ export default function DocumentsPane({ api, ownerId, signal, onDocuments, idPre
     </p>}
     <form onSubmit={upload} aria-label="Upload document">
       <fieldset disabled={busy} className={styles.fields} style={{ border: 0, padding: 0 }}>
-        <div className={styles.field}><label htmlFor={`${idPrefix}-file`}>PDF or DOCX (up to 10 MB)</label>
-          <input ref={fileInput} id={`${idPrefix}-file`} type="file" disabled={pending.current?.attempted} accept={`.pdf,.docx,${pdf},${docx}`} onChange={(e) => {
+        <div className={styles.field}><label htmlFor={`${idPrefix}-file`}>Upload file (up to 10 MB)</label>
+          <input ref={fileInput} id={`${idPrefix}-file`} type="file" disabled={pending.current?.attempted} accept={allowedDocumentMimes(kind).join(',')} onChange={(e) => {
             edit(); setFile(e.target.files?.[0] ?? null);
           }} /></div>
         <div className={styles.field}><label htmlFor={`${idPrefix}-kind`}>Document kind</label>
-          <select id={`${idPrefix}-kind`} value={kind} disabled={pending.current?.attempted} onChange={(e) => { edit(); setKind(z.enum(kinds).parse(e.target.value)); }}>
+          <select id={`${idPrefix}-kind`} value={kind} disabled={pending.current?.attempted} onChange={(e) => { edit(); setParentId(''); setKind(z.enum(kinds).parse(e.target.value)); }}>
             {kinds.map((value) => <option value={value} key={value}>{labelFor(value)}</option>)}
           </select></div>
         <div className={styles.field}><label htmlFor={`${idPrefix}-role`}>Target role</label>
@@ -180,7 +180,7 @@ export default function DocumentsPane({ api, ownerId, signal, onDocuments, idPre
         <div className={styles.field}><label htmlFor={`${idPrefix}-parent`}>Previous version / associated master</label>
           <select id={`${idPrefix}-parent`} value={parentId} disabled={pending.current?.attempted} onChange={(e) => { edit(); setParentId(e.target.value); }}>
             <option value="">New document</option>
-            {documents.filter((d) => d.state === 'available').map((d) => <option key={d.id} value={d.id}>{d.name} / v{d.version} / {labelFor(d.kind)}</option>)}
+            {documents.filter((d) => d.state === 'available' && d.kind === kind).map((d) => <option key={d.id} value={d.id}>{d.name} / v{d.version} / {labelFor(d.kind)}</option>)}
           </select></div>
         <div><button className={styles.button} type="submit" disabled={!file || storage === 'unconfigured' || storage === null}>
           {busy ? 'Uploading...' : pending.current ? 'Retry upload' : 'Upload document'}

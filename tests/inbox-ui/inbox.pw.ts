@@ -278,7 +278,7 @@ test('document selector excludes unavailable versions and upload labels remain u
   const select = form.getByRole('combobox', { name: f.state.q.descriptor.originalWording });
   await expect(select.getByRole('option', { name: 'synthetic-transcript.pdf / v3' })).toHaveCount(1);
   await expect(select.getByRole('option', { name: /quarantined/ })).toHaveCount(0);
-  const input = inbox(page).getByRole('form', { name: 'Upload document' }).getByLabel('PDF or DOCX (up to 10 MB)', { exact: true });
+  const input = inbox(page).getByRole('form', { name: 'Upload document' }).getByLabel('Upload file (up to 10 MB)', { exact: true });
   await expect(input).toHaveAttribute('id', 'inbox-document-file');
   expect(await page.evaluate(() => {
     const ids = [...document.querySelectorAll('[id]')].map((element) => element.id);

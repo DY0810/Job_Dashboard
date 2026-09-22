@@ -1,11 +1,12 @@
 import { sql } from 'drizzle-orm';
 import { check, foreignKey, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { DOCUMENT_KINDS } from '../applications/document-types.ts';
 import { user } from './schema.ts';
 
 export const documents = sqliteTable('private_document', {
   id: text('id').primaryKey(),
   ownerId: text('owner_id').notNull().references(() => user.id, { onDelete: 'restrict' }),
-  kind: text('kind', { enum: ['resume_master', 'resume_source', 'resume_artifact', 'transcript', 'certificate', 'supporting'] }).notNull(),
+  kind: text('kind', { enum: DOCUMENT_KINDS }).notNull(),
   name: text('name').notNull(),
   role: text('role'),
   parentId: text('parent_id'),
@@ -29,7 +30,7 @@ export const documents = sqliteTable('private_document', {
   index('private_document_owner_state_idx').on(t.ownerId, t.state),
   foreignKey({ columns: [t.ownerId, t.parentId], foreignColumns: [t.ownerId, t.id] }),
   foreignKey({ columns: [t.ownerId, t.masterId], foreignColumns: [t.ownerId, t.id] }),
-  check('private_document_kind_check', sql`${t.kind} in ('resume_master','resume_source','resume_artifact','transcript','certificate','supporting')`),
+  check('private_document_kind_check', sql`${t.kind} in ('resume_master','resume_source','resume_artifact','transcript','certificate','supporting','portfolio','artwork')`),
   check('private_document_state_check', sql`${t.state} in ('pending','quarantined','available','rejected','expired')`),
   check('private_document_safety_check', sql`${t.safetyCheck} in ('pending','passed','rejected','deferred')`),
   check('private_document_storage_check', sql`${t.storage} in ('local','blob')`),
@@ -38,7 +39,7 @@ export const documents = sqliteTable('private_document', {
   check('private_document_attempts_check', sql`typeof(${t.attempts}) = 'integer' and ${t.attempts} >= 0`),
   check('private_document_hash_check', sql`${t.sha256} is null or (length(${t.sha256}) = 64 and ${t.sha256} not glob '*[^a-f0-9]*')`),
   check('private_document_available_check', sql`${t.state} != 'available' or (${t.sha256} is not null and ${t.safetyCheck} = 'passed')`),
-  check('private_document_mime_check', sql`${t.mime} in ('application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document')`),
+  check('private_document_mime_check', sql`${t.mime} in ('application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','image/png','image/jpeg')`),
 ]);
 
 export const documentUploadGrants = sqliteTable('private_document_upload_grant', {

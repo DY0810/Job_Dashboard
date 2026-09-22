@@ -95,7 +95,8 @@ async function eligible(tx: WorkerTx, app: ApplicationRow, ctx: Context) {
     await liveRun(tx, app, ctx.now) && await workerAvailable(tx, app, ctx);
 }
 const documentPermission = (kind: typeof documents.$inferSelect['kind']) =>
-  kind === 'resume_master' || kind === 'resume_source' || kind === 'resume_artifact' ? 'resume' : kind === 'supporting' ? null : kind;
+  kind === 'resume_master' || kind === 'resume_source' || kind === 'resume_artifact' ? 'resume' :
+    kind === 'portfolio' || kind === 'artwork' ? 'portfolio' : kind === 'supporting' ? null : kind;
 function permitted(q: QuestionDescriptor, ctx: Context) {
   if (!ctx.policy.policy.actions.includes('fill_forms') || q.field.type === 'intervention') return false;
   if (q.field.type === 'document') return q.field.documentKinds.some(kind => {

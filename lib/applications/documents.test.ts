@@ -19,6 +19,7 @@ let storage: DocumentStorage;
 const input = (size = 100) => ({
   requestId: randomUUID(), kind: 'resume_master', name: 'synthetic.pdf', mime: 'application/pdf', size,
 });
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlUfJQAAAAASUVORK5CYII=', 'base64');
 beforeEach(async () => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'workie-documents-')));
   db = openPrivateDb({ url: pathToFileURL(join(dir, 'private.db')).href });
@@ -80,6 +81,17 @@ describe('owner-scoped immutable document grants', () => {
     expect(Buffer.from((await downloadDocument(db, 'one', result.id, storage)).bytes)).toEqual(bytes);
     writeFileSync(join(dir, 'objects', grant.pathname.split('/')[1]), Buffer.alloc(bytes.length, 0));
     await expect(downloadDocument(db, 'one', result.id, storage)).rejects.toMatchObject({ status: 503 });
+  });
+  it('accepts a portfolio image but rejects it as a resume', async () => {
+    const portfolio = await createDocumentGrant(db, 'one', {
+      requestId: randomUUID(), kind: 'portfolio', name: 'case-study.png', mime: 'image/png', size: png.length,
+    }, storage);
+    await expect(receiveLocalDocument(db, 'one', portfolio.grantId, new Request('http://localhost', {
+      method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: png,
+    }), storage)).resolves.toMatchObject({ kind: 'portfolio', state: 'available', safetyCheck: 'passed' });
+    await expect(createDocumentGrant(db, 'one', {
+      requestId: randomUUID(), kind: 'resume_master', name: 'resume.png', mime: 'image/png', size: png.length,
+    }, storage)).rejects.toMatchObject({ status: 400 });
   });
   it('keeps quota and idempotency atomic across independent local clients', async () => {
     const peer = openPrivateDb({ url: pathToFileURL(join(dir, 'private.db')).href });
