@@ -48,7 +48,7 @@ function addPostings(count: number, start = 1, sameTenant = false) {
   }))).run();
 }
 async function policyFor(ownerId = 'alice', overrides: Partial<Policy> = {}) {
-  const policy: Policy = { ...createEmptyPolicy(), actions: ['read_jobs'], undisclosedPay: 'include', ...overrides };
+  const policy: Policy = { ...createEmptyPolicy(), actions: ['read_jobs'], destinations: ['job-boards.greenhouse.io'], undisclosedPay: 'include', ...overrides };
   const hash = hashValue(policy);
   await db.insert(policyVersions).values({ ownerId, version: 1, hash, policy, createdAt: now });
   await db.insert(policyHeads).values({ ownerId, revision: 1, policyVersion: 1, enabled: true,
@@ -137,6 +137,16 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     await complete(token, run.id);
     expect(await appRows()).toHaveLength(601);
   }, 30_000);
+
+  it('starts the rescan interval when staging completes, not when capture began', async () => {
+    const { token, run } = await prepared(); addPostings(201);
+    await discoverWorkerRuns(db, token, provider, options);
+    now += DISCOVERY_INTERVAL_MS * 2;
+    await discoverWorkerRuns(db, token, provider, options);
+    expect(await getDiscoveryStatus(db, 'alice', run.id, options)).toMatchObject({ state: 'ready', lastScanAt: now });
+    await discoverWorkerRuns(db, token, provider, options);
+    expect(await manifests()).toHaveLength(1);
+  });
 
   it('rolls back a failed final chunk and retries the exact hash without advancing progress or clocks', async () => {
     const { token, run } = await prepared(); addPostings(201);

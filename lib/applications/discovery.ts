@@ -207,7 +207,7 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
       eq(discoveryManifests.stagedCount, manifest.candidateCount),
     )).returning());
     one(await tx.update(applicationRuns).set({
-      discoveryState: 'ready', lastScanAt: manifest.capturedAt, captureUntil: now + DISCOVERY_INTERVAL_MS, discoveryError: null,
+      discoveryState: 'ready', lastScanAt: now, captureUntil: now + DISCOVERY_INTERVAL_MS, discoveryError: null,
     }).where(and(runScope(worker.ownerId, run.id), eq(applicationRuns.revision, run.revision),
       eq(applicationRuns.currentManifestId, id))).returning());
   });
