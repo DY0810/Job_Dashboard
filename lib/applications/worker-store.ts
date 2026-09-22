@@ -2,6 +2,7 @@ import 'server-only';
 import { and, eq, sql } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 import { getAuth } from '../auth.ts';
+import { householdAuthConfigured, readHouseholdConfig } from '../household-auth.ts';
 import type { PrivateDb } from '../private-db/index.ts';
 import { account, applications, applicationRuns, discoveryManifests, manualApplicationMarks, user, workers, workerCommands, workerPairings } from '../private-db/schema.ts';
 import { hashValue, getPolicy } from './stores.ts';
@@ -37,6 +38,12 @@ export async function workerTransaction<T>(db: PrivateDb, action: (tx: WorkerTx)
   }
 }
 export async function credentialBinding(tx: WorkerTx, ownerId: string, options: WorkerOptions): Promise<string | null> {
+  if (householdAuthConfigured()) {
+    const [row] = await tx.select({ email: user.email, verified: user.emailVerified }).from(user).where(eq(user.id, ownerId));
+    const config = readHouseholdConfig();
+    const profile = Object.values(config.profiles).find((candidate) => candidate.email === row?.email);
+    return row?.verified && profile ? hashValue(['household-v1', ownerId, profile.email, config.secret, config.passcode]) : null;
+  }
   const rows = await tx.select({
     email: user.email, verified: user.emailVerified, accountId: account.id, password: account.password,
   }).from(user).innerJoin(account, and(eq(account.userId, user.id), eq(account.providerId, 'credential')))

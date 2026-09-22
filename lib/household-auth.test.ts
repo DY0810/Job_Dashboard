@@ -1,5 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +16,7 @@ import {
 } from '@/lib/household-auth';
 import { migratePrivateDb, openPrivateDb, type PrivateDb } from '@/lib/private-db';
 import { rateLimit } from '@/lib/private-db/schema';
+import { credentialBinding, workerTransaction } from '@/lib/applications/worker-store';
 
 vi.mock('server-only', () => ({}));
 
@@ -36,7 +38,12 @@ function cookieHeader(value: string) {
 
 beforeEach(async () => {
   vi.stubEnv('VERCEL', '');
-  directory = mkdtempSync(join(process.cwd(), 'logs/auto-apply-gate/household-'));
+  vi.stubEnv('BETTER_AUTH_URL', origin);
+  vi.stubEnv('BETTER_AUTH_SECRET', 'a'.repeat(64));
+  vi.stubEnv('WORKIE_HOUSEHOLD_PASSCODE', '2468');
+  vi.stubEnv('WORKIE_HOUSEHOLD_DY_EMAIL', 'dy@example.test');
+  vi.stubEnv('WORKIE_HOUSEHOLD_MAY_EMAIL', 'may@example.test');
+  directory = mkdtempSync(join(tmpdir(), 'workie-household-'));
   db = openPrivateDb({ url: `file:${join(directory, 'private.db')}` });
   await migratePrivateDb(db);
   config = readHouseholdConfig({
@@ -88,5 +95,15 @@ describe('household access', () => {
     expect(() => readHouseholdConfig({ WORKIE_HOUSEHOLD_PASSCODE: '2468' })).toThrow(HouseholdAuthError);
     const expired = householdSessionCookie(config, 'dy', Date.now() - 31 * 24 * 60 * 60_000);
     await expect(resolveHouseholdApplicant(request(cookieHeader(expired)), db, config)).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('binds workers to the verified household credential and rotates with the PIN', async () => {
+    await unlockHousehold(request(), '2468', 'dy', db, config);
+    const first = await workerTransaction(db, (tx) => credentialBinding(tx, 'household-dy-v1', {}));
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    vi.stubEnv('WORKIE_HOUSEHOLD_PASSCODE', '1357');
+    const rotated = await workerTransaction(db, (tx) => credentialBinding(tx, 'household-dy-v1', {}));
+    expect(rotated).not.toBe(first);
+    expect(await workerTransaction(db, (tx) => credentialBinding(tx, 'forged-owner', {}))).toBeNull();
   });
 });
