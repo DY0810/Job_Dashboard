@@ -27,4 +27,19 @@ describe('parseOfficialRequirements', () => {
       terms: ['fall'], paid: false,
     });
   });
+
+  it('keeps a graduation window separate from the internship term', () => {
+    expect(parseOfficialRequirements({ ...base, description: 'Summer 2028 internship. Candidates graduating between Winter 2027 and Summer 2028 are eligible.' })).toMatchObject({
+      terms: ['summer 2028'], graduationWindow: { earliest: '2026-12', latest: '2028-08' },
+    });
+    expect(parseOfficialRequirements({ ...base, description: 'Graduating in December 2028.' })).toMatchObject({
+      terms: [], graduationWindow: { earliest: '2028-12', latest: '2028-12' },
+    });
+    expect(parseOfficialRequirements({ ...base, description: 'Summer 2028 internship for students graduating between Winter 2027 and Summer 2028.' })).toMatchObject({
+      terms: ['summer 2028'], graduationWindow: { earliest: '2026-12', latest: '2028-08' },
+    });
+    expect(parseOfficialRequirements({ ...base, description: 'Summer 2027 internship. Applicants graduating in Fall 2027 or later are eligible.' })).toMatchObject({
+      terms: ['summer 2027'], graduationWindow: { earliest: '2027-09', latest: '2099-12' },
+    });
+  });
 });

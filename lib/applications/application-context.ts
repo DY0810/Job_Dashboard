@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { driver, type ReadDb } from '../db/index.ts';
 import { postings, postingSources } from '../db/schema.ts';
 import type { PrivateDb } from '../private-db/index.ts';
-import { applications, applicationArtifacts, applicationRuns, discoveryManifests, discoveryTargets, documents } from '../private-db/schema.ts';
+import { applications, applicationArtifacts, applicationRuns, discoveryManifests, discoveryTargets, documents, questions, questionAnswers } from '../private-db/schema.ts';
 import { ApplicationContextSchema, ApplicationContextRequestSchema, type ApplicationContext } from './application-context-protocol.ts';
 import { withWorker, type WorkerOptions, WorkerError, type WorkerTx, type WorkerRow } from './worker-store.ts';
 import { checkedLease } from './leases.ts';
@@ -37,6 +37,10 @@ function profileFacts(profile: Awaited<ReturnType<typeof getProfile>>['profile']
     ? 'confirmed' as const : 'unknown' as const;
   const pay = factValue<{ amount: number; currency: string; period: string }>(profile.preferences.payFloor);
   const payPeriod = pay?.period === 'hour' || pay?.period === 'year' ? pay.period : null;
+  const graduations = schools.flatMap(school => {
+    const date = factValue<{ precision: string; value: string }>(school.expectedGraduation);
+    return date && date.precision === 'month' ? [date.value] : [];
+  });
   return {
     countries,
     degreeLevels: listFact({ state: schools.some((school) => school.level.state === 'declined') ? 'declined' : 'confirmed',
@@ -45,6 +49,7 @@ function profileFacts(profile: Awaited<ReturnType<typeof getProfile>>['profile']
       value: schools.flatMap((school) => factValue<string>(school.major) ? [factValue<string>(school.major)!] : []) }),
     availableTerms: listFact({ state: profile.availability.windows.length ? 'confirmed' : 'unknown',
       value: profile.availability.windows.flatMap((window) => factValue<string>(window.term) ? [factValue<string>(window.term)!] : []) }),
+    expectedGraduation: { state: graduations.length === 1 ? 'confirmed' as const : 'unknown' as const, month: graduations.length === 1 ? graduations[0] : null },
     workAuthorization: { state: authorizationState, values: authorization },
     pay: { state: pay ? 'confirmed' as const : 'unknown' as const, currency: pay?.currency ?? null,
       amount: pay?.amount ?? null, period: payPeriod },
@@ -130,6 +135,29 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
   });
   const requirements = { ...parsedRequirements, excerpts: [...new Set([...parsedRequirements.excerpts, ...candidate.reasons])].slice(0, 32) };
   const answers = applicationAnswers(profile, facts.workAuthorization.values);
+  const screeningAnswers = await tx.select({ question: questions, answer: questionAnswers }).from(questions)
+    .innerJoin(questionAnswers, and(eq(questionAnswers.ownerId, questions.ownerId), eq(questionAnswers.id, questions.answerId)))
+    .where(and(eq(questions.ownerId, worker.ownerId), eq(questions.applicationId, checked.id), eq(questions.active, true)));
+  for (const { question, answer } of screeningAnswers) {
+    if (!question.resolvedAt || question.profileRevision !== profileResponse.revision ||
+        question.policyRevision !== policy.revision || question.descriptor.scope.applicationId !== checked.id ||
+        answer.applicationId !== checked.id || answer.value.type !== 'text') continue;
+    const value = answer.value.value.trim();
+    if (!value) continue;
+    if (question.key === 'screening-country' && /^[A-Z]{2}$/.test(value)) facts.countries = { state: 'confirmed', values: [value] };
+    if (question.key === 'screening-degree') facts.degreeLevels = { state: 'confirmed', values: [value] };
+    if (question.key === 'screening-major') facts.majors = { state: 'confirmed', values: [value] };
+    if (question.key === 'screening-term') facts.availableTerms = { state: 'confirmed', values: [value] };
+    if (question.key === 'screening-graduation' && /^20\d{2}-(0[1-9]|1[0-2])$/.test(value)) facts.expectedGraduation = { state: 'confirmed', month: value };
+    if (question.key === 'screening-authorization' && ['authorized', 'not_authorized'].includes(value)) {
+      facts.workAuthorization = { state: 'confirmed', values: [value] };
+      answers.authorized = value === 'authorized' ? 'Yes' : 'No';
+      answers.work_authorization = answers.authorized;
+    }
+    if (question.key === 'screening-employer-pay' && value === 'accept') {
+      facts.pay = { state: 'unknown', currency: null, amount: null, period: null };
+    }
+  }
   const masters = profile.documentsProvider.masters
     .map((master) => ({ master, role: factValue<string>(master.role), ref: factValue<{ documentId: string; version: number }>(master.document) }))
     .filter((item): item is { master: typeof item.master; role: string | null; ref: { documentId: string; version: number } } => item.ref !== null);
@@ -178,7 +206,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
       };
       return ApplicationContextSchema.parse({
         protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
-        policyRevision: run.policyRevision, identity: candidate.identity, company: official.company, role: official.title,
+        policyRevision: run.policyRevision, profileRevision: profileResponse.revision, identity: candidate.identity, company: official.company, role: official.title,
         applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
         tailoredArtifact: { documentId: saved.document.id, version: saved.document.version, sourceDocumentId: selectedDocument.id,
           sourceVersion: selectedDocument.version, sourceHash: selectedDocument.sha256, verificationManifestHash: saved.artifact.manifestHash,
@@ -189,7 +217,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
   }
   return ApplicationContextSchema.parse({
     protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
-    policyRevision: run.policyRevision, identity: candidate.identity, company: official.company, role: official.title,
+    policyRevision: run.policyRevision, profileRevision: profileResponse.revision, identity: candidate.identity, company: official.company, role: official.title,
     applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
     tailoredArtifact: null, manifestHash: null, artifactHashes: [], createdAt: now,
   });

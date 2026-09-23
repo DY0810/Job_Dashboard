@@ -60,7 +60,7 @@ export const QuestionDescriptorSchema = z.strictObject({
       (q.required && q.field.allowBlank)) {
     ctx.addIssue({ code: 'custom', message: 'Question kind, requiredness or facts are inconsistent.' });
   }
-  if (q.provenance.source !== 'user' && (!q.provenance.sourceId || !q.provenance.sourceVersion)) {
+  if (['document', 'model'].includes(q.provenance.source) && (!q.provenance.sourceId || !q.provenance.sourceVersion)) {
     ctx.addIssue({ code: 'custom', message: 'A versioned provenance source is required.' });
   }
 });

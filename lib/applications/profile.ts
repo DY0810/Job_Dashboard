@@ -44,7 +44,7 @@ export const FactScopeSchema = z.strictObject({
   }
 });
 export const ProvenanceSchema = z.strictObject({
-  source: z.enum(['user', 'document', 'model']),
+  source: z.enum(['user', 'document', 'model', 'system']),
   sourceId: id.nullable(),
   sourceVersion: version.nullable(),
   excerpt: z.string().max(1000).nullable(),
@@ -72,7 +72,7 @@ function fact<T extends z.ZodType, K extends string, U extends string | null>(
     if ((f.state === 'confirmed') !== (f.confirmedAt !== null)) {
       ctx.addIssue({ code: 'custom', path: ['confirmedAt'], message: 'Confirmation time must match confirmed state.' });
     }
-    if (f.provenance.source !== 'user' && (!f.provenance.sourceId || !f.provenance.sourceVersion)) {
+    if (['document', 'model'].includes(f.provenance.source) && (!f.provenance.sourceId || !f.provenance.sourceVersion)) {
       ctx.addIssue({ code: 'custom', path: ['provenance'], message: 'Imported candidates require a versioned source.' });
     }
   }).meta({ fact: true, control, factType: type, units }).default(() => ({

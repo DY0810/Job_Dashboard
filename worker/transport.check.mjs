@@ -64,13 +64,14 @@ test("application context and document downloads stay bearer-bound and path-exac
     if (req.method === "POST") {
       assert.equal(req.url, `/api/worker/applications/${appId}/context`);
       return json(res, {
-        protocolVersion: 1, applicationId: appId, runId: randomUUID(), ownerId: "owner", policyRevision: 1,
+        protocolVersion: 1, applicationId: appId, runId: randomUUID(), ownerId: "owner", policyRevision: 1, profileRevision: 1,
         identity: { ats: "greenhouse", tenant: "fixture", requisition: "123" }, company: "Fixture Co", role: "Intern",
         applicationUrl: "https://boards.greenhouse.io/fixture/jobs/123", facts: {
           countries: { state: "unknown", values: [] }, degreeLevels: { state: "unknown", values: [] }, majors: { state: "unknown", values: [] },
           availableTerms: { state: "unknown", values: [] }, workAuthorization: { state: "unknown", values: [] },
+          expectedGraduation: { state: "unknown", month: null },
           pay: { state: "unknown", currency: null, amount: null, period: null },
-        }, requirements: { sourceUrl: "https://boards.greenhouse.io/fixture/jobs/123", officialDescription: "Fixture", excerpts: ["Fixture"], countries: [], degreeLevels: [], majors: [], terms: [], authorizationRequired: false, paid: null, payFloor: null },
+        }, requirements: { sourceUrl: "https://boards.greenhouse.io/fixture/jobs/123", officialDescription: "Fixture", excerpts: ["Fixture"], countries: [], degreeLevels: [], majors: [], terms: [], graduationWindow: null, authorizationRequired: false, paid: null, payFloor: null },
         answers: {}, documents: {
           resume: { documentId, version: 1, sha256: "0".repeat(64), size: bytes.length, mime: "application/pdf", path: `/api/worker/applications/${appId}/documents/${documentId}` },
           resumeMaster: { documentId, version: 1, sha256: "0".repeat(64), size: bytes.length, mime: "application/pdf", path: `/api/worker/applications/${appId}/documents/${documentId}` },

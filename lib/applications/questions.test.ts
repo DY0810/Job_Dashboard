@@ -20,6 +20,7 @@ import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
 import { type WorkerOptions } from './worker-store.ts';
 import { workerTransport } from '../../worker/transport.ts';
+import { screeningQuestions } from '../../worker/screening.ts';
 import {
   AnswerCommandSchema, QuestionDescriptorSchema, QuestionDetailSchema, validQuestionAnswer,
   type AnswerCommand, type AnswerValue, type QuestionDescriptor, type QuestionField, type QuestionBatch,
@@ -139,6 +140,21 @@ afterEach(() => {
 });
 
 describe('question DAL atomic answers and scoped reuse', () => {
+  it('stores a missing screening fact for its applicant and resumes only its application once', async () => {
+    const a = await prepared(), b = await prepared();
+    const context = { applicationId: a.app.id, profileRevision: 1, company: 'Synthetic Employer', role: 'Intern',
+      identity: { ats: 'fixture', tenant: 'employer', requisition: a.app.requisition },
+      requirements: { sourceUrl: 'https://example.test/role', excerpts: ['Graduating December 2028'] } };
+    const generated = screeningQuestions(context as never, ['graduation_unknown']);
+    const first = await batch(a, generated.questions);
+    expect((await getInboxStatus(db, 'alice', options)).unresolved).toBe(1);
+    expect((await getInbox(db, 'alice', {}, options)).items[0].question?.id).toBe(first.id);
+    await expect(getQuestion(db, 'bob', first.id, options)).rejects.toMatchObject({ status: 404 });
+    const answer = await answerQuestion(db, 'alice', first.id, await answerInput(first.id, { type: 'text', value: '2028-12' }), options);
+    expect(answer.resumedApplicationIds).toEqual([a.app.id]);
+    expect((await appRow(b.app.id)).state).toBe('queued');
+    expect((await db.select().from(questionAnswers)).length).toBe(1);
+  });
   it('resolves exact reviewed waiters, waits for every blocker, reuses future batches, and replays after reopening', async () => {
     const a = await prepared(), first = await batch(a);
     const b = await prepared(), second = await batch(b, [descriptor(), descriptor({ key: 'other', meaning: { id: 'other', reviewId: null },

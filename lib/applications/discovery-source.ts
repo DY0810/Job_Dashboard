@@ -102,7 +102,7 @@ function screen(candidate: DiscoveryCandidate, policy: Policy) {
     if (policy.targetRoles.length && !policy.targetRoles.some((role) => label(p.title).includes(label(role)))) {
       blocked.add('role_not_selected');
     }
-    if (p.paid === null || (p.paid && p.payRateMin === null && p.payRateMax === null)) {
+    if (p.paid === null) {
       if (policy.undisclosedPay === 'exclude') blocked.add('pay_undisclosed_excluded');
       if (policy.undisclosedPay === 'ask') questions.add('pay_undisclosed');
     }

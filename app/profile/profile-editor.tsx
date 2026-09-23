@@ -9,6 +9,7 @@ import { completion, labelFor, SectionFields, type DocumentOption, type FieldIss
 import { privateJson, type PrivateApi } from './api';
 import DocumentsPane from './documents-pane';
 import PolicyPane from './policy-pane';
+import { importResumeCandidates } from '@/lib/applications/resume-import';
 import styles from './profile.module.css';
 
 const applicantSchema = z.object({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -75,6 +76,9 @@ export default function ProfileEditor() {
   const [draftError, setDraftError] = useState('');
   const [recoveries, setRecoveries] = useState<Recovery[]>([]);
   const [documents, setDocuments] = useState<DocumentOption[]>([]);
+  const [resumeJson, setResumeJson] = useState('');
+  const [resumeReview, setResumeReview] = useState<{ base: string; imported: Profile } | null>(null);
+  const [resumeError, setResumeError] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -332,6 +336,30 @@ export default function ProfileEditor() {
           <button className={styles.button} onClick={() => writer?.reconcile(conflict, false)}>Use server profile</button>
         </div>
       </section>}
+      <section className={styles.section} aria-label="Review resume import">
+        <h2>Review resume import</h2>
+        <p>Paste a local resume extraction in JSON. Preview every change before adding it as an unconfirmed candidate. Existing answers stay intact.</p>
+        <label htmlFor="resume-import-json">Resume extraction JSON</label>
+        <textarea id="resume-import-json" value={resumeJson} rows={4} onChange={event => {
+          setResumeJson(event.target.value); setResumeReview(null); setResumeError('');
+        }} />
+        <div className={styles.row}><button className={styles.button} type="button" onClick={() => {
+          try {
+            const imported = importResumeCandidates(ProfileSchema.parse(profile), JSON.parse(resumeJson));
+            setResumeReview({ base: JSON.stringify(profile), imported }); setResumeError('');
+          } catch { setResumeError('Check the extraction JSON and its linked resume document.'); }
+        }}>Preview candidates</button></div>
+        {resumeError && <p role="alert" className={styles.alert}>{resumeError}</p>}
+        {resumeReview && <>
+          <dl>{differences(profile, resumeReview.imported).map(change => <div key={change.path}>
+            <dt>{change.path}</dt><dd>{change.server}</dd>
+          </div>)}</dl>
+          <button className={styles.button} type="button" disabled={locked || writer?.status === 'conflict' || resumeReview.base !== JSON.stringify(profile)}
+            onClick={() => { writer?.setDesired(resumeReview.imported); setResumeReview(null); setResumeJson(''); }}>
+            Add reviewed candidates
+          </button>
+        </>}
+      </section>
       <div className={styles.layout}>
         <nav className={styles.navigation} aria-label="Profile sections">
           {sections.map((key) => {

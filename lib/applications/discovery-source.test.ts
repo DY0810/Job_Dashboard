@@ -144,7 +144,7 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
     ] as const) {
       const result = await captureCandidateSnapshot(f.db, policy({ undisclosedPay }), NOW);
       expect(result.candidates[0].disposition).toBe(expected);
-      expect(result.candidates[7].disposition).toBe(expected);
+      expect(result.candidates[7].disposition).toBe('candidate');
       expect(result.candidates[0].postings[0].paid).toBeNull();
       expect(result.candidates[1].postings[0].paid).toBe(false);
     }

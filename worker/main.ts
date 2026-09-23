@@ -13,7 +13,7 @@ import { createBrowserRuntime } from "./browser.ts";
 import { ashby } from "./ats/ashby.ts";
 import { greenhouse } from "./ats/greenhouse.ts";
 import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
-import { screenApplication } from "./screening.ts";
+import { screenApplication, screeningQuestions } from "./screening.ts";
 import { AtsError } from "./ats/protocol.ts";
 import { AtsIdentitySchema, type AtsApplication } from "./ats/protocol.ts";
 import { lever } from "./ats/lever.ts";
@@ -336,7 +336,7 @@ export async function main(args = process.argv.slice(2)) {
         const requirement = screenApplication(applicationContext.facts, applicationContext.requirements);
         if (lease.state === "screening") {
           if (requirement.status === "blocked") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
-          if (requirement.status === "needs_question") return { state: "needs_answer" as const, reasonCode: "screening_question" };
+          if (requirement.status === "needs_question") return screeningQuestions(applicationContext, requirement.reasons);
           return { state: "tailoring" as const, reasonCode: "screened" };
         }
         if (lease.state === "tailoring") {

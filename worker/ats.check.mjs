@@ -18,12 +18,14 @@ const browserReady = existsSync(chromium.executablePath());
 const facts = {
   countries: { state: 'confirmed', values: ['US'] }, degreeLevels: { state: 'confirmed', values: ['bachelor'] },
   majors: { state: 'confirmed', values: ['computer science'] }, availableTerms: { state: 'confirmed', values: ['summer 2027'] },
+  expectedGraduation: { state: 'confirmed', month: '2028-12' },
   workAuthorization: { state: 'confirmed', values: ['authorized'] },
-  pay: { state: 'confirmed', currency: 'USD', amount: 30, period: 'hour' },
+  pay: { state: 'unknown', currency: null, amount: null, period: null },
 };
 const requirements = {
   sourceUrl: 'https://boards.greenhouse.io/fixture/jobs/123', officialDescription: 'US work authorization required.', excerpts: ['US work authorization required.'],
   countries: ['US'], degreeLevels: ['bachelor'], majors: ['computer science'], terms: ['summer 2027'],
+  graduationWindow: null,
   authorizationRequired: true, paid: true, payFloor: { currency: 'USD', amount: 20, period: 'hour' },
 };
 

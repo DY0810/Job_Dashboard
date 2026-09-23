@@ -11,6 +11,7 @@ export const ScreeningFactsSchema = z.strictObject({
   degreeLevels: z.strictObject({ state: z.enum(['confirmed', 'unknown', 'declined']), values: z.array(z.string().trim().min(1).max(160)).max(100) }),
   majors: z.strictObject({ state: z.enum(['confirmed', 'unknown', 'declined']), values: z.array(z.string().trim().min(1).max(160)).max(100) }),
   availableTerms: z.strictObject({ state: z.enum(['confirmed', 'unknown', 'declined']), values: z.array(z.string().trim().min(1).max(160)).max(100) }),
+  expectedGraduation: z.strictObject({ state: z.enum(['confirmed', 'unknown', 'declined']), month: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/).nullable() }),
   workAuthorization: z.strictObject({ state: z.enum(['confirmed', 'unknown', 'declined']), values: z.array(z.string().trim().min(1).max(160)).max(100) }),
   pay: z.strictObject({ state: z.enum(['confirmed', 'unknown', 'declined']), currency: z.string().regex(/^[A-Z]{3}$/).nullable(),
     amount: z.number().finite().nonnegative().nullable(), period: z.enum(['hour', 'year']).nullable() }),
@@ -24,6 +25,7 @@ export const ScreeningRequirementsSchema = z.strictObject({
   degreeLevels: z.array(z.string().trim().min(1).max(100)).max(20),
   majors: z.array(z.string().trim().min(1).max(160)).max(100),
   terms: z.array(z.string().trim().min(1).max(100)).max(20),
+  graduationWindow: z.strictObject({ earliest: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/), latest: z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/) }).nullable(),
   authorizationRequired: z.boolean(), paid: z.boolean().nullable(),
   payFloor: z.strictObject({ currency: z.string().regex(/^[A-Z]{3}$/), amount: z.number().finite().nonnegative(), period: z.enum(['hour', 'year']) }).nullable(),
 });
@@ -49,6 +51,7 @@ export const TailoredArtifactSchema = z.strictObject({
 export const ApplicationContextSchema = z.strictObject({
   protocolVersion: z.literal(WORKER_PROTOCOL_VERSION), applicationId: uuid, runId: uuid, ownerId: z.string().min(1).max(256),
   policyRevision: z.number().int().positive().safe(), identity: ApplicationIdentitySchema,
+  profileRevision: z.number().int().nonnegative().safe(),
   company: z.string().trim().min(1).max(200), role: z.string().trim().min(1).max(300),
   applicationUrl: z.url({ protocol: /^https?$/ }), facts: ScreeningFactsSchema,
   requirements: ScreeningRequirementsSchema, answers: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), value).superRefine((items, ctx) => {

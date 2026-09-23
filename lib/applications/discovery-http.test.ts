@@ -60,6 +60,7 @@ beforeEach(async () => {
     id: 1, dedupeKey: 'synthetic', canonicalUrl: 'https://boards.greenhouse.io/fixture/jobs/123',
     company: 'Fixture', title: 'Engineer', firstSeenRun: 'fixture', postedAt: new Date(), companyNorm: 'fixture',
     titleNorm: 'engineer', locationKey: 'US', country: 'US', track: 'engineering', paid: true,
+    description: 'Official fixture job description for a paid engineering role.',
   }).run();
   auth = authModule.createAuth({ baseURL: origin, secret: randomBytes(32).toString('hex'), mailFrom: 'auth@example.test',
     allowedEmails: ['alice@example.test', 'bob@example.test'] }, db, { sendMail: async () => {}, scheduleMail: () => {} });
@@ -126,7 +127,7 @@ it('returns shared DTOs, immutable preview retries and explicit expiry/conflict 
 
 it('uses the authenticated existing worker poll for discovery, validates tenant scope on status and preserves worker v1', async () => {
   const corpusRead = vi.spyOn(corpusModule, 'getDiscoveryCorpus').mockReturnValue(corpus);
-  const policy = { ...createEmptyPolicy(), actions: ['read_jobs'] as const, undisclosedPay: 'include' as const }, hash = hashValue(policy), now = Date.now();
+  const policy = { ...createEmptyPolicy(), actions: ['read_jobs'] as const, destinations: ['boards.greenhouse.io', 'job-boards.greenhouse.io'], undisclosedPay: 'include' as const }, hash = hashValue(policy), now = Date.now();
   await db.insert(policyVersions).values({ ownerId: alice.id, version: 1, policy: { ...policy, actions: ['read_jobs'] }, hash, createdAt: now });
   await db.insert(policyHeads).values({ ownerId: alice.id, revision: 1, policyVersion: 1, enabled: true,
     acceptedPolicyVersion: 1, acceptedPolicyHash: hash, acceptedAt: now });

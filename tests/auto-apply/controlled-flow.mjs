@@ -18,13 +18,15 @@ const browserReady = existsSync(chromium.executablePath());
 const facts = {
   countries: { state: 'confirmed', values: ['US'] }, degreeLevels: { state: 'confirmed', values: ['bachelor'] },
   majors: { state: 'confirmed', values: ['computer science'] }, availableTerms: { state: 'confirmed', values: ['summer 2027'] },
+  expectedGraduation: { state: 'confirmed', month: '2028-12' },
   workAuthorization: { state: 'confirmed', values: ['authorized'] },
-  pay: { state: 'confirmed', currency: 'USD', amount: 30, period: 'hour' },
+  pay: { state: 'unknown', currency: null, amount: null, period: null },
 };
 const requirements = {
   sourceUrl: 'https://fixture.example/jobs/123', officialDescription: 'Synthetic paid US role.',
   excerpts: ['Synthetic paid US role.'], countries: ['US'], degreeLevels: ['bachelor'], majors: ['computer science'],
   terms: ['summer 2027'], authorizationRequired: true, paid: true,
+  graduationWindow: null,
   payFloor: { currency: 'USD', amount: 20, period: 'hour' },
 };
 const choices = {
