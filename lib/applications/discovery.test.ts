@@ -207,6 +207,7 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect(previous).toMatchObject({ state: 'cancelled', startedAt: null, reasonCode: 'run_stopped' });
     expect(retry).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: previous.id });
     expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts.duplicate).toBe(1);
+    expect((await poll(token)).lease?.applicationId).toBe(retry.id);
   });
 
   it.each(['DELETE', 'WAL'])('reconciles a replaced %s corpus instead of advancing the scan clock on a cached old inode', async (journal) => {

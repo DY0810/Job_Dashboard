@@ -221,13 +221,14 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
 
 function capExceeded(policy: Policy, now: number) {
   const day = Math.floor(now / DAY_MS) * DAY_MS;
+  // Qualify the outer row: an unqualified column resolves to the inner `used` table in SQLite.
   return sql<boolean>`(
-    (select count(*) from ${applications} used where used.owner_id = ${applications.ownerId}
+    (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
       and used.started_at >= ${day} and used.started_at < ${day + DAY_MS}) >= ${policy.dailyApplicationCap}
-    or (select count(*) from ${applications} used where used.owner_id = ${applications.ownerId}
+    or (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
       and used.started_at >= ${day} and used.started_at < ${day + DAY_MS}
-      and (used.employer_key = ${applications.employerKey} or
-        (used.ats = ${applications.ats} and used.tenant = ${applications.tenant}))) >= ${policy.perEmployerCap}
+      and (used.employer_key = ${applications}.employer_key or
+        (used.ats = ${applications}.ats and used.tenant = ${applications}.tenant))) >= ${policy.perEmployerCap}
   )`;
 }
 export async function discoveryClaimAllowed(tx: WorkerTx, app: ApplicationRow, now: number): Promise<boolean> {
