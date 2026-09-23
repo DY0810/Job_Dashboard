@@ -1,5 +1,6 @@
 'use client';
 
+import { RefreshCw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
@@ -134,19 +135,23 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
   };
 
   const busy = waiting || (phase !== 'idle' && phase !== 'done');
+  const status = waiting ? 'refreshing in the cloud…' : LABEL[phase];
   return (
-    <span className="inline-flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
       <button
         type="button"
-        className="chip"
+        className="chip app-icon-button"
         onClick={start}
         disabled={busy}
         aria-busy={busy}
-        aria-live="polite"
+        aria-label={status}
+        title={status}
       >
-        {waiting ? 'refreshing in the cloud…' : LABEL[phase]}
+        <RefreshCw size={16} aria-hidden="true" />
       </button>
-      {note ? <span className="text-[11px] text-fg-dim">{note}</span> : null}
+      {note || busy || phase === 'done' ? (
+        <span role="status" aria-live="polite" className="text-[11px] text-fg-dim">{note ?? status}</span>
+      ) : null}
     </span>
   );
 }

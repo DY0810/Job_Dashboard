@@ -71,8 +71,8 @@ function Select({ p, filter, values }: { p: Params; filter: 'posted'; values: re
   const selected = p[filter];
   const id = `filter-${filter}`;
   return (
-    <span className="flex items-baseline gap-1.5">
-      <label htmlFor={id} className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">
+    <span className="filter-group filter-select-group">
+      <label htmlFor={id} className="filter-label">
         seen
       </label>
       <span className="select-box" data-on={selected ? 'true' : undefined}>
@@ -107,9 +107,9 @@ function Select({ p, filter, values }: { p: Params; filter: 'posted'; values: re
 function CheckGroup({ p, group, values }: { p: Params; group: Group; values: readonly string[] }) {
   const chosen = p[group];
   return (
-    <fieldset className="flex items-baseline gap-1.5 border-0 p-0">
+    <fieldset className="filter-group border-0 p-0">
       {/* A legend rather than a label: this names a set of controls, not one of them. */}
-      <legend className="float-left text-[10px] uppercase tracking-[0.1em] text-fg-dim">
+      <legend className="filter-label">
         {group}
       </legend>
       {values.map((value) => (
@@ -151,7 +151,7 @@ export function Filters({ p }: { p: Params }) {
   return (
     <form
       action="/"
-      className="flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-rule py-2"
+      className="filter-form"
     >
       {/* Submitting replaces the whole query string, so state that is not a control here has
           to ride along. `job` deliberately does not: filtering closes the drawer. */}

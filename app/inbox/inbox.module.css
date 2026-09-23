@@ -4,8 +4,8 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 36px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--fg-faint);
   border-radius: 3px;
   color: var(--fg);
@@ -104,7 +104,7 @@
 .documents { margin-top: 12px; overflow-x: auto; }
 @media (max-width: 480px) {
   .toolbar, .content { padding: 12px; }
-  .bell { height: 36px; }
+  .bell { width: 44px; height: 44px; }
   .detail { grid-template-columns: 1fr; gap: 1px; }
   .detail dd { margin-bottom: 6px; }
 }

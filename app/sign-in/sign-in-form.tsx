@@ -57,8 +57,8 @@ export function SignInForm() {
 
   return (
     <div className={`${styles.form} min-w-0 text-sm`}>
-      <h1 className="mb-6 text-lg font-medium">Household access</h1>
-      {checking ? <p role="status">Checking access...</p> : applicant ? (
+      <h1 className="board-title mb-6">Household access</h1>
+      {checking ? <p role="status">Checking access…</p> : applicant ? (
         <div className="grid gap-4">
           <p>{applicant.name} is active.</p>
           <ApplicantSwitcher />
@@ -74,17 +74,17 @@ export function SignInForm() {
           <fieldset disabled={busy} className="grid min-w-0 gap-5 border-0 p-0">
             <label className="grid min-w-0 gap-1" htmlFor="household-profile">
               Applicant
-              <select id="household-profile" className="note-input w-full min-w-0" name="profile" defaultValue="dy">
+              <select id="household-profile" className="auth-input w-full min-w-0" name="profile" defaultValue="dy">
                 <option value="dy">DY</option>
                 <option value="may">May</option>
               </select>
             </label>
             <label className="grid min-w-0 gap-1" htmlFor="household-passcode">
               Passcode
-              <input id="household-passcode" className="note-input w-full min-w-0" name="passcode" type="password"
-                inputMode="numeric" autoComplete="current-password" pattern="[0-9]{4}" minLength={4} maxLength={4} required autoFocus />
+              <input id="household-passcode" className="auth-input w-full min-w-0" name="passcode" type="password"
+                inputMode="numeric" autoComplete="current-password" pattern="[0-9]{4}" minLength={4} maxLength={4} required placeholder="4-digit code…" spellCheck={false} />
             </label>
-            <button className="chip justify-self-start" type="submit">{busy ? 'Unlocking...' : 'Unlock Workie'}</button>
+            <button className="chip justify-self-start" type="submit">{busy ? 'Unlocking…' : 'Unlock Workie'}</button>
           </fieldset>
         </form>
       )}

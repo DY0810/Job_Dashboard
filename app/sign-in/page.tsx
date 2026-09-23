@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { SignInForm } from './sign-in-form';
 import { NotificationBell } from '../notification-bell';
+import { AppNav } from '../app-nav';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
@@ -12,16 +12,12 @@ export const metadata: Metadata = {
 
 export default function SignInPage() {
   return (
-    <main id="main-content" className="min-h-dvh px-4 pb-16">
-      <header className="flex flex-wrap items-baseline gap-6 border-b border-rule py-2">
-        <Link href="/" className="w-wide text-[13px] font-medium">Workie</Link>
-        <nav aria-label="Account" className="flex gap-4 text-[11px]">
-          <Link href="/">Jobs</Link>
-          <span aria-current="page">Account</span>
-        </nav>
+    <main id="main-content" className="mx-auto min-h-dvh w-full max-w-[1720px] px-4 pb-16 md:px-6">
+      <header className="app-header">
+        <AppNav current="/sign-in" />
         <NotificationBell />
       </header>
-      <section className="mx-auto w-full max-w-sm py-8">
+      <section className="mx-auto w-full max-w-md py-10">
         <SignInForm />
       </section>
     </main>

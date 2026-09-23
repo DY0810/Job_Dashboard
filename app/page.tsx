@@ -20,7 +20,6 @@ import {
 import { rowChips } from "@/lib/chips";
 import { listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } from "@/lib/query";
 import { RefreshButton } from "./refresh-button";
-import { TalkieBadge } from "./talkie-badge";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
 import { Chevron, ExternalLink } from "./icons";
@@ -28,6 +27,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { NotificationBell } from "./notification-bell";
 import { ApplicantSwitcher } from "./applicant-switcher";
 import { AppliedCheckbox } from "./applied-checkbox";
+import { AppNav } from "./app-nav";
 
 /**
  * The table, described once: header label and width class together, in render order. `grow`
@@ -265,12 +265,12 @@ function Empty({ outside }: { outside: number }) {
  *  site is asked to render is often this. Name the two variables rather than throwing. */
 function NotConfigured() {
   return (
-    <main className="flex h-dvh min-h-0 flex-col px-4 pb-3" id="main-content">
-      <header className="flex shrink-0 flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-rule py-2">
-        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
-        <span className="w-wide text-[11px] text-fg-dim">not configured</span>
+    <main className="board-page" id="main-content">
+      <header className="app-header">
+        <AppNav current="/" />
         <NotificationBell />
       </header>
+      <h1 className="board-title">Job board unavailable</h1>
       <div className="prose max-w-lg py-12">
         <p>No database is configured for this deployment.</p>
         <p className="mt-3">
@@ -359,36 +359,50 @@ export default async function Page({
   const columns = COLUMNS[p.tab];
 
   return (
-    <main className="flex h-dvh min-h-0 flex-col px-4 pb-3" id="main-content">
-      <header className="flex shrink-0 flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-rule py-2">
-        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
-        <nav className="flex gap-4" aria-label="Track">
+    <main className="board-page" id="main-content">
+      <header className="app-header">
+        <AppNav current="/" />
+        <div className="app-tools">
+          <span className="nums app-status">
+            {lastRun
+              ? `Updated ${ago(lastRun.startedAt, now)} ago`
+              : "No ingest run yet"}
+          </span>
+          <RefreshButton hosted={Boolean(process.env.VERCEL)} />
+          <ThemeToggle />
+          <NotificationBell />
+          <ApplicantSwitcher />
+        </div>
+      </header>
+
+      <section className="board-intro" aria-label="Job board overview">
+        <div>
+          <h1 className="board-title">{p.tab === "design" ? "Design" : "Engineering"} jobs</h1>
+          <p className="board-summary">
+            {rows.length} {rows.length === 1 ? "role" : "roles"} on this page
+            <span aria-hidden="true"> / </span>
+            <span className="board-fresh">{freshCount} new in the last 24 hours</span>
+          </p>
+        </div>
+        <div className="board-switches">
+        <nav className="board-track" aria-label="Track">
           {TABS.map((tab) => (
             <Link
               key={tab}
               href={withTab(p, tab)}
               scroll={false}
               aria-current={tab === p.tab ? "page" : undefined}
-              className={
-                tab === p.tab
-                  ? "w-wide border-b border-fg pb-1 text-[11px] text-fg"
-                  : "w-wide pb-1 text-[11px] text-fg-dim hover:text-fg"
-              }
+              className="board-track-link"
             >
-              {tab}
+              {tab === "design" ? "Design" : "Engineering"}
             </Link>
           ))}
-          {/* The notes board is its own route, not a tab value: see app/talkie/page.tsx. */}
-          <Link href="/talkie" className="w-wide inline-flex items-center gap-1.5 pb-1 text-[11px] text-fg-dim hover:text-fg">
-            talkie
-            <TalkieBadge />
-          </Link>
         </nav>
         {/* The Design split. A partition of the tab rather than a filter, so it sits with the
             tabs and not in the filter row: there is no "any", one side is always showing, and
             `clear` does not reset it. Absent on Engineering, where `basis` is null. */}
         {p.basis ? (
-          <nav className="flex gap-1.5" aria-label="Engagement">
+          <nav className="board-basis" aria-label="Engagement">
             {BASES.map((basis) => (
               <Link
                 key={basis}
@@ -403,19 +417,8 @@ export default async function Page({
           </nav>
         ) : null}
 
-        <div className="ml-auto flex min-w-0 flex-wrap items-baseline gap-4 text-[11px] text-fg-dim">
-          <span className="nums whitespace-nowrap">
-            {lastRun
-              ? `last run ${ago(lastRun.startedAt, now)} ago`
-              : "no ingest run yet"}
-          </span>
-          {/* Runs the real cycle where the pipeline lives; on Vercel it re-pulls the last push. */}
-          <RefreshButton hosted={Boolean(process.env.VERCEL)} />
-          <ThemeToggle />
-          <NotificationBell />
-          <ApplicantSwitcher />
         </div>
-      </header>
+      </section>
 
       <Filters p={p} />
 

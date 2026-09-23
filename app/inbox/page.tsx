@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { NotificationBell } from '../notification-bell';
 import { ThemeToggle } from '../theme-toggle';
+import { AppNav } from '../app-nav';
 import styles from '../workers/workers.module.css';
 
 export const dynamic = 'force-dynamic';
@@ -11,17 +11,8 @@ export const metadata: Metadata = {
 
 export default function InboxPage() {
   return <main id="main-content" className={styles.page}>
-    <header className={styles.header}>
-      <Link href="/" prefetch={false}>Workie</Link>
-      <nav aria-label="Account">
-        <Link href="/" prefetch={false}>Jobs</Link>
-        <Link href="/profile" prefetch={false}>Profile</Link>
-        <Link href="/applications" prefetch={false}>Applications</Link>
-        <Link href="/workers" prefetch={false}>Workers</Link>
-        <Link href="/settings" prefetch={false}>Settings</Link>
-        <span aria-current="page">Inbox</span>
-        <Link href="/sign-in" prefetch={false}>Account</Link>
-      </nav>
+    <header className={`${styles.header} app-header`}>
+      <AppNav current="/inbox" />
       <ThemeToggle />
       <NotificationBell standalone />
     </header>

@@ -1,17 +1,18 @@
 'use client';
 
+import { AppNav } from './app-nav';
+
 /**
  * The database is a local file that may not have been migrated yet, so the useful error
  * state names the command that fixes the common case instead of apologising.
  */
 export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
-    <main id="main-content" className="min-h-dvh px-4 pb-16">
-      <header className="flex items-baseline gap-6 border-b border-rule py-2">
-        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
-        <span className="w-wide text-[11px] text-fg-dim">error</span>
-      </header>
-      <div className="prose max-w-lg py-12">
+    <main id="main-content" className="board-page">
+      <header className="app-header"><AppNav current="/" /></header>
+      <div className="prose max-w-lg py-12" role="alert">
+        <p className="board-eyebrow">Job board</p>
+        <h1 className="board-title">Couldn’t load jobs</h1>
         <p>Could not read the postings database.</p>
         <p className="mt-3">
           If this is a fresh checkout, run{' '}
@@ -21,7 +22,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
         </p>
         {error.digest ? <p className="mt-3">Digest {error.digest}.</p> : null}
         <button type="button" className="chip mt-4" onClick={reset}>
-          retry
+          Retry
         </button>
       </div>
     </main>

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { ThemeToggle } from '../theme-toggle';
+import { AppNav } from '../app-nav';
 import Workers from './workers';
 import { NotificationBell } from '../notification-bell';
 import styles from './workers.module.css';
@@ -13,16 +13,8 @@ export const metadata: Metadata = {
 
 export default function WorkersPage() {
   return <main id="main-content" className={styles.page}>
-    <header className={styles.header}>
-      <Link href="/" prefetch={false}>Workie</Link>
-      <nav aria-label="Account">
-        <Link href="/" prefetch={false}>Jobs</Link>
-        <Link href="/profile" prefetch={false}>Profile</Link>
-        <Link href="/applications" prefetch={false}>Applications</Link>
-        <span aria-current="page">Workers</span>
-        <Link href="/settings" prefetch={false}>Settings</Link>
-        <Link href="/sign-in" prefetch={false}>Account</Link>
-      </nav>
+    <header className={`${styles.header} app-header`}>
+      <AppNav current="/workers" />
       <ThemeToggle />
       <NotificationBell />
       <ApplicantSwitcher />

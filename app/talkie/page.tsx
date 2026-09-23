@@ -5,6 +5,7 @@ import { listNotes, listWeeks, weekKey, weekLabel, weekRange } from '@/lib/notes
 import { Calendar } from '../icons';
 import { Board } from './board';
 import { NotificationBell } from '../notification-bell';
+import { AppNav } from '../app-nav';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,13 +36,8 @@ export default async function Talkie({
 
   return (
     <main id="main-content" className="min-h-dvh px-4 pb-16">
-      <header className="flex flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-rule py-2">
-        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
-        <nav className="flex gap-4" aria-label="Track">
-          <Link href="/" className="w-wide pb-1 text-[11px] text-fg-dim hover:text-fg">design</Link>
-          <Link href="/?tab=engineering" className="w-wide pb-1 text-[11px] text-fg-dim hover:text-fg">engineering</Link>
-          <Link href="/talkie" aria-current="page" className="w-wide border-b border-fg pb-1 text-[11px] text-fg">talkie</Link>
-        </nav>
+      <header className="app-header">
+        <AppNav current="/talkie" />
         <details className="relative ml-auto">
           <summary className="chip flex cursor-pointer list-none items-center gap-1.5" aria-label="Pick a week">
             <Calendar />
@@ -59,6 +55,7 @@ export default async function Talkie({
         </details>
         <NotificationBell />
       </header>
+      <h1 className="board-title mt-6">Notes</h1>
       <Board key={week} notes={notes} canWrite={week === current} week={week} />
     </main>
   );

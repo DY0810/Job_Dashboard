@@ -1,28 +1,31 @@
-/**
- * Shown while the page's database read is in flight. It keeps the chrome and greys the data
- * region rather than replacing the screen, so a filter change does not feel like navigation.
- */
+import { AppNav } from './app-nav';
+
 export default function Loading() {
   return (
-    <main id="main-content" className="min-h-dvh px-4 pb-16">
-      <header className="flex items-baseline gap-6 border-b border-rule py-2">
-        <h1 className="w-wide text-[13px] font-medium">Workie</h1>
-        <span className="w-wide text-[11px] text-fg-dim">loading</span>
-      </header>
-      <div className="border-b border-rule py-2">
-        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">posted</span>
+    <main id="main-content" className="board-page" aria-busy="true">
+      <header className="app-header"><AppNav current="/" /></header>
+      <section className="board-intro" aria-label="Loading job board">
+        <div>
+          <h1 className="board-title">Loading jobs…</h1>
+          <span className="skeleton-line mt-2 w-44" aria-hidden="true" />
+        </div>
+      </section>
+      <div className="filter-form" aria-hidden="true">
+        {[70, 180, 150, 130].map((width) => (
+          <span key={width} className="skeleton-line h-6" style={{ width }} />
+        ))}
       </div>
-      <table className="rows" aria-hidden>
-        <tbody>
-          {Array.from({ length: 12 }, (_, i) => (
-            <tr key={i}>
-              <td className="text-fg-faint">&mdash;</td>
-              <td className="grow text-fg-faint">&mdash;</td>
-              <td className="text-fg-faint">&mdash;</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="min-h-0 flex-1 overflow-hidden" aria-hidden="true">
+        <div className="loading-row loading-head"><span>Seen</span><span>Role</span><span>Pay</span><span>Company</span></div>
+        {Array.from({ length: 14 }, (_, index) => (
+          <div className="loading-row" key={index}>
+            <span className="skeleton-line w-8" />
+            <span className="skeleton-line" style={{ width: `${52 + (index % 4) * 11}%` }} />
+            <span className="skeleton-line w-16" />
+            <span className="skeleton-line w-24" />
+          </div>
+        ))}
+      </div>
     </main>
   );
 }
