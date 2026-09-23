@@ -700,6 +700,7 @@ dialog.drawer[open]::backdrop {
   margin-left: auto;
 }
 .app-header .select { width: auto; min-height: 0; padding: 0; border: 0; background: transparent; }
+.app-tools > .select-box { min-height: 28px; }
 
 .app-status {
   color: var(--fg-dim);
@@ -763,6 +764,7 @@ dialog.drawer[open]::backdrop {
 .loading-head { color: var(--fg-dim); font-size: 10px; font-weight: 600; text-transform: uppercase; }
 .board-switches { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .board-track, .board-basis { display: inline-flex; align-items: center; gap: 8px; }
+.board-track { gap: 0; }
 .board-track-link, .board-basis .chip {
   display: inline-flex;
   align-items: center;
@@ -776,6 +778,8 @@ dialog.drawer[open]::backdrop {
   font-size: 12px;
   font-weight: 500;
 }
+.board-track-link:first-child { border-radius: 4px 0 0 4px; }
+.board-track-link + .board-track-link { border-left: 0; border-radius: 0 4px 4px 0; }
 .board-track-link:hover, .board-basis .chip:hover { color: var(--fg); background: var(--surface); }
 .board-track-link[aria-current="page"], .board-basis .chip[aria-current="true"] { color: var(--fg); background: var(--surface); border-color: var(--fg); }
 
