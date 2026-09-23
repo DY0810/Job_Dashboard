@@ -54,7 +54,7 @@ export const ApplicationContextSchema = z.strictObject({
   requirements: ScreeningRequirementsSchema, answers: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), value).superRefine((items, ctx) => {
     if (Object.keys(items).length > 64) ctx.addIssue({ code: 'custom', message: 'Too many answers.' });
   }),
-  documents: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), ApplicationDocumentSchema).superRefine((items, ctx) => {
+  documents: z.record(z.string().regex(/^[a-z][A-Za-z0-9_-]{0,63}$/), ApplicationDocumentSchema).superRefine((items, ctx) => {
     if (Object.keys(items).length > 16) ctx.addIssue({ code: 'custom', message: 'Too many documents.' });
   }),
   tailoredArtifact: TailoredArtifactSchema.nullable().default(null),

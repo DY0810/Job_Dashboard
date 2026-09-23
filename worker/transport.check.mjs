@@ -71,7 +71,10 @@ test("application context and document downloads stay bearer-bound and path-exac
           availableTerms: { state: "unknown", values: [] }, workAuthorization: { state: "unknown", values: [] },
           pay: { state: "unknown", currency: null, amount: null, period: null },
         }, requirements: { sourceUrl: "https://boards.greenhouse.io/fixture/jobs/123", officialDescription: "Fixture", excerpts: ["Fixture"], countries: [], degreeLevels: [], majors: [], terms: [], authorizationRequired: false, paid: null, payFloor: null },
-        answers: {}, documents: { resume: { documentId, version: 1, sha256: "0".repeat(64), size: bytes.length, mime: "application/pdf", path: `/api/worker/applications/${appId}/documents/${documentId}` } },
+        answers: {}, documents: {
+          resume: { documentId, version: 1, sha256: "0".repeat(64), size: bytes.length, mime: "application/pdf", path: `/api/worker/applications/${appId}/documents/${documentId}` },
+          resumeMaster: { documentId, version: 1, sha256: "0".repeat(64), size: bytes.length, mime: "application/pdf", path: `/api/worker/applications/${appId}/documents/${documentId}` },
+        },
         manifestHash: "1".repeat(64), artifactHashes: ["0".repeat(64)], createdAt: 1000,
       });
     }
@@ -82,6 +85,7 @@ test("application context and document downloads stay bearer-bound and path-exac
   const client = workerTransport({ origin, token, allowLoopback: true });
   const context = await client.applicationContext(appId, { protocolVersion: 1, applicationId: appId, fence: 1, expectedRevision: 1 });
   assert.equal(context.documents.resume.documentId, documentId);
+  assert.equal(context.documents.resumeMaster.documentId, documentId);
   assert.deepEqual(await client.downloadDocument(appId, documentId, context.documents.resume.path), bytes);
   await assert.rejects(client.downloadDocument(appId, documentId, `/api/worker/applications/${randomUUID()}/documents/${documentId}`), /INVALID_DOCUMENT/);
 });
