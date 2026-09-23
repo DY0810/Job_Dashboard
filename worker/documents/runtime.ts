@@ -209,7 +209,7 @@ export async function tailorDocument(input: {
     ) {
       throw new DocumentRuntimeError('DOCUMENT_INVARIANT_FAILED');
     }
-    for (const edit of edits) if (!result.text.includes(normalized(edit.replacement))) {
+    for (const edit of edits) if (!normalized(result.text).includes(normalized(edit.replacement))) {
       throw new DocumentRuntimeError('EDIT_NOT_PRESENT');
     }
     const outputManifest = TemplateManifestSchema.parse({ ...manifest, textHash: digest(normalized(result.text)), frozenTextHash: outputFrozen });

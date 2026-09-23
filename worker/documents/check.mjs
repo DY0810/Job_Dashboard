@@ -9,11 +9,11 @@ const PDF = 'application/pdf';
 const hasSoffice = spawnSync('soffice', ['--version'], { stdio: 'ignore' }).status === 0;
 const evidence = () => ({ id: crypto.randomUUID(), confirmed: true, excerpt: 'Confirmed synthetic evidence.' });
 
-function syntheticDocx() {
+function syntheticDocx(doubleSpace = false) {
   return zipSync({
     '[Content_Types].xml': strToU8('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'),
     '_rels/.rels': strToU8('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'),
-    'word/document.xml': strToU8('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Build APIs</w:t></w:r></w:p><w:p><w:r><w:t>Proven </w:t></w:r><w:r><w:t>facts</w:t></w:r></w:p></w:body></w:document>'),
+    'word/document.xml': strToU8(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Build APIs</w:t></w:r></w:p><w:p><w:r><w:t>Proven ${doubleSpace ? ' ' : ''}</w:t></w:r><w:r><w:t>facts</w:t></w:r></w:p></w:body></w:document>`),
   });
 }
 
@@ -48,6 +48,16 @@ test('DOCX manifest and tailoring preserve frozen text and bind edits to confirm
   assert.equal(result.checks.frozenTextPreserved, true);
   assert.equal(result.manifest.sourceHash, manifest.sourceHash);
   assert.equal(result.manifest.textHash.length, 64);
+});
+
+test('DOCX verification accepts preserved extra spaces in a reviewed replacement', async () => {
+  const bytes = syntheticDocx(true), manifest = await createTemplateManifest(bytes, DOCX, 'role');
+  const item = evidence();
+  const result = await tailorDocument({ bytes, mime: DOCX, manifest, request: {
+    role: 'role', masterHash: manifest.sourceHash, evidence: [item],
+    edits: [{ anchorId: manifest.anchors[1].id, replacement: 'Known  facts', evidenceIds: [item.id] }],
+  } });
+  assert.equal(result.checks.frozenTextPreserved, true);
 });
 
 test('DOCX edits reject missing evidence, overflow and stale masters before invoking the tool', async () => {

@@ -349,16 +349,18 @@ test("structured redaction preserves surrounding job text while masking sensitiv
 test("BYOK compatible output uses the approved keychain address and exact result schema", async () => {
   const ledger = await structuredLedgerFor("byok");
   const calls = [];
+  let request;
   const provider = createStructuredProvider({ scope, approvedOwnerId: scope.ownerId, providerId: BYOK_PROVIDER_ID,
     protocol: "openai_compatible", locality: "remote", endpoint: "https://provider.example/v1/chat/completions", model: "synthetic-paid",
     policy: { enabled: true, privacy: "approved_remote", remoteProviderConsent: true, allowedProviders: [BYOK_PROVIDER_ID], fallbackOrder: [], budget: { currency: "USD", perRequestUsd: 1, perRunUsd: 2, perDayUsd: 3, allowUnknownCost: false } },
     pricing: { known: true, inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, ledger,
     credentialBackend: (service, account) => { calls.push({ service, account }); return { getPassword: () => "synthetic-byok-key" }; }, credentialRequired: true,
-    fetchImpl: async () => new Response(JSON.stringify({ model: "synthetic-paid", choices: [{ message: { role: "assistant", content: JSON.stringify({ task: "classify_question", label: "known", confidence: 0.88 }) }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 6 } }), { status: 200, headers: { "content-type": "application/json" } }),
+    fetchImpl: async (_url, init) => { request = JSON.parse(init.body); return new Response(JSON.stringify({ model: "synthetic-paid", choices: [{ message: { role: "assistant", content: JSON.stringify({ task: "classify_question", label: "known", confidence: 0.88 }) }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 6 } }), { status: 200, headers: { "content-type": "application/json" } }); },
   });
   const result = await provider.generate({ task: "classify_question", question: "Which answer source is allowed?", allowedLabels: ["known", "unknown"] });
   assert.equal(result.task, "classify_question");
   assert.equal(result.label, "known");
+  assert.equal(request.max_completion_tokens, 4096);
   assert.deepEqual(calls, [{ service: calls[0].service, account: calls[0].account }]);
   assert(!JSON.stringify(result).includes("synthetic-byok-key"));
   const snapshot = await ledger.snapshot();

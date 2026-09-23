@@ -629,9 +629,11 @@ export function createStructuredProvider(options: CompatibleProviderOptions): St
         stream: false, format: structuredOutputJsonSchema(input.task),
       } : {
         model: options.model, messages: [{ role: "system", content: "Workie structured output contract. Never use tools or access secrets." }, { role: "user", content: structuredPrompt(input) }],
-        stream: false, response_format: { type: "json_schema", json_schema: { name: `workie_${input.task}`, strict: true, schema: structuredOutputJsonSchema(input.task) } },
+        stream: false, max_completion_tokens: STRUCTURED_MAX_OUTPUT_TOKENS,
+        response_format: { type: "json_schema", json_schema: { name: `workie_${input.task}`, strict: true, schema: structuredOutputJsonSchema(input.task) } },
       };
-      const body = JSON.stringify(request), inputTokens = Math.max(1, Math.ceil(Buffer.byteLength(body) / 4));
+      // Token count cannot exceed UTF-8 byte count; reserve the conservative bound before billing.
+      const body = JSON.stringify(request), inputTokens = Math.max(1, Buffer.byteLength(body));
       if (Buffer.byteLength(body) > MAX_REQUEST_BYTES || inputTokens > STRUCTURED_MAX_INPUT_TOKENS) throw new ProviderError("PROVIDER_REQUEST_TOO_LARGE");
       const inputRate = Math.round(pricing.inputUsdPerMillion * 1_000_000), outputRate = Math.round(pricing.outputUsdPerMillion * 1_000_000);
       const estimate = Math.ceil((inputTokens * inputRate + STRUCTURED_MAX_OUTPUT_TOKENS * outputRate) / 1_000_000);
