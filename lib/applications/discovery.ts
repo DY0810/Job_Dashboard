@@ -180,14 +180,20 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
     ));
     // One INSERT SELECT is bounded by the captured manifest, not a changing corpus or UI page.
     await tx.run(sql`insert into ${applications}
-      (id, owner_id, run_id, worker_id, ats, tenant, requisition, available_at, created_at,
+      (id, owner_id, run_id, worker_id, ats, tenant, requisition, attempt, previous_application_id, available_at, created_at,
        snapshot_manifest_id, snapshot_target_key, snapshot_hash, employer_key)
-      select t.id, t.owner_id, t.run_id, ${worker.id}, t.ats, t.tenant, t.requisition, ${now}, ${now},
+      select t.id, t.owner_id, t.run_id, ${worker.id}, t.ats, t.tenant, t.requisition,
+        coalesce((select max(a.attempt) from ${applications} a where a.owner_id = t.owner_id
+          and a.ats = t.ats and a.tenant = t.tenant and a.requisition = t.requisition), 0) + 1,
+        (select a.id from ${applications} a where a.owner_id = t.owner_id
+          and a.ats = t.ats and a.tenant = t.tenant and a.requisition = t.requisition
+          order by a.attempt desc limit 1), ${now}, ${now},
         t.manifest_id, t.target_key, t.candidate_hash, t.employer_key
       from ${discoveryTargets} t where t.owner_id = ${worker.ownerId} and t.manifest_id = ${id}
         and t.disposition = 'eligible'
         and not exists (select 1 from ${applications} a where a.owner_id = t.owner_id
-          and a.ats = t.ats and a.tenant = t.tenant and a.requisition = t.requisition)
+          and a.ats = t.ats and a.tenant = t.tenant and a.requisition = t.requisition
+          and (a.started_at is not null or a.state != 'cancelled' or coalesce(a.reason_code, '') != 'run_stopped'))
       on conflict (owner_id, ats, tenant, requisition, attempt) do nothing`);
     const appId = sql<string>`(select a.id from ${applications} a where a.owner_id = ${discoveryTargets.ownerId}
       and a.ats = ${discoveryTargets.ats} and a.tenant = ${discoveryTargets.tenant}

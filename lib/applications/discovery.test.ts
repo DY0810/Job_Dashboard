@@ -192,6 +192,23 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect((await manifests()).find((m) => m.id === first.id)?.artifact).toEqual(first.artifact);
   });
 
+  it('retries a stopped, unstarted target in a new run without reopening started applications', async () => {
+    const { token, run, worker } = await prepared(); addPostings(2); await complete(token, run.id);
+    const started = (await poll(token)).lease!;
+    const startedApp = (await appRows()).find((app) => app.id === started.applicationId)!;
+    const unstartedRequisition = startedApp.requisition === '1' ? '2' : '1';
+    await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'stop' }, options);
+    const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
+    await complete(token, replacement.id);
+    const history = await appRows();
+    expect(history.filter((app) => app.requisition === startedApp.requisition)).toHaveLength(1);
+    const retry = history.find((app) => app.requisition === unstartedRequisition && app.runId === replacement.id)!;
+    const previous = history.find((app) => app.requisition === unstartedRequisition && app.runId === run.id)!;
+    expect(previous).toMatchObject({ state: 'cancelled', startedAt: null, reasonCode: 'run_stopped' });
+    expect(retry).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: previous.id });
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts.duplicate).toBe(1);
+  });
+
   it.each(['DELETE', 'WAL'])('reconciles a replaced %s corpus instead of advancing the scan clock on a cached old inode', async (journal) => {
     const { token, run } = await prepared(); addPostings(1);
     const path = join(dir, 'synthetic-corpus.db'), replacement = join(dir, 'replacement.db');
