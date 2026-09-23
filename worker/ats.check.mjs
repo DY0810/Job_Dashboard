@@ -191,6 +191,8 @@ test('submission uses one deterministic intent and an inspect decision cannot fa
       assert.equal(result.state, 'submitted');
       assert.equal(calls[0].value.intentId, input.submissionIntentId);
       assert.equal(calls[1].value.intentId, input.submissionIntentId);
+      assert.equal(calls[1].value.evidence.pageUrl, input.applicationUrl);
+      assert.equal(calls[1].value.evidence.observedText, 'Application received');
     } finally { await runtime.close(); }
     const inspectRuntime = await createBrowserRuntime({ userDataDir: join(directory, 'inspect-browser'), approvedOrigins: [fixture.origin], allowLoopback: true });
     try {

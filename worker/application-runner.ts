@@ -73,8 +73,14 @@ export async function runAtsApplication(input: {
   const persist = async (receipt: AtsReceipt) => {
     if (input.submission) {
       try {
-        await input.submission.receipt({ intentId: submission!.intentId, receipt, evidence: { source: 'confirmation_page', pageUrl: application.applicationUrl,
-          observedText: `${receipt.company} ${receipt.role}` } });
+        const page = runtime.context.pages()[0];
+        if (!page) throw new AtsError('RECEIPT_NOT_VERIFIED');
+        const confirmation = page.locator('[data-receipt="application"]').first();
+        const observedText = (await (await confirmation.count() ? confirmation : page.locator('body')).innerText()).trim().slice(0, 2000);
+        if (!observedText) throw new AtsError('RECEIPT_NOT_VERIFIED');
+        await input.submission.receipt({ intentId: submission!.intentId, receipt, evidence: {
+          source: 'confirmation_page', pageUrl: page.url(), observedText,
+        } });
       } catch { return { state: 'submission_unknown' as const, reasons: ['receipt_persistence_failed'], receipt: null, reconciled: false }; }
     }
     return { state: 'submitted' as const, reasons: ['exact_role_receipt'], receipt, reconciled: false };
