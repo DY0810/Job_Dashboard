@@ -27,6 +27,12 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
   if (input.answers[disclosureAnswerKey(field.label)] !== undefined) return input.answers[disclosureAnswerKey(field.label)];
   if (field.key === 'candidate-location' && field.label === 'Location (City)') return input.answers.current_location;
   if (field.key === 'country' && field.label === 'Country' && input.answers.phone_country === 'US') return 'United States +1';
+  if (input.identity.tenant === 'figma' && input.identity.requisition === '6143238004') {
+    if (field.key === 'question_19438728004' && field.label === 'Pronouns') return input.answers.voluntary_pronouns;
+    if (field.key === 'gender' && field.label === 'Gender') return input.answers.voluntary_gender;
+    if (field.key === 'hispanic_ethnicity' && field.label === 'Are you Hispanic/Latino?') return input.answers.voluntary_hispanic;
+    if (field.key === 'veteran_status' && field.label === 'Veteran Status') return input.answers.voluntary_veteran;
+  }
   if (field.label === 'Are you legally authorized to work in the United States?') return input.answers.work_authorization;
   if (field.label === 'Do you require sponsorship for employment visa status?') return input.answers.sponsorship_now;
   return undefined;

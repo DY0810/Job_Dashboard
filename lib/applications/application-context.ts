@@ -72,6 +72,11 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
   }
   const currentLocation = factValue<string>(profile.identity.currentLocation);
   if (currentLocation) answers.current_location = currentLocation;
+  const pronouns = factValue<string>(profile.voluntary.pronouns);
+  if (pronouns === 'he/him/his') answers.voluntary_pronouns = pronouns;
+  if (factValue<string>(profile.voluntary.gender) === 'Man') answers.voluntary_gender = 'Male';
+  if (factValue<string[]>(profile.voluntary.raceEthnicity)?.includes('Not Hispanic or Latino')) answers.voluntary_hispanic = 'No';
+  if (factValue<string>(profile.voluntary.veteran) === 'Never a veteran') answers.voluntary_veteran = 'I am not a protected veteran';
   const school = profile.education.schools.find(item => factValue<string>(item.school));
   if (school) {
     const name = factValue<string>(school.school);

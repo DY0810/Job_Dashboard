@@ -60,3 +60,24 @@ describe('confirmed contact location', () => {
     expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, country)).toBeUndefined();
   });
 });
+
+describe('Figma voluntary choices', () => {
+  it('uses only matching confirmed facts and official options', () => {
+    const profile = createEmptyProfile();
+    profile.voluntary.pronouns = confirmed(profile.voluntary.pronouns, 'he/him/his');
+    profile.voluntary.gender = confirmed(profile.voluntary.gender, 'Man');
+    profile.voluntary.raceEthnicity = confirmed(profile.voluntary.raceEthnicity, ['Asian', 'Not Hispanic or Latino']);
+    profile.voluntary.veteran = confirmed(profile.voluntary.veteran, 'Never a veteran');
+    const input = { identity: { ats: 'greenhouse' as const, tenant: 'figma', requisition: '6143238004' },
+      company: 'Figma', role: 'Software Engineer Intern', applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/6143238004',
+      answers: applicationAnswers(profile, [], 'Figma'), documents: {} };
+    const field = (key: string, label: string) => ({ key, label, kind: 'combobox' as const, required: false });
+    expect(greenhouseAnswer(input, field('question_19438728004', 'Pronouns'))).toBe('he/him/his');
+    expect(greenhouseAnswer(input, field('gender', 'Gender'))).toBe('Male');
+    expect(greenhouseAnswer(input, field('hispanic_ethnicity', 'Are you Hispanic/Latino?'))).toBe('No');
+    expect(greenhouseAnswer(input, field('veteran_status', 'Veteran Status'))).toBe('I am not a protected veteran');
+    expect(greenhouseAnswer({ ...input, identity: { ...input.identity, requisition: 'other' } }, field('gender', 'Gender'))).toBeUndefined();
+    profile.voluntary.veteran = { ...profile.voluntary.veteran, state: 'candidate', confirmedAt: null };
+    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, field('veteran_status', 'Veteran Status'))).toBeUndefined();
+  });
+});
