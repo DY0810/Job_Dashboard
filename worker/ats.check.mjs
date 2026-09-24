@@ -12,7 +12,8 @@ import { greenhouse } from './ats/greenhouse.ts';
 import { locateField } from './ats/protocol.ts';
 import { createJevActionSelector } from './jev.ts';
 import { createConfiguredJevActionSelector } from './main.ts';
-import { runAtsApplication } from './application-runner.ts';
+import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
+import { AtsObservationSchema } from './ats/protocol.ts';
 import { privateStore } from './storage.ts';
 
 const browserReady = existsSync(chromium.executablePath());
@@ -37,6 +38,26 @@ const requirements = {
   graduationWindow: null,
   authorizationRequired: true, paid: true, payFloor: { currency: 'USD', amount: 20, period: 'hour' },
 };
+
+test('long official questions retain exact wording while action selection stays bounded', async () => {
+  const label = 'Export controls: '.repeat(20);
+  const observation = AtsObservationSchema.parse({
+    identity: { ats: 'greenhouse', tenant: 'fixture', requisition: '123' },
+    company: 'Fixture Co', role: 'Software Engineering Intern',
+    fields: [{ key: 'question_123', label, kind: 'combobox', required: true }], actions: ['fill', 'inspect'],
+  });
+  let selected = false;
+  const result = await fillAtsApplication({ runtime: {}, adapter: {
+    observe: async () => observation,
+    fill: async () => { selected = true; },
+  }, application: {}, facts, requirements, chooseAction: async ({ state }) => {
+    assert.equal(state.fields[0].label, observation.fields[0].label.slice(0, 200));
+    return { actionId: 'fill', confidence: 1 };
+  } });
+  assert.equal(result.state, 'ready');
+  assert.equal(selected, true);
+  assert.equal(observation.fields[0].label, label.trim());
+});
 
 function pageMarkup(ats, wrongRole = false) {
   const role = wrongRole ? 'Other role' : 'Software Engineering Intern';

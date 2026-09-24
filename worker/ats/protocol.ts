@@ -9,7 +9,7 @@ export const AtsIdentitySchema = z.strictObject({
 });
 export type AtsIdentity = z.infer<typeof AtsIdentitySchema>;
 export const AtsFieldSchema = z.strictObject({
-  key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), label: z.string().trim().min(1).max(160),
+  key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), label: z.string().trim().min(1).max(1000),
   kind: z.enum(['text', 'email', 'date', 'select', 'combobox', 'radio', 'checkbox', 'file']), required: z.boolean(),
   name: z.string().regex(/^[a-zA-Z0-9_.-]{1,100}$/).optional(),
   options: z.array(z.string().trim().min(1).max(120)).max(32).optional(),

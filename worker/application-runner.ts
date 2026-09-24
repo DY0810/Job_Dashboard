@@ -14,7 +14,7 @@ function providerState(labels: string[], actions: readonly string[]) {
   return {
     // Jev only needs the redacted form shape and current actions; employer identity is not needed for this choice.
     company: '[redacted]', role: '[redacted]', ats: 'candidate-form', tenant: 'redacted',
-    fields: labels.map((label) => ({ label, kind: 'text' as const, options: undefined })), observedActions: [...actions],
+    fields: labels.map((label) => ({ label: label.slice(0, 200), kind: 'text' as const, options: undefined })), observedActions: [...actions],
   };
 }
 
