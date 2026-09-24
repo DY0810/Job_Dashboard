@@ -331,12 +331,13 @@ test("structured redaction preserves surrounding job text while masking sensitiv
   const ledger = await structuredLedgerFor("redaction");
   const evidenceId = "00000000-0000-4000-8000-000000000021";
   const requests = [];
+  let replacement = "Build tooling";
   const provider = createStructuredProvider({ scope, approvedOwnerId: scope.ownerId, providerId: LOCAL_OLLAMA_PROVIDER_ID,
     protocol: "ollama_native", locality: "local", endpoint: LOCAL_OLLAMA_ENDPOINT, model: "synthetic-local", policy: structuredLocalPolicy,
     pricing: structuredLocalPricing, ledger, fetchImpl: async (_url, init) => {
       requests.push(JSON.parse(init.body));
       return new Response(JSON.stringify({ model: "synthetic-local", message: { role: "assistant", content: JSON.stringify({
-        task: "tailor", edits: [{ anchorId: "bullet-1", replacement: "Build tooling", evidenceIds: [evidenceId] }], confidence: 0.9,
+        task: "tailor", edits: [{ anchorId: "bullet-1", replacement, evidenceIds: [evidenceId] }], confidence: 0.9,
       }) }, done: true, prompt_eval_count: 20, eval_count: 12 }), { status: 200 });
     } });
   await provider.generate({ task: "tailor", role: "Software Engineer", jobSummary: "Build resume tooling for internal teams.",
@@ -348,6 +349,11 @@ test("structured redaction preserves surrounding job text while masking sensitiv
   assert(prompt.includes("Maintain [redacted] tooling"));
   assert(prompt.includes("make 1 to 3 substantive edits"));
   assert.equal(requests[0].format.properties.edits.maxItems, 3);
+  replacement = "X".repeat(41);
+  await assert.rejects(provider.generate({ task: "tailor", role: "Software Engineer", jobSummary: "Build resume tooling for internal teams.",
+    evidence: [{ id: evidenceId, excerpt: "Resume experience is useful; keep this requirement." }],
+    anchors: [{ id: "bullet-1", text: "Maintain resume tooling", maxChars: 40 }] }),
+  error => error instanceof ProviderError && error.diagnostic === "edit_overflow");
 });
 
 test('cover letters cite resume evidence, fit one page, and reject unsupported content', async () => {

@@ -24,7 +24,8 @@ const execFileAsync = promisify(execFile);
 
 export class ProviderError extends Error {
   readonly code: string;
-  constructor(code: string) { super(code); this.code = code; }
+  readonly diagnostic?: string;
+  constructor(code: string, diagnostic?: string) { super(code); this.code = code; this.diagnostic = diagnostic; }
 }
 
 const label = z.string().trim().min(1).max(200);
@@ -455,9 +456,9 @@ function structuredPrompt(input: StructuredTaskInput) {
 
 function parseStructuredResult(content: string, input: StructuredTaskInput): z.infer<typeof structuredResult> {
   let raw: unknown;
-  try { raw = JSON.parse(content); } catch { throw new ProviderError("PROVIDER_INVALID_RESPONSE"); }
+  try { raw = JSON.parse(content); } catch { throw new ProviderError("PROVIDER_INVALID_RESPONSE", "json"); }
   const result = structuredResult.safeParse(raw);
-  if (!result.success || result.data.task !== input.task) throw new ProviderError("PROVIDER_INVALID_RESPONSE");
+  if (!result.success || result.data.task !== input.task) throw new ProviderError("PROVIDER_INVALID_RESPONSE", "schema");
   if (input.task === "tailor") {
     if (result.data.task !== "tailor") throw new ProviderError("PROVIDER_INVALID_RESPONSE");
     const anchors = new Map(input.anchors.map((item) => [item.id, item]));
@@ -465,8 +466,9 @@ function parseStructuredResult(content: string, input: StructuredTaskInput): z.i
     const seen = new Set<string>();
     for (const edit of result.data.edits) {
       const target = anchors.get(edit.anchorId);
-      if (!target || seen.has(edit.anchorId) || edit.replacement.length > target.maxChars || /[\r\n]/.test(edit.replacement) ||
-          edit.evidenceIds.some((id) => !evidence.has(id))) throw new ProviderError("PROVIDER_INVALID_RESPONSE");
+      if (!target || seen.has(edit.anchorId)) throw new ProviderError("PROVIDER_INVALID_RESPONSE", "anchor");
+      if (edit.replacement.length > target.maxChars || /[\r\n]/.test(edit.replacement)) throw new ProviderError("PROVIDER_INVALID_RESPONSE", "edit_overflow");
+      if (edit.evidenceIds.some((id) => !evidence.has(id))) throw new ProviderError("PROVIDER_INVALID_RESPONSE", "evidence");
       seen.add(edit.anchorId);
     }
   } else if (input.task === "cover_letter") {
@@ -690,7 +692,9 @@ export function createStructuredProvider(options: CompatibleProviderOptions): St
         } else {
           const parsed = z.object({ model: z.string().trim().min(1).max(100), choices: z.array(z.object({ message: z.object({ role: z.string(), content: z.string().nullable(), tool_calls: z.array(z.unknown()).optional() }).passthrough(), finish_reason: z.string().nullable() }).passthrough()).length(1), usage: z.object({ prompt_tokens: z.number().int().nonnegative().max(STRUCTURED_MAX_INPUT_TOKENS), completion_tokens: z.number().int().nonnegative().max(STRUCTURED_MAX_OUTPUT_TOKENS) }).passthrough().optional() }).passthrough().safeParse(raw);
           const choice = parsed.success ? parsed.data.choices[0] : null;
-          if (!parsed.success || !choice || choice.finish_reason === "length" || !choice.message.content || choice.message.tool_calls?.length || choice.message.role !== "assistant") throw new ProviderError("PROVIDER_INVALID_RESPONSE");
+          if (!parsed.success || !choice) throw new ProviderError("PROVIDER_INVALID_RESPONSE", "envelope");
+          if (choice.finish_reason === "length") throw new ProviderError("PROVIDER_INVALID_RESPONSE", "truncated");
+          if (!choice.message.content || choice.message.tool_calls?.length || choice.message.role !== "assistant") throw new ProviderError("PROVIDER_INVALID_RESPONSE", "message");
           model = parsed.data.model; content = choice.message.content; usage = parsed.data.usage ? compatibleUsage(options.protocol, parsed.data.usage) : null;
         }
         const result = parseStructuredResult(content, input), actualUsage = usage ?? { input_tokens: inputTokens, output_tokens: 0 };

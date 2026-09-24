@@ -153,7 +153,7 @@ export function providerFailureResult(error: unknown) {
   if (!(error instanceof ProviderError)) return null;
   return {
     state: "provider_unavailable" as const,
-    reasonCode: error.code.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80),
+    reasonCode: `${error.code}${error.diagnostic ? `_${error.diagnostic}` : ""}`.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80),
   };
 }
 
@@ -375,7 +375,8 @@ export async function main(args = process.argv.slice(2)) {
             const providerFailure = providerFailureResult(error);
             if (providerFailure) return providerFailure;
             if (error instanceof DocumentRuntimeError) return { state: "needs_document" as const, reasonCode: "document_tailoring_unavailable" };
-            return { state: "retryable_failure" as const, reasonCode: "tailoring_failed" };
+            return { state: "retryable_failure" as const, reasonCode: error instanceof TransportError ? `tailoring_transport_${error.status}` :
+              error instanceof z.ZodError ? "tailoring_schema_invalid" : "tailoring_failed" };
           }
         }
         const workDirectory = await mkdtemp(join(directory, "application-"));
