@@ -4,7 +4,8 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApplicationArtifactManifest, createConfiguredJevActionSelector, createStructuredActionSelector, ensureProviderCapability, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
+import { atsFailureReason, createApplicationArtifactManifest, createConfiguredJevActionSelector, createStructuredActionSelector, ensureProviderCapability, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
+import { AtsError } from "./ats/protocol.ts";
 import { artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { ProviderError } from "./providers.ts";
 import { privateStore } from "./storage.ts";
@@ -17,6 +18,11 @@ const config = {
   endpoint: null, privacy: "approved_remote", remoteProviderConsent: true,
   allowedProviders: ["typesafe:jev"], fallbackOrder: [], maxUsd: 10,
 };
+
+test("ATS failures report bounded codes without including field values", () => {
+  assert.equal(atsFailureReason(new AtsError("FIELD_NOT_FOUND", "private field value")), "ats_field_not_found");
+  assert.equal(atsFailureReason(new Error("private field value")), "ats_execution_failed");
+});
 
 test("tailored artifact verification binds the output to the selected master and manifest", () => {
   const resume = { documentId: "00000000-0000-4000-8000-000000000001", version: 2, sha256: "a".repeat(64) };

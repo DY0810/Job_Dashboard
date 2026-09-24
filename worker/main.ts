@@ -157,6 +157,13 @@ export function providerFailureResult(error: unknown) {
   };
 }
 
+export function atsFailureReason(error: unknown) {
+  if (error instanceof AtsError) return `ats_${error.code.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 70)}`;
+  if (error instanceof z.ZodError) return "ats_schema_invalid";
+  if (error instanceof Error && error.name === "TimeoutError") return "ats_timeout";
+  return "ats_execution_failed";
+}
+
 export function hasVerifiedTailoredArtifact(context: Pick<ApplicationContext, "documents" | "tailoredArtifact" | "manifestHash" | "artifactHashes">) {
   const output = context.documents.resume, source = context.documents.resumeMaster, artifact = context.tailoredArtifact;
   return Boolean(output && source && artifact && artifact.documentId === output.documentId && artifact.version === output.version &&
@@ -484,7 +491,7 @@ export async function main(args = process.argv.slice(2)) {
             return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
           }
           if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
-          return { state: "retryable_failure" as const, reasonCode: "ats_execution_failed" };
+          return { state: "retryable_failure" as const, reasonCode: atsFailureReason(error) };
         } finally {
           if (runtime) await runtime.close().catch(() => {});
           await rm(workDirectory, { recursive: true, force: true });
