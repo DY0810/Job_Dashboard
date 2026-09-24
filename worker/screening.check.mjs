@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { screenApplication, screeningQuestions } from './screening.ts';
+import { screenApplication, screeningQuestions, formQuestions } from './screening.ts';
+import { QuestionDispatchSchema } from './question-client.ts';
+import { formQuestionKey } from './ats/protocol.ts';
 
 const facts = {
   countries: { state: 'confirmed', values: ['US'] }, degreeLevels: { state: 'confirmed', values: ['bachelor'] },
@@ -31,4 +33,18 @@ test('missing screening facts produce application-scoped durable question descri
   assert.equal(result.expectedProfileRevision, 2);
   assert.deepEqual(result.questions.map(q => q.key), ['screening-graduation', 'screening-authorization']);
   assert(result.questions.every(q => q.scope.applicationId === applicationId && q.required));
+});
+
+test('unknown employer fields become scoped inbox questions with exact wording', () => {
+  const applicationId = crypto.randomUUID();
+  const context = { applicationId, profileRevision: 2, company: 'Fixture', role: 'Intern',
+    identity: { ats: 'greenhouse', tenant: 'fixture', requisition: '123' },
+    applicationUrl: 'https://job-boards.greenhouse.io/fixture/jobs/123' };
+  const batch = QuestionDispatchSchema.parse(formQuestions(context, [
+    { key: 'question_123', label: 'Are you a U.S. citizen?', kind: 'combobox', required: true },
+  ]));
+  assert.equal(batch.questions[0].key, formQuestionKey({ key: 'question_123', label: 'Are you a U.S. citizen?' }));
+  assert.equal(batch.questions[0].originalWording, 'Are you a U.S. citizen?');
+  assert.equal(batch.questions[0].scope.applicationId, applicationId);
+  assert.equal(batch.questions[0].sensitive, true);
 });

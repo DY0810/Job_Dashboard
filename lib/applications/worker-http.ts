@@ -81,9 +81,13 @@ export function buildProviderConfig(
   const model = provider === 'typesafe_jev' ? (confirmed(profile.model) ?? 'jev-latest') : confirmed(profile.model);
   const protocol = provider === 'typesafe_jev' ? 'typesafe_systemone' : provider === 'local_ollama' ? 'ollama_native' : 'openai_compatible';
   const locality = provider === 'none' ? 'none' : local ? 'local' : 'remote';
+  // Only this exact OpenAI endpoint/model has verified public pricing. Other BYOK hosts remain blocked.
+  const openAiLuna = provider === 'byok' && endpoint === 'https://api.openai.com/v1/chat/completions' && model === 'gpt-6-luna';
   const pricing = provider === 'typesafe_jev'
     ? { known: true, inputUsdPerMillion: TYPESAFE_INPUT_PRICE_USD_PER_BILLION / 1000, outputUsdPerMillion: 0 }
-    : local ? { known: true, inputUsdPerMillion: 0, outputUsdPerMillion: 0 } : { known: false, inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
+    : local ? { known: true, inputUsdPerMillion: 0, outputUsdPerMillion: 0 }
+      : openAiLuna ? { known: true, inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.5 }
+        : { known: false, inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
   const budgetConfig = { perRequestUsd: currentPolicy.budget.perRequest, perRunUsd: currentPolicy.budget.perRun,
     perDayUsd: currentPolicy.budget.perDay, allowUnknownCost: false as const };
   const policyReady = !!providerId && currentPolicy.allowedProviders.includes(providerId) && currentPolicy.fallbackOrder.length === 0;

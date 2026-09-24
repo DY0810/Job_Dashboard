@@ -9,12 +9,21 @@ import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
 import { ashby } from './ats/ashby.ts';
 import { greenhouse } from './ats/greenhouse.ts';
+import { locateField } from './ats/protocol.ts';
 import { createJevActionSelector } from './jev.ts';
 import { createConfiguredJevActionSelector } from './main.ts';
 import { runAtsApplication } from './application-runner.ts';
 import { privateStore } from './storage.ts';
 
 const browserReady = existsSync(chromium.executablePath());
+test('hosted fields resolve their exact ID when visible labels collide', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<label for="other">Attach</label><input id="other"><label for="resume">Attach</label><input id="resume" type="file">');
+    assert.equal(await (await locateField(page, { key: 'resume', label: 'Attach', kind: 'file', required: true })).getAttribute('id'), 'resume');
+  } finally { await browser.close(); }
+});
 const facts = {
   countries: { state: 'confirmed', values: ['US'] }, degreeLevels: { state: 'confirmed', values: ['bachelor'] },
   majors: { state: 'confirmed', values: ['computer science'] }, availableTerms: { state: 'confirmed', values: ['summer 2027'] },

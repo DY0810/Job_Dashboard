@@ -3,7 +3,9 @@ import { after, test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PDFDocument } from 'pdf-lib';
 import { privateStore } from "./storage.ts";
+import { renderCoverLetter } from './documents/cover-letter.ts';
 import {
   ProviderError,
   TYPESAFE_KEYCHAIN_ACCOUNT,
@@ -344,6 +346,25 @@ test("structured redaction preserves surrounding job text while masking sensitiv
   assert(prompt.includes("Build [redacted] tooling for internal teams."));
   assert(prompt.includes("[redacted] experience is useful; keep this requirement."));
   assert(prompt.includes("Maintain [redacted] tooling"));
+});
+
+test('cover letters cite resume evidence, fit one page, and reject unsupported content', async () => {
+  const id = '00000000-0000-4000-8000-000000000022';
+  const letter = { task: 'cover_letter', introduction: 'I am excited to apply for this software internship and contribute to your engineering team.',
+    body: [
+      { text: 'I built reliable TypeScript services and learned to test each change against real requirements.', evidenceIds: [id] },
+      { text: 'I enjoy using engineering judgment to turn a rough problem into a working product.', evidenceIds: [id] },
+    ], conclusion: 'I would welcome the chance to discuss the role. Thank you for your time and consideration.',
+    companyParagraph: 'Your team builds tools for real users. I would be excited to contribute to that work.', confidence: 0.9 };
+  const provider = createStructuredProvider({ scope, approvedOwnerId: scope.ownerId, providerId: LOCAL_OLLAMA_PROVIDER_ID,
+    protocol: 'ollama_native', locality: 'local', endpoint: LOCAL_OLLAMA_ENDPOINT, model: 'synthetic-local', policy: structuredLocalPolicy,
+    pricing: structuredLocalPricing, ledger: await structuredLedgerFor('letter'), fetchImpl: async () => new Response(JSON.stringify({ model: 'synthetic-local', message: { role: 'assistant', content: JSON.stringify(letter) }, done: true, prompt_eval_count: 20, eval_count: 12 }), { status: 200 }) });
+  const input = { task: 'cover_letter', company: 'Example', role: 'Software Intern', jobSummary: 'Build software for customers.',
+    evidence: [{ id, excerpt: 'Built reliable TypeScript services.' }] };
+  const result = await provider.generate(input);
+  assert.equal((await PDFDocument.load(await renderCoverLetter(result, 'Test Applicant'))).getPageCount(), 1);
+  letter.body[0].text += ' — invented';
+  await assert.rejects(provider.generate(input), /PROVIDER_INVALID_RESPONSE/);
 });
 
 test("BYOK compatible output uses the approved keychain address and exact result schema", async () => {

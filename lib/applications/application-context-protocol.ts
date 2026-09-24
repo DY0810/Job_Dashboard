@@ -51,6 +51,7 @@ export const TailoredArtifactSchema = z.strictObject({
 export const ApplicationContextSchema = z.strictObject({
   protocolVersion: z.literal(WORKER_PROTOCOL_VERSION), applicationId: uuid, runId: uuid, ownerId: z.string().min(1).max(256),
   policyRevision: z.number().int().positive().safe(), identity: ApplicationIdentitySchema,
+  coverLetterAllowed: z.boolean().default(false),
   profileRevision: z.number().int().nonnegative().safe(),
   company: z.string().trim().min(1).max(200), role: z.string().trim().min(1).max(300),
   applicationUrl: z.url({ protocol: /^https?$/ }), facts: ScreeningFactsSchema,

@@ -64,6 +64,28 @@ function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['pro
   if (first) answers.first_name = first;
   if (last) answers.last_name = last;
   if (email) answers.email = email;
+  const phone = profile.identity.phones.map(item => factValue<string>(item.number)).find(Boolean);
+  if (phone) answers.phone = phone;
+  const school = profile.education.schools.find(item => factValue<string>(item.school));
+  if (school) {
+    const name = factValue<string>(school.school);
+    const level = factValue<string>(school.level);
+    const major = factValue<string>(school.major);
+    const start = factValue<{ value: string }>(school.enrollmentStart);
+    const graduation = factValue<{ value: string }>(school.expectedGraduation);
+    const gpa = factValue<{ value: number; scale: number }>(school.gpa);
+    if (name) answers['school--0'] = name;
+    if (level) answers['degree--0'] = level;
+    if (major) answers['discipline--0'] = major;
+    if (start) answers['start-year--0'] = start.value.slice(0, 4);
+    if (graduation) answers['end-year--0'] = graduation.value.slice(0, 4);
+    if (gpa) answers.gpa = String(gpa.value);
+  }
+  const usAuthorization = profile.authorization.countries.find(item => factValue<string>(item.country) === 'US');
+  if (usAuthorization) {
+    const sponsorship = factValue<boolean>(usAuthorization.sponsorshipNow);
+    if (sponsorship !== null) answers.sponsorship_now = sponsorship ? 'Yes' : 'No';
+  }
   if (authorized.includes('authorized')) {
     answers.authorized = 'Yes'; answers.work_authorization = 'Yes';
   } else if (authorized.includes('not_authorized')) {
@@ -157,6 +179,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
     if (question.key === 'screening-employer-pay' && value === 'accept') {
       facts.pay = { state: 'unknown', currency: null, amount: null, period: null };
     }
+    if (question.key.startsWith('form-')) answers[question.key] = value;
   }
   const masters = profile.documentsProvider.masters
     .map((master) => ({ master, role: factValue<string>(master.role), ref: factValue<{ documentId: string; version: number }>(master.document) }))
@@ -207,6 +230,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
       return ApplicationContextSchema.parse({
         protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
         policyRevision: run.policyRevision, profileRevision: profileResponse.revision, identity: candidate.identity, company: official.company, role: official.title,
+        coverLetterAllowed: policy.policy.documentKinds.includes('cover_letter'),
         applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
         tailoredArtifact: { documentId: saved.document.id, version: saved.document.version, sourceDocumentId: selectedDocument.id,
           sourceVersion: selectedDocument.version, sourceHash: selectedDocument.sha256, verificationManifestHash: saved.artifact.manifestHash,
@@ -218,6 +242,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
   return ApplicationContextSchema.parse({
     protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
     policyRevision: run.policyRevision, profileRevision: profileResponse.revision, identity: candidate.identity, company: official.company, role: official.title,
+    coverLetterAllowed: policy.policy.documentKinds.includes('cover_letter'),
     applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
     tailoredArtifact: null, manifestHash: null, artifactHashes: [], createdAt: now,
   });
