@@ -1875,6 +1875,16 @@
     "verified_at": "2026-08-18T04:01:37.276Z"
   },
   {
+    "name": "Sage",
+    "ats": "greenhouse",
+    "token": "sage49",
+    "tags": [
+      "internship-heavy"
+    ],
+    "verified_at": "2026-09-24T04:33:22.000Z",
+    "postings_at_probe": 8
+  },
+  {
     "name": "Sales-Hub",
     "ats": "smartrecruiters",
     "token": "saleshub",
