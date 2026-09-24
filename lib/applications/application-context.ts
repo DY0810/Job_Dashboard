@@ -5,7 +5,7 @@ import { driver, type ReadDb } from '../db/index.ts';
 import { postings, postingSources } from '../db/schema.ts';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applications, applicationArtifacts, applicationRuns, discoveryManifests, discoveryTargets, documents, questions, questionAnswers } from '../private-db/schema.ts';
-import { ApplicationContextSchema, ApplicationContextRequestSchema, type ApplicationContext } from './application-context-protocol.ts';
+import { ApplicationContextSchema, ApplicationContextRequestSchema, disclosureAnswerKey, type ApplicationContext } from './application-context-protocol.ts';
 import { withWorker, type WorkerOptions, WorkerError, type WorkerTx, type WorkerRow } from './worker-store.ts';
 import { checkedLease } from './leases.ts';
 import { getPolicy, getProfile } from './stores.ts';
@@ -56,7 +56,7 @@ function profileFacts(profile: Awaited<ReturnType<typeof getProfile>>['profile']
   };
 }
 
-function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['profile'], authorized: string[]) {
+export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['profile'], authorized: string[], company: string) {
   const answers: Record<string, string | boolean> = {};
   const first = factValue<string>(profile.identity.legalFirstName) ?? factValue<string>(profile.identity.preferredName);
   const last = factValue<string>(profile.identity.legalLastName);
@@ -90,6 +90,18 @@ function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['pro
     answers.authorized = 'Yes'; answers.work_authorization = 'Yes';
   } else if (authorized.includes('not_authorized')) {
     answers.authorized = 'No'; answers.work_authorization = 'No';
+  }
+  for (const item of profile.disclosures.answers) {
+    const employer = factValue<string>(item.employer);
+    const question = factValue<string>(item.exactQuestion);
+    const answer = factValue<boolean>(item.answer);
+    if (employer && question && answer !== null && label(employer) === label(company) &&
+        item.meaning.state === 'confirmed' && item.timeframe.state === 'confirmed' &&
+        item.includesSubsidiaries.state === 'confirmed' && item.answer.scope.kind === 'employer' &&
+        label(item.answer.scope.employer ?? '') === label(company) && !item.answer.scope.includesSubsidiaries &&
+        item.answer.scope.timeframe === item.timeframe.value) {
+      answers[disclosureAnswerKey(question)] = answer ? 'Yes' : 'No';
+    }
   }
   return answers;
 }
@@ -156,7 +168,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
     sourceFields: official.sourceFields, paid: official.paid,
   });
   const requirements = { ...parsedRequirements, excerpts: [...new Set([...parsedRequirements.excerpts, ...candidate.reasons])].slice(0, 32) };
-  const answers = applicationAnswers(profile, facts.workAuthorization.values);
+  const answers = applicationAnswers(profile, facts.workAuthorization.values, official.company);
   const screeningAnswers = await tx.select({ question: questions, answer: questionAnswers }).from(questions)
     .innerJoin(questionAnswers, and(eq(questionAnswers.ownerId, questions.ownerId), eq(questionAnswers.id, questions.answerId)))
     .where(and(eq(questions.ownerId, worker.ownerId), eq(questions.applicationId, checked.id), eq(questions.active, true)));

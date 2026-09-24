@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
 import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
 
 const fields: AtsField[] = [
@@ -23,6 +24,7 @@ function hosted(input: AtsApplication) {
 export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
   if (input.answers[formQuestionKey(field)] !== undefined) return input.answers[formQuestionKey(field)];
   if (input.answers[field.key] !== undefined) return input.answers[field.key];
+  if (input.answers[disclosureAnswerKey(field.label)] !== undefined) return input.answers[disclosureAnswerKey(field.label)];
   if (field.label === 'Are you legally authorized to work in the United States?') return input.answers.work_authorization;
   if (field.label === 'Do you require sponsorship for employment visa status?') return input.answers.sponsorship_now;
   return undefined;

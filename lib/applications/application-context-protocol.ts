@@ -1,5 +1,9 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import { ApplicationIdentitySchema, WORKER_PROTOCOL_VERSION } from './worker-protocol.ts';
+
+export const disclosureAnswerKey = (question: string) =>
+  `disclosure_${createHash('sha256').update(question).digest('hex').slice(0, 32)}`;
 
 const uuid = z.uuid();
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
