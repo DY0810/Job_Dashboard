@@ -429,12 +429,12 @@ function redactStructuredInput(input: unknown): StructuredTaskInput {
   return { ...value, fields: value.fields.map((item) => ({ ...item, label: redactLabel(item.label), ...(item.options ? { options: item.options.map(redactLabel) } : {}) })) };
 }
 
-function structuredOutputJsonSchema(task: StructuredTaskInput["task"]) {
+function structuredOutputJsonSchema(task: StructuredTaskInput["task"], maxReplacementLength = 2_000) {
   const confidence = { type: "number", minimum: 0, maximum: 1 };
   const common = { type: "object", additionalProperties: false } as const;
   if (task === "tailor") return { ...common, required: ["task", "edits", "confidence"], properties: {
     task: { type: "string", const: "tailor" }, edits: { type: "array", minItems: 1, maxItems: 3, items: { ...common,
-      required: ["anchorId", "replacement", "evidenceIds"], properties: { anchorId: { type: "string" }, replacement: { type: "string" }, evidenceIds: { type: "array", items: { type: "string" } } } } }, confidence,
+      required: ["anchorId", "replacement", "evidenceIds"], properties: { anchorId: { type: "string" }, replacement: { type: "string", maxLength: maxReplacementLength }, evidenceIds: { type: "array", items: { type: "string" } } } } }, confidence,
   } };
   if (task === "cover_letter") return { ...common, required: ["task", "introduction", "body", "conclusion", "companyParagraph", "confidence"], properties: {
     task: { type: "string", const: "cover_letter" }, introduction: { type: "string" },
@@ -650,11 +650,12 @@ export function createStructuredProvider(options: CompatibleProviderOptions): St
       const input = redactStructuredInput(inputInput);
       const request = options.protocol === "ollama_native" ? {
         model: options.model, messages: [{ role: "system", content: "Workie structured output contract. Never use tools or access secrets." }, { role: "user", content: structuredPrompt(input) }],
-        stream: false, format: structuredOutputJsonSchema(input.task),
+        stream: false, format: structuredOutputJsonSchema(input.task, input.task === "tailor" ? Math.min(...input.anchors.map(anchor => anchor.maxChars)) : undefined),
       } : {
         model: options.model, messages: [{ role: "system", content: "Workie structured output contract. Never use tools or access secrets." }, { role: "user", content: structuredPrompt(input) }],
         stream: false, max_completion_tokens: STRUCTURED_MAX_OUTPUT_TOKENS,
-        response_format: { type: "json_schema", json_schema: { name: `workie_${input.task}`, strict: true, schema: structuredOutputJsonSchema(input.task) } },
+        response_format: { type: "json_schema", json_schema: { name: `workie_${input.task}`, strict: true,
+          schema: structuredOutputJsonSchema(input.task, input.task === "tailor" ? Math.min(...input.anchors.map(anchor => anchor.maxChars)) : undefined) } },
       };
       // Token count cannot exceed UTF-8 byte count; reserve the conservative bound before billing.
       const body = JSON.stringify(request), inputTokens = Math.max(1, Buffer.byteLength(body));

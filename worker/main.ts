@@ -353,10 +353,11 @@ export async function main(args = process.argv.slice(2)) {
               id: artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256, anchorId: anchor.id, index }),
               confirmed: true as const, excerpt: anchor.text.slice(0, 1000),
             }));
+            const editableAnchors = [...template.anchors].sort((a, b) => b.maxChars - a.maxChars).slice(0, 5);
             const generated = await context.generate({ task: "tailor", role: template.role,
               jobSummary: applicationContext.requirements.officialDescription.slice(0, 12_000),
               evidence: evidence.map(({ id, excerpt }) => ({ id, excerpt })),
-              anchors: template.anchors.map(({ id, text, maxChars }) => ({ id, text, maxChars })),
+              anchors: editableAnchors.map(({ id, text, maxChars }) => ({ id, text, maxChars })),
             }, { signal, runId: lease.runId });
             if (generated.task !== "tailor" || generated.confidence < 0.75) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
             const request = { role: template.role, masterHash: template.sourceHash, evidence, edits: generated.edits };

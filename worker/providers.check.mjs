@@ -349,6 +349,7 @@ test("structured redaction preserves surrounding job text while masking sensitiv
   assert(prompt.includes("Maintain [redacted] tooling"));
   assert(prompt.includes("make 1 to 3 substantive edits"));
   assert.equal(requests[0].format.properties.edits.maxItems, 3);
+  assert.equal(requests[0].format.properties.edits.items.properties.replacement.maxLength, 40);
   replacement = "X".repeat(41);
   await assert.rejects(provider.generate({ task: "tailor", role: "Software Engineer", jobSummary: "Build resume tooling for internal teams.",
     evidence: [{ id: evidenceId, excerpt: "Resume experience is useful; keep this requirement." }],
