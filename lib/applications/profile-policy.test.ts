@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
-import { documents, profileVersions, policyVersions, policyHeads, user, workerPairings, workers } from '../private-db/schema.ts';
+import { documents, profileHeads, profileVersions, policyVersions, policyHeads, user, workerPairings, workers } from '../private-db/schema.ts';
 import { createEmptyProfile, EducationSchema, EmploymentSchema, AuthorizationSchema, DisclosureSchema,
-  PreciseDateSchema, ProfileSchema, effectiveProfile, profileEnablementIssues, type Profile } from './profile.ts';
+  PreciseDateSchema, ProfileSchema, ProfileSections, effectiveProfile, profileEnablementIssues, type Profile } from './profile.ts';
 import { createEmptyPolicy, PolicySchema } from './policy.ts';
 import { getProfile, saveProfile, getPolicy, mutatePolicy, requireActivePolicy } from './stores.ts';
 import { getDraftKey, readDraftKeyConfig } from './draft-key.ts';
@@ -147,6 +147,23 @@ describe('typed profile semantics', () => {
 });
 
 describe('immutable async profile saves', () => {
+  it('saves newly added facts on an older stored profile without changing existing IDs', async () => {
+    const old = applicant();
+    old.identity.phones = ProfileSections.identity.parse({ phones: [{}] }).phones;
+    const firstNameId = old.identity.legalFirstName.id;
+    delete (old.identity as unknown as Record<string, unknown>).currentLocation;
+    delete (old.identity.phones[0] as unknown as Record<string, unknown>).country;
+    await db.insert(profileVersions).values({ ownerId: 'one', revision: 1, requestId: requestId(),
+      requestHash: 'legacy', profile: old, createdAt: Date.now() });
+    await db.insert(profileHeads).values({ ownerId: 'one', revision: 1 });
+    const loaded = (await getProfile(db, 'one')).profile;
+    loaded.identity.currentLocation = confirmed(loaded.identity.currentLocation, 'Los Angeles, California, United States');
+    loaded.identity.phones[0].country = confirmed(loaded.identity.phones[0].country, 'US');
+    const saved = await saveProfile(db, 'one', { expectedRevision: 1, requestId: requestId(), profile: loaded });
+    expect(saved.profile.identity.legalFirstName.id).toBe(firstNameId);
+    expect(saved.profile.identity.currentLocation.value).toBe('Los Angeles, California, United States');
+    expect(saved.profile.identity.phones[0].country.value).toBe('US');
+  });
   it('isolates owners, rejects absent owners, and returns original retries after later saves', async () => {
     const command = { expectedRevision: 0, requestId: requestId(), profile: applicant() };
     const first = await saveProfile(db, 'one', command);

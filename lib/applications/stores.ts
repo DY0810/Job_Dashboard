@@ -82,7 +82,7 @@ export async function getProfile(db: Db, ownerId: string): Promise<ProfileRespon
 }
 
 /** IDs survive reorder; revisions/timestamps are assigned by the server on explicit saves. */
-function versionProfile(previous: Profile | null, next: Profile, now: string): Profile {
+function versionProfile(previous: unknown, next: Profile, now: string): Profile {
   type Item = { id: string; version: number; [key: string]: unknown };
   const old = new Map<string, { item: Item; path: string }>();
   const oldPaths = new Map<string, string>();
@@ -127,7 +127,10 @@ export async function saveProfile(db: PrivateDb, ownerId: string, input: Profile
     }
     const current = await getProfile(tx, ownerId);
     if (current.revision !== command.expectedRevision) conflict();
-    const profile = versionProfile(current.revision ? current.profile : null, command.profile, new Date().toISOString());
+    // Compare IDs against the stored JSON. Parsing an older schema adds fresh default IDs on every read.
+    const [stored] = current.revision ? await tx.select({ profile: profileVersions.profile }).from(profileVersions)
+      .where(and(eq(profileVersions.ownerId, ownerId), eq(profileVersions.revision, current.revision))) : [];
+    const profile = versionProfile(stored?.profile ?? null, command.profile, new Date().toISOString());
     await validateDocumentReferences(tx, ownerId, profile);
     bound(profile);
     const revision = current.revision + 1;
