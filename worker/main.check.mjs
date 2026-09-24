@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApplicationArtifactManifest, createConfiguredJevActionSelector, createStructuredActionSelector, ensureProviderCapability, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
+import { artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { ProviderError } from "./providers.ts";
 import { privateStore } from "./storage.ts";
 import { runWorker } from "./runtime.ts";
@@ -92,6 +93,11 @@ test("tailoring manifest binds the generated edits to the selected master and ou
   assert.deepEqual(result.manifest.source, { documentId: source.documentId, version: source.version, sha256: source.sha256 });
   assert.equal(result.manifest.output.sha256, "b".repeat(64));
   assert.deepEqual(result.request.edits, generated.edits);
+  const requestId = (manifest) => artifactRequestId({ applicationId, sourceHash: source.sha256,
+    policyRevision: 1, manifestHash: artifactManifestHash(manifest) });
+  assert.equal(requestId(result.manifest), requestId(result.manifest));
+  assert.notEqual(requestId(result.manifest), requestId({ ...result.manifest,
+    output: { ...result.manifest.output, sha256: "c".repeat(64) } }));
 });
 
 const directory = await mkdtemp(join(tmpdir(), "main-jev-"));

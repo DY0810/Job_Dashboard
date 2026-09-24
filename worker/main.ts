@@ -35,7 +35,7 @@ import {
 } from "../lib/applications/provider-protocol.ts";
 import type { ApplicationContext } from "../lib/applications/application-context-protocol.ts";
 import type { PrivateStore } from "./storage.ts";
-import { ApplicationArtifactManifestSchema, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
+import { ApplicationArtifactManifestSchema, artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 import { renderCoverLetter } from "./documents/cover-letter.ts";
 
@@ -362,9 +362,10 @@ export async function main(args = process.argv.slice(2)) {
             if (generated.task !== "tailor" || generated.confidence < 0.75) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
             const request = { role: template.role, masterHash: template.sourceHash, evidence, edits: generated.edits };
             const tailored = await tailorDocument({ bytes, mime: source.mime, manifest: template, request });
-            const requestId = artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256, policyRevision: applicationContext.policyRevision });
             const artifact = createApplicationArtifactManifest({ applicationId: lease.applicationId, source, template,
               evidence, generated, tailored });
+            const requestId = artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256,
+              policyRevision: applicationContext.policyRevision, manifestHash: artifactManifestHash(artifact.manifest) });
             guard.check();
             const intent = await control.artifactIntent(lease.applicationId, { protocolVersion: 1, requestId, fence: lease.fence,
               expectedRevision: lease.revision, manifest: artifact.manifest }, signal);
