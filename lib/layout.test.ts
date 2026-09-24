@@ -23,7 +23,7 @@ const PAGE = readFileSync('app/page.tsx', 'utf8');
 
 describe('the flexible column contract', () => {
   it('pins company, Apply and applied status inside the scroll region', () => {
-    expect(CSS).toContain('@media (min-width: 701px)');
+    expect(CSS).toContain('@media (min-width: 901px)');
     expect(CSS).toMatch(/\.rows td\[data-field="applied"\]\s*\{[^}]*position: sticky;[^}]*right: 0;/);
     expect(CSS).toMatch(/\.rows td\[data-field="apply"\]\s*\{[^}]*position: sticky;[^}]*right: 64px;/);
     expect(CSS).toMatch(/\.rows td\[data-field="company"\]\s*\{[^}]*position: sticky;[^}]*right: 128px;/);
