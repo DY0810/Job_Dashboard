@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
 import path from "node:path";
 
+const documentParserTrace = [
+  './lib/applications/documents-parse-worker.mjs',
+  './node_modules/pdf-lib/**', './node_modules/@pdf-lib/**',
+  './node_modules/pako/**', './node_modules/tslib/**',
+  './node_modules/yauzl/**', './node_modules/pend/**', './node_modules/sax/**',
+];
+
 const nextConfig: NextConfig = {
   // Next 15 dev/build use default webpack until libSQL native-loader tracing is
   // qualified with Turbopack (vercel/next.js#82881); keep both file and HTTP clients.
@@ -10,12 +17,8 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     // libsql selects its installed native package with a computed require().
     '/api/**': ['./node_modules/@libsql/*/package.json', './node_modules/@libsql/*/*.node'],
-    '/api/documents{,/**}': [
-      './lib/applications/documents-parse-worker.mjs',
-      './node_modules/pdf-lib/**', './node_modules/@pdf-lib/**',
-      './node_modules/pako/**', './node_modules/tslib/**',
-      './node_modules/yauzl/**', './node_modules/pend/**', './node_modules/sax/**',
-    ],
+    '/api/documents{,/**}': documentParserTrace,
+    '/api/worker/applications/**/artifacts/**/upload': documentParserTrace,
   },
   // A stray lockfile up the directory tree (outside this repo) makes Turbopack guess the
   // wrong workspace root. Pin it explicitly so builds are deterministic regardless.
