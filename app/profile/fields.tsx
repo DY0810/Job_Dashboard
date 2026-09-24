@@ -28,7 +28,8 @@ const overrides: Record<string, string> = {
   metric: 'Measured result', contribution: 'Contribution ownership', sourceAnswer: 'How you heard about the role',
   sourceId: 'Source document / proposal ID', evidenceFactIds: 'Supporting fact IDs', document: 'Document version',
   perRequest: 'Per request', perRun: 'Per run', perDay: 'Per day', line1: 'Street address', line2: 'Address line 2',
-  number: 'Phone number', windows: 'Term windows', schools: 'Schools', employment: 'Employment',
+  number: 'Phone number', currentLocation: 'Current location (city, state, country)',
+  windows: 'Term windows', schools: 'Schools', employment: 'Employment',
   answers: 'Employer disclosures', countries: 'Countries', masters: 'Resume masters by role',
 };
 export function labelFor(key: string): string {

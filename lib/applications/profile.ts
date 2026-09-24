@@ -151,8 +151,10 @@ export const ProfileSections = {
     phones: collection(z.strictObject({
       ...entity, number: fact(z.string().regex(/^[0-9 ()-]{3,30}$/), 'phone', null, 'tel'),
       countryCode: fact(z.string().regex(/^\+[1-9]\d{0,3}$/), 'calling_code', null, 'tel'),
+      country: fact(country, 'country', null),
       type: choice(['mobile', 'home', 'work']),
     })),
+    currentLocation: text(),
     currentAddress: fact(address, 'address', null, 'address'),
     permanentAddress: fact(address, 'address', null, 'address'),
     portfolio: link(), github: link(), linkedin: link(), ageEligible: bool(),

@@ -64,8 +64,14 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
   if (first) answers.first_name = first;
   if (last) answers.last_name = last;
   if (email) answers.email = email;
-  const phone = profile.identity.phones.map(item => factValue<string>(item.number)).find(Boolean);
-  if (phone) answers.phone = phone;
+  const phone = profile.identity.phones.find(item => factValue<string>(item.number));
+  if (phone) {
+    answers.phone = factValue<string>(phone.number)!;
+    const phoneCountry = factValue<string>(phone.country);
+    if (phoneCountry) answers.phone_country = phoneCountry;
+  }
+  const currentLocation = factValue<string>(profile.identity.currentLocation);
+  if (currentLocation) answers.current_location = currentLocation;
   const school = profile.education.schools.find(item => factValue<string>(item.school));
   if (school) {
     const name = factValue<string>(school.school);

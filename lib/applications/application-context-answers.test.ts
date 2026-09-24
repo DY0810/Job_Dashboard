@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createEmptyProfile, DisclosureSchema, ProfileSchema } from './profile.ts';
+import { createEmptyProfile, DisclosureSchema, ProfileSchema, ProfileSections } from './profile.ts';
 import { applicationAnswers } from './application-context.ts';
 import { greenhouseAnswer } from '../../worker/ats/greenhouse.ts';
 
@@ -34,5 +34,29 @@ describe('exact employer disclosure answers', () => {
     expect(greenhouseAnswer(input('Figma'), { ...field, label: `${wording} Includes subsidiaries?` })).toBeUndefined();
     disclosure.answer = { ...disclosure.answer, state: 'candidate', confirmedAt: null };
     expect(greenhouseAnswer(input('Figma'), field)).toBeUndefined();
+  });
+});
+
+describe('confirmed contact location', () => {
+  it('uses city and phone country only for their matching Greenhouse contact fields', () => {
+    const profile = createEmptyProfile();
+    profile.identity.currentLocation = confirmed(profile.identity.currentLocation, 'Los Angeles, California, United States');
+    profile.identity.phones = ProfileSections.identity.parse({ phones: [{}] }).phones;
+    profile.identity.phones[0].number = confirmed(profile.identity.phones[0].number, '555 555 0100');
+    profile.identity.phones[0].country = confirmed(profile.identity.phones[0].country, 'US');
+    expect(ProfileSchema.safeParse(profile).success).toBe(true);
+    const answers = applicationAnswers(profile, [], 'Figma');
+    const input = { identity: { ats: 'greenhouse' as const, tenant: 'figma', requisition: '6143238004' },
+      company: 'Figma', role: 'Software Engineer Intern', applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/6143238004',
+      answers, documents: {} };
+    const city = { key: 'candidate-location', label: 'Location (City)', kind: 'combobox' as const, required: true };
+    const country = { key: 'country', label: 'Country', kind: 'combobox' as const, required: true };
+    expect(greenhouseAnswer(input, city)).toBe('Los Angeles, California, United States');
+    expect(greenhouseAnswer(input, country)).toBe('United States +1');
+    expect(greenhouseAnswer(input, { ...city, label: 'Willing to relocate?' })).toBeUndefined();
+    profile.identity.currentLocation = { ...profile.identity.currentLocation, state: 'candidate', confirmedAt: null };
+    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, city)).toBeUndefined();
+    profile.identity.phones[0].country = { ...profile.identity.phones[0].country, state: 'candidate', confirmedAt: null };
+    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, country)).toBeUndefined();
   });
 });

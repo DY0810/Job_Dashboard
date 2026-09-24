@@ -25,6 +25,8 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
   if (input.answers[formQuestionKey(field)] !== undefined) return input.answers[formQuestionKey(field)];
   if (input.answers[field.key] !== undefined) return input.answers[field.key];
   if (input.answers[disclosureAnswerKey(field.label)] !== undefined) return input.answers[disclosureAnswerKey(field.label)];
+  if (field.key === 'candidate-location' && field.label === 'Location (City)') return input.answers.current_location;
+  if (field.key === 'country' && field.label === 'Country' && input.answers.phone_country === 'US') return 'United States +1';
   if (field.label === 'Are you legally authorized to work in the United States?') return input.answers.work_authorization;
   if (field.label === 'Do you require sponsorship for employment visa status?') return input.answers.sponsorship_now;
   return undefined;
