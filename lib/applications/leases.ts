@@ -28,6 +28,7 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
   if (options.corpus) await discoverWorkerRuns(db, token, options.corpus, options);
   return withWorker(db, token, options, async (tx, worker, now) => {
     const active = await tx.select().from(applications).where(and(eq(applications.ownerId, worker.ownerId), sql`${applications.leaseUntil} is not null`));
+    let assigned: ApplicationRow | undefined;
     for (const app of active) {
       if (app.workerId === worker.id && app.state === 'submission_unknown') {
         // A new poll abandons this read-only assignment; heartbeat retains it instead.
@@ -38,6 +39,8 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
         )).returning());
       } else if (app.leaseUntil! <= now || now < app.leaseCheckedAt! || !await liveRun(tx, app, now)) {
         await releaseApplication(tx, app, 'lease_expired');
+      } else if (app.workerId === worker.id) {
+        assigned ??= app;
       }
     }
     one(await tx.update(workers).set({ lastSeenAt: now }).where(and(
@@ -48,6 +51,7 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
     while (true) {
       const candidates: ApplicationRow[] = await tx.select().from(applications).where(and(
         eq(applications.ownerId, worker.ownerId), eq(applications.workerId, worker.id), sql`${applications.availableAt} <= ${now}`,
+        assigned && eq(applications.id, assigned.id),
         sql`${applications.state} in ('queued','screening','tailoring','filling','ready','submitting','submission_unknown')`,
         cursor && sql`(${applications.leaseUntil} is null, ${applications.availableAt}, ${applications.createdAt}, ${applications.id}) >
           (${cursor.leaseUntil === null ? 1 : 0}, ${cursor.availableAt}, ${cursor.createdAt}, ${cursor.id})`,

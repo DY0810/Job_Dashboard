@@ -248,6 +248,23 @@ describe('hashed owner-approved pairings', () => {
   });
 });
 describe('async leases, checkpoints and stable identity', () => {
+  it('reclaims one active lease before assigning another role to the same worker', async () => {
+    const worker = await paired();
+    const run = await createRun(db, 'alice', { requestId: randomUUID(), expectedRevision: 0, workerId: worker.workerId }, options);
+    const first = await enqueueApplication(db, 'alice', run.id,
+      { ats: 'fixture', tenant: 'first', requisition: 'one' }, options);
+    const second = await enqueueApplication(db, 'alice', run.id,
+      { ats: 'fixture', tenant: 'second', requisition: 'two' }, options);
+    const lease = await claim(worker.token);
+    const waiting = lease.applicationId === first.id ? second : first;
+    const reclaimed = await claim(worker.token);
+    expect(reclaimed.applicationId).toBe(lease.applicationId);
+    expect(reclaimed.fence).toBeGreaterThan(lease.fence);
+    expect((await db.select().from(applications).where(eq(applications.id, waiting.id)))[0].state).toBe('queued');
+    await recordWorkerEvent(db, worker.token, reclaimed.applicationId,
+      { ...event(reclaimed, 'skipped'), reasonCode: 'fixture_ineligible' }, options);
+    expect((await claim(worker.token)).applicationId).toBe(waiting.id);
+  });
   it.each(['paused', 'obsolete-policy', 'busy-tenant'] as const)(
     'finds runnable work beyond 250 %s candidates with tied creation times', async (reason) => {
       const worker = await paired();
