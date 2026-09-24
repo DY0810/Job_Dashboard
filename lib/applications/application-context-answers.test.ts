@@ -99,11 +99,13 @@ describe('Figma education and links', () => {
     const field = (key: string, label: string) => ({ key, label, kind: 'combobox' as const, required: true });
     const grad = field('question_19438730004', 'If you are currently enrolled in university or a program, what is your expected graduation date?');
     expect(greenhouseAnswer(input, grad)).toBe('Fall 2028');
+    expect(greenhouseAnswer(input, field('end-month--0', 'End date month'))).toBe('December');
     expect(greenhouseAnswer(input, field('question_19438735004', 'LinkedIn Profile'))).toBe('https://linkedin.com/in/example');
     expect(greenhouseAnswer(input, field('question_19438736004', 'Other Website'))).toBe('https://example.com');
     expect(greenhouseAnswer({ ...input, identity: { ...input.identity, requisition: 'other' } }, grad)).toBeUndefined();
     school.status = { ...school.status, state: 'candidate', confirmedAt: null };
     expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, grad)).toBeUndefined();
+    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, field('end-month--0', 'End date month'))).toBeUndefined();
     school.status = confirmed(school.status, 'in_progress');
     school.expectedGraduation = { ...school.expectedGraduation, state: 'candidate', confirmedAt: null };
     expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, grad)).toBeUndefined();

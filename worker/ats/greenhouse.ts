@@ -26,6 +26,9 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
   if (input.answers[field.key] !== undefined) return input.answers[field.key];
   if (input.answers[disclosureAnswerKey(field.label)] !== undefined) return input.answers[disclosureAnswerKey(field.label)];
   if (field.key === 'candidate-location' && field.label === 'Location (City)') return input.answers.current_location;
+  if (field.key === 'end-month--0' && field.label === 'End date month' && typeof input.answers.expected_graduation_month === 'string') {
+    return new Date(`${input.answers.expected_graduation_month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+  }
   if (input.identity.tenant === 'figma' && input.identity.requisition === '6143238004') {
     if (field.key === 'country' && field.label === 'Country' && input.answers.phone_country === 'US') return 'United States +1';
     if (field.key === 'question_19438735004' && field.label === 'LinkedIn Profile') return input.answers.linkedin;
