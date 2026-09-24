@@ -28,6 +28,10 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
   if (field.key === 'candidate-location' && field.label === 'Location (City)') return input.answers.current_location;
   if (input.identity.tenant === 'figma' && input.identity.requisition === '6143238004') {
     if (field.key === 'country' && field.label === 'Country' && input.answers.phone_country === 'US') return 'United States +1';
+    if (field.key === 'question_19438735004' && field.label === 'LinkedIn Profile') return input.answers.linkedin;
+    if (field.key === 'question_19438736004' && field.label === 'Other Website') return input.answers.portfolio;
+    if (field.key === 'question_19438730004' && field.label === 'If you are currently enrolled in university or a program, what is your expected graduation date?' &&
+        input.answers.expected_graduation_month === '2028-12') return 'Fall 2028';
     if (field.key === 'question_19438728004' && field.label === 'Pronouns') return input.answers.voluntary_pronouns;
     if (field.key === 'gender' && field.label === 'Gender') return input.answers.voluntary_gender;
     if (field.key === 'hispanic_ethnicity' && field.label === 'Are you Hispanic/Latino?') return input.answers.voluntary_hispanic;

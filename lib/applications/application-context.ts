@@ -72,6 +72,10 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
   }
   const currentLocation = factValue<string>(profile.identity.currentLocation);
   if (currentLocation) answers.current_location = currentLocation;
+  const linkedin = factValue<string>(profile.identity.linkedin);
+  if (linkedin) answers.linkedin = linkedin;
+  const portfolio = factValue<string>(profile.identity.portfolio);
+  if (portfolio) answers.portfolio = portfolio;
   const pronouns = factValue<string>(profile.voluntary.pronouns);
   if (pronouns === 'he/him/his') answers.voluntary_pronouns = pronouns;
   if (factValue<string>(profile.voluntary.gender) === 'Man') answers.voluntary_gender = 'Male';
@@ -83,13 +87,16 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
     const level = factValue<string>(school.level);
     const major = factValue<string>(school.major);
     const start = factValue<{ value: string }>(school.enrollmentStart);
-    const graduation = factValue<{ value: string }>(school.expectedGraduation);
+    const graduation = factValue<{ precision: string; value: string }>(school.expectedGraduation);
     const gpa = factValue<{ value: number; scale: number }>(school.gpa);
     if (name) answers['school--0'] = name;
     if (level) answers['degree--0'] = level;
     if (major) answers['discipline--0'] = major;
     if (start) answers['start-year--0'] = start.value.slice(0, 4);
     if (graduation) answers['end-year--0'] = graduation.value.slice(0, 4);
+    if (factValue<string>(school.status) === 'in_progress' && graduation?.precision === 'month') {
+      answers.expected_graduation_month = graduation.value;
+    }
     if (gpa) answers.gpa = String(gpa.value);
   }
   const usAuthorization = profile.authorization.countries.find(item => factValue<string>(item.country) === 'US');

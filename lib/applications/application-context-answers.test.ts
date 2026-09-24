@@ -82,3 +82,30 @@ describe('Figma voluntary choices', () => {
     expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, field('veteran_status', 'Veteran Status'))).toBeUndefined();
   });
 });
+
+describe('Figma education and links', () => {
+  it('uses confirmed enrollment, month, and profile links only on the matching form', () => {
+    const profile = createEmptyProfile();
+    profile.identity.linkedin = confirmed(profile.identity.linkedin, 'https://linkedin.com/in/example');
+    profile.identity.portfolio = confirmed(profile.identity.portfolio, 'https://example.com');
+    const school = ProfileSections.education.parse({ schools: [{}] }).schools[0];
+    school.school = confirmed(school.school, 'University of Southern California');
+    school.status = confirmed(school.status, 'in_progress');
+    school.expectedGraduation = confirmed(school.expectedGraduation, { precision: 'month', value: '2028-12' });
+    profile.education.schools = [school];
+    const input = { identity: { ats: 'greenhouse' as const, tenant: 'figma', requisition: '6143238004' },
+      company: 'Figma', role: 'Software Engineer Intern', applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/6143238004',
+      answers: applicationAnswers(profile, [], 'Figma'), documents: {} };
+    const field = (key: string, label: string) => ({ key, label, kind: 'combobox' as const, required: true });
+    const grad = field('question_19438730004', 'If you are currently enrolled in university or a program, what is your expected graduation date?');
+    expect(greenhouseAnswer(input, grad)).toBe('Fall 2028');
+    expect(greenhouseAnswer(input, field('question_19438735004', 'LinkedIn Profile'))).toBe('https://linkedin.com/in/example');
+    expect(greenhouseAnswer(input, field('question_19438736004', 'Other Website'))).toBe('https://example.com');
+    expect(greenhouseAnswer({ ...input, identity: { ...input.identity, requisition: 'other' } }, grad)).toBeUndefined();
+    school.status = { ...school.status, state: 'candidate', confirmedAt: null };
+    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, grad)).toBeUndefined();
+    school.status = confirmed(school.status, 'in_progress');
+    school.expectedGraduation = { ...school.expectedGraduation, state: 'candidate', confirmedAt: null };
+    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, grad)).toBeUndefined();
+  });
+});
