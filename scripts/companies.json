@@ -792,6 +792,16 @@
     "postings_at_probe": 2
   },
   {
+    "name": "Formlabs Internships",
+    "ats": "greenhouse",
+    "token": "formlabsinternships",
+    "tags": [
+      "internship-heavy"
+    ],
+    "verified_at": "2026-09-24T06:52:00Z",
+    "postings_at_probe": 13
+  },
+  {
     "name": "Fresh Prints",
     "ats": "greenhouse",
     "token": "freshprints",
