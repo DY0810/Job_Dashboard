@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ScreeningFactsSchema, ScreeningRequirementsSchema } from '../lib/applications/application-context-protocol.ts';
 import type { ApplicationContext } from '../lib/applications/application-context-protocol.ts';
 import type { QuestionDispatch } from './question-client.ts';
+import { formQuestionKey, type AtsField } from './ats/protocol.ts';
 export { ScreeningFactsSchema, ScreeningRequirementsSchema };
 export type ScreeningFacts = z.infer<typeof ScreeningFactsSchema>;
 export type ScreeningRequirements = z.infer<typeof ScreeningRequirementsSchema>;
@@ -88,5 +89,22 @@ export function screeningQuestions(context: ApplicationContext, reasons: string[
         sensitive: reason === 'work_authorization_unknown',
       };
     }),
+  };
+}
+
+export function formQuestions(context: ApplicationContext, fields: AtsField[]): QuestionDispatch {
+  return {
+    kind: 'questions', expectedProfileRevision: context.profileRevision, company: context.company, role: context.role,
+    questions: fields.slice(0, 20).map(field => ({
+      key: formQuestionKey(field), kind: 'needs_answer' as const, originalWording: field.label,
+      reason: `Required field on the official application: ${context.applicationUrl}`,
+      required: true, meaning: { id: formQuestionKey(field), reviewId: null }, schemaVersion: 1,
+      scope: { kind: 'application' as const, country: null, employer: null, applicationId: context.applicationId,
+        includesSubsidiaries: false, timeframe: 'current' as const, validFrom: null, validUntil: null,
+        ats: context.identity.ats, tenant: context.identity.tenant, version: 1 },
+      provenance: { source: 'system' as const, sourceId: null, sourceVersion: null, excerpt: field.label },
+      field: { type: 'text' as const, allowBlank: false, declineValue: null, units: null, precision: null,
+        minLength: 1, maxLength: 4000, format: 'plain' as const }, factIds: [], sensitive: true,
+    })),
   };
 }

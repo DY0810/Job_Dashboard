@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import type { Page } from 'playwright';
 import type { BrowserRuntime } from '../browser.ts';
 
@@ -9,11 +10,13 @@ export const AtsIdentitySchema = z.strictObject({
 export type AtsIdentity = z.infer<typeof AtsIdentitySchema>;
 export const AtsFieldSchema = z.strictObject({
   key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), label: z.string().trim().min(1).max(160),
-  kind: z.enum(['text', 'email', 'date', 'select', 'radio', 'checkbox', 'file']), required: z.boolean(),
+  kind: z.enum(['text', 'email', 'date', 'select', 'combobox', 'radio', 'checkbox', 'file']), required: z.boolean(),
   name: z.string().regex(/^[a-zA-Z0-9_.-]{1,100}$/).optional(),
   options: z.array(z.string().trim().min(1).max(120)).max(32).optional(),
 });
 export type AtsField = z.infer<typeof AtsFieldSchema>;
+export const formQuestionKey = (field: Pick<AtsField, 'key' | 'label'>) =>
+  `form-${createHash('sha256').update(`${field.key}\u0000${field.label}`).digest('hex').slice(0, 32)}`;
 export const AtsObservationSchema = z.strictObject({
   identity: AtsIdentitySchema, company: z.string().trim().min(1).max(200), role: z.string().trim().min(1).max(300),
   fields: z.array(AtsFieldSchema).min(1).max(64), actions: z.array(z.enum(['fill', 'inspect'])).min(1).max(2),
@@ -46,6 +49,8 @@ export type AtsAdapter = {
 };
 
 export async function locateField(page: Page, field: AtsField) {
+  const byId = page.locator(`#${field.key}`).first();
+  if (await byId.count()) return byId;
   const byLabel = page.getByLabel(field.label, { exact: false }).first();
   if (await byLabel.count()) return byLabel;
   if (field.name) {
@@ -68,6 +73,13 @@ export async function fillField(page: Page, field: AtsField, value: AtsValue | u
   if (field.kind === 'checkbox') {
     if (typeof value !== 'boolean') throw new AtsError('ANSWER_TYPE_MISMATCH', field.key);
     if (value) await locator.check(); else await locator.uncheck();
+  } else if (field.kind === 'combobox') {
+    if (typeof value !== 'string') throw new AtsError('ANSWER_TYPE_MISMATCH', field.key);
+    await locator.click();
+    await locator.fill(value);
+    const exact = page.getByRole('option', { name: value, exact: true });
+    try { await exact.first().click({ timeout: 3_000 }); }
+    catch { throw new AtsError('ANSWER_OPTION_INVALID', field.key); }
   } else if (field.kind === 'select') {
     if (typeof value !== 'string' || !field.options?.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key);
     await locator.selectOption({ label: value });
@@ -92,6 +104,8 @@ export async function verifyField(page: Page, field: AtsField, value: AtsValue |
     return await option.count() > 0 && await option.isChecked();
   }
   if (field.kind === 'select') return typeof value === 'string' && (await locator.inputValue()) === value;
+  if (field.kind === 'combobox') return typeof value === 'string' &&
+    (await locator.evaluate((node) => node.closest('.select__control')?.textContent?.trim() ?? '')) === value;
   return typeof value === 'string' && (await locator.inputValue()) === value;
 }
 

@@ -191,6 +191,24 @@ describe('Phase 3 real route handlers over loopback with Better Auth 1.7.5', () 
       { revision: 3, policy, enabled: true, policyVersion: 1, policyHash: null, acceptedPolicyVersion: 1, acceptedPolicyHash: null, acceptedAt: null, runnerAvailable: true }));
     expect(config).toMatchObject({ enabled: true, provider: 'typesafe_jev', model: 'jev-latest', endpoint: 'https://api.typesafe.ai/v1/systemone', maxUsd: 10 });
   });
+  it('enables only the priced OpenAI Luna BYOK destination', () => {
+    const profile = createEmptyProfile();
+    const confirmed = <T extends { state: string; value: unknown; confirmedAt: string | null }>(fact: T, value: T['value']) =>
+      ({ ...fact, state: 'confirmed' as const, value, confirmedAt: new Date().toISOString() });
+    profile.documentsProvider.provider = confirmed(profile.documentsProvider.provider, 'remote');
+    profile.documentsProvider.model = confirmed(profile.documentsProvider.model, 'gpt-6-luna');
+    profile.documentsProvider.endpoint = confirmed(profile.documentsProvider.endpoint, 'https://api.openai.com/v1/chat/completions');
+    const policy = createEmptyPolicy();
+    Object.assign(policy, { privacy: 'approved_remote', remoteProviderConsent: true, allowedProviders: ['byok:compatible'],
+      budget: { currency: 'USD', perRequest: 0.1, perRun: 0.5, perDay: 1, allowUnknownCost: false } });
+    const current = () => buildProviderConfig('synthetic-owner', { ownerId: 'synthetic-owner', revision: 2, profile },
+      { revision: 3, policy, enabled: true, policyVersion: 1, policyHash: null, acceptedPolicyVersion: 1,
+        acceptedPolicyHash: null, acceptedAt: null, runnerAvailable: true });
+    expect(current()).toMatchObject({ enabled: true, provider: 'byok', pricing: { known: true,
+      inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.5 } });
+    profile.documentsProvider.endpoint = confirmed(profile.documentsProvider.endpoint, 'https://other.example/v1/chat/completions');
+    expect(current()).toMatchObject({ enabled: false, pricing: { known: false } });
+  });
   it('persists a submission intent and exact receipt through authenticated worker routes', async () => {
     const worker = await paired();
     await running(worker.workerId);
