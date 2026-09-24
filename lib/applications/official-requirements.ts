@@ -113,8 +113,12 @@ export function parseOfficialRequirements(input: OfficialPostingInput): Screenin
   const description = input.description.trim();
   if (!description) throw new Error('OFFICIAL_DESCRIPTION_REQUIRED');
   const text = bodyText({ ...input, description });
-  const educationClauses = text.split(/[.\n]/).filter(clause =>
-    /\b(?:degree|major(?:ing)?|academic background|field of study|studying|pursuing|enrolled|students? (?:in|of)|bachelor(?:'s|s)?|master(?:'s|s)?)\b/i.test(clause)).join('\n');
+  const academicCue = /\b(?:degree|major(?:ing)?|academic background|field of study|studying|pursuing|enrolled|students? (?:in|of)|bachelor(?:'s|s)?|master(?:'s|s)?)\b/i;
+  // ponytail: bound flattened posting prose; use structured academic fields if a source provides them.
+  const educationClauses = text.split(/(?<!\b[A-Za-z])\.(?=\s|$)|\n/).flatMap(clause => {
+    const cue = academicCue.exec(clause);
+    return cue ? [clause.slice(cue.index, cue.index + 160)] : [];
+  }).join('\n');
   const degreeLevels = DEGREE_RULES.filter(([, pattern]) => pattern.test(educationClauses)).map(([value]) => value);
   const majors = MAJORS.filter(([, pattern]) => pattern.test(educationClauses)).map(([value]) => value);
   const paid = /\b(?:unpaid|without pay|no compensation|course credit only)\b/i.test(text) ? false :

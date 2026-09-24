@@ -29,6 +29,13 @@ describe('parseOfficialRequirements', () => {
     });
   });
 
+  it('does not turn flattened job duties into required majors', () => {
+    const description = `WHAT YOU'LL DO Build systems from design through launch Solve problems in payments, risk, finance, data, and AI Work with product and business teams WHAT YOU'LL NEED Currently pursuing a B.S. or higher in Computer Science or a related technical field, graduating December 2027 or later Strong programming fundamentals Track record of shipping products Ability to turn business problems into engineering solutions.`;
+    expect(parseOfficialRequirements({ ...base, description })).toMatchObject({
+      majors: ['computer science'], graduationWindow: { earliest: '2027-12', latest: '2099-12' },
+    });
+  });
+
   it('recognizes an explicit unpaid condition over a generic internship title', () => {
     expect(parseOfficialRequirements({ ...base, description: 'Fall internship for course credit only. This is unpaid.' })).toMatchObject({
       terms: ['fall'], paid: false,
