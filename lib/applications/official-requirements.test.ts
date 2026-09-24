@@ -22,6 +22,13 @@ describe('parseOfficialRequirements', () => {
     });
   });
 
+  it('does not turn product and data work into required academic majors', () => {
+    const description = `Figma makes design accessible to all. Build product or business data pipelines and help design datasets. We welcome students curious about data engineering.`;
+    expect(parseOfficialRequirements({ ...base, title: 'Data Engineer Intern (2027)', description })).toMatchObject({
+      degreeLevels: [], majors: [], graduationWindow: null,
+    });
+  });
+
   it('recognizes an explicit unpaid condition over a generic internship title', () => {
     expect(parseOfficialRequirements({ ...base, description: 'Fall internship for course credit only. This is unpaid.' })).toMatchObject({
       terms: ['fall'], paid: false,

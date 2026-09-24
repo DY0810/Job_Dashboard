@@ -113,8 +113,10 @@ export function parseOfficialRequirements(input: OfficialPostingInput): Screenin
   const description = input.description.trim();
   if (!description) throw new Error('OFFICIAL_DESCRIPTION_REQUIRED');
   const text = bodyText({ ...input, description });
-  const degreeLevels = DEGREE_RULES.filter(([, pattern]) => pattern.test(text)).map(([value]) => value);
-  const majors = MAJORS.filter(([, pattern]) => pattern.test(text)).map(([value]) => value);
+  const educationClauses = text.split(/[.\n]/).filter(clause =>
+    /\b(?:degree|major(?:ing)?|academic background|field of study|studying|pursuing|enrolled|students? (?:in|of)|bachelor(?:'s|s)?|master(?:'s|s)?)\b/i.test(clause)).join('\n');
+  const degreeLevels = DEGREE_RULES.filter(([, pattern]) => pattern.test(educationClauses)).map(([value]) => value);
+  const majors = MAJORS.filter(([, pattern]) => pattern.test(educationClauses)).map(([value]) => value);
   const paid = /\b(?:unpaid|without pay|no compensation|course credit only)\b/i.test(text) ? false :
     /\b(?:paid|stipend|salary|wage|compensation)\b/i.test(text) || parsePay(text) !== null ? true : input.paid;
   const country = input.country?.toUpperCase();
