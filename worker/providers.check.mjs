@@ -346,6 +346,8 @@ test("structured redaction preserves surrounding job text while masking sensitiv
   assert(prompt.includes("Build [redacted] tooling for internal teams."));
   assert(prompt.includes("[redacted] experience is useful; keep this requirement."));
   assert(prompt.includes("Maintain [redacted] tooling"));
+  assert(prompt.includes("make 1 to 3 substantive edits"));
+  assert.equal(requests[0].format.properties.edits.maxItems, 3);
 });
 
 test('cover letters cite resume evidence, fit one page, and reject unsupported content', async () => {
