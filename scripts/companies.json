@@ -948,6 +948,17 @@
     "postings_at_probe": 16
   },
   {
+    "name": "HP IQ",
+    "ats": "greenhouse",
+    "token": "hpiq",
+    "tags": [
+      "ai",
+      "internship-heavy"
+    ],
+    "verified_at": "2026-09-24T04:57:38Z",
+    "postings_at_probe": 33
+  },
+  {
     "name": "HubSpot",
     "ats": "greenhouse",
     "token": "hubspot",
