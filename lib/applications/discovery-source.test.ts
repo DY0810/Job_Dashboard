@@ -111,6 +111,15 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
     expect(result.candidates.slice(0, 5).every((c) => c.reasons.length > 0)).toBe(true);
   });
 
+  it('matches Software Engineering Intern to an approved Software Engineer role', async () => {
+    const f = fixture(kind);
+    f.add(1, { title: 'Software Engineering Intern' });
+    f.add(2, { title: 'Design Engineering Intern' });
+    const result = await captureCandidateSnapshot(f.db, policy({ targetRoles: ['Software Engineer'] }), NOW);
+    expect(result.candidates.map((candidate) => candidate.disposition)).toEqual(['candidate', 'blocked']);
+    expect(result.candidates[1].reasons).toContain('role_not_selected');
+  });
+
   it('blocks resolved applications outside the explicitly approved destination hosts', async () => {
     const f = fixture(kind);
     f.add(1);

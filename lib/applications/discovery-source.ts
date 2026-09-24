@@ -78,6 +78,7 @@ export async function captureLegacyPostings(db: ReadDb, postingIds: number[]): P
 }
 
 const label = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+const roleLabel = (value: string) => label(value).replace(/\bengineering\b/g, 'engineer');
 const identityKey = (identity: OfficialIdentity) => JSON.stringify([identity.ats, identity.tenant, identity.requisition]);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export const officialContentHash = (content: OfficialPostingContent) => hash({
@@ -99,7 +100,7 @@ function screen(candidate: DiscoveryCandidate, policy: Policy) {
       else if (!policy.countries.includes(p.country)) blocked.add('country_restricted');
     }
     if (policy.employerBlocklist.some((company) => label(company) === label(p.company))) blocked.add('employer_blocked');
-    if (policy.targetRoles.length && !policy.targetRoles.some((role) => label(p.title).includes(label(role)))) {
+    if (policy.targetRoles.length && !policy.targetRoles.some((role) => roleLabel(p.title).includes(roleLabel(role)))) {
       blocked.add('role_not_selected');
     }
     if (p.paid === null) {
