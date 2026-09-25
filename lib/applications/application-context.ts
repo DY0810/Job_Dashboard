@@ -209,7 +209,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
     .where(and(eq(questions.ownerId, worker.ownerId), eq(questions.applicationId, checked.id), eq(questions.active, true)));
   for (const { question, answer } of screeningAnswers) {
     if (!question.resolvedAt || question.policyRevision !== policy.revision || question.descriptor.scope.applicationId !== checked.id ||
-        answer.applicationId !== checked.id || answer.value.type !== 'text') continue;
+        answer.applicationId !== checked.id || (answer.value.type !== 'text' && answer.value.type !== 'choice')) continue;
     const value = answer.value.value.trim();
     if (!value) continue;
     if (question.key === 'screening-country' && /^[A-Z]{2}$/.test(value)) facts.countries = { state: 'confirmed', values: [value] };

@@ -387,7 +387,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         if (runtime && application && !submissionStarted) {
           const observed = await adapter.observe(runtime, application, signal).catch(() => null);
           const field = observed?.fields.find(item => item.key === error.message);
-          if (field) return formQuestions(applicationContext, [field]);
+          if (field) return formQuestions(applicationContext, [field], error.options);
         }
         return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
       }

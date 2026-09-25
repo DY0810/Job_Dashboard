@@ -405,21 +405,24 @@ export async function registerQuestionBatch(
       const [old] = await tx.select().from(questions).where(and(eq(questions.ownerId, worker.ownerId),
         eq(questions.applicationId, applicationId), eq(questions.key, descriptor.key)));
       const changed = !old || old.semanticHash !== semantic || old.scopeHash !== values.scopeHash || !fresh(old, ctx);
+      // The worker asks an answered question again only when the form rejected that answer. Resuming would
+      // loop (fill, ask, auto-resolve, fill); reopen it in the inbox for a new answer instead.
+      const rejected = !!old && !changed && old.resolvedAt !== null;
       let row: QuestionRow;
-      if (old && !changed) row = old;
+      if (old && !changed && !rejected) row = old;
       else if (old) row = one(await tx.update(questions).set({ ...values, active: true, answerId: null, resolvedAt: null, revision: old.revision + 1 })
         .where(and(qScope(worker.ownerId, old.id), eq(questions.revision, old.revision))).returning());
       else row = one(await tx.insert(questions).values({ ...values, id: randomUUID(), ownerId: worker.ownerId,
         applicationId, key: descriptor.key, createdAt: now }).returning());
-      const reusable = await reusableAnswer(tx, row, app, ctx);
-      const optional = !descriptor.required && (descriptor.field.allowBlank || descriptor.field.declineValue !== null) &&
+      const reusable = rejected ? undefined : await reusableAnswer(tx, row, app, ctx);
+      const optional = !rejected && !descriptor.required && (descriptor.field.allowBlank || descriptor.field.declineValue !== null) &&
         allowOptional(descriptor, ctx) && await canAnswer(tx, row, app, ctx);
       if (reusable || optional) {
         if (row.resolvedAt === null || (reusable && row.answerId !== reusable.id))
           row = one(await tx.update(questions).set({ answerId: reusable?.id ?? null, resolvedAt: now, revision: row.revision + 1 })
             .where(and(qScope(worker.ownerId, row.id), eq(questions.revision, row.revision))).returning());
       }
-      if (row.resolvedAt === null && changed) await notify(tx, app, descriptor.kind, row.id, now);
+      if (row.resolvedAt === null && (changed || rejected)) await notify(tx, app, descriptor.kind, row.id, now);
       questionIds.push(row.id);
     }
     // Omitted fields remain active. A partial batch cannot silently erase another blocker.

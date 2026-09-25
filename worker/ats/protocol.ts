@@ -39,7 +39,9 @@ export type AtsApplication = {
 
 export class AtsError extends Error {
   readonly code: string;
-  constructor(code: string, message = code) { super(message); this.code = code; }
+  /** The choices the form offered when an answer was not one of them. */
+  readonly options?: string[];
+  constructor(code: string, message = code, options?: string[]) { super(message); this.code = code; this.options = options; }
 }
 
 export type AtsAdapter = {
@@ -81,12 +83,18 @@ export async function fillField(page: Page, field: AtsField, value: AtsValue | u
     await locator.fill(value);
     const exact = page.getByRole('option', { name: value, exact: true });
     try { await exact.first().click({ timeout: 3_000 }); }
-    catch { throw new AtsError('ANSWER_OPTION_INVALID', field.key); }
+    catch {
+      // Clearing the search lists every choice of a fixed dropdown, so the applicant can pick an exact one.
+      await locator.fill('');
+      const options = [...new Set((await page.getByRole('option').allTextContents()).map(item => item.trim()).filter(Boolean))];
+      await page.keyboard.press('Escape');
+      throw new AtsError('ANSWER_OPTION_INVALID', field.key, options.length ? options : undefined);
+    }
   } else if (field.kind === 'select') {
-    if (typeof value !== 'string' || !field.options?.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key);
+    if (typeof value !== 'string' || !field.options?.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key, field.options);
     await locator.selectOption({ label: value });
   } else if (field.kind === 'radio') {
-    if (typeof value !== 'string' || !field.options?.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key);
+    if (typeof value !== 'string' || !field.options?.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key, field.options);
     const option = page.getByLabel(value, { exact: true }).first();
     if (!await option.count()) throw new AtsError('ANSWER_OPTION_NOT_FOUND', field.key);
     await option.check();

@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
 import { ashby } from './ats/ashby.ts';
 import { greenhouse } from './ats/greenhouse.ts';
-import { locateField, verifyField } from './ats/protocol.ts';
+import { fillField, locateField, verifyField } from './ats/protocol.ts';
 import { createJevActionSelector } from './jev.ts';
 import { createConfiguredJevActionSelector } from './main.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
@@ -23,6 +23,24 @@ test('hosted fields resolve their exact ID when visible labels collide', { skip:
     const page = await browser.newPage();
     await page.setContent('<label for="other">Attach</label><input id="other"><label for="resume">Attach</label><input id="resume" type="file">');
     assert.equal(await (await locateField(page, { key: 'resume', label: 'Attach', kind: 'file', required: true })).getAttribute('id'), 'resume');
+  } finally { await browser.close(); }
+});
+test('a dropdown answer the form does not offer fails with every choice the form does offer', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    // Like a react-select dropdown: typing filters the choices; an empty search lists them all.
+    await page.setContent(`<div class="select__control"><input id="school" role="combobox"></div><div id="menu"></div><script>
+      const choices = ['University of California, Los Angeles', 'Binghamton University', 'Other'];
+      const input = document.getElementById('school'), menu = document.getElementById('menu');
+      const render = () => { menu.innerHTML = ''; for (const choice of choices.filter(c => c.toLowerCase().includes(input.value.toLowerCase()))) {
+        const item = document.createElement('div'); item.setAttribute('role', 'option'); item.textContent = choice; menu.append(item); } };
+      input.addEventListener('input', render); input.addEventListener('click', render);
+    </script>`);
+    const field = { key: 'school', label: 'Which college or university do you currently attend?', kind: 'combobox', required: true };
+    const error = await fillField(page, field, 'UCLA', {}).then(() => null, error => error);
+    assert.equal(error?.code, 'ANSWER_OPTION_INVALID');
+    assert.deepEqual(error.options, ['University of California, Los Angeles', 'Binghamton University', 'Other']);
   } finally { await browser.close(); }
 });
 test('an uploaded Greenhouse file verifies by the name shown in place of its input', { skip: !browserReady }, async () => {

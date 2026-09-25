@@ -429,15 +429,33 @@ describe('question DAL atomic answers and scoped reuse', () => {
     const pair = await batch(b, formQuestions(contextFor(b), [form('Why us?'), form('Why this role?', 'question_2')]).questions);
     await answerQuestion(db, 'alice', pair.id, await answerInput(pair.id, { type: 'text', value: 'Mission' }), options);
     await editProfile(false);
-    // The worker observes the same form again after the save: the stored answer still applies.
-    await batch(a, asked);
-    expect(await appRow(a.app.id)).toMatchObject({ state: 'screening' });
+    // The save leaves the stored answer in place for the worker to use.
     expect((await qRow(first.id)).resolvedAt).not.toBeNull();
+    expect(await appRow(a.app.id)).toMatchObject({ state: 'screening' });
     // Answering the last open question resumes the application even though its earlier answer predates the save.
     const last = pair.result.questionIds[1];
     const resumed = await answerQuestion(db, 'alice', last, await answerInput(last, { type: 'text', value: 'Scope' }), options);
     expect(resumed.resumedApplicationIds).toEqual([b.app.id]);
     expect((await getInboxStatus(db, 'alice', options)).unresolved).toBe(0);
+  });
+
+  it('a question the worker asks again after its answer failed on the form reopens instead of looping', async () => {
+    const college = { key: 'question_1', label: 'Which college or university do you currently attend?', kind: 'combobox' as const, required: true };
+    const contextFor = (f: Fixture) => ({ applicationId: f.app.id, profileRevision: 1, company: 'Synthetic Employer', role: 'Intern',
+      applicationUrl: 'https://example.test/apply', identity: { ats: 'fixture', tenant: 'employer', requisition: f.app.requisition } }) as never;
+    const a = await prepared(), asked = formQuestions(contextFor(a), [college]).questions;
+    const first = await batch(a, asked);
+    await answerQuestion(db, 'alice', first.id, await answerInput(first.id, { type: 'text', value: 'UCLA' }), options);
+    expect(await appRow(a.app.id)).toMatchObject({ state: 'screening' });
+    // "UCLA" is not one of the form's options, so the worker asks the same question again.
+    await batch(a, asked);
+    expect(await appRow(a.app.id)).toMatchObject({ state: 'needs_answer' }); // not screening again, which looped
+    expect((await qRow(first.id)).resolvedAt).toBeNull();
+    expect((await getInboxStatus(db, 'alice', options)).unresolved).toBe(1);
+    // When the worker saw the dropdown's choices, the question lists them so the next answer is an exact one.
+    const choices = formQuestions(contextFor(a), [college], ['University of California, Los Angeles', 'Other']).questions;
+    expect(choices[0].field).toMatchObject({ type: 'select', minSelections: 1, maxSelections: 1,
+      options: [{ value: 'University of California, Los Angeles', label: 'University of California, Los Angeles' }, { value: 'Other', label: 'Other' }] });
   });
 
   it('current-profile answer updates fence active work without reusing stale facts or rewriting submitted answers', async () => {

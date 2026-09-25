@@ -92,7 +92,17 @@ export function screeningQuestions(context: ApplicationContext, reasons: string[
   };
 }
 
-export function formQuestions(context: ApplicationContext, fields: AtsField[]): QuestionDispatch {
+// Options come from the form (a fixed dropdown, select or radio group); without them the answer is free text.
+function formField(field: AtsField, options = field.options) {
+  const choices = [...new Set(options ?? [])].filter(option => option.length <= 300);
+  return choices.length && choices.length <= 100
+    ? { type: 'select' as const, allowBlank: false, declineValue: null, units: null, precision: null,
+      options: choices.map(option => ({ value: option, label: option })), minSelections: 1, maxSelections: 1 }
+    : { type: 'text' as const, allowBlank: false, declineValue: null, units: null, precision: null,
+      minLength: 1, maxLength: 4000, format: 'plain' as const };
+}
+
+export function formQuestions(context: ApplicationContext, fields: AtsField[], options?: string[]): QuestionDispatch {
   return {
     kind: 'questions', expectedProfileRevision: context.profileRevision, company: context.company, role: context.role,
     questions: fields.slice(0, 20).map(field => ({
@@ -103,8 +113,7 @@ export function formQuestions(context: ApplicationContext, fields: AtsField[]): 
         includesSubsidiaries: false, timeframe: 'current' as const, validFrom: null, validUntil: null,
         ats: context.identity.ats, tenant: context.identity.tenant, version: 1 },
       provenance: { source: 'system' as const, sourceId: null, sourceVersion: null, excerpt: field.label },
-      field: { type: 'text' as const, allowBlank: false, declineValue: null, units: null, precision: null,
-        minLength: 1, maxLength: 4000, format: 'plain' as const }, factIds: [], sensitive: true,
+      field: formField(field, options ?? field.options), factIds: [], sensitive: true,
     })),
   };
 }
