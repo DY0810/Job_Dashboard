@@ -12,6 +12,7 @@ import { createBrowserRuntime } from '../../worker/browser.ts';
 import { createStageDispatch } from '../../worker/main.ts';
 import { createJevActionSelector } from '../../worker/jev.ts';
 import { artifactManifestHash } from '../../lib/applications/artifact-protocol.ts';
+import { postingContacts } from '../../worker/outreach.ts';
 
 // Drives the real worker stage dispatch (screening -> tailoring -> filling -> submit) against a
 // Greenhouse-shaped hosted form, with a fake control plane and a deterministic writer model.
@@ -24,7 +25,8 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const ORIGINAL = 'Built REST APIs in TypeScript for a scheduling product used by students';
 const TAILORED = 'Built TypeScript REST APIs with CI tests for a student scheduling app';
 const NARRATIVE = 'Fixture Co builds tools students rely on, and I want to make them faster.';
-const JD = 'Fixture Co is hiring a Software Engineering Intern to build TypeScript APIs, write CI tests and improve reliability.';
+const JD = 'Fixture Co is hiring a Software Engineering Intern to build TypeScript APIs, write CI tests and improve reliability. ' +
+  'Questions? Email university-recruiting@fixtureco.com or see https://www.fixtureco.com/careers and https://www.eeoc.gov/poster.';
 
 function masterDocx() {
   const paragraphs = ['Test Applicant', ORIGINAL, 'Reduced dashboard query time by 95 percent with indexed joins', 'Skills: TypeScript, PostgreSQL, React'];
@@ -82,11 +84,11 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
     const applicationId = randomUUID(), runId = randomUUID(), master = masterDocx();
     const masterRef = { documentId: randomUUID(), version: 1, sha256: sha256(master), size: master.length, mime: DOCX, path: '/master' };
     const stored = new Map([[masterRef.documentId, master]]);
-    const calls = { tailor: [], letter: [], jev: 0, intents: [], submission: null, receipt: null, captured: null };
+    const calls = { tailor: [], letter: [], jev: 0, intents: [], submission: null, receipt: null, captured: null, outreach: [] };
     const context = {
       protocolVersion: 1, applicationId, runId, ownerId: 'owner', policyRevision: 1, profileRevision: 1,
       identity: { ats: 'greenhouse', tenant: 'fixtureco', requisition: '4000001' }, company: 'Fixture Co', role: 'Software Engineering Intern',
-      coverLetterAllowed: true, applicationUrl: `${URL_BASE}${JOB}`,
+      coverLetterAllowed: true, outreach: true, applicationUrl: `${URL_BASE}${JOB}`,
       facts: {
         countries: { state: 'confirmed', values: ['US'] }, degreeLevels: { state: 'confirmed', values: ['bachelor'] },
         majors: { state: 'confirmed', values: ['computer science'] }, availableTerms: { state: 'confirmed', values: ['summer 2027'] },
@@ -118,6 +120,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       },
       submissionIntent: async (_application, body) => { calls.submission = body; return { intentId: body.intentId }; },
       receipt: async (_application, body) => { calls.receipt = body; return {}; },
+      outreach: async (_application, body) => { calls.outreach.push({ body, afterReceipt: calls.receipt !== null }); return {}; },
     };
     const usage = { input_tokens: 1, output_tokens: 1 };
     const generate = async (input) => {
@@ -184,7 +187,27 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       const letter = spawnSync('pdftotext', [letterPath, '-'], { encoding: 'utf8' }).stdout;
       assert.match(letter, /Software Engineering Intern role at Fixture Co/);
       assert.match(letter, /Sincerely,\s+Test Applicant/);
+
+      // After the verified receipt, one recruiter note built from the submitted letter goes to the server.
+      assert.equal(calls.outreach.length, 1);
+      const [{ body: note, afterReceipt }] = calls.outreach;
+      assert.equal(afterReceipt, true);
+      assert.equal(note.subject, 'Following up on my Software Engineering Intern application');
+      assert.deepEqual(note.body.split('\n\n'), [
+        'I just applied for the Software Engineering Intern role at Fixture Co and wanted to reach out directly.',
+        'I built TypeScript REST APIs for a scheduling product used by students.',
+        'Fixture Co builds tools that students rely on every day.',
+        'Would you be open to a quick 15-minute call about the role or the team? If someone else is handling this position, I would appreciate it if you could point me in the right direction.',
+        'Thank you,\nTest Applicant\nhttps://linkedin.com/in/test',
+      ]);
+      assert.deepEqual({ emails: note.emails, domains: note.domains }, { emails: ['university-recruiting@fixtureco.com'], domains: ['fixtureco.com'] });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+test('posting contacts keep recruiting inboxes and employer domains only', () => {
+  assert.deepEqual(postingContacts('Email accommodations@acme.io, no-reply-careers@acme.io or Talent@Acme.io. Apply via ' +
+    'https://boards.greenhouse.io/acme and read https://acme.io/privacy, https://www.dol.gov/agencies and https://linkedin.com/company/acme.'),
+  { emails: ['talent@acme.io'], domains: ['acme.io'] });
+});

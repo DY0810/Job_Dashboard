@@ -41,3 +41,5 @@
   .page input:not([type="checkbox"]):not([type="radio"]), .page select { min-height: 44px; font-size: 16px; }
   .icon { width: 40px; height: 40px; }
 }
+.preview { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--fg-dim); }
+.page .form input[type="email"] { width: 270px; }

@@ -98,6 +98,24 @@ export const ReceiptCommandSchema = z.strictObject({
 export const ReceiptResponseSchema = z.strictObject({
   applicationId: uuid, intentId: uuid, state: z.literal('submitted'), revision, replayed: z.boolean(),
 });
+// Recruiter email after a verified submission. The subject can never carry a header break.
+const email = z.email().max(254).transform((value) => value.toLowerCase());
+const domain = z.string().regex(/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/);
+export const OutreachDraftSchema = z.strictObject({
+  ...protocol, subject: z.string().trim().min(1).max(400).regex(/^[^\r\n]+$/), body: z.string().trim().min(1).max(4000),
+  emails: z.array(email).max(5), domains: z.array(domain).max(5),
+});
+export const OutreachSendSchema = z.strictObject({ to: email, name: z.string().trim().min(1).max(120).nullable() });
+export const OutreachSchema = z.strictObject({
+  applicationId: uuid, status: z.enum(['draft', 'sending', 'sent', 'failed', 'skipped']),
+  company, role, subject: z.string(), body: z.string(),
+  to: z.string().nullable(), name: z.string().nullable(), title: z.string().nullable(),
+  source: z.enum(['posting', 'hunter', 'manual']).nullable(), reason: z.string().nullable(),
+  sentAt: timestamp.nullable(), updatedAt: timestamp,
+});
+export const OutreachListSchema = z.strictObject({ ownerId: z.string().min(1), outreach: z.array(OutreachSchema).max(500) });
+export type OutreachDraft = z.infer<typeof OutreachDraftSchema>;
+export type Outreach = z.infer<typeof OutreachSchema>;
 export type PairingCreate = z.infer<typeof PairingCreateSchema>;
 export type PairingGrant = z.infer<typeof PairingGrantSchema>;
 export type PairRequest = z.infer<typeof PairRequestSchema>;

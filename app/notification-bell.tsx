@@ -139,7 +139,7 @@ export function NotificationBell({ standalone = false }: { standalone?: boolean 
                   {view.inbox?.items.map((item) => <li className={styles.item} key={item.eventId}>
                     <div className={styles.row}>
                       <span className={styles.tag}>{item.question ? kindNames[item.question.descriptor.kind] :
-                        item.kind === 'submitted' ? 'Submitted' : item.kind.replaceAll('_', ' ')}</span>
+                        item.kind === 'submitted' ? 'Submitted' : item.kind === 'outreach' ? 'Recruiter email' : item.kind.replaceAll('_', ' ')}</span>
                       {!item.read && <span className={styles.muted}>Unread</span>}
                       {item.question && <span className={styles.muted}>{item.question.resolved ? 'Resolved' : `${item.question.waitingCount} waiting`}</span>}
                     </div>

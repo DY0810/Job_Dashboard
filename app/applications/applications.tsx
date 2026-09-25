@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
-import { HEARTBEAT_MS, RunListSchema, WorkerListSchema } from '../../lib/applications/worker-protocol';
+import { HEARTBEAT_MS, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import styles from '../workers/workers.module.css';
 
@@ -23,12 +23,13 @@ type View = {
   workers: z.infer<typeof WorkerListSchema> | null;
   runs: z.infer<typeof RunListSchema> | null;
   policy: z.infer<typeof PolicyResponseSchema> | null;
+  outreach: Outreach[];
   loading: boolean;
   locked: boolean;
   error: string;
 };
 
-const initialView: View = { account: null, workers: null, runs: null, policy: null, loading: true, locked: true, error: '' };
+const initialView: View = { account: null, workers: null, runs: null, policy: null, outreach: [], loading: true, locked: true, error: '' };
 
 async function request(path: string, ownerId?: string) {
   const headers = new Headers();
@@ -43,6 +44,44 @@ async function request(path: string, ownerId?: string) {
   return body;
 }
 
+function outreachStatus(item: Outreach) {
+  const who = `${item.name ?? item.to}${item.title ? ` (${item.title})` : ''}`;
+  if (item.status === 'sent') return `Emailed ${who}${item.sentAt ? ` on ${new Date(item.sentAt).toLocaleDateString()}` : ''}`;
+  if (item.status === 'sending') return `Sending to ${who}...`;
+  if (item.status === 'skipped') return `Not sent: ${who} was already emailed about another role`;
+  if (item.status === 'failed') return `Sending to ${who} failed. Check the address and send again.`;
+  return item.reason === 'sender_not_configured' ? `Ready for ${who}, but Gmail sending is not set up for your address`
+    : 'Draft ready. No recruiter address was found; add one to send.';
+}
+
+function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: string; onChange: () => void }) {
+  const [to, setTo] = useState(item.to ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const send = async () => {
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`/api/outreach/${item.applicationId}`, {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(60_000),
+        headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
+        body: JSON.stringify({ to: to.trim(), name: to.trim() === item.to ? item.name : null }),
+      });
+      if (!response.ok) throw new Error();
+      onChange();
+    } catch { setError('Could not send. Check the address and try again.'); }
+    finally { setBusy(false); }
+  };
+  return <div>
+    <div className={styles.row}><span>Recruiter email: {outreachStatus(item)}</span></div>
+    <details><summary className={styles.muted}>{item.subject}</summary><pre className={styles.preview}>{item.body}</pre></details>
+    {item.status !== 'sent' && item.status !== 'sending' && <form className={styles.form} onSubmit={(event) => { event.preventDefault(); void send(); }}>
+      <input type="email" required value={to} onChange={(event) => setTo(event.target.value)} placeholder="recruiter@company.com" aria-label={`Recruiter email for ${item.company}`} />
+      <button className={styles.button} type="submit" disabled={busy}>{busy ? 'Sending...' : 'Send email'}</button>
+      {error && <span role="alert" className={styles.reason}>{error}</span>}
+    </form>}
+  </div>;
+}
+
 export default function Applications() {
   const [view, setView] = useState(initialView);
   const [refreshing, setRefreshing] = useState(false);
@@ -51,13 +90,17 @@ export default function Applications() {
     else setRefreshing(true);
     try {
       const account = ApplicantSchema.parse(await request('/api/auth/applicant'));
-      const [workers, runs, policy] = await Promise.all([
+      const [workers, runs, policy, outreach] = await Promise.all([
         WorkerListSchema.parse(await request('/api/workers', account.ownerId)),
         RunListSchema.parse(await request('/api/application-runs', account.ownerId)),
         PolicyResponseSchema.parse(await request('/api/auto-apply/policies', account.ownerId)),
+        // Recruiter email is secondary: its failure must not hide the application history.
+        request('/api/outreach', account.ownerId).then((body) => OutreachListSchema.parse(body)).catch(() => null),
       ]);
-      if (workers.ownerId !== account.ownerId || runs.ownerId !== account.ownerId) throw new Error('Account changed. Refresh the current applicant.');
-      setView({ account, workers, runs, policy, loading: false, locked: false, error: '' });
+      if (workers.ownerId !== account.ownerId || runs.ownerId !== account.ownerId || (outreach && outreach.ownerId !== account.ownerId)) {
+        throw new Error('Account changed. Refresh the current applicant.');
+      }
+      setView({ account, workers, runs, policy, outreach: outreach?.outreach ?? [], loading: false, locked: false, error: '' });
     } catch (error) {
       setView((current) => ({ ...current, loading: false, locked: true,
         error: error instanceof z.ZodError ? 'Private service returned an incompatible response.' :
@@ -78,6 +121,7 @@ export default function Applications() {
     return result;
   }, {});
   const onlineWorkers = view.workers?.workers.filter((worker) => worker.online) ?? [];
+  const outreach = new Map(view.outreach.map((item) => [item.applicationId, item]));
   return <>
     <div className={styles.toolbar}>
       <h1>Applications</h1>
@@ -120,6 +164,8 @@ export default function Applications() {
               <div className={styles.row}><span className={styles.muted}>Provider: worker-local configuration / cost: not reported</span>
                 {app.receiptId && <span>Receipt {app.receiptId}{app.submittedAt ? ` / ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
               {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
+              {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}
+                item={outreach.get(app.id)!} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
             </li>)}
           </ul>}
       </section>

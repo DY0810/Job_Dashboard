@@ -38,6 +38,7 @@ import type { PrivateStore } from "./storage.ts";
 import { ApplicationArtifactManifestSchema, artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 import { renderCoverLetter } from "./documents/cover-letter.ts";
+import { outreachDraft, postingContacts } from "./outreach.ts";
 
 const ERROR_CODES = new Set([
   "NODE_22_REQUIRED", "UNSUPPORTED_PLATFORM", "CONFIGURATION_REQUIRED", "INVALID_ORIGIN",
@@ -299,21 +300,26 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         (adapter === greenhouse ? greenhouseAnswer(currentApplication, field) :
           currentApplication.answers[formQuestionKey(field)] ?? currentApplication.answers[field.key]) === undefined);
       if (missing.length) return formQuestions(applicationContext, missing);
-      // An optional letter field is left empty when the policy does not allow cover letters.
-      if (observed.fields.some(field => field.key === 'cover_letter' && field.kind === 'file' && (field.required || applicationContext.coverLetterAllowed))) {
-        if (!applicationContext.coverLetterAllowed || !context.generate || !localDocuments.resumeMaster) {
-          return { state: "needs_document" as const, reasonCode: "cover_letter_unavailable" };
-        }
+      const applicant = [application.answers.first_name, application.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
+      const writeLetter = async () => {
         const source = await readFile(localDocuments.resumeMaster);
         const template = await createTemplateManifest(source, applicationContext.documents.resumeMaster.mime, applicationContext.role);
         const evidence = template.anchors.slice(0, 32).map((anchor, index) => ({
           id: artifactRequestId({ applicationId: lease.applicationId, sourceHash: template.sourceHash, anchorId: anchor.id, index }),
           excerpt: anchor.text.slice(0, 1000),
         }));
-        const letter = await context.generate({ task: 'cover_letter', company: applicationContext.company, role: applicationContext.role,
+        const letter = await context.generate!({ task: 'cover_letter', company: applicationContext.company, role: applicationContext.role,
           jobSummary: applicationContext.requirements.officialDescription.slice(0, 12_000), evidence }, { signal, runId: lease.runId });
         if (letter.task !== 'cover_letter' || letter.confidence < 0.75) throw new ProviderError('PROVIDER_LOW_CONFIDENCE');
-        const applicant = [application.answers.first_name, application.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
+        return letter;
+      };
+      let letter: Awaited<ReturnType<typeof writeLetter>> | undefined;
+      // An optional letter field is left empty when the policy does not allow cover letters.
+      if (observed.fields.some(field => field.key === 'cover_letter' && field.kind === 'file' && (field.required || applicationContext.coverLetterAllowed))) {
+        if (!applicationContext.coverLetterAllowed || !context.generate || !localDocuments.resumeMaster) {
+          return { state: "needs_document" as const, reasonCode: "cover_letter_unavailable" };
+        }
+        letter = await writeLetter();
         if (!applicant) throw new AtsError('REQUIRED_ANSWER_MISSING', 'first_name');
         const path = join(workDirectory, 'cover_letter.pdf');
         await writeFile(path, await renderCoverLetter(letter, applicant), { mode: 0o600, flag: 'wx' });
@@ -338,6 +344,14 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
             receiptId: receipt.receiptId, submittedAt: receipt.submittedAt, evidence,
           }, signal),
         } });
+      if (result.state === "submitted" && applicationContext.outreach && context.generate && localDocuments.resumeMaster) {
+        // Best effort after the verified receipt: a failed note never changes the submitted outcome.
+        const note = outreachDraft({ company: applicationContext.company, role: applicationContext.role, name: applicant,
+          linkedin: typeof application.answers.linkedin === 'string' ? application.answers.linkedin : undefined,
+          letter: letter ?? await writeLetter().catch(() => undefined) });
+        await control.outreach(lease.applicationId, { protocolVersion: 1, ...note,
+          ...postingContacts(applicationContext.requirements.officialDescription) }, signal).catch(() => {});
+      }
       if (result.state === "submitted" || result.state === "submission_unknown") {
         return { state: result.state, reasonCode: result.reasons[0]?.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80) || "submission_unknown", durable: true };
       }
