@@ -7,7 +7,7 @@ import {
 import type { QuestionBatch, InterventionAck } from "../lib/applications/question-protocol.ts";
 import {
   PairRequestSchema, PairResponseSchema, PollRequestSchema, PollResponseSchema,
-  HeartbeatRequestSchema, EventRequestSchema, EventResponseSchema, WORKER_PROTOCOL_VERSION,
+  HeartbeatRequestSchema, EventRequestSchema, EventResponseSchema, WORKER_PROTOCOL_VERSION, POLL_TIMEOUT_MS,
   SubmissionIntentSchema, SubmissionIntentResponseSchema, ReceiptCommandSchema, ReceiptResponseSchema,
   OutreachDraftSchema, OutreachSchema, SubmittedLetterSchema, SubmittedLetterAckSchema,
 } from "../lib/applications/worker-protocol.ts";
@@ -106,7 +106,7 @@ export function workerTransport(options: {
       post("/api/worker/pair", PairRequestSchema.parse(input), PairResponseSchema, signal),
     poll: (signal?: AbortSignal) =>
       post("/api/worker/poll", PollRequestSchema.parse(version), PollResponseSchema, signal, false,
-        options.timeoutMs ?? 30_000),
+        options.timeoutMs ?? POLL_TIMEOUT_MS),
     heartbeat: (lease: HeartbeatRequest["lease"], signal?: AbortSignal) =>
       post("/api/worker/heartbeat", HeartbeatRequestSchema.parse({ ...version, lease }), PollResponseSchema, signal),
     providerConfig: (signal?: AbortSignal) =>

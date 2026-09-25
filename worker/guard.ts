@@ -1,4 +1,4 @@
-import { HEARTBEAT_MS, LEASE_MS } from "../lib/applications/worker-protocol.ts";
+import { HEARTBEAT_MS, LEASE_MS, POLL_TIMEOUT_MS } from "../lib/applications/worker-protocol.ts";
 import type { Lease } from "../lib/applications/worker-protocol.ts";
 import type { WorkerScope } from "./credentials.ts";
 
@@ -34,9 +34,10 @@ export function createLeaseGuard(
     const now = sample();
     const elapsed = now.mono - requestStart.mono;
     const remaining = value.leaseUntil - time;
+    // The deadline counts from the request start, so a slow reply only shortens it; allow any reply the poll waits for.
     if (!Number.isSafeInteger(time) || !Number.isSafeInteger(value.policyRevision) || value.policyRevision < 1 ||
       !Number.isFinite(remaining) || remaining <= 1000 || remaining > LEASE_MS ||
-      elapsed < 0 || elapsed > 10000 || Math.abs(now.wall - requestStart.wall - elapsed) > 2000) fail("INVALID_LEASE");
+      elapsed < 0 || elapsed > POLL_TIMEOUT_MS || Math.abs(now.wall - requestStart.wall - elapsed) > 2000) fail("INVALID_LEASE");
     deadline = requestStart.mono + remaining - 1000;
     check();
   }

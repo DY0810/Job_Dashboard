@@ -101,6 +101,15 @@ test("lease expires using monotonic time even with regular checks and cannot be 
   assert.throws(() => guard.renew({ ...value, leaseUntil: 239000 }, 119000, clock()), /LEASE_EXPIRED/);
 });
 
+test("a lease from a slow discovery poll is kept, with its deadline counted from the request start", () => {
+  let time = 24000; // the poll ran a discovery scan before assigning this lease
+  const clock = () => ({ mono: time, wall: time });
+  const guard = createLeaseGuard({ ...lease(), leaseUntil: 24000 + 120000 }, scope, 24000, { mono: 0, wall: 0 }, clock);
+  for (time = 40000; time <= 100000; time += 20000) guard.check();
+  time = 119000;
+  assert.throws(() => guard.check(), /LEASE_EXPIRED/, "expiry is measured from when the poll was sent");
+});
+
 test("monotonic lease guard rejects sleep, wall jumps, expired leases, identity and changed policy", async () => {
   let mono = 0, wall = 0;
   const clock = () => ({ mono, wall });
