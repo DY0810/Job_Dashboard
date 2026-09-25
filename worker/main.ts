@@ -344,6 +344,11 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
             receiptId: receipt.receiptId, submittedAt: receipt.submittedAt, evidence,
           }, signal),
         } });
+      if (result.state === "submitted" && letter && application.documents.cover_letter) {
+        // Keep the letter that went out so the applicant can read it; never affects the outcome.
+        await control.letter(lease.applicationId, { protocolVersion: 1, introduction: letter.introduction,
+          body: letter.body.map(item => item.text), conclusion: letter.conclusion, companyParagraph: letter.companyParagraph }, signal).catch(() => {});
+      }
       if (result.state === "submitted" && applicationContext.outreach && context.generate && localDocuments.resumeMaster) {
         // Best effort after the verified receipt: a failed note never changes the submitted outcome.
         const note = outreachDraft({ company: applicationContext.company, role: applicationContext.role, name: applicant,

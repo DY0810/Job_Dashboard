@@ -5,7 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
-import { account, applications, policyHeads, policyVersions, user } from '../private-db/schema.ts';
+import { account, applicationArtifacts, applications, documents, policyHeads, policyVersions, user } from '../private-db/schema.ts';
 import { createEmptyPolicy, type Policy } from './policy.ts';
 import { hashValue } from './stores.ts';
 import { createPairing, pairWorker } from './pairing.ts';
@@ -14,6 +14,7 @@ import { pollWorker } from './leases.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { getInbox } from './questions.ts';
 import { listOutreach, recordOutreachDraft, sendOutreach, type OutreachOptions } from './outreach.ts';
+import { listMaterials, recordSubmittedLetter } from './materials.ts';
 
 vi.mock('server-only', () => ({}));
 let db: PrivateDb, dir: string, now: number, options: OutreachOptions;
@@ -139,5 +140,33 @@ describe('recruiter email after a verified submission', () => {
     expect((await listOutreach(db, 'bob')).outreach).toEqual([]);
     await expect(sendOutreach(db, 'bob', app.id, { to: 'x@employer.test', name: null }, options)).rejects.toMatchObject({ status: 404 });
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe('application materials', () => {
+  it('keeps the submitted cover letter once and lists what the tailored resume changed, privately', async () => {
+    const { token, app } = await application();
+    const letter = { protocolVersion: 1 as const, introduction: 'I am applying for the Software Engineering Intern role.',
+      body: ['I built TypeScript APIs.', 'I added CI checks.'], conclusion: 'Thank you.', companyParagraph: 'Employer Co builds tools.' };
+    expect(await recordSubmittedLetter(db, token, app.id, letter, options)).toEqual({ applicationId: app.id, stored: true });
+    await recordSubmittedLetter(db, token, app.id, { ...letter, conclusion: 'A replay cannot rewrite it.' }, options);
+    const doc = (id: string, kind: 'resume_master' | 'resume_artifact') => ({ id, ownerId: 'alice', kind, name: 'resume.docx', masterId: id,
+      version: 1, objectKey: `synthetic/${id}`, storage: 'local' as const, mime: 'application/pdf', size: 10, sha256: 'c'.repeat(64),
+      state: 'available' as const, safetyCheck: 'passed' as const, createdAt: now });
+    const master = randomUUID(), tailored = randomUUID();
+    await db.insert(documents).values([doc(master, 'resume_master'), doc(tailored, 'resume_artifact')]);
+    await db.insert(applicationArtifacts).values({ id: randomUUID(), ownerId: 'alice', applicationId: app.id, requestId: randomUUID(),
+      sourceDocumentId: master, sourceVersion: 1, sourceHash: 'd'.repeat(64), documentId: tailored, outputHash: 'c'.repeat(64),
+      manifestHash: 'e'.repeat(64), createdAt: now, manifest: { schemaVersion: 1, applicationId: app.id,
+        source: { documentId: master, version: 1, sha256: 'd'.repeat(64) }, output: { sha256: 'c'.repeat(64), mime: 'application/pdf', size: 10 },
+        template: { anchors: [{ id: 'line-1', text: 'Built REST APIs in TypeScript' }, { id: 'line-2', text: 'Skills: React' }] },
+        request: { edits: [{ anchorId: 'line-1', replacement: 'Built TypeScript APIs with CI' }] },
+        checks: { pageCount: 1, linksPreserved: true, frozenTextPreserved: true, anchorsFit: true }, tool: { name: 'workie-document-runtime', version: '1' } } });
+    expect((await listMaterials(db, 'alice')).materials).toEqual([{ applicationId: app.id,
+      resume: { documentId: tailored, mime: 'application/pdf', createdAt: now, changes: [{ before: 'Built REST APIs in TypeScript', after: 'Built TypeScript APIs with CI' }] },
+      letter: { introduction: letter.introduction, body: letter.body, conclusion: 'Thank you.', companyParagraph: letter.companyParagraph } }]);
+    expect((await listMaterials(db, 'bob')).materials).toEqual([]);
+    const pending = await application('alice', false, 'unsubmitted');
+    await expect(recordSubmittedLetter(db, pending.token, pending.app.id, letter, options)).rejects.toMatchObject({ status: 409 });
   });
 });

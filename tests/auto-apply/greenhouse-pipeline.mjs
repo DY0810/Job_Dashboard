@@ -121,6 +121,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       submissionIntent: async (_application, body) => { calls.submission = body; return { intentId: body.intentId }; },
       receipt: async (_application, body) => { calls.receipt = body; return {}; },
       outreach: async (_application, body) => { calls.outreach.push({ body, afterReceipt: calls.receipt !== null }); return {}; },
+      letter: async (_application, body) => { calls.storedLetter = { body, afterReceipt: calls.receipt !== null }; return { applicationId, stored: true }; },
     };
     const usage = { input_tokens: 1, output_tokens: 1 };
     const generate = async (input) => {
@@ -187,6 +188,12 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       const letter = spawnSync('pdftotext', [letterPath, '-'], { encoding: 'utf8' }).stdout;
       assert.match(letter, /Software Engineering Intern role at Fixture Co/);
       assert.match(letter, /Sincerely,\s+Test Applicant/);
+
+      // The exact letter that went out is kept for the Applications page.
+      assert.deepEqual(calls.storedLetter, { afterReceipt: true, body: { protocolVersion: 1,
+        introduction: 'I am applying for the Software Engineering Intern role at Fixture Co.',
+        body: ['I built TypeScript REST APIs for a scheduling product used by students.', 'I reduced dashboard query time by 95 percent with indexed joins.'],
+        conclusion: 'Thank you for considering my application.', companyParagraph: 'Fixture Co builds tools that students rely on every day.' } });
 
       // After the verified receipt, one recruiter note built from the submitted letter goes to the server.
       assert.equal(calls.outreach.length, 1);

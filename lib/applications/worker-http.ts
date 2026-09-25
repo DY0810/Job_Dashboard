@@ -19,6 +19,7 @@ import { beginSubmission, recordReceipt } from './submissions.ts';
 import { applicationContext, applicationDocumentOwner } from './application-context.ts';
 import { createArtifactIntent, uploadArtifact } from './artifacts.ts';
 import { listOutreach, recordOutreachDraft, sendOutreach } from './outreach.ts';
+import { listMaterials, recordSubmittedLetter } from './materials.ts';
 import { documentStorageConfig, readDocumentObject } from './documents-storage.ts';
 import { getPolicy, getProfile } from './stores.ts';
 import { ApplicationContextSchema, ApplicationContextRequestSchema } from './application-context-protocol.ts';
@@ -58,7 +59,7 @@ function checkPath(request: Request, ids: string[]) {
   }
 }
 type BrowserAction = 'list-workers' | 'create-pairing' | 'revoke-pairing' | 'revoke-worker' |
-  'list-runs' | 'create-run' | 'command-run' | 'command-application' | 'list-outreach' | 'send-outreach';
+  'list-runs' | 'create-run' | 'command-run' | 'command-application' | 'list-outreach' | 'send-outreach' | 'list-materials';
 
 const confirmed = <T>(fact: { state: string; value: T | null }) => fact.state === 'confirmed' ? fact.value : null;
 export function buildProviderConfig(
@@ -140,11 +141,12 @@ export async function browserWorkerEndpoint(request: Request, action: BrowserAct
       case 'command-application': body = p.ApplicationSummarySchema.parse(await commandApplication(db, ownerId, ids[0], ids[1], await readPrivateJson(request, p.ApplicationCommandSchema), options)); break;
       case 'list-outreach': body = p.OutreachListSchema.parse(await listOutreach(db, ownerId)); break;
       case 'send-outreach': body = p.OutreachSchema.parse(await sendOutreach(db, ownerId, ids[0], await readPrivateJson(request, p.OutreachSendSchema), options)); break;
+      case 'list-materials': body = p.MaterialsSchema.parse(await listMaterials(db, ownerId)); break;
     }
     return privateJson(body, { headers });
   } catch (error) { return errorResponse(error, headers); }
 }
-export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent' | 'submission-intent' | 'receipt' | 'provider-config' | 'context' | 'artifact-intent' | 'outreach', id?: string) {
+export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent' | 'submission-intent' | 'receipt' | 'provider-config' | 'context' | 'artifact-intent' | 'outreach' | 'letter', id?: string) {
   try {
     checkPath(request, id ? [id] : []);
     const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
@@ -174,6 +176,7 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       case 'context': body = ApplicationContextSchema.parse(await applicationContext(db, token, id!, ApplicationContextRequestSchema.parse(raw), options)); break;
       case 'artifact-intent': body = ArtifactIntentResponseSchema.parse(await createArtifactIntent(db, token, id!, ArtifactIntentSchema.parse(raw), options)); break;
       case 'outreach': body = p.OutreachSchema.parse(await recordOutreachDraft(db, token, id!, p.OutreachDraftSchema.parse(raw), options)); break;
+      case 'letter': body = p.SubmittedLetterAckSchema.parse(await recordSubmittedLetter(db, token, id!, p.SubmittedLetterSchema.parse(raw), options)); break;
       case 'provider-config': {
         ProviderConfigRequestSchema.parse(raw);
         body = await providerConfig(db, workerOwnerId!);

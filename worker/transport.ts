@@ -9,7 +9,7 @@ import {
   PairRequestSchema, PairResponseSchema, PollRequestSchema, PollResponseSchema,
   HeartbeatRequestSchema, EventRequestSchema, EventResponseSchema, WORKER_PROTOCOL_VERSION,
   SubmissionIntentSchema, SubmissionIntentResponseSchema, ReceiptCommandSchema, ReceiptResponseSchema,
-  OutreachDraftSchema, OutreachSchema,
+  OutreachDraftSchema, OutreachSchema, SubmittedLetterSchema, SubmittedLetterAckSchema,
 } from "../lib/applications/worker-protocol.ts";
 import type { PairRequest, HeartbeatRequest, EventRequest } from "../lib/applications/worker-protocol.ts";
 import {
@@ -193,6 +193,10 @@ export function workerTransport(options: {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       // Idempotent on the server: one fixed row per application, sent at most once.
       return post(`/api/worker/applications/${applicationId}/outreach`, OutreachDraftSchema.parse(input), OutreachSchema, signal, true, 45_000);
+    },
+    letter: (applicationId: string, input: z.input<typeof SubmittedLetterSchema>, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
+      return post(`/api/worker/applications/${applicationId}/letter`, SubmittedLetterSchema.parse(input), SubmittedLetterAckSchema, signal, true);
     },
     questionBatch: (applicationId: string, input: QuestionBatch, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");

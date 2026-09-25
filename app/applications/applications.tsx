@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
-import { HEARTBEAT_MS, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach } from '../../lib/applications/worker-protocol';
+import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import styles from '../workers/workers.module.css';
 
@@ -24,12 +24,14 @@ type View = {
   runs: z.infer<typeof RunListSchema> | null;
   policy: z.infer<typeof PolicyResponseSchema> | null;
   outreach: Outreach[];
+  materials: Material[];
   loading: boolean;
   locked: boolean;
   error: string;
 };
 
-const initialView: View = { account: null, workers: null, runs: null, policy: null, outreach: [], loading: true, locked: true, error: '' };
+type Material = z.infer<typeof MaterialsSchema>['materials'][number];
+const initialView: View = { account: null, workers: null, runs: null, policy: null, outreach: [], materials: [], loading: true, locked: true, error: '' };
 
 async function request(path: string, ownerId?: string) {
   const headers = new Headers();
@@ -42,6 +44,26 @@ async function request(path: string, ownerId?: string) {
   if (!response.ok) throw new Error(response.status === 401 ? 'Unlock Workie to view private applications.' :
     response.status === 403 ? 'Applicant access denied.' : 'Private application status is unavailable.');
   return body;
+}
+
+/** The tailored resume (and the lines it changed) and the cover letter that went out with this application. */
+function MaterialsPanel({ item }: { item: Material }) {
+  const { resume, letter } = item;
+  return <>
+    {resume && <div>
+      <div className={styles.row}>
+        <span>Tailored resume: {resume.changes.length ? `${resume.changes.length} line${resume.changes.length === 1 ? '' : 's'} rewritten for this posting` : 'saved'}</span>
+        <a href={`/api/documents/${resume.documentId}/download`} download>Download</a>
+      </div>
+      {resume.changes.length > 0 && <details><summary className={styles.muted}>What changed</summary>
+        <ul className={styles.changes}>{resume.changes.map((change, index) =>
+          <li key={index}><del>{change.before}</del><ins>{change.after}</ins></li>)}</ul>
+      </details>}
+    </div>}
+    {letter && <details><summary className={styles.muted}>Cover letter sent</summary>
+      <pre className={styles.preview}>{['Dear Hiring Manager,', letter.introduction, ...letter.body, letter.conclusion, letter.companyParagraph].join('\n\n')}</pre>
+    </details>}
+  </>;
 }
 
 function outreachStatus(item: Outreach) {
@@ -90,17 +112,20 @@ export default function Applications() {
     else setRefreshing(true);
     try {
       const account = ApplicantSchema.parse(await request('/api/auth/applicant'));
-      const [workers, runs, policy, outreach] = await Promise.all([
+      const [workers, runs, policy, outreach, materials] = await Promise.all([
         WorkerListSchema.parse(await request('/api/workers', account.ownerId)),
         RunListSchema.parse(await request('/api/application-runs', account.ownerId)),
         PolicyResponseSchema.parse(await request('/api/auto-apply/policies', account.ownerId)),
         // Recruiter email is secondary: its failure must not hide the application history.
         request('/api/outreach', account.ownerId).then((body) => OutreachListSchema.parse(body)).catch(() => null),
+        request('/api/applications/materials', account.ownerId).then((body) => MaterialsSchema.parse(body)).catch(() => null),
       ]);
-      if (workers.ownerId !== account.ownerId || runs.ownerId !== account.ownerId || (outreach && outreach.ownerId !== account.ownerId)) {
+      if (workers.ownerId !== account.ownerId || runs.ownerId !== account.ownerId ||
+          (outreach && outreach.ownerId !== account.ownerId) || (materials && materials.ownerId !== account.ownerId)) {
         throw new Error('Account changed. Refresh the current applicant.');
       }
-      setView({ account, workers, runs, policy, outreach: outreach?.outreach ?? [], loading: false, locked: false, error: '' });
+      setView({ account, workers, runs, policy, outreach: outreach?.outreach ?? [], materials: materials?.materials ?? [],
+        loading: false, locked: false, error: '' });
     } catch (error) {
       setView((current) => ({ ...current, loading: false, locked: true,
         error: error instanceof z.ZodError ? 'Private service returned an incompatible response.' :
@@ -122,6 +147,7 @@ export default function Applications() {
   }, {});
   const onlineWorkers = view.workers?.workers.filter((worker) => worker.online) ?? [];
   const outreach = new Map(view.outreach.map((item) => [item.applicationId, item]));
+  const materials = new Map(view.materials.map((item) => [item.applicationId, item]));
   return <>
     <div className={styles.toolbar}>
       <h1>Applications</h1>
@@ -164,6 +190,7 @@ export default function Applications() {
               <div className={styles.row}><span className={styles.muted}>Provider: worker-local configuration / cost: not reported</span>
                 {app.receiptId && <span>Receipt {app.receiptId}{app.submittedAt ? ` / ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
               {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
+              {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
               {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}
                 item={outreach.get(app.id)!} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
             </li>)}

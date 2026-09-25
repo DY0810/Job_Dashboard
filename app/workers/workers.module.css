@@ -43,3 +43,6 @@
 }
 .preview { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--fg-dim); }
 .page .form input[type="email"] { width: 270px; }
+.changes { display: grid; gap: 8px; margin: 6px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
+.changes del { display: block; color: var(--fg-dim); }
+.changes ins { display: block; text-decoration: none; }

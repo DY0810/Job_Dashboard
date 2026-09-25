@@ -27,6 +27,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { NotificationBell } from "./notification-bell";
 import { ApplicantSwitcher } from "./applicant-switcher";
 import { AppliedCheckbox } from "./applied-checkbox";
+import { AppliedSync } from "./applied-sync";
 import { AppNav } from "./app-nav";
 
 /**
@@ -479,6 +480,7 @@ export default async function Page({
       ) : null}
 
       <Drawer jobId={p.job} closeHref={withJob(p, null)} />
+      <AppliedSync />
     </main>
   );
 }

@@ -37,7 +37,7 @@ export function AppliedCheckbox({
     <span className="inline-flex items-center gap-1">
       <label
         className="inline-flex cursor-pointer items-center gap-2 text-[11px]"
-        title="Application status saved only in this browser"
+        title="Saved in this browser. When you are signed in, auto-apply also skips this job."
       >
         <input
           type="checkbox"

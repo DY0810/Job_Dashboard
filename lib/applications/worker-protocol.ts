@@ -114,6 +114,17 @@ export const OutreachSchema = z.strictObject({
   sentAt: timestamp.nullable(), updatedAt: timestamp,
 });
 export const OutreachListSchema = z.strictObject({ ownerId: z.string().min(1), outreach: z.array(OutreachSchema).max(500) });
+// The cover letter exactly as uploaded with a submitted application, and what the applicant can review.
+const paragraph = z.string().trim().min(1).max(900);
+const letterText = { introduction: paragraph, body: z.array(paragraph).min(1).max(4), conclusion: paragraph, companyParagraph: paragraph };
+export const SubmittedLetterSchema = z.strictObject({ ...protocol, ...letterText });
+export const SubmittedLetterAckSchema = z.strictObject({ applicationId: uuid, stored: z.literal(true) });
+export const MaterialsSchema = z.strictObject({ ownerId: z.string().min(1), materials: z.array(z.strictObject({
+  applicationId: uuid,
+  resume: z.strictObject({ documentId: uuid, mime: z.string(), createdAt: timestamp,
+    changes: z.array(z.strictObject({ before: z.string(), after: z.string() })).max(64) }).nullable(),
+  letter: z.strictObject(letterText).nullable(),
+})).max(500) });
 export type OutreachDraft = z.infer<typeof OutreachDraftSchema>;
 export type Outreach = z.infer<typeof OutreachSchema>;
 export type PairingCreate = z.infer<typeof PairingCreateSchema>;
