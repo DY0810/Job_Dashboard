@@ -106,9 +106,20 @@ export async function verifyField(page: Page, field: AtsField, value: AtsValue |
     return await option.count() > 0 && await option.isChecked();
   }
   if (field.kind === 'select') return typeof value === 'string' && (await locator.inputValue()) === value;
-  if (field.kind === 'combobox') return typeof value === 'string' &&
-    (await locator.evaluate((node) => node.closest('.select__control')?.textContent?.trim() ?? '')) === value;
-  return typeof value === 'string' && (await locator.inputValue()) === value;
+  if (field.kind === 'combobox') {
+    if (typeof value !== 'string') return false;
+    const shown = await locator.evaluate((node) => {
+      const control = node.closest('.select__control');
+      return { text: control?.textContent?.trim() ?? '', flag: /\biti__([a-z]{2})\b/.exec(control?.querySelector('.iti__flag')?.className ?? '')?.[1] };
+    });
+    // Greenhouse's phone-country picker shows "United States +1" as a US flag and "+1"; the flag tells +1 countries apart.
+    return shown.text === value ||
+      (shown.flag !== undefined && `${new Intl.DisplayNames(['en'], { type: 'region' }).of(shown.flag.toUpperCase())} ${shown.text}` === value);
+  }
+  if (typeof value !== 'string') return false;
+  const actual = await locator.inputValue();
+  // Greenhouse reformats phone numbers as they are typed: 4155550123 becomes (415) 555-0123.
+  return actual === value || (/\bphone\b/i.test(field.label) && /\d/.test(value) && actual.replace(/\D/g, '') === value.replace(/\D/g, ''));
 }
 
 export async function observeReceipt(page: Page, expected: AtsApplication) {

@@ -45,6 +45,8 @@ const text = (id, label, required = true, tag = 'input') => `<label id="${id}-la
 const FORM = `<!doctype html><title>Job Application for Software Engineering Intern at Fixture Co</title>
 <form id="application-form">
   ${text('first_name', 'First Name')}${text('last_name', 'Last Name')}${text('email', 'Email')}${text('phone', 'Phone', false)}
+  <label id="country-label" for="country">Country</label>
+  <div class="select__control"><div class="select__single-value"></div><input id="country" name="country" role="combobox" aria-required="false"></div>
   <label id="resume-label" for="resume">Resume/CV*</label><input id="resume" name="resume" type="file">
   <label id="cover_letter-label" for="cover_letter">Cover Letter</label><input id="cover_letter" name="cover_letter" type="file">
   ${text('question_101', 'LinkedIn Profile')}
@@ -57,12 +59,22 @@ const FORM = `<!doctype html><title>Job Application for Software Engineering Int
 for (const input of document.querySelectorAll('input[role="combobox"]')) input.addEventListener('input', () => {
   document.querySelectorAll('[role="listbox"]').forEach(node => node.remove());
   const list = document.createElement('div'); list.setAttribute('role', 'listbox');
-  for (const option of ['Yes', 'No']) {
+  // Like the live phone-country picker: "United States +1" is shown as a flag and "+1".
+  const options = input.id === 'country' ? [['United States +1', 'us'], ['Canada +1', 'ca']] : [['Yes'], ['No']];
+  for (const [option, flag] of options) {
     const item = document.createElement('div'); item.setAttribute('role', 'option'); item.textContent = option;
-    item.onclick = () => { input.closest('.select__control').querySelector('.select__single-value').textContent = option; input.value = ''; list.remove(); };
+    item.onclick = () => {
+      input.closest('.select__control').querySelector('.select__single-value').innerHTML = flag ? '<div class="iti__flag iti__' + flag + '"></div><span>+1</span>' : option;
+      input.value = ''; list.remove();
+    };
     list.append(item);
   }
   input.closest('.select__control').after(list);
+});
+// Like the live form, the phone is reformatted as it is typed.
+document.getElementById('phone').addEventListener('input', event => {
+  const d = event.target.value.replace(/[^0-9]/g, '');
+  if (d.length === 10) event.target.value = '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
 });
 document.getElementById('submit').onclick = async () => {
   const base64 = async file => { let out = ''; for (const byte of new Uint8Array(await file.arrayBuffer())) out += String.fromCharCode(byte); return btoa(out); };
@@ -101,7 +113,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       },
       // What the server derives from confirmed profile facts (see applicationAnswers).
       answers: { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', linkedin: 'https://linkedin.com/in/test',
-        us_authorized: 'Yes', posting_authorized: 'Yes', us_sponsorship_ever: 'No', posting_sponsorship_ever: 'No' },
+        phone: '4155550123', phone_country: 'US', us_authorized: 'Yes', posting_authorized: 'Yes', us_sponsorship_ever: 'No', posting_sponsorship_ever: 'No' },
       documents: { resumeMaster: masterRef, resume: masterRef }, tailoredArtifact: null, manifestHash: null, artifactHashes: [], createdAt: Date.now(),
     };
     let intent;
@@ -179,7 +191,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       assert.deepEqual(calls.receipt.identity, context.identity);
       assert.equal(calls.receipt.evidence.pageUrl, `${URL_BASE}${JOB}/confirmation`);
       const { fields, files } = calls.captured;
-      assert.deepEqual(fields, { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', phone: '',
+      assert.deepEqual(fields, { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', phone: '(415) 555-0123', country: '+1',
         question_101: 'https://linkedin.com/in/test', question_102: 'Yes', question_103: 'No', question_104: NARRATIVE });
       assert.equal(sha256(Buffer.from(files.resume.base64, 'base64')), context.tailoredArtifact.outputHash, 'the tailored resume is the one submitted');
       assert.equal(calls.letter.at(-1).jobSummary, JD);

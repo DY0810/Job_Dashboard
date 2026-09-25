@@ -21,6 +21,7 @@ const config = {
 
 test("ATS failures report bounded codes without including field values", () => {
   assert.equal(atsFailureReason(new AtsError("FIELD_NOT_FOUND", "private field value")), "ats_field_not_found");
+  assert.equal(atsFailureReason(new AtsError("FIELD_RECONCILIATION_FAILED", "candidate-location")), "ats_field_reconciliation_failed_candidate_location");
   assert.equal(atsFailureReason(new Error("private field value")), "ats_execution_failed");
 });
 

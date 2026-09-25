@@ -159,7 +159,11 @@ export function providerFailureResult(error: unknown) {
 }
 
 export function atsFailureReason(error: unknown) {
-  if (error instanceof AtsError) return `ats_${error.code.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 70)}`;
+  if (error instanceof AtsError) {
+    // A field key names the failing field; any other message may hold a private value and is dropped.
+    const field = error.message !== error.code && /^[a-z][a-z0-9_-]{0,63}$/.test(error.message) ? `_${error.message}` : '';
+    return `ats_${error.code.toLowerCase()}${field}`.replace(/[^a-z0-9_]/g, '_').slice(0, 80);
+  }
   if (error instanceof z.ZodError) return "ats_schema_invalid";
   if (error instanceof Error && error.name === "TimeoutError") return "ats_timeout";
   return "ats_execution_failed";
@@ -287,7 +291,11 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       runtime = await browser({
         userDataDir: join(directory, "browser", `${application.identity.ats}-${application.identity.tenant.replace(/[^A-Za-z0-9_-]/g, "_")}`),
         approvedOrigins: [new URL(application.applicationUrl).origin,
-          ...(hostname === "job-boards.greenhouse.io" ? ["https://job-boards.cdn.greenhouse.io", "https://s4-recruiting.cdn.greenhouse.io", "https://my.greenhouse.io", "https://boards.greenhouse.io"] : [])],
+          ...(hostname === "job-boards.greenhouse.io" ? ["https://job-boards.cdn.greenhouse.io", "https://s4-recruiting.cdn.greenhouse.io", "https://my.greenhouse.io", "https://boards.greenhouse.io",
+            // The Location (City) autocomplete; without it the profile's location can never be selected.
+            "https://api-geocode-earth-proxy.greenhouse.io",
+            // Greenhouse runs reCAPTCHA Enterprise on submit, as in any browser; blocking it can leave a submit unconfirmed.
+            "https://www.recaptcha.net", "https://www.gstatic.com"] : [])],
         allowLoopback: /^127\./.test(hostname), headless: true,
       });
       const observed = await adapter.observe(runtime, application, signal);
@@ -537,7 +545,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   main().catch(error => {
     const code = error instanceof TransportError ? error.message :
       error instanceof Error && ERROR_CODES.has(error.message) ? error.message : "WORKER_FAILED";
-    process.stderr.write(JSON.stringify({ error: code }) + "\n");
+    // An unnamed failure keeps its type and first line (schema paths only, never values) so it can be diagnosed.
+    const detail = code !== "WORKER_FAILED" ? undefined : error instanceof z.ZodError
+      ? `ZodError ${error.issues.slice(0, 5).map(issue => `${issue.path.join(".")}:${issue.code}`).join(" ")}`
+      : error instanceof Error ? `${error.name}${error instanceof AtsError ? ` ${error.code}` : ""}: ${error.message.split("\n")[0].slice(0, 160)}` : typeof error;
+    process.stderr.write(JSON.stringify({ error: code, ...(detail ? { detail } : {}) }) + "\n");
     process.exitCode = 1;
   });
 }
