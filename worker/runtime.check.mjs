@@ -78,6 +78,23 @@ test("default dispatch releases waiting slot, emits no submitted state, and runs
   assert.equal((await store.read("checkpoint")).pending, null);
 });
 
+test("a network blip on poll keeps the worker running; an unexpected transport error still stops it", async () => {
+  const s = scope(), store = await storeFor(s), controller = new AbortController();
+  let polls = 0;
+  const running = runWorker({ scope: s, store, signal: controller.signal, transport: {
+    poll: async () => { polls += 1; throw new TransportError("NETWORK_UNAVAILABLE"); }, heartbeat: async () => clockResponse(),
+  } });
+  const stopped = await Promise.race([running.then(() => "exited", error => error.message), sleep(300).then(() => "running")]);
+  assert.equal(stopped, "running", "a failed poll used to end the worker with NETWORK_UNAVAILABLE");
+  assert.equal(polls, 1);
+  controller.abort();
+  await running;
+  const s2 = scope();
+  await assert.rejects(runWorker({ scope: s2, store: await storeFor(s2), signal: new AbortController().signal, transport: {
+    poll: async () => { throw new TransportError("HTTP_409", 409); }, heartbeat: async () => clockResponse(),
+  } }), /HTTP_409/);
+});
+
 test("safe-stage dispatch receives the owner-selected Jev action selector", async () => {
   const s = scope(), store = await storeFor(s), controller = new AbortController();
   const chooseAction = async (input, options) => {

@@ -19,6 +19,8 @@ import { questionClient, QuestionDispatchSchema, abortable, type FocusObserver }
 import type { JevActionSelector } from "./jev.ts";
 import type { StructuredGenerationResult, StructuredTaskInput } from "./providers.ts";
 
+const transient = (error: unknown) => error instanceof TransportError && (error.message === "NETWORK_UNAVAILABLE" || error.status >= 500);
+
 const JournalSchema = z.strictObject({
   version: z.literal(1), scope: ScopeSchema,
   pending: z.strictObject({ applicationId: z.uuid(), event: EventRequestSchema }).nullable(),
@@ -120,9 +122,13 @@ export async function runWorker(options: {
         active?.guard.check();
         const started = clock();
         const lease = active?.lease;
-        const response = PollResponseSchema.parse(await abortable(transport.heartbeat(lease ? {
-          applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
-        } : null, signal), signal));
+        let response;
+        // Idle, a missed beat changes nothing; holding a lease, losing contact still stops work (fail closed).
+        try {
+          response = PollResponseSchema.parse(await abortable(transport.heartbeat(lease ? {
+            applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
+          } : null, signal), signal));
+        } catch (error) { if (!lease && transient(error)) return; throw error; }
         if (!active) {
           if (response.lease) throw new Error("UNEXPECTED_ASSIGNMENT");
           return;
@@ -164,7 +170,10 @@ export async function runWorker(options: {
       await exclusive(async () => {
         if (signal.aborted) return;
         const started = clock();
-        const response = PollResponseSchema.parse(await abortable(transport.poll(signal), signal));
+        let response;
+        // A poll holds no lease, and the server hands a lost assignment back first, so retry after a blip.
+        try { response = PollResponseSchema.parse(await abortable(transport.poll(signal), signal)); }
+        catch (error) { if (transient(error)) return; throw error; }
         if (signal.aborted) return;
         if (!response.lease) { options.status?.("idle"); return; }
         active = { lease: response.lease,
