@@ -78,15 +78,17 @@ test("default dispatch releases waiting slot, emits no submitted state, and runs
   assert.equal((await store.read("checkpoint")).pending, null);
 });
 
-test("a network blip on poll keeps the worker running; an unexpected transport error still stops it", async () => {
+test("a network blip on poll or intervention poll keeps the worker running; an unexpected transport error still stops it", async () => {
   const s = scope(), store = await storeFor(s), controller = new AbortController();
-  let polls = 0;
+  let polls = 0, interventionPolls = 0;
   const running = runWorker({ scope: s, store, signal: controller.signal, transport: {
     poll: async () => { polls += 1; throw new TransportError("NETWORK_UNAVAILABLE"); }, heartbeat: async () => clockResponse(),
+    interventions: async () => { interventionPolls += 1; throw new TransportError("NETWORK_UNAVAILABLE"); },
   } });
   const stopped = await Promise.race([running.then(() => "exited", error => error.message), sleep(300).then(() => "running")]);
   assert.equal(stopped, "running", "a failed poll used to end the worker with NETWORK_UNAVAILABLE");
   assert.equal(polls, 1);
+  assert.equal(interventionPolls, 1);
   controller.abort();
   await running;
   const s2 = scope();

@@ -162,7 +162,9 @@ export async function runWorker(options: {
     interventions = (async () => {
       if (!transport.interventions) return; // Existing compiled control-v1 transports remain usable.
       while (!signal.aborted) {
-        await questions.pollInterventions();
+        // Each poll first replays its own journal, so a network blip only skips one beat.
+        try { await questions.pollInterventions(); }
+        catch (error) { if (!transient(error)) throw error; }
         await delay(HEARTBEAT_MS, undefined, { signal });
       }
     })().catch(error => { if (!signal.aborted) fail(error); });
