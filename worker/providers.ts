@@ -473,6 +473,11 @@ function parseStructuredResult(content: string, input: StructuredTaskInput): z.i
     }
   } else if (input.task === "cover_letter") {
     if (result.data.task !== "cover_letter") throw new ProviderError("PROVIDER_INVALID_RESPONSE");
+    const proofread = (value: string) => value.replace(/\s*—\s*/g, ", ").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+    result.data.introduction = proofread(result.data.introduction);
+    result.data.body = result.data.body.map(item => ({ ...item, text: proofread(item.text) }));
+    result.data.conclusion = proofread(result.data.conclusion);
+    result.data.companyParagraph = proofread(result.data.companyParagraph);
     const evidence = new Set(input.evidence.map(item => item.id));
     const text = [result.data.introduction, ...result.data.body.map(item => item.text), result.data.conclusion, result.data.companyParagraph].join(' ');
     if (/[—\r\n]/.test(text)) throw new ProviderError("PROVIDER_INVALID_RESPONSE", "letter_format");

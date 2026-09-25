@@ -372,8 +372,12 @@ test('cover letters cite resume evidence, fit one page, and reject unsupported c
     evidence: [{ id, excerpt: 'Built reliable TypeScript services.' }] };
   const result = await provider.generate(input);
   assert.equal((await PDFDocument.load(await renderCoverLetter(result, 'Test Applicant'))).getPageCount(), 1);
-  letter.body[0].text += ' — invented';
-  await assert.rejects(provider.generate(input), error => error instanceof ProviderError && error.diagnostic === 'letter_format');
+  letter.body[0].text = 'I built reliable TypeScript services — and learned to test each change against real requirements.';
+  const proofread = await provider.generate(input);
+  assert(!JSON.stringify(proofread).includes('—'));
+  assert.equal((await PDFDocument.load(await renderCoverLetter(proofread, 'Test Applicant'))).getPageCount(), 1);
+  letter.body[0].evidenceIds = ['00000000-0000-4000-8000-000000000099'];
+  await assert.rejects(provider.generate(input), error => error instanceof ProviderError && error.diagnostic === 'letter_evidence');
 });
 
 test("BYOK compatible output uses the approved keychain address and exact result schema", async () => {
