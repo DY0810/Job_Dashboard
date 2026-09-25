@@ -56,7 +56,8 @@ function profileFacts(profile: Awaited<ReturnType<typeof getProfile>>['profile']
   };
 }
 
-export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['profile'], authorized: string[], company: string) {
+export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['profile'], authorized: string[], company: string,
+  postingCountry: string | null = null) {
   const answers: Record<string, string | boolean> = {};
   const first = factValue<string>(profile.identity.legalFirstName) ?? factValue<string>(profile.identity.preferredName);
   const last = factValue<string>(profile.identity.legalLastName);
@@ -76,6 +77,8 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
   if (linkedin) answers.linkedin = linkedin;
   const portfolio = factValue<string>(profile.identity.portfolio);
   if (portfolio) answers.portfolio = portfolio;
+  const github = factValue<string>(profile.identity.github);
+  if (github) answers.github = github;
   const pronouns = factValue<string>(profile.voluntary.pronouns);
   if (pronouns === 'he/him/his') answers.voluntary_pronouns = pronouns;
   if (factValue<string>(profile.voluntary.gender) === 'Man') answers.voluntary_gender = 'Male';
@@ -103,6 +106,20 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
   if (usAuthorization) {
     const sponsorship = factValue<boolean>(usAuthorization.sponsorshipNow);
     if (sponsorship !== null) answers.sponsorship_now = sponsorship ? 'Yes' : 'No';
+  }
+  // Per-country work rights for the US and for the posting's own country, so differently worded
+  // Greenhouse questions resolve from confirmed facts instead of reaching the inbox again.
+  const yesNo = (value: boolean | null) => value === null ? null : value ? 'Yes' : 'No';
+  for (const [prefix, code] of [['us', 'US'], ['posting', postingCountry]] as const) {
+    const item = code ? profile.authorization.countries.find(entry => factValue<string>(entry.country) === code) : undefined;
+    if (!item) continue;
+    const now = factValue<boolean>(item.sponsorshipNow), future = factValue<boolean>(item.sponsorshipFuture);
+    const rights = {
+      authorized: yesNo(factValue<boolean>(item.rightToWork)), sponsorship_now: yesNo(now),
+      // "Now or in the future": Yes if either is true, No only when both are confirmed false.
+      sponsorship_ever: now === true || future === true ? 'Yes' : now === false && future === false ? 'No' : null,
+    };
+    for (const [key, value] of Object.entries(rights)) if (value) answers[`${prefix}_${key}`] = value;
   }
   if (authorized.includes('authorized')) {
     answers.authorized = 'Yes'; answers.work_authorization = 'Yes';
@@ -186,13 +203,12 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
     sourceFields: official.sourceFields, paid: official.paid,
   });
   const requirements = { ...parsedRequirements, excerpts: [...new Set([...parsedRequirements.excerpts, ...candidate.reasons])].slice(0, 32) };
-  const answers = applicationAnswers(profile, facts.workAuthorization.values, official.company);
+  const answers = applicationAnswers(profile, facts.workAuthorization.values, official.company, requirements.countries.length === 1 ? requirements.countries[0] : null);
   const screeningAnswers = await tx.select({ question: questions, answer: questionAnswers }).from(questions)
     .innerJoin(questionAnswers, and(eq(questionAnswers.ownerId, questions.ownerId), eq(questionAnswers.id, questions.answerId)))
     .where(and(eq(questions.ownerId, worker.ownerId), eq(questions.applicationId, checked.id), eq(questions.active, true)));
   for (const { question, answer } of screeningAnswers) {
-    if (!question.resolvedAt || question.profileRevision !== profileResponse.revision ||
-        question.policyRevision !== policy.revision || question.descriptor.scope.applicationId !== checked.id ||
+    if (!question.resolvedAt || question.policyRevision !== policy.revision || question.descriptor.scope.applicationId !== checked.id ||
         answer.applicationId !== checked.id || answer.value.type !== 'text') continue;
     const value = answer.value.value.trim();
     if (!value) continue;

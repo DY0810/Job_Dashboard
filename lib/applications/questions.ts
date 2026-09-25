@@ -66,9 +66,10 @@ function currentDescriptor(row: QuestionRow, ctx: Context) {
     row.scopeHash === hashValue(row.descriptor.scope) && row.semanticHash === semanticHash(row.descriptor) &&
     currentTimeframe(row.descriptor, ctx.now);
 }
+// Fact versions pin the facts an answer depends on. The profile revision is not compared: any unrelated
+// profile save used to reopen every answered question and strand applications with none left in the inbox.
 function fresh(row: QuestionRow, ctx: Context) {
-  return currentDescriptor(row, ctx) && row.profileRevision === ctx.profile.revision &&
-    hashValue(factVersions(row.descriptor, ctx)) === hashValue(row.factVersions);
+  return currentDescriptor(row, ctx) && hashValue(factVersions(row.descriptor, ctx)) === hashValue(row.factVersions);
 }
 async function workerAvailable(tx: WorkerTx, app: ApplicationRow, ctx: Context) {
   const [worker] = await tx.select().from(workers).where(and(eq(workers.ownerId, ctx.ownerId), eq(workers.id, app.workerId)));
@@ -359,7 +360,7 @@ async function reusableAnswer(tx: WorkerTx, row: QuestionRow, app: ApplicationRo
     if (!scopeMatches(answer, row)) continue;
     if (answer.reuse !== 'application' && (!review || answer.meaningReviewId !== review.id ||
         !reuseScopes(row.descriptor, true, ctx).includes(answer.reuse))) continue;
-    if (answer.profileRevision !== ctx.profile.revision || answer.policyRevision !== ctx.policy.revision ||
+    if (answer.policyRevision !== ctx.policy.revision ||
         hashValue(answer.factVersions) !== hashValue(row.factVersions) || !await answerValid(tx, row, answer.value, ctx)) return;
     return answer;
   }

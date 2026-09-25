@@ -12,6 +12,12 @@ const waiting: readonly ApplicationState[] = [
   'provider_unavailable', 'retryable_failure', 'blocked_unsupported',
 ];
 export function isWaitingState(state: ApplicationState): boolean { return waiting.includes(state); }
+/** Failures a retry from the checkpoint can clear. `provider_inspect_required` came from a removed
+ * fill/inspect model gate that parked answered forms; a real verification hold stays excluded. */
+export function isSafeRetryState(state: ApplicationState, reasonCode: string | null): boolean {
+  return state === 'provider_unavailable' || state === 'retryable_failure' ||
+    (state === 'needs_verification' && reasonCode === 'provider_inspect_required');
+}
 export function isTerminalState(state: ApplicationState): boolean {
   return ['submitted', 'failed', 'skipped', 'cancelled'].includes(state);
 }

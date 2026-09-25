@@ -17,6 +17,8 @@ export const AtsFieldSchema = z.strictObject({
 export type AtsField = z.infer<typeof AtsFieldSchema>;
 export const formQuestionKey = (field: Pick<AtsField, 'key' | 'label'>) =>
   `form-${createHash('sha256').update(`${field.key}\u0000${field.label}`).digest('hex').slice(0, 32)}`;
+// Adapters list only actions Workie can perform. None implements 'inspect': offering it let the model
+// park fully answered forms in needs_verification, with no inbox path out.
 export const AtsObservationSchema = z.strictObject({
   identity: AtsIdentitySchema, company: z.string().trim().min(1).max(200), role: z.string().trim().min(1).max(300),
   fields: z.array(AtsFieldSchema).min(1).max(64), actions: z.array(z.enum(['fill', 'inspect'])).min(1).max(2),

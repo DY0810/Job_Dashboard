@@ -517,6 +517,16 @@ describe('async leases, checkpoints and stable identity', () => {
     }, options);
     await expect(commandApplication(db, 'alice', next.run.id, next.app.id,
       { ...revision(blocked.revision), action: 'retry-safe' }, options)).rejects.toMatchObject({ status: 409 });
+    // Forms parked by the removed fill/inspect gate retry from their checkpoint; real verification holds do not.
+    for (const [reasonCode, allowed] of [['provider_inspect_required', true], ['captcha_required', false]] as const) {
+      const parked = await prepared('alice', `parked-${reasonCode}`);
+      const held = await recordWorkerEvent(db, parked.worker.token, parked.app.id, {
+        ...event(await claim(parked.worker.token), 'needs_verification'), reasonCode,
+      }, options);
+      const retry = commandApplication(db, 'alice', parked.run.id, parked.app.id, { ...revision(held.revision), action: 'retry-safe' }, options);
+      if (allowed) expect(await retry).toMatchObject({ state: 'screening' });
+      else await expect(retry).rejects.toMatchObject({ status: 409 });
+    }
   });
   it('revocation commits unknown submission and permanently rejects all subsequent token operations', async () => {
     const { worker, app, run } = await prepared();

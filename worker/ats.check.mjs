@@ -116,12 +116,7 @@ test('Greenhouse and Ashby fixtures fill an uploaded document and verify exact-r
         assert.equal(result.receipt.identity.ats, ats);
         assert.equal(result.receipt.identity.requisition, '123');
         assert.equal(result.receipt.role, input.role);
-        assert.equal(sentState.company, '[redacted]');
-        assert.equal(sentState.role, '[redacted]');
-        assert.equal(sentState.ats, 'candidate-form');
-        assert.equal(sentState.tenant, 'redacted');
-        assert(!JSON.stringify(sentState).includes('Fixture Co'));
-        assert(!JSON.stringify(sentState).includes('Software Engineering Intern'));
+        assert.equal(sentState, undefined, 'fill is the only offered action, so no form state reaches a model');
       } finally { await runtime.close(); }
     }
   } finally {
@@ -130,7 +125,7 @@ test('Greenhouse and Ashby fixtures fill an uploaded document and verify exact-r
   }
 });
 
-test('configured TypeSafe Jev selector drives a synthetic ATS fixture with redacted state', { skip: !browserReady }, async () => {
+test('configured TypeSafe Jev selector is neither called nor billed when fill is the only action', { skip: !browserReady }, async () => {
   const fixture = await fixtureServer();
   const directory = await mkdtemp(join(tmpdir(), 'workie-ats-typesafe-'));
   const resume = join(directory, 'resume.pdf');
@@ -161,13 +156,8 @@ test('configured TypeSafe Jev selector drives a synthetic ATS fixture with redac
     try {
       const result = await runAtsApplication({ runtime, adapter: greenhouse, application: input, facts, requirements, chooseAction: selector });
       assert.equal(result.state, 'submitted');
-      assert.equal(request.state.company, '[redacted]');
-      assert.equal(request.state.role, '[redacted]');
-      assert.equal(request.state.ats, 'candidate-form');
-      assert.equal(request.state.tenant, 'redacted');
-      assert(!JSON.stringify(request).includes('Fixture Co'));
-      assert(!JSON.stringify(request).includes('Software Engineering Intern'));
-      assert.equal((await providerStore.read('typesafe-budget')).requests, 1);
+      assert.equal(request, undefined, 'a deterministic fill makes no paid Jev request');
+      assert.equal((await providerStore.read('typesafe-budget'))?.requests ?? 0, 0);
     } finally { await runtime.close(); }
   } finally {
     await new Promise((resolve) => fixture.server.close(resolve));
@@ -198,7 +188,7 @@ test('screening and receipt binding refuse ineligible or wrong-role applications
   }
 });
 
-test('submission uses one deterministic intent and an inspect decision cannot fall through to filling', { skip: !browserReady }, async () => {
+test('submission uses one deterministic intent and a model is never asked to park an answered form', { skip: !browserReady }, async () => {
   const fixture = await fixtureServer();
   const directory = await mkdtemp(join(tmpdir(), 'workie-ats-submit-'));
   const resume = join(directory, 'resume.pdf');
@@ -226,12 +216,16 @@ test('submission uses one deterministic intent and an inspect decision cannot fa
     } finally { await runtime.close(); }
     const inspectRuntime = await createBrowserRuntime({ userDataDir: join(directory, 'inspect-browser'), approvedOrigins: [fixture.origin], allowLoopback: true });
     try {
-      const chooseInspect = createJevActionSelector({ evaluate: async () => ({ model: 'jev-1.13.0', answers: { select_action: {
+      let asked = 0;
+      const chooseInspect = createJevActionSelector({ evaluate: async () => { asked += 1; return { model: 'jev-1.13.0', answers: { select_action: {
         type: 'choice', choice: 'inspect', probabilities: { fill: 0, inspect: 1 }, confidence: 1,
-      } }, usage: { input_tokens: 1, output_tokens: 0 } }) });
-      await assert.rejects(runAtsApplication({ runtime: inspectRuntime, adapter: greenhouse, application: input, facts, requirements,
+      } }, usage: { input_tokens: 1, output_tokens: 0 } }; } });
+      const result = await runAtsApplication({ runtime: inspectRuntime, adapter: greenhouse, application: input, facts, requirements,
         chooseAction: chooseInspect,
-      }), /PROVIDER_INSPECT_SELECTED/);
+      });
+      // Fill is the only action the adapter offers, so the selector decides deterministically.
+      assert.equal(asked, 0);
+      assert.equal(result.state, 'submitted');
     } finally { await inspectRuntime.close(); }
   } finally {
     await new Promise((resolve) => fixture.server.close(resolve));

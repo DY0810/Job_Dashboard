@@ -20,7 +20,7 @@ import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
 import { type WorkerOptions } from './worker-store.ts';
 import { workerTransport } from '../../worker/transport.ts';
-import { screeningQuestions } from '../../worker/screening.ts';
+import { formQuestions, screeningQuestions } from '../../worker/screening.ts';
 import {
   AnswerCommandSchema, QuestionDescriptorSchema, QuestionDetailSchema, validQuestionAnswer,
   type AnswerCommand, type AnswerValue, type QuestionDescriptor, type QuestionField, type QuestionBatch,
@@ -334,7 +334,8 @@ describe('question DAL atomic answers and scoped reuse', () => {
   });
 
   it.each(['profile', 'policy', 'expired'] as const)('future batches do not reuse answers after %s changed', async change => {
-    const q = descriptor();
+    // A profile change matters only through a fact the answer depends on.
+    const q = descriptor(change === 'profile' ? { factIds: [profile.availability.hoursDuringClasses.id] } : {});
     if (change === 'expired') q.scope.validUntil = { value: '2026-09-21', precision: 'day' };
     const a = await prepared(), first = await batch(a, [q]); await review(first.id);
     await answerQuestion(db, 'alice', first.id,
@@ -415,6 +416,28 @@ describe('question DAL atomic answers and scoped reuse', () => {
     const result = await answerQuestion(db, 'alice', q.id, await answerInput(q.id), options);
     expect(result.resumedApplicationIds).toEqual([a.app.id]);
     expect(await qRow(q.id)).toMatchObject({ profileRevision: 2, factVersions: current.factVersions });
+  });
+
+  it('an unrelated profile save neither reopens answered form questions nor strands the application', async () => {
+    const form = (label: string, key = 'question_1') => ({ key, label, kind: 'text' as const, required: true });
+    const contextFor = (f: Fixture) => ({ applicationId: f.app.id, profileRevision: 1, company: 'Synthetic Employer', role: 'Intern',
+      applicationUrl: 'https://example.test/apply', identity: { ats: 'fixture', tenant: 'employer', requisition: f.app.requisition } }) as never;
+    const a = await prepared(), asked = formQuestions(contextFor(a), [form('How did you hear about us?')]).questions;
+    const first = await batch(a, asked);
+    await answerQuestion(db, 'alice', first.id, await answerInput(first.id, { type: 'text', value: 'LinkedIn' }), options);
+    const b = await prepared('alice', 'second');
+    const pair = await batch(b, formQuestions(contextFor(b), [form('Why us?'), form('Why this role?', 'question_2')]).questions);
+    await answerQuestion(db, 'alice', pair.id, await answerInput(pair.id, { type: 'text', value: 'Mission' }), options);
+    await editProfile(false);
+    // The worker observes the same form again after the save: the stored answer still applies.
+    await batch(a, asked);
+    expect(await appRow(a.app.id)).toMatchObject({ state: 'screening' });
+    expect((await qRow(first.id)).resolvedAt).not.toBeNull();
+    // Answering the last open question resumes the application even though its earlier answer predates the save.
+    const last = pair.result.questionIds[1];
+    const resumed = await answerQuestion(db, 'alice', last, await answerInput(last, { type: 'text', value: 'Scope' }), options);
+    expect(resumed.resumedApplicationIds).toEqual([b.app.id]);
+    expect((await getInboxStatus(db, 'alice', options)).unresolved).toBe(0);
   });
 
   it('current-profile answer updates fence active work without reusing stale facts or rewriting submitted answers', async () => {

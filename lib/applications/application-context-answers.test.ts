@@ -111,3 +111,39 @@ describe('Figma education and links', () => {
     expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, grad)).toBeUndefined();
   });
 });
+
+describe('common Greenhouse wording', () => {
+  it('answers links, work authorization and sponsorship from confirmed facts for any employer', () => {
+    const profile = createEmptyProfile();
+    profile.identity.linkedin = confirmed(profile.identity.linkedin, 'https://linkedin.com/in/example');
+    profile.identity.github = confirmed(profile.identity.github, 'https://github.com/example');
+    const us = ProfileSections.authorization.parse({ countries: [{}] }).countries[0];
+    us.country = confirmed(us.country, 'US');
+    const inUs = <T extends typeof us.rightToWork>(fact: T, value: boolean) => ({ ...confirmed(fact, value), scope: { ...fact.scope, kind: 'country' as const, country: 'US' } });
+    us.rightToWork = inUs(us.rightToWork, true);
+    us.sponsorshipNow = inUs(us.sponsorshipNow, false);
+    profile.authorization.countries = [us];
+    expect(ProfileSchema.safeParse(profile).success).toBe(true);
+    const ask = (label: string, postingCountry: string | null = 'US', kind: 'text' | 'combobox' = 'combobox') => greenhouseAnswer({
+      identity: { ats: 'greenhouse' as const, tenant: 'sage49', requisition: '6131185004' }, company: 'Sage', role: 'Full Stack Intern',
+      applicationUrl: 'https://job-boards.greenhouse.io/sage49/jobs/6131185004',
+      answers: applicationAnswers(profile, ['authorized'], 'Sage', postingCountry), documents: {},
+    }, { key: 'question_1', label, kind, required: true });
+    const future = 'Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa)?';
+    expect(ask('LinkedIn Profile', 'US', 'text')).toBe('https://linkedin.com/in/example');
+    expect(ask('GitHub URL', 'US', 'text')).toBe('https://github.com/example');
+    expect(ask('Are you legally authorized to work in the country for which you are applying?')).toBe('Yes');
+    expect(ask('Are you authorized to work in the US?', null)).toBe('Yes');
+    expect(ask('Do you require sponsorship for employment visa status?')).toBe('No');
+    expect(ask(future)).toBeUndefined(); // future sponsorship is not confirmed yet
+    us.sponsorshipFuture = inUs(us.sponsorshipFuture, false);
+    expect(ask(future)).toBe('No');
+    // Ambiguous or unsupported wording still reaches the inbox.
+    expect(ask('How did you hear about us? (LinkedIn, Handshake, other)', 'US', 'text')).toBeUndefined();
+    expect(ask('Are you legally authorized to work in the United States without sponsorship?')).toBeUndefined();
+    expect(ask('Are you not authorized to work in the US?')).toBeUndefined();
+    expect(ask('Are you authorized to work in the country you live in?')).toBeUndefined();
+    expect(ask('Are you legally authorized to work in the country for which you are applying?', 'KR')).toBeUndefined();
+    expect(ask('Can you work with us onsite?')).toBeUndefined();
+  });
+});

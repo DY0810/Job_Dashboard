@@ -3,7 +3,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, workers } from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
-import { isTerminalState } from './state.ts';
+import { isSafeRetryState, isTerminalState } from './state.ts';
 import {
   RunCreateSchema, RunCommandSchema, ApplicationCommandSchema, ApplicationIdentitySchema,
   type RunCreate, type RunCommand, type ApplicationCommand, type ApplicationIdentity, type Run,
@@ -125,7 +125,7 @@ export async function commandApplication(
     let next = row.state, availableAt = row.availableAt, retries = row.retries;
     if (command.action === 'retry-safe') {
       const [run] = await tx.select().from(applicationRuns).where(and(eq(applicationRuns.id, runId), eq(applicationRuns.ownerId, ownerId)));
-      if (!run || run.state === 'stopped' || !['provider_unavailable', 'retryable_failure'].includes(row.state) ||
+      if (!run || run.state === 'stopped' || !isSafeRetryState(row.state, row.reasonCode) ||
           !row.checkpoint || row.retries >= 3) fail(409, 'CONFLICT', 'No safe retry is available.');
       next = row.checkpoint.stage; retries += 1; availableAt = now + 5000 * 2 ** row.retries;
     } else next = ambiguous ? 'submission_unknown' : command.action === 'skip' ? 'skipped' : 'cancelled';

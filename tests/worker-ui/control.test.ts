@@ -455,6 +455,7 @@ test('application action matrix preserves unknown and terminal states; retry req
     expect(applicationActions({ ...app, checkpoint: null }, run)).not.toContain('retry-safe');
     expect(applicationActions(app, { ...run, state: 'stopped' })).not.toContain('retry-safe');
   }
+  expect(applicationActions(fixture.addApplication('needs_verification', 'provider_inspect_required'), run)).toContain('retry-safe');
 });
 
 test('skip and cancel persist while the hidden safe-retry cap remains server authoritative', async () => {

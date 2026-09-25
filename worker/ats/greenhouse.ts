@@ -40,9 +40,29 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
     if (field.key === 'hispanic_ethnicity' && field.label === 'Are you Hispanic/Latino?') return input.answers.voluntary_hispanic;
     if (field.key === 'veteran_status' && field.label === 'Veteran Status') return input.answers.voluntary_veteran;
   }
-  if (field.label === 'Are you legally authorized to work in the United States?') return input.answers.work_authorization;
-  if (field.label === 'Do you require sponsorship for employment visa status?') return input.answers.sponsorship_now;
-  return undefined;
+  return commonAnswer(input, field);
+}
+
+// Questions most employers ask in their own words, answered only from confirmed profile facts.
+// Anything ambiguous (negations, combined questions, unrecognized wording) still goes to the inbox.
+function commonAnswer(input: AtsApplication, field: AtsField) {
+  const text = field.label.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (/\bnot\b|\bhear\b/.test(text)) return undefined;
+  if (field.kind === 'text') {
+    if (/^linkedin\b|\blinkedin (profile|url|link)\b/.test(text)) return input.answers.linkedin;
+    if (/^github\b|\bgithub (profile|url|link|username)\b/.test(text)) return input.answers.github;
+    if (/^(personal |other )?(website|portfolio)( url| link)?( \(optional\))?$/.test(text)) return input.answers.portfolio;
+    if (/^((current|most recent) )?(school|university|college)( name)?$|^(what|which) (school|university|college) (do|did) you (currently )?attend\??$/.test(text)) {
+      return input.answers['school--0'];
+    }
+  }
+  const authorization = /\bauthori[sz]ed to work\b/.test(text), sponsorship = /\bsponsorship\b/.test(text);
+  if (authorization === sponsorship) return undefined;
+  // Uppercase US only: "work with us" is not a country.
+  const us = /united states|\bh-?1b\b/.test(text) || /(^|[^A-Za-z])(U\.S\.A?\.?|USA|US)(?![A-Za-z])/.test(field.label);
+  const postingCountry = /\bthe country\b/.test(text) && /\b(appl(y|ying|ied)|this (job|role|position))\b/.test(text);
+  if (authorization) return us ? input.answers.us_authorized : postingCountry ? input.answers.posting_authorized : undefined;
+  return input.answers[`${us ? 'us' : 'posting'}_sponsorship_${/\bfuture\b/.test(text) ? 'ever' : 'now'}`];
 }
 
 async function hostedFields(form: import('playwright').Locator): Promise<AtsField[]> {
@@ -83,7 +103,7 @@ export const greenhouse: AtsAdapter = {
     };
     const company = await form.getAttribute('data-company') ?? input.company;
     const role = await form.getAttribute('data-role') ?? input.role;
-    const observation = AtsObservationSchema.parse({ identity, company, role, fields: live ? await hostedFields(form) : fields, actions: ['fill', 'inspect'] });
+    const observation = AtsObservationSchema.parse({ identity, company, role, fields: live ? await hostedFields(form) : fields, actions: ['fill'] });
     if (JSON.stringify(observation.identity) !== JSON.stringify(input.identity) || observation.company !== input.company || observation.role !== input.role) {
       throw new AtsError('ATS_IDENTITY_MISMATCH');
     }

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { credentials, nativeCredentialBackend, type CredentialBackend, type WorkerScope } from "./credentials.ts";
 import { privateStore } from "./storage.ts";
-import { controlOrigin, workerTransport, TransportError } from "./transport.ts";
+import { controlOrigin, workerTransport, TransportError, type WorkerTransport } from "./transport.ts";
 import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, ScopeSchema } from "./pairing.ts";
 import { readMaskedGrant, readMaskedSecret } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
@@ -189,6 +189,185 @@ export function createApplicationArtifactManifest(input: {
   return { manifest, request };
 }
 
+/** Runs one leased stage. Exported so tests can drive the real pipeline against fixture forms. */
+export function createStageDispatch(control: WorkerTransport, directory: string, signal: AbortSignal,
+  browser: typeof createBrowserRuntime = createBrowserRuntime): StageDispatch {
+  return async (lease, guard, context) => {
+    let applicationContext;
+    try {
+      applicationContext = await control.applicationContext(lease.applicationId, {
+        protocolVersion: 1, applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
+      }, signal);
+      guard.check();
+    } catch (error) {
+      if (error instanceof TransportError && error.status === 409 && /NEEDS_DOCUMENT/.test(error.message)) {
+        return { state: "needs_document" as const, reasonCode: "resume_required" };
+      }
+      throw error;
+    }
+    const adapters = { greenhouse, ashby, lever, jobvite, workday, oracle, icims } as const;
+    const adapter = adapters[applicationContext.identity.ats as keyof typeof adapters];
+    if (!adapter) return { state: "blocked_unsupported" as const, reasonCode: "adapter_unavailable" };
+    const identity = AtsIdentitySchema.parse(applicationContext.identity);
+    const requirement = screenApplication(applicationContext.facts, applicationContext.requirements);
+    if (lease.state === "screening") {
+      if (requirement.status === "blocked") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
+      if (requirement.status === "needs_question") return screeningQuestions(applicationContext, requirement.reasons);
+      return { state: "tailoring" as const, reasonCode: "screened" };
+    }
+    if (lease.state === "tailoring") {
+      if (hasVerifiedTailoredArtifact(applicationContext)) return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
+      const source = applicationContext.documents.resumeMaster;
+      if (!context.generate || !source) return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
+      try {
+        guard.check();
+        const bytes = await control.downloadDocument(lease.applicationId, source.documentId, source.path, signal);
+        if (bytes.length !== source.size || createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw new DocumentRuntimeError("DOCUMENT_RECONCILIATION_FAILED");
+        const template = await createTemplateManifest(bytes, source.mime, applicationContext.role);
+        const evidence = template.anchors.slice(0, 32).map((anchor, index) => ({
+          id: artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256, anchorId: anchor.id, index }),
+          confirmed: true as const, excerpt: anchor.text.slice(0, 1000),
+        }));
+        const editableAnchors = [...template.anchors].sort((a, b) => b.maxChars - a.maxChars).slice(0, 5);
+        const generated = await context.generate({ task: "tailor", role: template.role,
+          jobSummary: applicationContext.requirements.officialDescription.slice(0, 12_000),
+          evidence: evidence.map(({ id, excerpt }) => ({ id, excerpt })),
+          anchors: editableAnchors.map(({ id, text, maxChars }) => ({ id, text, maxChars })),
+        }, { signal, runId: lease.runId });
+        if (generated.task !== "tailor" || generated.confidence < 0.75) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
+        const request = { role: template.role, masterHash: template.sourceHash, evidence, edits: generated.edits };
+        const tailored = await tailorDocument({ bytes, mime: source.mime, manifest: template, request });
+        const artifact = createApplicationArtifactManifest({ applicationId: lease.applicationId, source, template,
+          evidence, generated, tailored });
+        const requestId = artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256,
+          policyRevision: applicationContext.policyRevision, manifestHash: artifactManifestHash(artifact.manifest) });
+        guard.check();
+        const intent = await control.artifactIntent(lease.applicationId, { protocolVersion: 1, requestId, fence: lease.fence,
+          expectedRevision: lease.revision, manifest: artifact.manifest }, signal);
+        await control.uploadArtifact(lease.applicationId, intent.artifactId, intent.uploadPath,
+          { protocolVersion: 1, requestId, fence: lease.fence, expectedRevision: lease.revision }, tailored.bytes, source.mime, signal);
+        return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
+      } catch (error) {
+        if (signal.aborted) throw error;
+        const providerFailure = providerFailureResult(error);
+        if (providerFailure) return providerFailure;
+        if (error instanceof DocumentRuntimeError) return { state: "needs_document" as const, reasonCode: "document_tailoring_unavailable" };
+        return { state: "retryable_failure" as const, reasonCode: error instanceof TransportError ? `tailoring_transport_${error.status}` :
+          error instanceof z.ZodError ? "tailoring_schema_invalid" : "tailoring_failed" };
+      }
+    }
+    const workDirectory = await mkdtemp(join(directory, "application-"));
+    let runtime: Awaited<ReturnType<typeof createBrowserRuntime>> | undefined;
+    let application: AtsApplication | null = null;
+    let submissionStarted = false;
+    try {
+      const localDocuments: Record<string, string> = {};
+      for (const [key, document] of Object.entries(applicationContext.documents)) {
+        guard.check();
+        const bytes = await control.downloadDocument(lease.applicationId, document.documentId, document.path, signal);
+        if (bytes.length !== document.size || createHash("sha256").update(bytes).digest("hex") !== document.sha256) {
+          throw new Error("DOCUMENT_RECONCILIATION_FAILED");
+        }
+        const extension = document.mime === "application/pdf" ? ".pdf" : ".docx";
+        const path = join(workDirectory, `${key}${extension}`);
+        await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
+        localDocuments[key] = path;
+      }
+      if (!localDocuments.resume || !hasVerifiedTailoredArtifact(applicationContext)) {
+        return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
+      }
+      application = {
+        identity, company: applicationContext.company, role: applicationContext.role,
+        applicationUrl: applicationContext.applicationUrl, answers: applicationContext.answers, documents: localDocuments,
+        manifestHash: applicationContext.manifestHash!, artifactHashes: applicationContext.artifactHashes,
+        submissionIntentId: lease.applicationId,
+      };
+      const hostname = new URL(application.applicationUrl).hostname;
+      runtime = await browser({
+        userDataDir: join(directory, "browser", `${application.identity.ats}-${application.identity.tenant.replace(/[^A-Za-z0-9_-]/g, "_")}`),
+        approvedOrigins: [new URL(application.applicationUrl).origin,
+          ...(hostname === "job-boards.greenhouse.io" ? ["https://job-boards.cdn.greenhouse.io", "https://s4-recruiting.cdn.greenhouse.io", "https://my.greenhouse.io", "https://boards.greenhouse.io"] : [])],
+        allowLoopback: /^127\./.test(hostname), headless: true,
+      });
+      const observed = await adapter.observe(runtime, application, signal);
+      const currentApplication = application;
+      for (const field of observed.fields) {
+        const reviewed = currentApplication.answers[formQuestionKey(field)];
+        if (reviewed !== undefined) currentApplication.answers[field.key] = reviewed;
+      }
+      const missing = observed.fields.filter(field => field.required && field.kind !== 'file' &&
+        (adapter === greenhouse ? greenhouseAnswer(currentApplication, field) :
+          currentApplication.answers[formQuestionKey(field)] ?? currentApplication.answers[field.key]) === undefined);
+      if (missing.length) return formQuestions(applicationContext, missing);
+      // An optional letter field is left empty when the policy does not allow cover letters.
+      if (observed.fields.some(field => field.key === 'cover_letter' && field.kind === 'file' && (field.required || applicationContext.coverLetterAllowed))) {
+        if (!applicationContext.coverLetterAllowed || !context.generate || !localDocuments.resumeMaster) {
+          return { state: "needs_document" as const, reasonCode: "cover_letter_unavailable" };
+        }
+        const source = await readFile(localDocuments.resumeMaster);
+        const template = await createTemplateManifest(source, applicationContext.documents.resumeMaster.mime, applicationContext.role);
+        const evidence = template.anchors.slice(0, 32).map((anchor, index) => ({
+          id: artifactRequestId({ applicationId: lease.applicationId, sourceHash: template.sourceHash, anchorId: anchor.id, index }),
+          excerpt: anchor.text.slice(0, 1000),
+        }));
+        const letter = await context.generate({ task: 'cover_letter', company: applicationContext.company, role: applicationContext.role,
+          jobSummary: applicationContext.requirements.officialDescription.slice(0, 12_000), evidence }, { signal, runId: lease.runId });
+        if (letter.task !== 'cover_letter' || letter.confidence < 0.75) throw new ProviderError('PROVIDER_LOW_CONFIDENCE');
+        const applicant = [application.answers.first_name, application.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
+        if (!applicant) throw new AtsError('REQUIRED_ANSWER_MISSING', 'first_name');
+        const path = join(workDirectory, 'cover_letter.pdf');
+        await writeFile(path, await renderCoverLetter(letter, applicant), { mode: 0o600, flag: 'wx' });
+        application.documents.cover_letter = path;
+      }
+      if (lease.state === "filling") {
+        const result = await fillAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
+          requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId });
+        if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
+        if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
+        return { state: "ready" as const, reasonCode: "form_verified", evidence: { formVerified: true } };
+      }
+      const result = await runAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
+        requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId, submission: {
+          begin: async ({ intentId, identity, company, role, manifestHash, artifactHashes }) => {
+            submissionStarted = true;
+            return control.submissionIntent(lease.applicationId, { protocolVersion: 1, intentId, fence: lease.fence,
+              expectedRevision: lease.revision, identity, company, role, manifestHash, artifactHashes }, signal);
+          },
+          receipt: async ({ intentId, receipt, evidence }) => control.receipt(lease.applicationId, {
+            protocolVersion: 1, intentId, identity: receipt.identity, company: receipt.company, role: receipt.role,
+            receiptId: receipt.receiptId, submittedAt: receipt.submittedAt, evidence,
+          }, signal),
+        } });
+      if (result.state === "submitted" || result.state === "submission_unknown") {
+        return { state: result.state, reasonCode: result.reasons[0]?.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80) || "submission_unknown", durable: true };
+      }
+      if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
+      if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
+      return { state: "retryable_failure" as const, reasonCode: "application_failed" };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      if (error instanceof AtsError && error.code === "PROVIDER_INSPECT_SELECTED") {
+        return { state: "needs_verification" as const, reasonCode: "provider_inspect_required" };
+      }
+      const providerFailure = providerFailureResult(error);
+      if (providerFailure) return providerFailure;
+      if (error instanceof AtsError && /REQUIRED_ANSWER|ANSWER_/.test(error.code)) {
+        if (runtime && application && !submissionStarted) {
+          const observed = await adapter.observe(runtime, application, signal).catch(() => null);
+          const field = observed?.fields.find(item => item.key === error.message);
+          if (field) return formQuestions(applicationContext, [field]);
+        }
+        return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
+      }
+      if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
+      return { state: "retryable_failure" as const, reasonCode: atsFailureReason(error) };
+    } finally {
+      if (runtime) await runtime.close().catch(() => {});
+      await rm(workDirectory, { recursive: true, force: true });
+    }
+  };
+}
+
 export async function main(args = process.argv.slice(2)) {
   if (process.versions.node.split(".")[0] !== "22") throw new Error("NODE_22_REQUIRED");
   if (!["darwin", "linux"].includes(process.platform)) throw new Error("UNSUPPORTED_PLATFORM");
@@ -324,179 +503,7 @@ export async function main(args = process.argv.slice(2)) {
         if (!configured?.generate) throw new ProviderError("PROVIDER_DISABLED");
         return configured.generate(input, options);
       };
-      const dispatch: StageDispatch = async (lease, guard, context) => {
-        let applicationContext;
-        try {
-          applicationContext = await control.applicationContext(lease.applicationId, {
-            protocolVersion: 1, applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
-          }, signal);
-          guard.check();
-        } catch (error) {
-          if (error instanceof TransportError && error.status === 409 && /NEEDS_DOCUMENT/.test(error.message)) {
-            return { state: "needs_document" as const, reasonCode: "resume_required" };
-          }
-          throw error;
-        }
-        const adapters = { greenhouse, ashby, lever, jobvite, workday, oracle, icims } as const;
-        const adapter = adapters[applicationContext.identity.ats as keyof typeof adapters];
-        if (!adapter) return { state: "blocked_unsupported" as const, reasonCode: "adapter_unavailable" };
-        const identity = AtsIdentitySchema.parse(applicationContext.identity);
-        const requirement = screenApplication(applicationContext.facts, applicationContext.requirements);
-        if (lease.state === "screening") {
-          if (requirement.status === "blocked") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
-          if (requirement.status === "needs_question") return screeningQuestions(applicationContext, requirement.reasons);
-          return { state: "tailoring" as const, reasonCode: "screened" };
-        }
-        if (lease.state === "tailoring") {
-          if (hasVerifiedTailoredArtifact(applicationContext)) return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
-          const source = applicationContext.documents.resumeMaster;
-          if (!context.generate || !source) return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
-          try {
-            guard.check();
-            const bytes = await control.downloadDocument(lease.applicationId, source.documentId, source.path, signal);
-            if (bytes.length !== source.size || createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw new DocumentRuntimeError("DOCUMENT_RECONCILIATION_FAILED");
-            const template = await createTemplateManifest(bytes, source.mime, applicationContext.role);
-            const evidence = template.anchors.slice(0, 32).map((anchor, index) => ({
-              id: artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256, anchorId: anchor.id, index }),
-              confirmed: true as const, excerpt: anchor.text.slice(0, 1000),
-            }));
-            const editableAnchors = [...template.anchors].sort((a, b) => b.maxChars - a.maxChars).slice(0, 5);
-            const generated = await context.generate({ task: "tailor", role: template.role,
-              jobSummary: applicationContext.requirements.officialDescription.slice(0, 12_000),
-              evidence: evidence.map(({ id, excerpt }) => ({ id, excerpt })),
-              anchors: editableAnchors.map(({ id, text, maxChars }) => ({ id, text, maxChars })),
-            }, { signal, runId: lease.runId });
-            if (generated.task !== "tailor" || generated.confidence < 0.75) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
-            const request = { role: template.role, masterHash: template.sourceHash, evidence, edits: generated.edits };
-            const tailored = await tailorDocument({ bytes, mime: source.mime, manifest: template, request });
-            const artifact = createApplicationArtifactManifest({ applicationId: lease.applicationId, source, template,
-              evidence, generated, tailored });
-            const requestId = artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256,
-              policyRevision: applicationContext.policyRevision, manifestHash: artifactManifestHash(artifact.manifest) });
-            guard.check();
-            const intent = await control.artifactIntent(lease.applicationId, { protocolVersion: 1, requestId, fence: lease.fence,
-              expectedRevision: lease.revision, manifest: artifact.manifest }, signal);
-            await control.uploadArtifact(lease.applicationId, intent.artifactId, intent.uploadPath,
-              { protocolVersion: 1, requestId, fence: lease.fence, expectedRevision: lease.revision }, tailored.bytes, source.mime, signal);
-            return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
-          } catch (error) {
-            if (signal.aborted) throw error;
-            const providerFailure = providerFailureResult(error);
-            if (providerFailure) return providerFailure;
-            if (error instanceof DocumentRuntimeError) return { state: "needs_document" as const, reasonCode: "document_tailoring_unavailable" };
-            return { state: "retryable_failure" as const, reasonCode: error instanceof TransportError ? `tailoring_transport_${error.status}` :
-              error instanceof z.ZodError ? "tailoring_schema_invalid" : "tailoring_failed" };
-          }
-        }
-        const workDirectory = await mkdtemp(join(directory, "application-"));
-        let runtime: Awaited<ReturnType<typeof createBrowserRuntime>> | undefined;
-        let application: AtsApplication | null = null;
-        let submissionStarted = false;
-        try {
-          const localDocuments: Record<string, string> = {};
-          for (const [key, document] of Object.entries(applicationContext.documents)) {
-            guard.check();
-            const bytes = await control.downloadDocument(lease.applicationId, document.documentId, document.path, signal);
-            if (bytes.length !== document.size || createHash("sha256").update(bytes).digest("hex") !== document.sha256) {
-              throw new Error("DOCUMENT_RECONCILIATION_FAILED");
-            }
-            const extension = document.mime === "application/pdf" ? ".pdf" : ".docx";
-            const path = join(workDirectory, `${key}${extension}`);
-            await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
-            localDocuments[key] = path;
-          }
-          if (!localDocuments.resume || !hasVerifiedTailoredArtifact(applicationContext)) {
-            return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
-          }
-          application = {
-            identity, company: applicationContext.company, role: applicationContext.role,
-            applicationUrl: applicationContext.applicationUrl, answers: applicationContext.answers, documents: localDocuments,
-            manifestHash: applicationContext.manifestHash!, artifactHashes: applicationContext.artifactHashes,
-            submissionIntentId: lease.applicationId,
-          };
-          const hostname = new URL(application.applicationUrl).hostname;
-          runtime = await createBrowserRuntime({
-            userDataDir: join(directory, "browser", `${application.identity.ats}-${application.identity.tenant.replace(/[^A-Za-z0-9_-]/g, "_")}`),
-            approvedOrigins: [new URL(application.applicationUrl).origin,
-              ...(hostname === "job-boards.greenhouse.io" ? ["https://job-boards.cdn.greenhouse.io", "https://s4-recruiting.cdn.greenhouse.io", "https://my.greenhouse.io", "https://boards.greenhouse.io"] : [])],
-            allowLoopback: /^127\./.test(hostname), headless: true,
-          });
-          const observed = await adapter.observe(runtime, application, signal);
-          const currentApplication = application;
-          for (const field of observed.fields) {
-            const reviewed = currentApplication.answers[formQuestionKey(field)];
-            if (reviewed !== undefined) currentApplication.answers[field.key] = reviewed;
-          }
-          const missing = observed.fields.filter(field => field.required && field.kind !== 'file' &&
-            (adapter === greenhouse ? greenhouseAnswer(currentApplication, field) :
-              currentApplication.answers[formQuestionKey(field)] ?? currentApplication.answers[field.key]) === undefined);
-          if (missing.length) return formQuestions(applicationContext, missing);
-          if (observed.fields.some(field => field.key === 'cover_letter' && field.kind === 'file')) {
-            if (!applicationContext.coverLetterAllowed || !context.generate || !localDocuments.resumeMaster) {
-              return { state: "needs_document" as const, reasonCode: "cover_letter_unavailable" };
-            }
-            const source = await readFile(localDocuments.resumeMaster);
-            const template = await createTemplateManifest(source, applicationContext.documents.resumeMaster.mime, applicationContext.role);
-            const evidence = template.anchors.slice(0, 32).map((anchor, index) => ({
-              id: artifactRequestId({ applicationId: lease.applicationId, sourceHash: template.sourceHash, anchorId: anchor.id, index }),
-              excerpt: anchor.text.slice(0, 1000),
-            }));
-            const letter = await context.generate({ task: 'cover_letter', company: applicationContext.company, role: applicationContext.role,
-              jobSummary: applicationContext.requirements.officialDescription.slice(0, 12_000), evidence }, { signal, runId: lease.runId });
-            if (letter.task !== 'cover_letter' || letter.confidence < 0.75) throw new ProviderError('PROVIDER_LOW_CONFIDENCE');
-            const applicant = [application.answers.first_name, application.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
-            if (!applicant) throw new AtsError('REQUIRED_ANSWER_MISSING', 'first_name');
-            const path = join(workDirectory, 'cover_letter.pdf');
-            await writeFile(path, await renderCoverLetter(letter, applicant), { mode: 0o600, flag: 'wx' });
-            application.documents.cover_letter = path;
-          }
-          if (lease.state === "filling") {
-            const result = await fillAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
-              requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId });
-            if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
-            if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
-            return { state: "ready" as const, reasonCode: "form_verified", evidence: { formVerified: true } };
-          }
-          const result = await runAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
-            requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId, submission: {
-              begin: async ({ intentId, identity, company, role, manifestHash, artifactHashes }) => {
-                submissionStarted = true;
-                return control.submissionIntent(lease.applicationId, { protocolVersion: 1, intentId, fence: lease.fence,
-                  expectedRevision: lease.revision, identity, company, role, manifestHash, artifactHashes }, signal);
-              },
-              receipt: async ({ intentId, receipt, evidence }) => control.receipt(lease.applicationId, {
-                protocolVersion: 1, intentId, identity: receipt.identity, company: receipt.company, role: receipt.role,
-                receiptId: receipt.receiptId, submittedAt: receipt.submittedAt, evidence,
-              }, signal),
-            } });
-          if (result.state === "submitted" || result.state === "submission_unknown") {
-            return { state: result.state, reasonCode: result.reasons[0]?.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80) || "submission_unknown", durable: true };
-          }
-          if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
-          if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
-          return { state: "retryable_failure" as const, reasonCode: "application_failed" };
-        } catch (error) {
-          if (signal.aborted) throw error;
-          if (error instanceof AtsError && error.code === "PROVIDER_INSPECT_SELECTED") {
-            return { state: "needs_verification" as const, reasonCode: "provider_inspect_required" };
-          }
-          const providerFailure = providerFailureResult(error);
-          if (providerFailure) return providerFailure;
-          if (error instanceof AtsError && /REQUIRED_ANSWER|ANSWER_/.test(error.code)) {
-            if (runtime && application && !submissionStarted) {
-              const observed = await adapter.observe(runtime, application, signal).catch(() => null);
-              const field = observed?.fields.find(item => item.key === error.message);
-              if (field) return formQuestions(applicationContext, [field]);
-            }
-            return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
-          }
-          if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
-          return { state: "retryable_failure" as const, reasonCode: atsFailureReason(error) };
-        } finally {
-          if (runtime) await runtime.close().catch(() => {});
-          await rm(workDirectory, { recursive: true, force: true });
-        }
-      };
+      const dispatch = createStageDispatch(control, directory, signal);
       return { chooseAction, generate, dispatch };
     };
     await runWorker({ scope, store, transport, configure: setup,

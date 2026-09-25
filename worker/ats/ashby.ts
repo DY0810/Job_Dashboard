@@ -27,7 +27,7 @@ export const ashby: AtsAdapter = {
     };
     const observation = AtsObservationSchema.parse({
       identity, company: await form.getAttribute('data-company') ?? input.company,
-      role: await form.getAttribute('data-role') ?? input.role, fields, actions: ['fill', 'inspect'],
+      role: await form.getAttribute('data-role') ?? input.role, fields, actions: ['fill'],
     });
     if (JSON.stringify(observation.identity) !== JSON.stringify(input.identity) || observation.company !== input.company || observation.role !== input.role) {
       throw new AtsError('ATS_IDENTITY_MISMATCH');

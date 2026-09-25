@@ -36,7 +36,7 @@ export function createFormAdapter(config: FormAdapterConfig): AtsAdapter {
         company: await form.getAttribute('data-company') ?? input.company,
         role: await form.getAttribute('data-role') ?? input.role,
         fields: config.fields,
-        actions: ['fill', 'inspect'],
+        actions: ['fill'],
       });
       if (JSON.stringify(observation.identity) !== JSON.stringify(input.identity) ||
           observation.company !== input.company || observation.role !== input.role) {
