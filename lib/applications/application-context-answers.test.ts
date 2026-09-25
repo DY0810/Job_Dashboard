@@ -53,7 +53,8 @@ describe('confirmed contact location', () => {
     const country = { key: 'country', label: 'Country', kind: 'combobox' as const, required: true };
     expect(greenhouseAnswer(input, city)).toBe('Los Angeles, California, United States');
     expect(greenhouseAnswer(input, country)).toBe('United States +1');
-    expect(greenhouseAnswer({ ...input, identity: { ...input.identity, tenant: 'other' } }, country)).toBeUndefined();
+    // Every hosted form puts the same phone-country picker beside Phone.
+    expect(greenhouseAnswer({ ...input, identity: { ...input.identity, tenant: 'other' } }, country)).toBe('United States +1');
     expect(greenhouseAnswer(input, { ...city, label: 'Willing to relocate?' })).toBeUndefined();
     profile.identity.currentLocation = { ...profile.identity.currentLocation, state: 'candidate', confirmedAt: null };
     expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, city)).toBeUndefined();
