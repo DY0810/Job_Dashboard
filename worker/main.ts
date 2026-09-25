@@ -294,6 +294,8 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
           ...(hostname === "job-boards.greenhouse.io" ? ["https://job-boards.cdn.greenhouse.io", "https://s4-recruiting.cdn.greenhouse.io", "https://my.greenhouse.io", "https://boards.greenhouse.io",
             // The Location (City) autocomplete; without it the profile's location can never be selected.
             "https://api-geocode-earth-proxy.greenhouse.io",
+            // Attached files upload on attach (a blocked upload removes the file input); Email is validated on blur.
+            "https://grnhse-prod-jben-us-west-2.s3.us-west-2.amazonaws.com", "https://email-address-validator.us.greenhouse.io",
             // Greenhouse runs reCAPTCHA Enterprise on submit, as in any browser; blocking it can leave a submit unconfirmed.
             "https://www.recaptcha.net", "https://www.gstatic.com"] : [])],
         allowLoopback: /^127\./.test(hostname), headless: true,

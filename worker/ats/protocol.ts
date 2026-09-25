@@ -96,9 +96,19 @@ export async function fillField(page: Page, field: AtsField, value: AtsValue | u
   }
 }
 
-export async function verifyField(page: Page, field: AtsField, value: AtsValue | undefined) {
+export async function verifyField(page: Page, field: AtsField, value: AtsValue | undefined, documents: Record<string, string> = {}) {
+  if (field.kind === 'file') {
+    // Hosted Greenhouse uploads the file on attach, then replaces the input with the uploaded file's name.
+    const group = page.locator(`[aria-labelledby="upload-label-${field.key}"]`);
+    const name = documents[field.key]?.split('/').pop();
+    if (name && await group.count()) {
+      const shown = group.locator('.file-upload__filename');
+      await shown.first().waitFor({ timeout: 15_000 }).catch(() => {});
+      return await shown.count() === 1 && (await shown.innerText()).trim() === name;
+    }
+    return await (await locateField(page, field)).evaluate((node) => node instanceof HTMLInputElement && Boolean(node.files?.length));
+  }
   const locator = await locateField(page, field);
-  if (field.kind === 'file') return await locator.evaluate((node) => node instanceof HTMLInputElement && Boolean(node.files?.length));
   if (field.kind === 'checkbox') return typeof value === 'boolean' && (await locator.isChecked()) === value;
   if (field.kind === 'radio') {
     if (typeof value !== 'string') return false;

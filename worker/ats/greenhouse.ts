@@ -117,7 +117,7 @@ export const greenhouse: AtsAdapter = {
       const value = greenhouseAnswer(input, field);
       if (field.key === 'resume' || (field.key === 'cover_letter' && input.documents.cover_letter) || value !== undefined || field.required) {
         await fillField(page, field, value, input.documents);
-        if (!await verifyField(page, field, value)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
+        if (!await verifyField(page, field, value, input.documents)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
       }
     }
   },

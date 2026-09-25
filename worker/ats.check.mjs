@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
 import { ashby } from './ats/ashby.ts';
 import { greenhouse } from './ats/greenhouse.ts';
-import { locateField } from './ats/protocol.ts';
+import { locateField, verifyField } from './ats/protocol.ts';
 import { createJevActionSelector } from './jev.ts';
 import { createConfiguredJevActionSelector } from './main.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
@@ -23,6 +23,18 @@ test('hosted fields resolve their exact ID when visible labels collide', { skip:
     const page = await browser.newPage();
     await page.setContent('<label for="other">Attach</label><input id="other"><label for="resume">Attach</label><input id="resume" type="file">');
     assert.equal(await (await locateField(page, { key: 'resume', label: 'Attach', kind: 'file', required: true })).getAttribute('id'), 'resume');
+  } finally { await browser.close(); }
+});
+test('an uploaded Greenhouse file verifies by the name shown in place of its input', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    // The live form after a successful upload: no #resume input, only the uploaded file's name.
+    await page.setContent('<div role="group" aria-labelledby="upload-label-resume"><div id="upload-label-resume">Resume/CV</div>' +
+      '<div class="file-upload__filename"><p>resume.docx</p><button aria-label="Remove file"></button></div></div>');
+    const field = { key: 'resume', label: 'Resume/CV', kind: 'file', required: true };
+    assert.equal(await verifyField(page, field, undefined, { resume: '/tmp/application-x/resume.docx' }), true);
+    assert.equal(await verifyField(page, field, undefined, { resume: '/tmp/application-x/other.docx' }), false);
   } finally { await browser.close(); }
 });
 const facts = {
