@@ -39,6 +39,14 @@ test("real loopback transport binds bearer to configured origin and exact routes
   assert.deepEqual(requests[1].body, { protocolVersion: 1, lease: null });
 });
 
+test("poll waits for a resumable discovery scan beyond the ordinary request deadline", { timeout: 12000 }, async t => {
+  const origin = await fixture(t, async (_req, res) => {
+    await new Promise(resolve => setTimeout(resolve, 8500));
+    json(res, poll);
+  });
+  assert.deepEqual(await workerTransport({ origin, token, allowLoopback: true }).poll(), poll);
+});
+
 test("provider config uses the versioned worker contract and does not expose credentials", async t => {
   const origin = await fixture(t, async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);

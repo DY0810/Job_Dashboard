@@ -48,10 +48,11 @@ export function workerTransport(options: {
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 8000) throw new Error("INVALID_TIMEOUT");
   async function post<T>(
     path: string, body: unknown, schema: z.ZodType<T>, signal?: AbortSignal, checkpoint = false,
+    requestTimeoutMs = timeout,
   ): Promise<T> {
     const payload = JSON.stringify(body);
     if (Buffer.byteLength(payload) > 128 * 1024) throw new TransportError("REQUEST_LIMIT");
-    const deadline = AbortSignal.any([AbortSignal.timeout(timeout), ...(signal ? [signal] : [])]);
+    const deadline = AbortSignal.any([AbortSignal.timeout(requestTimeoutMs), ...(signal ? [signal] : [])]);
     // Only idempotent checkpoint events retry automatically, with the same serialized body/key.
     for (let attempt = 0; ; attempt++) {
       try {
@@ -103,7 +104,8 @@ export function workerTransport(options: {
     pair: (input: PairRequest, signal?: AbortSignal) =>
       post("/api/worker/pair", PairRequestSchema.parse(input), PairResponseSchema, signal),
     poll: (signal?: AbortSignal) =>
-      post("/api/worker/poll", PollRequestSchema.parse(version), PollResponseSchema, signal),
+      post("/api/worker/poll", PollRequestSchema.parse(version), PollResponseSchema, signal, false,
+        options.timeoutMs ?? 30_000),
     heartbeat: (lease: HeartbeatRequest["lease"], signal?: AbortSignal) =>
       post("/api/worker/heartbeat", HeartbeatRequestSchema.parse({ ...version, lease }), PollResponseSchema, signal),
     providerConfig: (signal?: AbortSignal) =>
