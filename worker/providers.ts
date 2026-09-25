@@ -475,9 +475,13 @@ function parseStructuredResult(content: string, input: StructuredTaskInput): z.i
     if (result.data.task !== "cover_letter") throw new ProviderError("PROVIDER_INVALID_RESPONSE");
     const evidence = new Set(input.evidence.map(item => item.id));
     const text = [result.data.introduction, ...result.data.body.map(item => item.text), result.data.conclusion, result.data.companyParagraph].join(' ');
-    if (/[—\r\n]/.test(text) || text.split(/\s+/).length > 450 ||
-        result.data.body.some(item => item.evidenceIds.some(id => !evidence.has(id))) ||
-        (result.data.companyParagraph.match(/[.!?](?:\s|$)/g)?.length ?? 0) < 2) throw new ProviderError("PROVIDER_INVALID_RESPONSE");
+    if (/[—\r\n]/.test(text)) throw new ProviderError("PROVIDER_INVALID_RESPONSE", "letter_format");
+    if (text.split(/\s+/).length > 450) throw new ProviderError("PROVIDER_INVALID_RESPONSE", "letter_length");
+    if (result.data.body.some(item => item.evidenceIds.some(id => !evidence.has(id))))
+      throw new ProviderError("PROVIDER_INVALID_RESPONSE", "letter_evidence");
+    const companySentences = result.data.companyParagraph.match(/[.!?](?:\s|$)/g)?.length ?? 0;
+    if (companySentences < 2 || companySentences > 3)
+      throw new ProviderError("PROVIDER_INVALID_RESPONSE", "letter_company_sentences");
   } else if (input.task === "classify_question") {
     if (result.data.task !== "classify_question") throw new ProviderError("PROVIDER_INVALID_RESPONSE");
     if (!input.allowedLabels.includes(result.data.label)) throw new ProviderError("PROVIDER_INVALID_RESPONSE");

@@ -373,7 +373,7 @@ test('cover letters cite resume evidence, fit one page, and reject unsupported c
   const result = await provider.generate(input);
   assert.equal((await PDFDocument.load(await renderCoverLetter(result, 'Test Applicant'))).getPageCount(), 1);
   letter.body[0].text += ' — invented';
-  await assert.rejects(provider.generate(input), /PROVIDER_INVALID_RESPONSE/);
+  await assert.rejects(provider.generate(input), error => error instanceof ProviderError && error.diagnostic === 'letter_format');
 });
 
 test("BYOK compatible output uses the approved keychain address and exact result schema", async () => {
