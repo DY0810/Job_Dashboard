@@ -51,6 +51,13 @@ export function createLeaseGuard(
       setDeadline(value, time, requestStart);
       lease = value;
     },
+    // A submission intent moves the application on under this same lease; renewals must carry its new revision.
+    advance(value: Pick<Lease, "revision" | "fence" | "state">) {
+      check();
+      if (value.revision === lease.revision && value.state === lease.state) return; // a replayed intent
+      if (value.fence !== lease.fence || value.revision < lease.revision) fail("BINDING_CHANGED");
+      lease = { ...lease, revision: value.revision, state: value.state };
+    },
     async boundary<T>(action: () => T | Promise<T>): Promise<T> {
       check();
       const result = await action();

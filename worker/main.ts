@@ -298,7 +298,8 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
             "https://grnhse-prod-jben-us-west-2.s3.us-west-2.amazonaws.com", "https://email-address-validator.us.greenhouse.io",
             // Greenhouse runs reCAPTCHA Enterprise on submit, as in any browser; blocking it can leave a submit unconfirmed.
             "https://www.recaptcha.net", "https://www.gstatic.com"] : [])],
-        allowLoopback: /^127\./.test(hostname), headless: true,
+        // Greenhouse may ask for an emailed code before it accepts a submission; the applicant enters it in this window.
+        allowLoopback: /^127\./.test(hostname), headless: !(lease.state === "ready" && hostname === "job-boards.greenhouse.io"),
       });
       const observed = await adapter.observe(runtime, application, signal);
       const currentApplication = application;
@@ -346,8 +347,10 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId, submission: {
           begin: async ({ intentId, identity, company, role, manifestHash, artifactHashes }) => {
             submissionStarted = true;
-            return control.submissionIntent(lease.applicationId, { protocolVersion: 1, intentId, fence: lease.fence,
+            const intent = await control.submissionIntent(lease.applicationId, { protocolVersion: 1, intentId, fence: lease.fence,
               expectedRevision: lease.revision, identity, company, role, manifestHash, artifactHashes }, signal);
+            context.advance?.({ revision: intent.revision, fence: intent.fence, state: intent.state });
+            return intent;
           },
           receipt: async ({ intentId, receipt, evidence }) => control.receipt(lease.applicationId, {
             protocolVersion: 1, intentId, identity: receipt.identity, company: receipt.company, role: receipt.role,

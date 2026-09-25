@@ -110,6 +110,18 @@ test("a lease from a slow discovery poll is kept, with its deadline counted from
   assert.throws(() => guard.check(), /LEASE_EXPIRED/, "expiry is measured from when the poll was sent");
 });
 
+test("a submission intent advances the lease so heartbeats keep renewing it", () => {
+  let time = 0;
+  const clock = () => ({ mono: time, wall: time });
+  const value = { ...lease(), state: "ready" }, guard = createLeaseGuard(value, scope, 0, clock(), clock);
+  const submitting = { ...value, state: "submitting", revision: 2, leaseUntil: 140000 };
+  time = 20000;
+  assert.throws(() => createLeaseGuard(value, scope, 0, { mono: 0, wall: 0 }, clock).renew(submitting, 20000, clock()), /BINDING_CHANGED/);
+  guard.advance({ revision: 2, fence: 1, state: "submitting" });
+  guard.renew(submitting, 20000, clock());
+  assert.throws(() => guard.advance({ revision: 3, fence: 2, state: "submitting" }), /BINDING_CHANGED/, "another fence is another lease");
+});
+
 test("monotonic lease guard rejects sleep, wall jumps, expired leases, identity and changed policy", async () => {
   let mono = 0, wall = 0;
   const clock = () => ({ mono, wall });

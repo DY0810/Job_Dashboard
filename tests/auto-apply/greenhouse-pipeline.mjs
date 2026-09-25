@@ -77,6 +77,16 @@ document.getElementById('phone').addEventListener('input', event => {
   if (d.length === 10) event.target.value = '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
 });
 document.getElementById('submit').onclick = async () => {
+  // Like Greenhouse's human check: the first submit emails a code that the applicant must type in.
+  const code = document.getElementById('security-code');
+  if (!code) {
+    const prompt = document.createElement('p');
+    prompt.textContent = 'A verification code was sent to test@example.com. To submit your application, enter the 8-character code to confirm you are a human.';
+    const input = document.createElement('input'); input.id = 'security-code';
+    document.body.append(prompt, input);
+    return;
+  }
+  if (code.value !== 'ABCD1234') return;
   const base64 = async file => { let out = ''; for (const byte of new Uint8Array(await file.arrayBuffer())) out += String.fromCharCode(byte); return btoa(out); };
   const files = {}, fields = {};
   for (const input of document.querySelectorAll('input[type=file]')) if (input.files.length) files[input.id] = { name: input.files[0].name, base64: await base64(input.files[0]) };
@@ -130,7 +140,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
           sourceHash: masterRef.sha256, verificationManifestHash: manifestHash, outputHash: hash };
         context.manifestHash = manifestHash; context.artifactHashes = [hash];
       },
-      submissionIntent: async (_application, body) => { calls.submission = body; return { intentId: body.intentId }; },
+      submissionIntent: async (_application, body) => { calls.submission = body; return { intentId: body.intentId, state: 'submitting', revision: 2, fence: 1 }; },
       receipt: async (_application, body) => { calls.receipt = body; return {}; },
       outreach: async (_application, body) => { calls.outreach.push({ body, afterReceipt: calls.receipt !== null }); return {}; },
       letter: async (_application, body) => { calls.storedLetter = { body, afterReceipt: calls.receipt !== null }; return { applicationId, stored: true }; },
@@ -153,8 +163,12 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
     // A model that would park the form if it were ever asked.
     const chooseAction = createJevActionSelector({ evaluate: async () => { calls.jev += 1; return { model: 'jev', usage,
       answers: { select_action: { type: 'choice', choice: 'inspect', probabilities: { fill: 0, inspect: 1 }, confidence: 1 } } }; } });
+    let submitPage; const submitPageOpened = new Promise(resolve => { submitPage = resolve; });
+    const visible = {};
     const browser = async (options) => {
-      const runtime = await createBrowserRuntime(options);
+      visible[stageNow] = options.headless === false;
+      const runtime = await createBrowserRuntime({ ...options, headless: true });
+      if (stageNow === 'ready') submitPage(runtime.context.pages()[0] ?? await runtime.page());
       await runtime.context.route(`${URL_BASE}/**`, async (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === JOB) return route.fulfill({ contentType: 'text/html', body: FORM });
@@ -167,8 +181,9 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
     };
     const signal = new AbortController().signal;
     const dispatch = createStageDispatch(control, directory, signal, browser);
-    const stage = (state) => dispatch({ applicationId, runId, fence: 1, revision: 1, state, checkpoint: null },
-      { check() {} }, { signal, generate, chooseAction });
+    let stageNow, advanced = [];
+    const stage = (state) => { stageNow = state; return dispatch({ applicationId, runId, fence: 1, revision: 1, state, checkpoint: null },
+      { check() {} }, { signal, generate, chooseAction, advance: value => advanced.push(value) }); };
     try {
       assert.deepEqual(await stage('screening'), { state: 'tailoring', reasonCode: 'screened' });
 
@@ -184,7 +199,18 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       context.answers[asked.questions[0].key] = NARRATIVE; // the inbox answer, as the server returns it
 
       assert.deepEqual(await stage('filling'), { state: 'ready', reasonCode: 'form_verified', evidence: { formVerified: true } });
-      assert.deepEqual(await stage('ready'), { state: 'submitted', reasonCode: 'exact_role_receipt', durable: true });
+      const printed = [], write = process.stdout.write;
+      process.stdout.write = (chunk, ...rest) => { printed.push(String(chunk)); return write.call(process.stdout, chunk, ...rest); };
+      const submitted = stage('ready').finally(() => { process.stdout.write = write; });
+      // The applicant types the emailed code into the visible window and submits again.
+      const page = await submitPageOpened;
+      await page.getByText('A verification code was sent to', { exact: false }).waitFor();
+      await page.locator('#security-code').fill('ABCD1234');
+      await page.getByRole('button', { name: 'Submit application', exact: true }).click();
+      assert.deepEqual(await submitted, { state: 'submitted', reasonCode: 'exact_role_receipt', durable: true });
+      assert.ok(printed.some(line => line.includes('"verification-code-required"')), 'the worker says a code is needed');
+      assert.deepEqual(visible, { filling: false, ready: true }, 'only the submit stage opens a window for the applicant');
+      assert.deepEqual(advanced, [{ revision: 2, fence: 1, state: 'submitting' }], 'heartbeats move to the revision the intent created');
 
       assert.equal(calls.jev, 0, 'a fully answered form is filled without a fill/inspect model call');
       assert.equal(calls.receipt.intentId, applicationId);

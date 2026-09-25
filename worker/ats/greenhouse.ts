@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
 import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
 
+const VERIFICATION_WAIT_MS = 10 * 60_000; // time for the applicant to find the emailed code
+
 const fields: AtsField[] = [
   { key: 'first_name', label: 'First name', kind: 'text', required: true },
   { key: 'last_name', label: 'Last name', kind: 'text', required: true },
@@ -128,8 +130,17 @@ export const greenhouse: AtsAdapter = {
     if (!await button.count()) throw new AtsError('SUBMIT_CONTROL_NOT_FOUND');
     await button.click();
     if (hosted(input)) {
-      try { await page.waitForURL(`https://job-boards.greenhouse.io/${input.identity.tenant}/jobs/${input.identity.requisition}/confirmation`, { timeout: 15_000 }); }
-      catch { throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT'); }
+      const confirmation = `https://job-boards.greenhouse.io/${input.identity.tenant}/jobs/${input.identity.requisition}/confirmation`;
+      const prompt = page.getByText('A verification code was sent to', { exact: false }).first();
+      await Promise.race([page.waitForURL(confirmation, { timeout: 15_000 }), prompt.waitFor({ timeout: 15_000 })]).catch(() => {});
+      if (page.url().startsWith(confirmation)) return;
+      // Greenhouse's human check: the applicant types the emailed code into this visible window and submits.
+      if (await prompt.isVisible()) {
+        process.stdout.write(JSON.stringify({ status: 'verification-code-required', company: input.company, role: input.role }) + '\n');
+        try { await page.waitForURL(confirmation, { timeout: VERIFICATION_WAIT_MS }); return; }
+        catch { throw new AtsError('VERIFICATION_CODE_TIMEOUT'); }
+      }
+      throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT');
     }
   },
   async receipt(runtime, input, signal) {
