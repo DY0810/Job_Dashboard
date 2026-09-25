@@ -102,7 +102,14 @@ export function questionClient(options: {
     async pollInterventions() {
       await recoverIntervention();
       signal.throwIfAborted();
-      const page = InterventionPageSchema.parse(await abortable(transport.interventions(signal), signal));
+      let page;
+      // Fetching the page changes nothing, so a network blip skips this beat; a failed acknowledgement still stops
+      // the worker so its journaled acknowledgement is replayed, never observed twice.
+      try { page = InterventionPageSchema.parse(await abortable(transport.interventions(signal), signal)); }
+      catch (error) {
+        if (error instanceof TransportError && (error.message === "NETWORK_UNAVAILABLE" || error.status >= 500)) return;
+        throw error;
+      }
       if (page.commands.some(c => c.workerId !== scope.workerId ||
         !["pending", "focused", "unavailable"].includes(c.status) ||
         !["needs_login", "needs_verification"].includes(c.descriptor.kind))) throw new Error("BINDING_CHANGED");
