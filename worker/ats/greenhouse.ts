@@ -99,7 +99,9 @@ export const greenhouse: AtsAdapter = {
     const live = hosted(input) && await form.getAttribute('id') === 'application-form';
     if (!live && await form.getAttribute('id') === 'application-form') throw new AtsError('ATS_IDENTITY_MISMATCH');
     if (live) await page.waitForLoadState('load', { timeout: 5_000 });
-    if (live && await page.title() !== `Job Application for ${input.role} at ${input.company}`) throw new AtsError('ATS_IDENTITY_MISMATCH');
+    // The title can lag the load event (seen in the visible submit window); a real mismatch still fails.
+    if (live && !await page.waitForFunction(title => document.title === title, `Job Application for ${input.role} at ${input.company}`,
+      { timeout: 10_000 }).then(() => true, () => false)) throw new AtsError('ATS_IDENTITY_MISMATCH');
     const identity = {
       ats: 'greenhouse' as const,
       tenant: await form.getAttribute('data-tenant') ?? input.identity.tenant,

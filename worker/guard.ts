@@ -56,7 +56,9 @@ export function createLeaseGuard(
       check();
       if (value.revision === lease.revision && value.state === lease.state) return; // a replayed intent
       if (value.fence !== lease.fence || value.revision < lease.revision) fail("BINDING_CHANGED");
-      lease = { ...lease, revision: value.revision, state: value.state };
+      // The server serves a submitting application in reconcile mode (worker-store), so renewals carry that mode.
+      lease = { ...lease, revision: value.revision, state: value.state,
+        mode: value.state === "submitting" || value.state === "submission_unknown" ? "reconcile" : lease.mode };
     },
     async boundary<T>(action: () => T | Promise<T>): Promise<T> {
       check();

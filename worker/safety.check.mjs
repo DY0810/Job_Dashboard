@@ -114,7 +114,8 @@ test("a submission intent advances the lease so heartbeats keep renewing it", ()
   let time = 0;
   const clock = () => ({ mono: time, wall: time });
   const value = { ...lease(), state: "ready" }, guard = createLeaseGuard(value, scope, 0, clock(), clock);
-  const submitting = { ...value, state: "submitting", revision: 2, leaseUntil: 140000 };
+  // What the server's heartbeat returns once the intent is recorded: submitting, next revision, reconcile mode.
+  const submitting = { ...value, state: "submitting", revision: 2, mode: "reconcile", leaseUntil: 140000 };
   time = 20000;
   assert.throws(() => createLeaseGuard(value, scope, 0, { mono: 0, wall: 0 }, clock).renew(submitting, 20000, clock()), /BINDING_CHANGED/);
   guard.advance({ revision: 2, fence: 1, state: "submitting" });
