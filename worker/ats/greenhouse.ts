@@ -31,6 +31,10 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
       Record<string, string>)[String(input.answers['degree--0'])];
     if (degree) return degree;
   }
+  // The dropdown lists single majors; for a joint major that includes Computer Science the applicant chose it
+  // (September 26, 2026). ponytail: one rule for CS joint majors; a per-applicant preference if another is needed.
+  if (field.key === 'discipline--0' && field.label === 'Discipline' && typeof input.answers['discipline--0'] === 'string' &&
+      input.answers['discipline--0'].split('/').map(part => part.trim()).includes('Computer Science')) return 'Computer Science';
   if (input.answers[field.key] !== undefined) return input.answers[field.key];
   if (input.answers[disclosureAnswerKey(field.label)] !== undefined) return input.answers[disclosureAnswerKey(field.label)];
   if (field.key === 'candidate-location' && field.label === 'Location (City)') return input.answers.current_location;

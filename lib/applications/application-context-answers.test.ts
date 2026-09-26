@@ -96,6 +96,9 @@ describe('Greenhouse education dropdowns', () => {
     expect(greenhouseAnswer(input({ 'degree--0': 'bachelor' }), field)).toBe("Bachelor's Degree");
     expect(greenhouseAnswer(input({ 'degree--0': 'doctorate' }), field)).toBe('doctorate'); // Ph.D., M.D. or J.D.: asked, not guessed
     expect(greenhouseAnswer(input({ 'degree--0': 'bachelor', [formQuestionKey(field)]: 'Other' }), field)).toBe('Other');
+    const discipline = { key: 'discipline--0', label: 'Discipline', kind: 'combobox' as const, required: true };
+    expect(greenhouseAnswer(input({ 'discipline--0': 'Physics/Computer Science' }), discipline)).toBe('Computer Science');
+    expect(greenhouseAnswer(input({ 'discipline--0': 'Economics' }), discipline)).toBe('Economics'); // tried as is; asked if not an option
   });
 });
 
