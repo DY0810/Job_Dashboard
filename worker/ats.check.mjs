@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
 import { ashby } from './ats/ashby.ts';
 import { greenhouse, hostedFields } from './ats/greenhouse.ts';
-import { fillField, locateField, verifyField } from './ats/protocol.ts';
+import { fillField, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
 import { createJevActionSelector } from './jev.ts';
 import { createConfiguredJevActionSelector } from './main.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
@@ -34,8 +34,13 @@ test('a hosted upload marked required only by its label asterisk is required', {
       '<div id="upload-label-question_1">Undergraduate Transcript<span class="required">*</span></div><input id="question_1" type="file">' +
       '<div id="upload-label-question_2">Graduate Transcript</div><input id="question_2" type="file"></form>');
     const fields = await hostedFields(page.locator('form'));
-    assert.deepEqual(fields.map(field => [field.key, field.required]), [['question_1', true], ['question_2', false]]);
+    assert.deepEqual(fields.map(field => [field.key, field.label, field.required]),
+      [['question_1', 'Undergraduate Transcript', true], ['question_2', 'Graduate Transcript', false]]);
   } finally { await browser.close(); }
+});
+test('the applicant transcript fits an undergraduate or plain transcript upload, never a graduate one', () => {
+  for (const label of ['Undergraduate Transcript', 'Transcript', 'Unofficial Transcript']) assert.equal(undergraduateTranscript(label), true, label);
+  for (const label of ['Graduate Transcript', 'Resume/CV', 'Cover Letter']) assert.equal(undergraduateTranscript(label), false, label);
 });
 test('a dropdown answer the form does not offer fails with every choice the form does offer', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });

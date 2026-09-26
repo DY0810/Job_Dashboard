@@ -232,6 +232,20 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
     .filter((item): item is { master: typeof item.master; role: string | null; ref: { documentId: string; version: number } } => item.ref !== null);
   masters.sort((a, b) => Number(label(official.title).includes(label(b.role ?? ''))) - Number(label(official.title).includes(label(a.role ?? ''))));
   const documentsByKey: Record<string, ApplicationContext['documents'][string]> = {};
+  // The applicant's confirmed transcript, only when the policy lets Workie send one.
+  const transcriptRef = policy.policy.documentKinds.includes('transcript') ? profile.education.schools
+    .map((item) => factValue<{ documentId: string; version: number }>(item.transcript)).find((ref) => ref !== null) : undefined;
+  if (transcriptRef) {
+    const [transcript] = await tx.select().from(documents).where(and(
+      eq(documents.ownerId, worker.ownerId), eq(documents.id, transcriptRef.documentId), eq(documents.version, transcriptRef.version),
+      eq(documents.state, 'available'), eq(documents.safetyCheck, 'passed'),
+    ));
+    if (transcript?.sha256) documentsByKey.transcript = {
+      documentId: transcript.id, version: transcript.version, sha256: transcript.sha256, size: transcript.size,
+      mime: transcript.mime as 'application/pdf' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      path: `/api/worker/applications/${checked.id}/documents/${transcript.id}`,
+    };
+  }
   const selected = masters[0];
   let selectedDocument: typeof documents.$inferSelect | undefined;
   if (selected) {

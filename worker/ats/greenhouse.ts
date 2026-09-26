@@ -85,7 +85,7 @@ export async function hostedFields(form: import('playwright').Locator): Promise<
     return input.type !== 'hidden' && !input.disabled && !input.id.endsWith('-search');
   }).map(node => {
     const input = node as HTMLInputElement;
-    const label = document.getElementById(`${input.id}-label`)?.textContent ??
+    const label = document.getElementById(`${input.id}-label`)?.textContent ?? document.getElementById(`upload-label-${input.id}`)?.textContent ??
       document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent ?? input.getAttribute('aria-label') ?? input.id;
     return { key: input.id, label: label.trim().replace(/\*\s*$/, '').trim(),
       kind: input.type === 'file' ? 'file' : input.getAttribute('role') === 'combobox' ? 'combobox' :

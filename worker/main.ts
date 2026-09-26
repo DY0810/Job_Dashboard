@@ -15,7 +15,7 @@ import { greenhouse, greenhouseAnswer } from "./ats/greenhouse.ts";
 import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
 import { screenApplication, screeningQuestions, formQuestions } from "./screening.ts";
 import { AtsError } from "./ats/protocol.ts";
-import { AtsIdentitySchema, formQuestionKey, type AtsApplication } from "./ats/protocol.ts";
+import { AtsIdentitySchema, formQuestionKey, undergraduateTranscript, type AtsApplication } from "./ats/protocol.ts";
 import { lever } from "./ats/lever.ts";
 import { jobvite } from "./ats/jobvite.ts";
 import { workday } from "./ats/workday.ts";
@@ -311,7 +311,11 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         (adapter === greenhouse ? greenhouseAnswer(currentApplication, field) :
           currentApplication.answers[formQuestionKey(field)] ?? currentApplication.answers[field.key]) === undefined);
       if (missing.length) return formQuestions(applicationContext, missing);
-      // A required upload Workie has no document for (a transcript) would fail the form's own check after submit.
+      // A transcript upload takes the applicant's undergraduate transcript.
+      for (const field of observed.fields) {
+        if (field.kind === 'file' && localDocuments.transcript && undergraduateTranscript(field.label)) currentApplication.documents[field.key] = localDocuments.transcript;
+      }
+      // A required upload Workie has no document for would fail the form's own check after submit.
       if (observed.fields.some(field => field.kind === 'file' && field.required && field.key !== 'cover_letter' && !currentApplication.documents[field.key])) {
         return { state: "needs_document" as const, reasonCode: "required_document_unavailable" };
       }

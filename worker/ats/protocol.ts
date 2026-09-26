@@ -64,6 +64,10 @@ export async function locateField(page: Page, field: AtsField) {
   throw new AtsError('FIELD_NOT_FOUND', field.key);
 }
 
+// An undergraduate applicant's transcript fits "Transcript" or "Undergraduate Transcript", never "Graduate Transcript".
+export const undergraduateTranscript = (label: string) =>
+  /transcript/i.test(label) && !/\bgraduate\b/i.test(label.replace(/undergraduate/gi, ''));
+
 export async function fillField(page: Page, field: AtsField, value: AtsValue | undefined, documents: Record<string, string>) {
   if (field.required && value === undefined && field.kind !== 'file') throw new AtsError('REQUIRED_ANSWER_MISSING', field.key);
   const locator = await locateField(page, field);
