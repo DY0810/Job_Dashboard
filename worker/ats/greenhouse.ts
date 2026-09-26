@@ -79,7 +79,7 @@ function commonAnswer(input: AtsApplication, field: AtsField) {
   return input.answers[`${us ? 'us' : 'posting'}_sponsorship_${/\bfuture\b/.test(text) ? 'ever' : 'now'}`];
 }
 
-async function hostedFields(form: import('playwright').Locator): Promise<AtsField[]> {
+export async function hostedFields(form: import('playwright').Locator): Promise<AtsField[]> {
   const raw = await form.evaluate(element => [...element.querySelectorAll('input[id],textarea[id],select[id]')].filter(node => {
     const input = node as HTMLInputElement;
     return input.type !== 'hidden' && !input.disabled && !input.id.endsWith('-search');
@@ -91,7 +91,9 @@ async function hostedFields(form: import('playwright').Locator): Promise<AtsFiel
       kind: input.type === 'file' ? 'file' : input.getAttribute('role') === 'combobox' ? 'combobox' :
         input.tagName === 'SELECT' ? 'select' : input.type === 'checkbox' ? 'checkbox' : input.type === 'radio' ? 'radio' :
           input.type === 'email' ? 'email' : 'text',
-      required: input.id === 'resume' || input.getAttribute('aria-required') === 'true' || input.required,
+      // A hosted upload marks "required" only with an asterisk in its upload label, never on the input.
+      required: input.id === 'resume' || input.getAttribute('aria-required') === 'true' || input.required ||
+        Boolean(document.getElementById(`upload-label-${input.id}`)?.querySelector('.required')),
       options: node instanceof HTMLSelectElement ? [...node.options].map(option => option.label).filter(Boolean) : undefined,
     };
   }));

@@ -311,6 +311,10 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         (adapter === greenhouse ? greenhouseAnswer(currentApplication, field) :
           currentApplication.answers[formQuestionKey(field)] ?? currentApplication.answers[field.key]) === undefined);
       if (missing.length) return formQuestions(applicationContext, missing);
+      // A required upload Workie has no document for (a transcript) would fail the form's own check after submit.
+      if (observed.fields.some(field => field.kind === 'file' && field.required && field.key !== 'cover_letter' && !currentApplication.documents[field.key])) {
+        return { state: "needs_document" as const, reasonCode: "required_document_unavailable" };
+      }
       const applicant = [application.answers.first_name, application.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
       const writeLetter = async () => {
         const source = await readFile(localDocuments.resumeMaster);

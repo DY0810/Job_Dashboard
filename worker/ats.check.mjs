@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
 import { ashby } from './ats/ashby.ts';
-import { greenhouse } from './ats/greenhouse.ts';
+import { greenhouse, hostedFields } from './ats/greenhouse.ts';
 import { fillField, locateField, verifyField } from './ats/protocol.ts';
 import { createJevActionSelector } from './jev.ts';
 import { createConfiguredJevActionSelector } from './main.ts';
@@ -23,6 +23,18 @@ test('hosted fields resolve their exact ID when visible labels collide', { skip:
     const page = await browser.newPage();
     await page.setContent('<label for="other">Attach</label><input id="other"><label for="resume">Attach</label><input id="resume" type="file">');
     assert.equal(await (await locateField(page, { key: 'resume', label: 'Attach', kind: 'file', required: true })).getAttribute('id'), 'resume');
+  } finally { await browser.close(); }
+});
+test('a hosted upload marked required only by its label asterisk is required', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    // Verkada's live markup: the input carries no required attribute; only the upload label's asterisk says so.
+    await page.setContent('<form id="application-form">' +
+      '<div id="upload-label-question_1">Undergraduate Transcript<span class="required">*</span></div><input id="question_1" type="file">' +
+      '<div id="upload-label-question_2">Graduate Transcript</div><input id="question_2" type="file"></form>');
+    const fields = await hostedFields(page.locator('form'));
+    assert.deepEqual(fields.map(field => [field.key, field.required]), [['question_1', true], ['question_2', false]]);
   } finally { await browser.close(); }
 });
 test('a dropdown answer the form does not offer fails with every choice the form does offer', { skip: !browserReady }, async () => {
