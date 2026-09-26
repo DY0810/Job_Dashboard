@@ -78,7 +78,10 @@ describe('Figma voluntary choices', () => {
     expect(greenhouseAnswer(input, field('gender', 'Gender'))).toBe('Male');
     expect(greenhouseAnswer(input, field('hispanic_ethnicity', 'Are you Hispanic/Latino?'))).toBe('No');
     expect(greenhouseAnswer(input, field('veteran_status', 'Veteran Status'))).toBe('I am not a protected veteran');
-    expect(greenhouseAnswer({ ...input, identity: { ...input.identity, requisition: 'other' } }, field('gender', 'Gender'))).toBeUndefined();
+    // Greenhouse's standard self-identification fields fill on every hosted form; Figma's own pronoun question does not.
+    const other = { ...input, identity: { ...input.identity, tenant: 'hpiq', requisition: '6116398004' } };
+    expect(greenhouseAnswer(other, field('gender', 'Gender'))).toBe('Male');
+    expect(greenhouseAnswer(other, field('question_19438728004', 'Pronouns'))).toBeUndefined();
     profile.voluntary.veteran = { ...profile.voluntary.veteran, state: 'candidate', confirmedAt: null };
     expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, field('veteran_status', 'Veteran Status'))).toBeUndefined();
   });

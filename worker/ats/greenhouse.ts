@@ -39,10 +39,11 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
     if (field.key === 'question_19438730004' && field.label === 'If you are currently enrolled in university or a program, what is your expected graduation date?' &&
         input.answers.expected_graduation_month === '2028-12') return 'Fall 2028';
     if (field.key === 'question_19438728004' && field.label === 'Pronouns') return input.answers.voluntary_pronouns;
-    if (field.key === 'gender' && field.label === 'Gender') return input.answers.voluntary_gender;
-    if (field.key === 'hispanic_ethnicity' && field.label === 'Are you Hispanic/Latino?') return input.answers.voluntary_hispanic;
-    if (field.key === 'veteran_status' && field.label === 'Veteran Status') return input.answers.voluntary_veteran;
   }
+  // Greenhouse's standard voluntary self-identification fields, answered only from confirmed profile facts.
+  if (field.key === 'gender' && field.label === 'Gender') return input.answers.voluntary_gender;
+  if (field.key === 'hispanic_ethnicity' && field.label === 'Are you Hispanic/Latino?') return input.answers.voluntary_hispanic;
+  if (field.key === 'veteran_status' && field.label === 'Veteran Status') return input.answers.voluntary_veteran;
   return commonAnswer(input, field);
 }
 
