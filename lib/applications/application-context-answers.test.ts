@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createEmptyProfile, DisclosureSchema, ProfileSchema, ProfileSections } from './profile.ts';
 import { applicationAnswers } from './application-context.ts';
 import { greenhouseAnswer } from '../../worker/ats/greenhouse.ts';
+import { formQuestionKey } from '../../worker/ats/protocol.ts';
 
 vi.mock('server-only', () => ({}));
 
@@ -84,6 +85,17 @@ describe('Figma voluntary choices', () => {
     expect(greenhouseAnswer(other, field('question_19438728004', 'Pronouns'))).toBeUndefined();
     profile.voluntary.veteran = { ...profile.voluntary.veteran, state: 'candidate', confirmedAt: null };
     expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, field('veteran_status', 'Veteran Status'))).toBeUndefined();
+  });
+});
+
+describe('Greenhouse education dropdowns', () => {
+  it('names the degree the way the dropdown does, and leaves an inbox answer in charge', () => {
+    const field = { key: 'degree--0', label: 'Degree', kind: 'combobox' as const, required: true };
+    const input = (answers: Record<string, string>) => ({ identity: { ats: 'greenhouse' as const, tenant: 'hpiq', requisition: '6116398004' },
+      company: 'HP IQ', role: 'Intern', applicationUrl: 'https://job-boards.greenhouse.io/hpiq/jobs/6116398004', answers, documents: {} });
+    expect(greenhouseAnswer(input({ 'degree--0': 'bachelor' }), field)).toBe("Bachelor's Degree");
+    expect(greenhouseAnswer(input({ 'degree--0': 'doctorate' }), field)).toBe('doctorate'); // Ph.D., M.D. or J.D.: asked, not guessed
+    expect(greenhouseAnswer(input({ 'degree--0': 'bachelor', [formQuestionKey(field)]: 'Other' }), field)).toBe('Other');
   });
 });
 

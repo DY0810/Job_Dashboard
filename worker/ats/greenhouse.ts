@@ -25,6 +25,12 @@ function hosted(input: AtsApplication) {
 
 export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
   if (input.answers[formQuestionKey(field)] !== undefined) return input.answers[formQuestionKey(field)];
+  // Greenhouse's education dropdown names the degree; the profile stores a level (doctorates are ambiguous, so asked).
+  if (field.key === 'degree--0' && field.label === 'Degree') {
+    const degree = ({ high_school: 'High School', associate: "Associate's Degree", bachelor: "Bachelor's Degree", master: "Master's Degree" } as
+      Record<string, string>)[String(input.answers['degree--0'])];
+    if (degree) return degree;
+  }
   if (input.answers[field.key] !== undefined) return input.answers[field.key];
   if (input.answers[disclosureAnswerKey(field.label)] !== undefined) return input.answers[disclosureAnswerKey(field.label)];
   if (field.key === 'candidate-location' && field.label === 'Location (City)') return input.answers.current_location;
