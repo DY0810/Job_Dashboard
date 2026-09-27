@@ -79,6 +79,9 @@ function commonAnswer(input: AtsApplication, field: AtsField) {
   return input.answers[`${us ? 'us' : 'posting'}_sponsorship_${/\bfuture\b/.test(text) ? 'ever' : 'now'}`];
 }
 
+// document.title collapses runs of spaces, so HP IQ's "Productivity  (Summer 2027)" must be compared collapsed.
+export const hostedTitle = (role: string, company: string) => `Job Application for ${role} at ${company}`.replace(/\s+/g, ' ').trim();
+
 export async function hostedFields(form: import('playwright').Locator): Promise<AtsField[]> {
   const raw = await form.evaluate(element => [...element.querySelectorAll('input[id],textarea[id],select[id]')].filter(node => {
     const input = node as HTMLInputElement;
@@ -112,7 +115,7 @@ export const greenhouse: AtsAdapter = {
     if (!live && await form.getAttribute('id') === 'application-form') throw new AtsError('ATS_IDENTITY_MISMATCH');
     if (live) await page.waitForLoadState('load', { timeout: 5_000 });
     // The title can lag the load event (seen in the visible submit window); a real mismatch still fails.
-    if (live && !await page.waitForFunction(title => document.title === title, `Job Application for ${input.role} at ${input.company}`,
+    if (live && !await page.waitForFunction(title => document.title === title, hostedTitle(input.role, input.company),
       { timeout: 10_000 }).then(() => true, () => false)) throw new AtsError('ATS_IDENTITY_MISMATCH');
     const identity = {
       ats: 'greenhouse' as const,

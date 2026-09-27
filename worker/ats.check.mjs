@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
 import { ashby } from './ats/ashby.ts';
-import { greenhouse, hostedFields } from './ats/greenhouse.ts';
+import { greenhouse, hostedFields, hostedTitle } from './ats/greenhouse.ts';
 import { fillField, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
 import { createJevActionSelector } from './jev.ts';
 import { createConfiguredJevActionSelector } from './main.ts';
@@ -41,6 +41,15 @@ test('a hosted upload marked required only by its label asterisk is required', {
 test('the applicant transcript fits an undergraduate or plain transcript upload, never a graduate one', () => {
   for (const label of ['Undergraduate Transcript', 'Transcript', 'Unofficial Transcript']) assert.equal(undergraduateTranscript(label), true, label);
   for (const label of ['Graduate Transcript', 'Resume/CV', 'Cover Letter']) assert.equal(undergraduateTranscript(label), false, label);
+});
+test('a role title with a double space matches the page title the browser collapses', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const role = 'Software Engineering Intern, Product & Developer Productivity  (Summer 2027)';
+    await page.setContent(`<title>Job Application for ${role.replace('&', '&amp;')} at HP IQ</title>`);
+    assert.equal(await page.title(), hostedTitle(role, 'HP IQ'));
+  } finally { await browser.close(); }
 });
 test('a dropdown answer the form does not offer fails with every choice the form does offer', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });
