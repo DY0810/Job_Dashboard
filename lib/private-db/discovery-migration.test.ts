@@ -24,7 +24,26 @@ it('migrates private storage twice while retaining prior assignment and terminal
     'private_application_artifact_no_update', 'private_application_artifact_no_delete',
   ]) expect(triggers.map((row) => row.name)).toContain(name);
   expect(await db.all(sql`pragma foreign_key_check`)).toEqual([]);
-  expect(await db.all(sql`select * from __drizzle_migrations`)).toHaveLength(9);
+  expect(await db.all(sql`select * from __drizzle_migrations`)).toHaveLength(10);
+  await db.run(sql`insert into private_user (id,name,email,email_verified,created_at,updated_at)
+    values ('alice','Synthetic','alice@example.test',1,1,1)`);
+  await db.run(sql`insert into private_policy_version (owner_id,version,hash,policy,created_at)
+    values ('alice',1,${'a'.repeat(64)},'{}',1)`);
+  await db.run(sql`insert into private_worker_pairing (id,owner_id,grant_hash,credential_binding,label,request_id,expires_at)
+    values ('pair','alice','grant',${'b'.repeat(64)},'fixture','request',10000)`);
+  await db.run(sql`insert into private_worker (id,owner_id,pairing_id,token_hash,credential_binding,registration_id,registration_hash,
+    label,protocol_version,worker_version,capabilities,created_at)
+    values ('worker','alice','pair',${'c'.repeat(64)},${'b'.repeat(64)},'reg','hash','fixture',1,'0.1','["control-v1"]',1)`);
+  await db.run(sql`insert into private_application_run (id,owner_id,worker_id,policy_revision,policy_version,policy_hash,created_at)
+    values ('run','alice','worker',1,1,${'a'.repeat(64)},1)`);
+  await db.run(sql`insert into private_application (id,owner_id,run_id,worker_id,ats,tenant,requisition,state,available_at,created_at)
+    values ('app','alice','run','worker','greenhouse','fixture','123','submission_unknown',1,1)`);
+  // An unknown submission leaves only as submitted, or as failed on the applicant's confirmation that it never arrived.
+  for (const [state, reason] of [['queued', 'applicant_confirmed_not_submitted'], ['filling', null], ['failed', null], ['failed', 'retry-safe'], ['cancelled', 'cancel']]) {
+    await expect(db.run(sql`update private_application set state = ${state}, reason_code = ${reason} where id = 'app'`)).rejects.toThrow();
+  }
+  await db.run(sql`update private_application set state = 'failed', reason_code = 'applicant_confirmed_not_submitted' where id = 'app'`);
+  await expect(db.run(sql`update private_application set state = 'queued' where id = 'app'`)).rejects.toThrow();
 });
 
 it('upgrades populated Phase 3 tables without changing identities, events, leases or run state', async () => {

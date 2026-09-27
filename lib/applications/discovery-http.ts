@@ -6,12 +6,12 @@ import { getAuth } from '../auth.ts';
 import { privateEndpoint, readPrivateJson, PrivateInputError } from './private-http.ts';
 import { WorkerError } from './worker-store.ts';
 import { previewLegacyImport, confirmLegacyImport } from './imports.ts';
-import { abandonDiscovery, getDiscoveryStatus, reapplyApplication } from './discovery.ts';
+import { abandonDiscovery, getDiscoveryStatus, reapplyApplication, retryUnsubmittedApplication } from './discovery.ts';
 import {
   ImportPreviewRequestSchema, ImportConfirmRequestSchema, ReapplyRequestSchema, AbandonDiscoverySchema,
 } from './discovery-protocol.ts';
 
-export async function discoveryEndpoint(request: Request, action: 'preview' | 'confirm' | 'status' | 'abandon' | 'reapply', runId?: string) {
+export async function discoveryEndpoint(request: Request, action: 'preview' | 'confirm' | 'status' | 'abandon' | 'reapply' | 'retry-unsubmitted', runId?: string) {
   return privateEndpoint(request, async (ownerId) => {
     try {
       if (new URL(request.url).search || (runId !== undefined && !z.uuid().safeParse(runId).success)) {
@@ -24,6 +24,7 @@ export async function discoveryEndpoint(request: Request, action: 'preview' | 'c
         case 'status': return await getDiscoveryStatus(db, ownerId, runId!);
         case 'abandon': return await abandonDiscovery(db, ownerId, runId!, await readPrivateJson(request, AbandonDiscoverySchema), options);
         case 'reapply': return await reapplyApplication(db, ownerId, runId!, await readPrivateJson(request, ReapplyRequestSchema), options);
+        case 'retry-unsubmitted': return await retryUnsubmittedApplication(db, ownerId, runId!, await readPrivateJson(request, ReapplyRequestSchema), options);
       }
     } catch (error) {
       if (error instanceof WorkerError) throw new PrivateInputError(error.status, error.message, error.code);

@@ -19,7 +19,7 @@ import { createRun, commandRun, commandApplication } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
 import {
-  discoverWorkerRuns, stageDiscoveryManifest, getDiscoveryStatus, abandonDiscovery, reapplyApplication,
+  discoverWorkerRuns, stageDiscoveryManifest, getDiscoveryStatus, abandonDiscovery, reapplyApplication, retryUnsubmittedApplication,
   DISCOVERY_INTERVAL_MS,
 } from './discovery.ts';
 import { previewLegacyImport, confirmLegacyImport } from './imports.ts';
@@ -439,6 +439,30 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect(history.find((a) => a.id === previous.id)).toMatchObject({ state: 'skipped', attempt: 1 });
     expect(history.find((a) => a.id === next.id)).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: previous.id });
     await expect(reapplyApplication(db, 'alice', run.id, { ...command, ...request() }, options)).rejects.toMatchObject({ code: 'DUPLICATE_BLOCKED' });
+    expect((await poll(token)).lease?.applicationId).toBe(next.id);
+  });
+
+  it('gives an applicant-confirmed unsubmitted application one fresh attempt without reapplication policy', async () => {
+    const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    await db.update(applications).set({ state: 'submission_unknown', leaseUntil: null, leaseCheckedAt: null })
+      .where(eq(applications.id, lease.applicationId));
+    const stuck = (await appRows()).find((a) => a.id === lease.applicationId)!;
+    const command = { ...request(), previousApplicationId: stuck.id, expectedRevision: stuck.revision };
+    await expect(reapplyApplication(db, 'alice', run.id, command, options)).rejects.toMatchObject({ code: 'REAPPLICATION_DISABLED' });
+    await expect(retryUnsubmittedApplication(db, 'bob', run.id, command, options)).rejects.toMatchObject({ status: 404 });
+    const next = await retryUnsubmittedApplication(db, 'alice', run.id, command, options);
+    expect(await retryUnsubmittedApplication(other, 'alice', run.id, command, options)).toEqual(next);
+    const history = await appRows();
+    const closed = history.find((a) => a.id === stuck.id)!;
+    expect(closed).toMatchObject({ state: 'failed', reasonCode: 'applicant_confirmed_not_submitted', attempt: 1 });
+    expect(history.find((a) => a.id === next.id)).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: stuck.id });
+    // Only an unknown submission qualifies, so neither the closed attempt nor the fresh one can be retried this way.
+    for (const app of [closed, history.find((a) => a.id === next.id)!]) {
+      await expect(retryUnsubmittedApplication(db, 'alice', run.id, { ...request(), previousApplicationId: app.id,
+        expectedRevision: app.revision }, options)).rejects.toMatchObject({ status: 409 });
+    }
+    now += DAY; // The stuck attempt used today's per-employer start.
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
   });
 

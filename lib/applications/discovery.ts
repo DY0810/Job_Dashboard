@@ -302,6 +302,30 @@ export async function abandonDiscovery(db: PrivateDb, ownerId: string, runId: st
   });
 }
 
+/** The next attempt of `previous`'s role in `run`, from the run's complete discovery snapshot. */
+async function nextAttempt(tx: WorkerTx, run: typeof applicationRuns.$inferSelect, previous: ApplicationRow, now: number) {
+  const ownerId = run.ownerId, runId = run.id;
+  const [target] = await tx.select().from(discoveryTargets).where(and(
+    eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.runId, runId), eq(discoveryTargets.ats, previous.ats),
+    eq(discoveryTargets.tenant, previous.tenant), eq(discoveryTargets.requisition, previous.requisition),
+    inArray(discoveryTargets.disposition, ['duplicate', 'eligible', 'held_cap']),
+  )).limit(1);
+  const [manifest] = target ? await tx.select().from(discoveryManifests).where(manifestScope(ownerId, target.manifestId)) : [];
+  if (!target || !manifest || manifest.state !== 'ready' || hashValue(manifest.artifact) !== manifest.hash) {
+    fail(409, 'DISCOVERY_REQUIRED', 'A complete matching discovery snapshot is required.');
+  }
+  const candidate = manifest.artifact.candidates[target.candidateIndex];
+  if (!candidate || candidate.disposition !== 'candidate' || hashValue(candidate) !== target.candidateHash) fail();
+  const row = one(await tx.insert(applications).values({
+    id: randomUUID(), ownerId, runId, workerId: run.workerId, ats: previous.ats, tenant: previous.tenant,
+    requisition: previous.requisition, attempt: previous.attempt + 1, previousApplicationId: previous.id,
+    snapshotManifestId: target.manifestId, snapshotTargetKey: target.targetKey, snapshotHash: target.candidateHash,
+    employerKey: target.employerKey, availableAt: now, createdAt: now,
+  }).returning());
+  one(await tx.update(discoveryTargets).set({ applicationId: row.id, disposition: 'eligible' })
+    .where(and(eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.id, target.id))).returning());
+  return row;
+}
 export async function reapplyApplication(
   db: PrivateDb, ownerId: string, runId: string, input: ReapplyRequest, options: WorkerOptions = {},
 ) {
@@ -335,25 +359,42 @@ export async function reapplyApplication(
     if (now - Math.max(previous.createdAt, previous.startedAt ?? 0, event.latest ?? 0, terminalCommand.latest ?? 0) < policy.reapplication.minimumDays * DAY_MS) {
       fail(409, 'COOLDOWN', 'Reapplication cooldown has not elapsed.');
     }
-    const [target] = await tx.select().from(discoveryTargets).where(and(
-      eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.runId, runId), eq(discoveryTargets.ats, previous.ats),
-      eq(discoveryTargets.tenant, previous.tenant), eq(discoveryTargets.requisition, previous.requisition),
-      inArray(discoveryTargets.disposition, ['duplicate', 'eligible', 'held_cap']),
-    )).limit(1);
-    const [manifest] = target ? await tx.select().from(discoveryManifests).where(manifestScope(ownerId, target.manifestId)) : [];
-    if (!target || !manifest || manifest.state !== 'ready' || hashValue(manifest.artifact) !== manifest.hash) {
-      fail(409, 'DISCOVERY_REQUIRED', 'A complete matching discovery snapshot is required.');
-    }
-    const candidate = manifest.artifact.candidates[target.candidateIndex];
-    if (!candidate || candidate.disposition !== 'candidate' || hashValue(candidate) !== target.candidateHash) fail();
-    const row = one(await tx.insert(applications).values({
-      id: randomUUID(), ownerId, runId, workerId: run.workerId, ats: previous.ats, tenant: previous.tenant,
-      requisition: previous.requisition, attempt: previous.attempt + 1, previousApplicationId: previous.id,
-      snapshotManifestId: target.manifestId, snapshotTargetKey: target.targetKey, snapshotHash: target.candidateHash,
-      employerKey: target.employerKey, availableAt: now, createdAt: now,
-    }).returning());
-    one(await tx.update(discoveryTargets).set({ applicationId: row.id, disposition: 'eligible' })
-      .where(and(eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.id, target.id))).returning());
+    const row = await nextAttempt(tx, run, previous, now);
+    const acknowledgement = applicationSummary(row);
+    await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
+    return acknowledgement;
+  });
+  if (result instanceof WorkerError) throw result;
+  return result;
+}
+
+/** An applicant-confirmed unsubmitted application (no receipt; Greenhouse sent only a security code, or refused the
+ * form) closes as failed and its role gets a fresh attempt. The employer never received it, so this is not a
+ * reapplication: no reapplication policy or cooldown, but the same suppression and latest-attempt checks. */
+export async function retryUnsubmittedApplication(
+  db: PrivateDb, ownerId: string, runId: string, input: ReapplyRequest, options: WorkerOptions = {},
+) {
+  const command = ReapplyRequestSchema.parse(input), scope = `application:retry-unsubmitted:${runId}`;
+  const result = await workerTransaction(db, async (tx) => {
+    const replay = await replayCommand<ReturnType<typeof applicationSummary>>(tx, ownerId, scope, command);
+    if (replay) return replay;
+    const [run] = await tx.select().from(applicationRuns).where(runScope(ownerId, runId));
+    if (!run) fail(404, 'NOT_FOUND', 'Run not found.');
+    if (run.state === 'stopped') fail(409, 'CONFLICT', 'Run is stopped.');
+    const [worker] = await tx.select().from(workers).where(and(eq(workers.ownerId, ownerId), eq(workers.id, run.workerId)));
+    if (!worker || !await currentWorker(tx, worker, options)) return new WorkerError(403, 'FORBIDDEN', 'Worker is revoked.');
+    const now = nowAt(options);
+    const [previous] = await tx.select().from(applications).where(and(
+      eq(applications.ownerId, ownerId), eq(applications.id, command.previousApplicationId),
+    ));
+    if (!previous) fail(404, 'NOT_FOUND', 'Previous application not found.');
+    if (previous.revision !== command.expectedRevision || previous.state !== 'submission_unknown' || previous.leaseUntil !== null) fail();
+    const [latest] = await tx.select().from(applications).where(identityMatch(previous)).orderBy(desc(applications.attempt)).limit(1);
+    if (latest.id !== previous.id || await manuallySuppressed(tx, previous)) fail(409, 'DUPLICATE_BLOCKED', 'Application is suppressed.');
+    one(await tx.update(applications).set({
+      state: 'failed', reasonCode: 'applicant_confirmed_not_submitted', revision: previous.revision + 1, fence: previous.fence + 1,
+    }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, previous.id), eq(applications.revision, previous.revision))).returning());
+    const row = await nextAttempt(tx, run, previous, now);
     const acknowledgement = applicationSummary(row);
     await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
     return acknowledgement;
