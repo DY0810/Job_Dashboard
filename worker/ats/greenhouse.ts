@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
 import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
 
-const VERIFICATION_WAIT_MS = 10 * 60_000; // time for the applicant to find the emailed code
+const VERIFICATION_WAIT_MS = 30 * 60_000; // time for the applicant to find the emailed code
 
 const fields: AtsField[] = [
   { key: 'first_name', label: 'First name', kind: 'text', required: true },
