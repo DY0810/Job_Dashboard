@@ -423,6 +423,23 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await poll(token)).lease).not.toBeNull();
   });
 
+  it("holds a third Ramp application inside Ramp's 60-day limit, counting applications made by hand", async () => {
+    addPostings(3);
+    corpus.update(postings).set({ company: 'Ramp', canonicalUrl: sql`'https://jobs.ashbyhq.com/ramp/0000000' || ${postings.id} || '-0000-4000-8000-000000000000'` }).run();
+    const p = await preview([1]);
+    expect(p.rows[0].identity).toMatchObject({ ats: 'ashby', tenant: 'ramp' });
+    await confirmLegacyImport(db, 'alice', confirmInput(p), options);
+    const { token, run } = await prepared('alice', { destinations: ['jobs.ashbyhq.com'], perEmployerCap: 10 });
+    await complete(token, run.id);
+    const second = (await poll(token)).lease!;
+    await skip(second.applicationId);
+    now += DAY;
+    expect((await poll(token)).lease).toBeNull();
+    expect((await getDiscoveryStatus(db, 'alice', run.id, options)).counts.held_cap).toBe(1);
+    now += 60 * DAY;
+    expect((await poll(token)).lease).not.toBeNull();
+  });
+
   it('allows only explicit policy-approved reapplication after cooldown measured from the terminal command', async () => {
     const { token, run } = await prepared('alice', { reapplication: { allowed: true, minimumDays: 1 } });
     addPostings(1); await complete(token, run.id);

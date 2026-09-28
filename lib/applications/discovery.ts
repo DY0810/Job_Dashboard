@@ -219,6 +219,29 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
   });
 }
 
+/**
+ * Limits an employer's ATS enforces per candidate and only reveals at submit, after the whole form
+ * is filled. They bind every applicant, whatever their policy, and count applications the
+ * applicant reported as made by hand (manual marks) as well as Workie's own.
+ * ponytail: Ramp's cap is on Software Engineering roles only; this counts every Ramp role. Add a
+ * title match here if Workie ever applies to non-engineering Ramp roles.
+ */
+const EMPLOYER_LIMITS = [
+  // Ashby rejects the third: "a total of 2 over a span of 60 days" (seen 2026-09-27).
+  { ats: 'ashby', tenant: 'ramp', max: 2, days: 60 },
+] as const;
+
+function employerLimitReached(now: number) {
+  return sql.join(EMPLOYER_LIMITS.map(({ ats, tenant, max, days }) => {
+    const since = now - days * DAY_MS;
+    return sql`(${applications}.ats = ${ats} and lower(${applications}.tenant) = ${tenant} and (
+      (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
+        and used.ats = ${ats} and lower(used.tenant) = ${tenant} and used.started_at >= ${since})
+      + (select count(*) from ${manualApplicationMarks} m where m.owner_id = ${applications}.owner_id
+        and m.ats = ${ats} and lower(m.tenant) = ${tenant} and m.created_at >= ${since})) >= ${max})`;
+  }), sql` or `);
+}
+
 function capExceeded(policy: Policy, now: number) {
   const day = Math.floor(now / DAY_MS) * DAY_MS;
   // Qualify the outer row: an unqualified column resolves to the inner `used` table in SQLite.
@@ -229,6 +252,7 @@ function capExceeded(policy: Policy, now: number) {
       and used.started_at >= ${day} and used.started_at < ${day + DAY_MS}
       and (used.employer_key = ${applications}.employer_key or
         (used.ats = ${applications}.ats and used.tenant = ${applications}.tenant))) >= ${policy.perEmployerCap}
+    or ${employerLimitReached(now)}
   )`;
 }
 export async function discoveryClaimAllowed(tx: WorkerTx, app: ApplicationRow, now: number): Promise<boolean> {
