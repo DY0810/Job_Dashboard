@@ -38,6 +38,13 @@ describe('cloud refresh completion', () => {
     expect(await claimAndRun(() => { throw new Error('must not rerun'); }, db)).toBeNull();
   });
 
+  it('keeps the cycle exit when the completion write fails', async () => {
+    const db = openDb(':memory:', { migrate: true });
+    await requestRefresh(db);
+    // The connection dies during the cycle, as Turso's idle socket did under spawnSync.
+    expect(await claimAndRun(() => { (db as unknown as { $client: { close(): void } }).$client.close(); return 0; }, db)).toBe(0);
+  });
+
   it('records a thrown runner failure and propagates it', async () => {
     const db = openDb(':memory:', { migrate: true });
     const { request } = await requestRefresh(db);
