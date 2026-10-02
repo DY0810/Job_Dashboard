@@ -41,7 +41,7 @@ describe('cloud refresh completion', () => {
   it('keeps the cycle exit when the completion write fails', async () => {
     const db = openDb(':memory:', { migrate: true });
     await requestRefresh(db);
-    // The connection dies during the cycle, as Turso's idle socket did under spawnSync.
+    // Even when the completion write cannot land at all, the cycle's own exit stands.
     expect(await claimAndRun(() => { (db as unknown as { $client: { close(): void } }).$client.close(); return 0; }, db)).toBe(0);
   });
 

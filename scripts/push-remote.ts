@@ -36,7 +36,7 @@ import { getTableColumns, getTableName, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 
-import { MIGRATIONS_DIR, openDb, type Db, type TursoDb } from '../lib/db/index.ts';
+import { MIGRATIONS_DIR, openDb, retryingFetch, type Db, type TursoDb } from '../lib/db/index.ts';
 import * as schema from '../lib/db/schema.ts';
 
 /** Parents before children: `posting_sources.posting_id` references `postings.id`. */
@@ -197,7 +197,7 @@ export async function pushRemote(
   url: string,
   authToken: string | undefined,
 ): Promise<{ rows: number; deleted: number }[]> {
-  const remote = drizzle(createClient({ url, authToken }), { schema });
+  const remote = drizzle(createClient({ url, authToken, fetch: retryingFetch }), { schema });
   await migrate(remote, { migrationsFolder: MIGRATIONS_DIR });
 
   const local = openDb();

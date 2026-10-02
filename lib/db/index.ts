@@ -41,6 +41,29 @@ export const driver = (db: ReadDb): TursoDb => db as TursoDb;
 export const TURSO_ENV = ['TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN'] as const;
 
 /**
+ * `fetch` for the writer's Turso clients: retries a request ONCE when it throws, which an HTTP
+ * error status never does. Node's fetch pools keep-alive sockets per process, and the writer
+ * leaves them idle for minutes — a spawnSync'd cycle blocks the event loop, and the mirror
+ * hashes ~25,000 rows between statements — so Turso closes them, and the next statement
+ * written onto the dead socket dies on EPIPE or UND_ERR_SOCKET. A new client does not help: the
+ * pool is global. The failed socket is discarded, so the retry opens a fresh one.
+ *
+ * The server may still have run the first attempt (a half-closed socket reads it), so this is
+ * only for statements that tolerate running twice: the mirror's upserts and deletes, the
+ * guarded `finishRequest`, migrations (atomic, and skipped once recorded). A replayed
+ * `claimRequest` finds its own claim and reports nobody waiting; the row is reclaimed after
+ * CLAIM_TIMEOUT_MS. Never pass this to a client that sends a plain INSERT.
+ */
+export async function retryingFetch(request: Request): Promise<Response> {
+  const retry = request.clone();
+  try {
+    return await fetch(request);
+  } catch {
+    return fetch(retry);
+  }
+}
+
+/**
  * One connection per process. Next's dev server re-evaluates modules on every edit, so the
  * handle is cached on `globalThis` — otherwise each hot reload leaks a file descriptor.
  */

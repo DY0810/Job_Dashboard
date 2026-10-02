@@ -17,7 +17,7 @@ import { migrate } from 'drizzle-orm/libsql/migrator';
 
 import * as schema from '../lib/db/schema.ts';
 import { claimRequest, finishRequest } from '../lib/refresh-queue.ts';
-import { MIGRATIONS_DIR, openDb, type Db, type ReadDb, type TursoDb } from '../lib/db/index.ts';
+import { MIGRATIONS_DIR, openDb, retryingFetch, type Db, type ReadDb, type TursoDb } from '../lib/db/index.ts';
 import { readCheckpoints } from './ingest.ts';
 import { connectors } from './connectors/index.ts';
 
@@ -47,11 +47,10 @@ export function runRefreshCycles(
 export async function claimAndRun(run: () => number, db?: ReadDb): Promise<number | null> {
   const url = process.env.TURSO_DATABASE_URL;
   if (!url && !db) return null;
-  const connect = () => db ?? drizzle({
-    connection: { url: url!, authToken: process.env.TURSO_AUTH_TOKEN },
+  const remote = db ?? drizzle({
+    connection: { url: url!, authToken: process.env.TURSO_AUTH_TOKEN, fetch: retryingFetch },
     schema,
   }) as unknown as ReadDb;
-  const remote = connect();
 
   // The queue is bookkeeping; the cycle is the point. A claim that cannot be written must not
   // decide whether jobs get fetched — when Turso blocked writes on a quota, this line threw,
@@ -80,13 +79,11 @@ export async function claimAndRun(run: () => number, db?: ReadDb): Promise<numbe
   try {
     code = run();
   } finally {
-    // A fresh client, not `remote`: `run` is a spawnSync that blocks the event loop for the
-    // whole cycle, so Turso closes the idle keep-alive socket underneath it and the first
-    // write after a ~10-minute cycle died on EPIPE — failing a run whose ingest and mirror
-    // had both landed. And, as with the claim, the bookkeeping never decides the exit code:
-    // an unfinished row is reclaimed after CLAIM_TIMEOUT_MS.
+    // `run` blocks the event loop for the whole cycle, so this write lands on a socket Turso
+    // has closed; retryingFetch reconnects. And, as with the claim, the bookkeeping never
+    // decides the exit code: an unfinished row is reclaimed after CLAIM_TIMEOUT_MS.
     try {
-      await finishRequest(connect(), claimed, code === 0 ? null : `Refresh cycle exited with code ${code}`);
+      await finishRequest(remote, claimed, code === 0 ? null : `Refresh cycle exited with code ${code}`);
     } catch (error) {
       console.log(
         JSON.stringify({ event: 'refresh-finish-failed', id: claimed.id, reason: (error as Error).message.slice(0, 200) }),
