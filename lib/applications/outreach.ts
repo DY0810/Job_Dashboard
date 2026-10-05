@@ -168,6 +168,8 @@ async function deliver(db: PrivateDb, ownerId: string, applicationId: string, ma
   if (!state) fail(404, 'NOT_FOUND', 'No recruiter email draft for this application.');
   // Automatic delivery never retries a failure; the applicant does, from the Applications page.
   if (state.status === 'sent' || state.status === 'sending' || (!manual && state.status !== 'draft')) return view(state);
+  // A retried receipt changes nothing once the draft has a hold or the applicant's approval.
+  if (!manual && !queued && state.reason) return view(state);
   const settle = async (eventId: string, outcome: Omit<Outcome, 'kind' | 'outreach'>) => {
     await append(db, ownerId, applicationId, eventId, { kind: 'outreach', outreach: 'outcome', ...outcome }, nowAt(options));
     return view((await read())!);

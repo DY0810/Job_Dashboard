@@ -107,10 +107,10 @@ function ApprovePanel({ app, ownerId, onChange }: { app: { id: string; runId: st
 
 function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: string; onChange: () => void }) {
   const [to, setTo] = useState(item.to ?? '');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'queue' | 'now' | null>(null);
   const [error, setError] = useState('');
   const send = async (now: boolean) => {
-    setBusy(true); setError('');
+    setBusy(now ? 'now' : 'queue'); setError('');
     try {
       const response = await fetch(`/api/outreach/${item.applicationId}`, {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(60_000),
@@ -120,7 +120,7 @@ function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: s
       if (!response.ok) throw new Error();
       onChange();
     } catch { setError('Could not send. Check the address and try again.'); }
-    finally { setBusy(false); }
+    finally { setBusy(null); }
   };
   return <div>
     <div className={styles.row}><span>Recruiter email: {outreachStatus(item)}</span></div>
@@ -128,8 +128,8 @@ function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: s
     {item.status !== 'sent' && item.status !== 'sending' && <form className={styles.form} onSubmit={(event) => {
       event.preventDefault(); void send((event.nativeEvent as SubmitEvent).submitter?.getAttribute('name') === 'now'); }}>
       <input type="email" required value={to} onChange={(event) => setTo(event.target.value)} placeholder="recruiter@company.com" aria-label={`Recruiter email for ${item.company}`} />
-      <button className={styles.button} type="submit" disabled={busy}>Send</button>
-      <button className={styles.button} type="submit" name="now" disabled={busy}>{busy ? 'Sending...' : 'Send now'}</button>
+      <button className={styles.button} type="submit" disabled={!!busy}>{busy === 'queue' ? 'Queueing...' : 'Send'}</button>
+      <button className={styles.button} type="submit" name="now" disabled={!!busy}>{busy === 'now' ? 'Sending...' : 'Send now'}</button>
       {error && <span role="alert" className={styles.reason}>{error}</span>}
     </form>}
   </div>;

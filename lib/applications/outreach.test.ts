@@ -259,6 +259,20 @@ describe('recruiter email after a verified submission', () => {
       .toMatchObject({ status: 'draft', reason: 'awaiting_approval' });
   });
 
+  it('keeps an approved email queued when the worker retries the receipt', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    let lookups = 0;
+    options.fetch = async () => { lookups += 1; return Response.json({ data: { accept_all: false, emails: [] } }); };
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options);
+    const seen = lookups;
+    const queued = await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat' }, options);
+    now += 60_000;
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled', to: 'pat@employer.test', source: 'manual', sendAfter: queued.sendAfter });
+    expect(lookups).toBe(seen);
+  });
+
   it('Send now skips the wait, even for an email already queued', async () => {
     const { token, app } = await application();
     await recordOutreachDraft(db, token, app.id, draft(), options);
