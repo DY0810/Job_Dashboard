@@ -51,6 +51,25 @@ test('a role title with a double space matches the page title the browser collap
     assert.equal(await page.title(), hostedTitle(role, 'HP IQ'));
   } finally { await browser.close(); }
 });
+test('a renamed Greenhouse board passes on the exact role and job URL; a wrong role or job URL still fails', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    const role = 'Spring 2027 Software Engineering Internship/Co-op', job = 'https://job-boards.greenhouse.io/xai/jobs/5252108007';
+    // Seen live on 2026-10-05: xAI's board now titles its pages "at SpaceXAI".
+    const observe = (title, redirect) => {
+      context.route(redirect ?? job, route => route.fulfill({ contentType: 'text/html',
+        body: `<title>${title}</title><form id="application-form"><label for="first_name">First name</label><input id="first_name"></form>` }), { times: 1 });
+      return greenhouse.observe({ context, page: () => context.newPage(), navigate: async (page, url) => { await page.goto(redirect ?? url); return page; } },
+        { identity: { ats: 'greenhouse', tenant: 'xai', requisition: '5252108007' }, company: 'xAI', role, applicationUrl: job });
+    };
+    const observation = await observe(`Job Application for ${role} at SpaceXAI`);
+    assert.deepEqual([observation.company, observation.role, observation.fields.map(field => field.key)], ['xAI', role, ['first_name']]);
+    await assert.rejects(observe(`Job Application for Other Internship at SpaceXAI`), /ATS_IDENTITY_MISMATCH/);
+    await assert.rejects(observe(`Job Application for ${role} at Night at SpaceXAI`), /ATS_IDENTITY_MISMATCH/);
+    await assert.rejects(observe(`Job Application for ${role} at SpaceXAI`, 'https://job-boards.greenhouse.io/xai/jobs/1'), /ATS_IDENTITY_MISMATCH/);
+  } finally { await browser.close(); }
+});
 test('a dropdown answer the form does not offer fails with every choice the form does offer', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });
   try {

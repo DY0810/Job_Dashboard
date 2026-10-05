@@ -17,8 +17,8 @@ async function pageFor(input: AtsApplication, runtime: Parameters<AtsAdapter['ob
   return runtime.navigate(page, input.applicationUrl);
 }
 
-function hosted(input: AtsApplication) {
-  const url = new URL(input.applicationUrl);
+function hosted(input: AtsApplication, href = input.applicationUrl) {
+  const url = new URL(href);
   return url.origin === 'https://job-boards.greenhouse.io' &&
     url.pathname === `/${input.identity.tenant}/jobs/${input.identity.requisition}`;
 }
@@ -114,9 +114,15 @@ export const greenhouse: AtsAdapter = {
     const live = hosted(input) && await form.getAttribute('id') === 'application-form';
     if (!live && await form.getAttribute('id') === 'application-form') throw new AtsError('ATS_IDENTITY_MISMATCH');
     if (live) await page.waitForLoadState('load', { timeout: 5_000 });
-    // The title can lag the load event (seen in the visible submit window); a real mismatch still fails.
-    if (live && !await page.waitForFunction(title => document.title === title, hostedTitle(input.role, input.company),
-      { timeout: 10_000 }).then(() => true, () => false)) throw new AtsError('ATS_IDENTITY_MISMATCH');
+    // The loaded page must still be this job's own URL; that, not the title's company, pins tenant and requisition.
+    if (live && !hosted(input, page.url())) throw new AtsError('ATS_IDENTITY_MISMATCH');
+    // The title can lag the load event (seen in the visible submit window); a real mismatch still fails. Boards get renamed
+    // (xAI's titles say "SpaceXAI", 2026-10-05), so any company passes after the exact role, unless it holds " at " (an ambiguous role split).
+    if (live && !await page.waitForFunction(([title, prefix]) => document.title === title || document.title.startsWith(prefix) &&
+      document.title.length > prefix.length && !document.title.slice(prefix.length).includes(' at '),
+    [hostedTitle(input.role, input.company), `${hostedTitle(input.role, '')} `], { timeout: 10_000 }).then(() => true, () => false)) {
+      throw new AtsError('ATS_IDENTITY_MISMATCH');
+    }
     const identity = {
       ats: 'greenhouse' as const,
       tenant: await form.getAttribute('data-tenant') ?? input.identity.tenant,
