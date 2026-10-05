@@ -78,7 +78,7 @@ describe('recruiter email after a verified submission', () => {
     const result = await recordOutreachDraft(db, token, app.id, draft({ emails: ['university-recruiting@employer.test'] }), options);
     expect(result).toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'university-recruiting@employer.test', source: 'posting', company: 'Employer Co', sentAt: null });
     expect(sent).toHaveLength(0);
-    expect(await sendOutreach(db, 'alice', app.id, { to: 'university-recruiting@employer.test', name: null }, options)).toMatchObject({ status: 'sent', sentAt: now });
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'university-recruiting@employer.test', name: null, now: true }, options)).toMatchObject({ status: 'sent', sentAt: now });
     expect(sent).toEqual([{ from: ['alice@example.test'], to: 'university-recruiting@employer.test',
       subject: draft().subject, body: `Hi there,\n\n${draft().body}` }]);
     // A retried worker call or a click on Send never emails twice.
@@ -103,7 +103,7 @@ describe('recruiter email after a verified submission', () => {
     expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options)).toMatchObject({
       status: 'draft', reason: 'awaiting_approval', to: 'jane.doe@employer.test', name: 'Jane Doe', title: 'Technical Recruiter', source: 'hunter' });
     expect(sent).toHaveLength(0);
-    await sendOutreach(db, 'alice', app.id, { to: 'jane.doe@employer.test', name: 'Jane Doe' }, options);
+    await sendOutreach(db, 'alice', app.id, { to: 'jane.doe@employer.test', name: 'Jane Doe', now: true }, options);
     expect(sent[0].body.startsWith('Hi Jane,\n\n')).toBe(true);
     expect(calls[0].url.searchParams.get('domain')).toBe('employer.test');
     expect(calls[0].url.searchParams.has('company')).toBe(false);
@@ -136,7 +136,7 @@ describe('recruiter email after a verified submission', () => {
     expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
       .toMatchObject({ status: 'draft', reason: 'no_recipient', to: null });
     expect(sent).toHaveLength(0);
-    expect(await sendOutreach(db, 'alice', app.id, { to: 'Recruiter@Employer.test', name: 'Sam Park' }, options))
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'Recruiter@Employer.test', name: 'Sam Park', now: true }, options))
       .toMatchObject({ status: 'sent', to: 'recruiter@employer.test', source: 'manual' });
     expect(sent[0].body.startsWith('Hi Sam,\n\n')).toBe(true);
   });
@@ -145,17 +145,17 @@ describe('recruiter email after a verified submission', () => {
     const first = await application(), second = await application(), third = await application();
     const posting = draft({ emails: ['jobs@employer.test'] });
     await recordOutreachDraft(db, first.token, first.app.id, posting, options);
-    await sendOutreach(db, 'alice', first.app.id, { to: 'jobs@employer.test', name: null }, options);
+    await sendOutreach(db, 'alice', first.app.id, { to: 'jobs@employer.test', name: null, now: true }, options);
     expect(await recordOutreachDraft(db, second.token, second.app.id, posting, options))
       .toMatchObject({ status: 'skipped', reason: 'already_contacted', to: 'jobs@employer.test' });
     const failing: OutreachOptions = { ...options, sender: () => async () => { throw new Error('smtp down'); } };
     expect(await recordOutreachDraft(db, third.token, third.app.id, draft({ emails: ['campus@employer.test'] }), failing))
       .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'campus@employer.test' });
-    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null }, failing))
+    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null, now: true }, failing))
       .toMatchObject({ status: 'failed', reason: 'send_failed', to: 'campus@employer.test' });
-    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null }, { ...options, sender: () => null }))
+    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null, now: true }, { ...options, sender: () => null }))
       .toMatchObject({ status: 'draft', reason: 'sender_not_configured' });
-    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null }, options)).toMatchObject({ status: 'sent' });
+    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null, now: true }, options)).toMatchObject({ status: 'sent' });
     expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test', 'campus@employer.test']);
   });
 
@@ -228,31 +228,46 @@ describe('recruiter email after a verified submission', () => {
       .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'ann@employer.test', source: 'findymail', name: 'Ann' });
   });
 
-  it('schedules automatic sends for a Tue–Thu 16:00 UTC at least three days later', () => {
+  it('picks a Tue–Thu 16:00 UTC window at least the given delay later', () => {
     const mon = Date.UTC(2026, 9, 5, 10); // Monday 2026-10-05 10:00 UTC
     expect(new Date(sendWindow(mon)).toISOString()).toBe('2026-10-08T16:00:00.000Z'); // Thursday
     const thu = Date.UTC(2026, 9, 8, 10);
     expect(new Date(sendWindow(thu)).toISOString()).toBe('2026-10-13T16:00:00.000Z'); // next Tuesday
     expect(new Date(sendWindow(Date.UTC(2026, 9, 2, 16, 0, 0, 1))).toISOString()).toBe('2026-10-06T16:00:00.000Z'); // a ms past 16:00 waits a day
+    expect(new Date(sendWindow(mon, 0)).toISOString()).toBe('2026-10-06T16:00:00.000Z'); // the next window, Tuesday
+    expect(sendWindow(Date.UTC(2026, 9, 7, 16), 0)).toBe(Date.UTC(2026, 9, 7, 16)); // already in one
   });
 
-  it('holds the draft until its window, and the sweep still sends nothing the applicant has not approved', async () => {
-    options.scheduled = true;
-    const { token, app } = await application();
+  it('queues an approved email for its window and the cron sends it once, but never an unapproved draft', async () => {
+    const { token, app } = await application(), other = await application();
+    const window = sendWindow(now); // three days after the receipt, on a Tue–Thu morning
     expect(await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@employer.test'] }), options))
-      .toMatchObject({ status: 'draft', reason: 'scheduled', to: null, sendAfter: sendWindow(now) });
-    expect(sent).toHaveLength(0);
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'jobs@employer.test', sendAfter: window });
+    await recordOutreachDraft(db, other.token, other.app.id, draft({ emails: ['campus@employer.test'] }), options);
+    now = window;
+    expect(await sendDueOutreach(db, options)).toBe(0); // due, but nobody pressed Send
+    now = window + 3_600_000; // approved an hour after the window: waits for the next one
+    const queued = await sendOutreach(db, 'alice', app.id, { to: 'jobs@employer.test', name: null }, options);
+    expect(queued).toMatchObject({ status: 'draft', reason: 'scheduled', to: 'jobs@employer.test', source: 'posting', sendAfter: sendWindow(now, 0) });
+    expect(queued.sendAfter).toBeGreaterThan(now);
     expect(await sendDueOutreach(db, options)).toBe(0);
-    now = sendWindow(now);
+    now = queued.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(1);
     expect(await sendDueOutreach(db, options)).toBe(0);
-    expect(sent).toEqual([]);
+    expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test']);
+    expect((await listOutreach(db, 'alice', options)).outreach.find((item) => item.applicationId === other.app.id))
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval' });
   });
 
-  it('lets the applicant send a scheduled draft right away', async () => {
-    options.scheduled = true;
+  it('Send now skips the wait, even for an email already queued', async () => {
     const { token, app } = await application();
     await recordOutreachDraft(db, token, app.id, draft(), options);
-    expect(await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat' }, options)).toMatchObject({ status: 'sent' });
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat' }, options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled', to: 'pat@employer.test', source: 'manual', sendAfter: sendWindow(now) });
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat', now: true }, options)).toMatchObject({ status: 'sent' });
+    now = sendWindow(now);
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent.map((item) => item.to)).toEqual(['pat@employer.test']);
   });
 
   it('leaves the recipient blank when every source comes up empty', async () => {

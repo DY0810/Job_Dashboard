@@ -107,7 +107,7 @@ export const OutreachDraftSchema = z.strictObject({
   ...protocol, subject: z.string().trim().min(1).max(400).regex(/^[^\r\n]+$/), body: z.string().trim().min(1).max(4000),
   emails: z.array(email).max(5), domains: z.array(DomainSchema).max(5),
 });
-export const OutreachSendSchema = z.strictObject({ to: email, name: z.string().trim().min(1).max(120).nullable() });
+export const OutreachSendSchema = z.strictObject({ to: email, name: z.string().trim().min(1).max(120).nullable(), now: z.boolean().default(false) });
 export const OutreachSchema = z.strictObject({
   applicationId: uuid, status: z.enum(['draft', 'sending', 'sent', 'failed', 'skipped']),
   company, role, subject: z.string(), body: z.string(),

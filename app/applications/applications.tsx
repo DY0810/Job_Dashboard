@@ -73,8 +73,9 @@ function outreachStatus(item: Outreach) {
   if (item.status === 'sending') return `Sending to ${who}...`;
   if (item.status === 'skipped') return `Not sent: ${who} was already emailed about another role`;
   if (item.status === 'failed') return `Sending to ${who} failed. Check the address and send again.`;
-  if (item.reason === 'scheduled' && item.sendAfter) return `Sends automatically on ${new Date(item.sendAfter).toLocaleString()}, or send it now`;
-  if (item.reason === 'awaiting_approval') return `Draft ready for ${who}. Review it and press Send email; nothing goes out until you do.`;
+  const when = (at: number | null) => at && at > Date.now() ? new Date(at).toLocaleString() : 'the next Tue–Thu morning';
+  if (item.reason === 'scheduled') return `Queued for ${who} on ${when(item.sendAfter)}. Send now to skip the wait.`;
+  if (item.reason === 'awaiting_approval') return `Draft ready for ${who}. Send queues it for ${when(item.sendAfter)}; nothing goes out until you press it.`;
   return item.reason === 'sender_not_configured' ? `Ready for ${who}, but Gmail sending is not set up for your address`
     : 'Draft ready. No recruiter address was found; add one to send.';
 }
@@ -108,13 +109,13 @@ function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: s
   const [to, setTo] = useState(item.to ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const send = async () => {
+  const send = async (now: boolean) => {
     setBusy(true); setError('');
     try {
       const response = await fetch(`/api/outreach/${item.applicationId}`, {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(60_000),
         headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
-        body: JSON.stringify({ to: to.trim(), name: to.trim() === item.to ? item.name : null }),
+        body: JSON.stringify({ to: to.trim(), name: to.trim() === item.to ? item.name : null, now }),
       });
       if (!response.ok) throw new Error();
       onChange();
@@ -124,9 +125,11 @@ function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: s
   return <div>
     <div className={styles.row}><span>Recruiter email: {outreachStatus(item)}</span></div>
     <details><summary className={styles.muted}>{item.subject}</summary><pre className={styles.preview}>{item.body}</pre></details>
-    {item.status !== 'sent' && item.status !== 'sending' && <form className={styles.form} onSubmit={(event) => { event.preventDefault(); void send(); }}>
+    {item.status !== 'sent' && item.status !== 'sending' && <form className={styles.form} onSubmit={(event) => {
+      event.preventDefault(); void send((event.nativeEvent as SubmitEvent).submitter?.getAttribute('name') === 'now'); }}>
       <input type="email" required value={to} onChange={(event) => setTo(event.target.value)} placeholder="recruiter@company.com" aria-label={`Recruiter email for ${item.company}`} />
-      <button className={styles.button} type="submit" disabled={busy}>{busy ? 'Sending...' : 'Send email'}</button>
+      <button className={styles.button} type="submit" disabled={busy}>Send</button>
+      <button className={styles.button} type="submit" name="now" disabled={busy}>{busy ? 'Sending...' : 'Send now'}</button>
       {error && <span role="alert" className={styles.reason}>{error}</span>}
     </form>}
   </div>;

@@ -175,7 +175,7 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       case 'receipt': body = p.ReceiptResponseSchema.parse(await recordReceipt(db, token, id!, p.ReceiptCommandSchema.parse(raw), options)); break;
       case 'context': body = ApplicationContextSchema.parse(await applicationContext(db, token, id!, ApplicationContextRequestSchema.parse(raw), options)); break;
       case 'artifact-intent': body = ArtifactIntentResponseSchema.parse(await createArtifactIntent(db, token, id!, ArtifactIntentSchema.parse(raw), options)); break;
-      case 'outreach': body = p.OutreachSchema.parse(await recordOutreachDraft(db, token, id!, p.OutreachDraftSchema.parse(raw), { ...options, scheduled: true })); break;
+      case 'outreach': body = p.OutreachSchema.parse(await recordOutreachDraft(db, token, id!, p.OutreachDraftSchema.parse(raw), options)); break;
       case 'letter': body = p.SubmittedLetterAckSchema.parse(await recordSubmittedLetter(db, token, id!, p.SubmittedLetterSchema.parse(raw), options)); break;
       case 'provider-config': {
         ProviderConfigRequestSchema.parse(raw);
