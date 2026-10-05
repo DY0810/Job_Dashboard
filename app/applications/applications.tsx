@@ -71,12 +71,13 @@ function outreachStatus(item: Outreach) {
   const who = `${item.name ?? item.to}${item.title ? ` (${item.title})` : ''}`;
   if (item.status === 'sent') return `Emailed ${who}${item.sentAt ? ` on ${new Date(item.sentAt).toLocaleDateString()}` : ''}`;
   if (item.status === 'sending') return `Sending to ${who}...`;
-  if (item.status === 'skipped') return `Not sent: ${who} was already emailed about another role`;
+  const earlier = item.contactedFor ? ` Already emailed about ${item.contactedFor}.` : '';
+  if (item.status === 'skipped') return `Not sent: ${who} was already emailed about ${item.contactedFor ?? 'another role'}`;
   if (item.status === 'failed') return `Sending to ${who} failed. Check the address and send again.`;
   const when = (at: number | null) => at && at > Date.now() ? new Date(at).toLocaleString() : 'the next Tue–Thu morning';
-  if (item.reason === 'scheduled') return `Queued for ${who} on ${when(item.sendAfter)}. Send now to skip the wait.`;
+  if (item.reason === 'scheduled') return `Queued for ${who} on ${when(item.sendAfter)}. Send now to skip the wait.${earlier}`;
   if (item.reason === 'outreach_disabled') return `Not sent to ${who}: recruiter email is off in the Auto Apply policy. Turn it on and press Send again.`;
-  if (item.reason === 'awaiting_approval') return `Draft ready for ${who}. Send queues it for ${when(item.sendAfter)}; nothing goes out until you press it.`;
+  if (item.reason === 'awaiting_approval') return `Draft ready for ${who}. Send queues it for ${when(item.sendAfter)}; nothing goes out until you press it.${earlier}`;
   return item.reason === 'sender_not_configured' ? `Ready for ${who}, but Gmail sending is not set up for your address`
     : 'Draft ready. No recruiter address was found; add one to send.';
 }

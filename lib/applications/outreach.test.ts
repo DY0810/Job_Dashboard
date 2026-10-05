@@ -19,6 +19,7 @@ import { boardKey } from './company-domains.ts';
 import { resolveApplicationIdentity } from './application-identity.ts';
 
 vi.mock('server-only', () => ({}));
+const DAY = 86_400_000;
 let db: PrivateDb, dir: string, now: number, options: OutreachOptions;
 let sent: { from: string[]; to: string; subject: string; body: string }[];
 const secret = () => randomBytes(32).toString('base64url');
@@ -253,7 +254,10 @@ describe('recruiter email after a verified submission', () => {
     expect(await sendDueOutreach(db, options)).toBe(0);
     now = queued.sendAfter!;
     expect(await sendDueOutreach(db, options)).toBe(1);
+    const reads = vi.spyOn(db, 'select'); // a settled approval is no longer a candidate, so no log is folded
     expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(reads).not.toHaveBeenCalled();
+    reads.mockRestore();
     expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test']);
     expect((await listOutreach(db, 'alice', options)).outreach.find((item) => item.applicationId === other.app.id))
       .toMatchObject({ status: 'draft', reason: 'awaiting_approval' });
@@ -283,6 +287,12 @@ describe('recruiter email after a verified submission', () => {
     now = queued.sendAfter!;
     expect(await sendDueOutreach(db, options)).toBe(1);
     expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test', 'jobs@employer.test']);
+    const fresh = await application(); // a draft edited to that recruiter says who already got one
+    await recordOutreachDraft(db, fresh.token, fresh.app.id, draft({ emails: ['campus@employer.test'] }), options);
+    await sendOutreach(db, 'alice', fresh.app.id, { to: 'jobs@employer.test', name: null }, options);
+    const listed = new Map((await listOutreach(db, 'alice', options)).outreach.map((item) => [item.applicationId, item.contactedFor]));
+    expect(listed.get(fresh.app.id)).toBe('Employer Co – Software Engineering Intern');
+    expect(listed.get(first.app.id)).toBeNull(); // its own send is not an earlier one
   });
 
   it('keeps a Send pressed while the receipt is still looking for a recruiter', async () => {
@@ -308,6 +318,15 @@ describe('recruiter email after a verified submission', () => {
     expect(await sendDueOutreach(db, options)).toBe(0);
     expect(sent).toEqual([]);
     expect((await listOutreach(db, 'alice', options)).outreach[0]).toMatchObject({ status: 'draft', reason: 'outreach_disabled', to: 'jobs@employer.test' });
+    // Neither Send nor Send now gets around the switch.
+    for (const immediately of [false, true]) {
+      now += 60_000;
+      expect(await sendOutreach(db, 'alice', app.id, { to: 'jobs@employer.test', name: null, now: immediately }, options))
+        .toMatchObject({ status: 'draft', reason: 'outreach_disabled', to: 'jobs@employer.test' });
+    }
+    now = sendWindow(now, 7 * DAY);
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent).toEqual([]);
   });
 
   it('Send now skips the wait, even for an email already queued', async () => {

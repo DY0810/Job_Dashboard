@@ -25,7 +25,7 @@ type Approval = Recipient & { outreach: 'approval'; sendAfter: number };
 type Outcome = Partial<Recipient> & { kind: 'outreach'; outreach: 'outcome'; attempt: number | null;
   status: 'sent' | 'failed' | 'draft' | 'skipped'; reason: string | null };
 type Entry = (Draft | Attempt | Approval | Outcome) & { createdAt: number };
-type State = Outreach & { draft: Draft; attempts: number };
+type State = Omit<Outreach, 'contactedFor'> & { draft: Draft; attempts: number };
 export type OutreachSender = (addresses: string[]) => ((message: Outgoing) => Promise<void>) | null;
 export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch; resolveMx?: Resolver['resolveMx'];
   registryDomain?: typeof registryDomain };
@@ -131,9 +131,16 @@ function fold(applicationId: string, log: Entry[], now: number): State | null {
     : { ...base, status: 'failed', reason: 'send_unconfirmed', sentAt: null };
   return { ...base, status: latest.status, reason: latest.reason, sentAt: latest.status === 'sent' ? latest.createdAt : null };
 }
-function view(state: State): Outreach {
+function view(state: State, contactedFor: string | null = null): Outreach {
   const { applicationId, status, company, role, subject, body, to, name, title, source, reason, sentAt, sendAfter, updatedAt } = state;
-  return { applicationId, status, company, role, subject, body, to, name, title, source, reason, sentAt, sendAfter, updatedAt };
+  return { applicationId, status, company, role, subject, body, to, name, title, source, reason, sentAt, sendAfter, updatedAt, contactedFor };
+}
+const enabled = async (db: PrivateDb, ownerId: string, now: number) =>
+  (await getPolicy(db, ownerId, now)).policy.actions.includes('email_recruiters');
+/** Holds the email because recruiter email is off in the policy; Send again once it is back on. */
+async function holdDisabled(db: PrivateDb, ownerId: string, state: State, { to, name, title, source }: Recipient, now: number) {
+  await append(db, ownerId, state.applicationId, id(state.applicationId, 'hold', state.attempts, state.updatedAt, 'draft', 'outreach_disabled', to),
+    { kind: 'outreach', outreach: 'outcome', attempt: null, status: 'draft', reason: 'outreach_disabled', to, name, title, source }, now);
 }
 
 async function logs(db: PrivateDb, ownerId: string, applicationId?: string) {
@@ -235,22 +242,24 @@ export async function recordOutreachDraft(db: PrivateDb, token: string, applicat
 }
 
 /** Cron: sends each approved email whose queue time has come, once; a hold or failure here is never retried. */
-// ponytail: unindexed json_extract scan of application_events; fine at a few hundred rows, add an expression index if it grows.
+// ponytail: unindexed json_extract scan of application_events; add an expression index if the table outgrows a full scan.
 export async function sendDueOutreach(db: PrivateDb, options: OutreachOptions = {}) {
   const now = nowAt(options);
+  // Only approvals nothing has followed yet: a sent, failed, held or superseded one is settled, and the fold still decides.
   const rows = await db.selectDistinct({ ownerId: applicationEvents.ownerId, applicationId: applicationEvents.applicationId })
     .from(applicationEvents).where(and(sql`json_extract(${applicationEvents.acknowledgement}, '$.outreach') = 'approval'`,
-      sql`json_extract(${applicationEvents.acknowledgement}, '$.sendAfter') <= ${now}`));
+      sql`json_extract(${applicationEvents.acknowledgement}, '$.sendAfter') <= ${now}`,
+      sql`not exists (select 1 from private_application_event later where later.owner_id = ${applicationEvents.ownerId}
+        and later.application_id = ${applicationEvents.applicationId} and later.rowid > ${applicationEvents}.rowid
+        and json_extract(later.acknowledgement, '$.outreach') is not null)`));
   let sent = 0;
   for (const { ownerId, applicationId } of rows) {
     try {
       const state = await current(db, ownerId, applicationId, options);
       if (state?.reason !== 'scheduled' || (state.sendAfter ?? Infinity) > now) continue; // still queued, and due
       // The applicant may have turned recruiter email off since approving it: hold it rather than send it weeks later.
-      if (!(await getPolicy(db, ownerId, now)).policy.actions.includes('email_recruiters')) {
-        const { to, name, title, source } = state;
-        await append(db, ownerId, applicationId, id(applicationId, 'hold', state.attempts, state.updatedAt, 'draft', 'outreach_disabled', to),
-          { kind: 'outreach', outreach: 'outcome', attempt: null, status: 'draft', reason: 'outreach_disabled', to: to!, name, title, source: source! }, now);
+      if (!await enabled(db, ownerId, now)) {
+        await holdDisabled(db, ownerId, state, { to: state.to!, name: state.name, title: state.title, source: state.source! }, now);
         continue;
       }
       if ((await deliver(db, ownerId, applicationId, null, options, true)).status === 'sent') sent += 1;
@@ -267,16 +276,24 @@ export async function sendOutreach(db: PrivateDb, ownerId: string, applicationId
   // Keep the found recruiter's title and source when the applicant sends to that same address.
   const recipient: Recipient = to === state.to && state.source ? { to, name, title: state.title, source: state.source }
     : { to, name, title: null, source: 'manual' };
-  if (immediately) return deliver(db, ownerId, applicationId, recipient, options);
   if (state.status === 'sent' || state.status === 'sending') return view(state);
+  if (!await enabled(db, ownerId, nowAt(options))) {
+    await holdDisabled(db, ownerId, state, recipient, nowAt(options));
+    return view((await current(db, ownerId, applicationId, options))!);
+  }
+  if (immediately) return deliver(db, ownerId, applicationId, recipient, options);
   const sendAfter = Math.max(state.draft.sendAfter ?? 0, sendWindow(nowAt(options), 0));
   await append(db, ownerId, applicationId, id(applicationId, 'approval', state.attempts, state.updatedAt, to), { outreach: 'approval', ...recipient, sendAfter }, nowAt(options));
   return view((await current(db, ownerId, applicationId, options))!);
 }
 
 export async function listOutreach(db: PrivateDb, ownerId: string, options: WorkerOptions = {}) {
-  return { ownerId, outreach: [...await logs(db, ownerId)].flatMap(([applicationId, log]) => {
-    const state = fold(applicationId, log, nowAt(options));
-    return state ? [view(state)] : [];
+  const states = [...await logs(db, ownerId)].flatMap(([applicationId, log]) => fold(applicationId, log, nowAt(options)) ?? []);
+  // Each address's first send, so the applicant knows before emailing that recruiter about another role.
+  const sentTo = new Map<string, State>();
+  for (const state of states) if (state.status === 'sent' && state.to && !sentTo.has(state.to)) sentTo.set(state.to, state);
+  return { ownerId, outreach: states.map((state) => {
+    const earlier = state.to ? sentTo.get(state.to) : undefined;
+    return view(state, earlier && earlier.applicationId !== state.applicationId ? `${earlier.company} – ${earlier.role}` : null);
   }) };
 }
