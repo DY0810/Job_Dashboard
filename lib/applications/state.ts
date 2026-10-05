@@ -18,6 +18,11 @@ export function isSafeRetryState(state: ApplicationState, reasonCode: string | n
   return state === 'provider_unavailable' || state === 'retryable_failure' ||
     (state === 'needs_verification' && reasonCode === 'provider_inspect_required');
 }
+/** A filled, verified form the worker will not submit until the applicant approves it. */
+export const SUBMIT_APPROVAL = 'submit_approval';
+export function isAwaitingSubmitApproval(state: ApplicationState, reasonCode: string | null): boolean {
+  return state === 'needs_policy_decision' && reasonCode === SUBMIT_APPROVAL;
+}
 export function isTerminalState(state: ApplicationState): boolean {
   return ['submitted', 'failed', 'skipped', 'cancelled'].includes(state);
 }

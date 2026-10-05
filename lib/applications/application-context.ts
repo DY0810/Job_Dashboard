@@ -15,6 +15,7 @@ import { resolveApplicationIdentity } from './application-identity.ts';
 import { officialContentHash } from './discovery-source.ts';
 import { parseOfficialRequirements } from './official-requirements.ts';
 import { ApplicationArtifactManifestSchema, artifactManifestHash } from './artifact-protocol.ts';
+import { savedLetter } from './materials.ts';
 
 type Fact = { state: string; value: unknown };
 const factValue = <T>(fact: Fact | undefined): T | null => fact?.state === 'confirmed' ? fact.value as T : null;
@@ -290,7 +291,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
       return ApplicationContextSchema.parse({
         protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
         policyRevision: run.policyRevision, profileRevision: profileResponse.revision, identity: candidate.identity, company: official.company, role: official.title,
-        coverLetterAllowed: policy.policy.documentKinds.includes('cover_letter'), outreach: policy.policy.actions.includes('email_recruiters'),
+        coverLetterAllowed: policy.policy.documentKinds.includes('cover_letter'), outreach: policy.policy.actions.includes('email_recruiters'), letter: await savedLetter(tx, worker.ownerId, checked.id),
         applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
         tailoredArtifact: { documentId: saved.document.id, version: saved.document.version, sourceDocumentId: selectedDocument.id,
           sourceVersion: selectedDocument.version, sourceHash: selectedDocument.sha256, verificationManifestHash: saved.artifact.manifestHash,
@@ -302,7 +303,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
   return ApplicationContextSchema.parse({
     protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
     policyRevision: run.policyRevision, profileRevision: profileResponse.revision, identity: candidate.identity, company: official.company, role: official.title,
-    coverLetterAllowed: policy.policy.documentKinds.includes('cover_letter'), outreach: policy.policy.actions.includes('email_recruiters'),
+    coverLetterAllowed: policy.policy.documentKinds.includes('cover_letter'), outreach: policy.policy.actions.includes('email_recruiters'), letter: await savedLetter(tx, worker.ownerId, checked.id),
     applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
     tailoredArtifact: null, manifestHash: null, artifactHashes: [], createdAt: now,
   });

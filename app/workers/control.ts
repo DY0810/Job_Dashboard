@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition.ts';
 import { PolicySchema } from '../../lib/applications/policy.ts';
-import { isSafeRetryState, isTerminalState } from '../../lib/applications/state.ts';
+import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from '../../lib/applications/state.ts';
 import {
   ApplicationCommandSchema, ApplicationSummarySchema, HEARTBEAT_MS, PairingCreateSchema,
   PairingGrantSchema, RevisionCommandSchema, RevocationSchema, RunCommandSchema, RunCreateSchema,
@@ -49,6 +49,7 @@ export function applicationActions(app: ApplicationSummary, run?: Run): Applicat
   const actions: ApplicationCommand['action'][] = ['skip', 'cancel'];
   // Retry budget remains server-authoritative; it is not part of the summary.
   if (run && run.state !== 'stopped' && app.checkpoint && isSafeRetryState(app.state, app.reasonCode)) actions.push('retry-safe');
+  if (run && run.state !== 'stopped' && isAwaitingSubmitApproval(app.state, app.reasonCode)) actions.unshift('approve-submit');
   return actions;
 }
 

@@ -70,10 +70,12 @@ afterEach(() => {
 });
 
 describe('recruiter email after a verified submission', () => {
-  it('emails a recruiting address the posting names, exactly once, and notifies the inbox', async () => {
+  it('holds the draft for a recruiting address the posting names, sends it once the applicant presses Send, and notifies the inbox', async () => {
     const { token, app } = await application();
     const result = await recordOutreachDraft(db, token, app.id, draft({ emails: ['university-recruiting@employer.test'] }), options);
-    expect(result).toMatchObject({ status: 'sent', to: 'university-recruiting@employer.test', source: 'posting', company: 'Employer Co', sentAt: now });
+    expect(result).toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'university-recruiting@employer.test', source: 'posting', company: 'Employer Co', sentAt: null });
+    expect(sent).toHaveLength(0);
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'university-recruiting@employer.test', name: null }, options)).toMatchObject({ status: 'sent', sentAt: now });
     expect(sent).toEqual([{ from: ['alice@example.test'], to: 'university-recruiting@employer.test',
       subject: draft().subject, body: `Hi there,\n\n${draft().body}` }]);
     // A retried worker call or a click on Send never emails twice.
@@ -95,7 +97,9 @@ describe('recruiter email after a verified submission', () => {
     };
     const { token, app } = await application();
     expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options)).toMatchObject({
-      status: 'sent', to: 'jane.doe@employer.test', name: 'Jane Doe', title: 'Technical Recruiter', source: 'hunter' });
+      status: 'draft', reason: 'awaiting_approval', to: 'jane.doe@employer.test', name: 'Jane Doe', title: 'Technical Recruiter', source: 'hunter' });
+    expect(sent).toHaveLength(0);
+    await sendOutreach(db, 'alice', app.id, { to: 'jane.doe@employer.test', name: 'Jane Doe' }, options);
     expect(sent[0].body.startsWith('Hi Jane,\n\n')).toBe(true);
     expect(calls[0].url.searchParams.get('domain')).toBe('employer.test');
     expect(calls[0].url.searchParams.has('company')).toBe(false);
@@ -113,14 +117,17 @@ describe('recruiter email after a verified submission', () => {
     expect(sent[0].body.startsWith('Hi Sam,\n\n')).toBe(true);
   });
 
-  it('never emails the same recruiter twice automatically, and recovers from send and sender failures', async () => {
+  it('never emails on its own or the same recruiter twice, and recovers from send and sender failures', async () => {
     const first = await application(), second = await application(), third = await application();
     const posting = draft({ emails: ['jobs@employer.test'] });
     await recordOutreachDraft(db, first.token, first.app.id, posting, options);
+    await sendOutreach(db, 'alice', first.app.id, { to: 'jobs@employer.test', name: null }, options);
     expect(await recordOutreachDraft(db, second.token, second.app.id, posting, options))
       .toMatchObject({ status: 'skipped', reason: 'already_contacted', to: 'jobs@employer.test' });
     const failing: OutreachOptions = { ...options, sender: () => async () => { throw new Error('smtp down'); } };
     expect(await recordOutreachDraft(db, third.token, third.app.id, draft({ emails: ['campus@employer.test'] }), failing))
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'campus@employer.test' });
+    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null }, failing))
       .toMatchObject({ status: 'failed', reason: 'send_failed', to: 'campus@employer.test' });
     expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null }, { ...options, sender: () => null }))
       .toMatchObject({ status: 'draft', reason: 'sender_not_configured' });

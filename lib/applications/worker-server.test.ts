@@ -528,6 +528,31 @@ describe('async leases, checkpoints and stable identity', () => {
       else await expect(retry).rejects.toMatchObject({ status: 409 });
     }
   });
+  it('submits a filled form only after the applicant approves it, and only when the policy allows submit', async () => {
+    const park = async (ownerId: string, tenant: string) => {
+      const parked = await prepared(ownerId, tenant);
+      const held = await recordWorkerEvent(db, parked.worker.token, parked.app.id, {
+        ...event(await claim(parked.worker.token), 'needs_policy_decision'), reasonCode: 'submit_approval' }, options);
+      return { ...parked, approve: { ...revision(held.revision), action: 'approve-submit' as const } };
+    };
+    // Bob's policy does not include submit.
+    const bob = await park('bob', 'approval-bob');
+    await expect(commandApplication(db, 'bob', bob.run.id, bob.app.id, bob.approve, options)).rejects.toMatchObject({ status: 403 });
+    const policy = { ...createEmptyPolicy(), actions: ['fill_forms', 'submit'] as ['fill_forms', 'submit'] }, hash = hashValue(policy);
+    await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash, policy, createdAt: now });
+    await db.update(policyHeads).set({ revision: 2, policyVersion: 2, acceptedPolicyVersion: 2, acceptedPolicyHash: hash }).where(eq(policyHeads.ownerId, 'alice'));
+    // Approval is only for a form the worker filled and parked for review.
+    const other = await prepared('alice', 'not-parked');
+    const answer = await recordWorkerEvent(db, other.worker.token, other.app.id, {
+      ...event(await claim(other.worker.token), 'needs_answer'), reasonCode: 'fixture_hold' }, options);
+    await expect(commandApplication(db, 'alice', other.run.id, other.app.id, { ...revision(answer.revision), action: 'approve-submit' }, options))
+      .rejects.toMatchObject({ status: 409 });
+    const alice = await park('alice', 'approval-alice');
+    expect((await pollWorker(db, alice.worker.token, { protocolVersion: 1 }, options)).lease).toBeNull();
+    expect(await commandApplication(db, 'alice', alice.run.id, alice.app.id, alice.approve, options))
+      .toMatchObject({ state: 'ready', reasonCode: 'submit_approved' });
+    expect((await pollWorker(db, alice.worker.token, { protocolVersion: 1 }, options)).lease).toMatchObject({ applicationId: alice.app.id, state: 'ready' });
+  });
   it('revocation commits unknown submission and permanently rejects all subsequent token operations', async () => {
     const { worker, app, run } = await prepared();
     const lease = await claim(worker.token);
