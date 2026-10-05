@@ -17,7 +17,7 @@ test('engineering note: role subject, one proof, GitHub link, ≤120 words', () 
   assert.ok(words(note.body) <= 120, `${words(note.body)} words`);
 });
 
-test('design note leads with the portfolio link and stays plain text', () => {
+test('design note links the portfolio, not GitHub', () => {
   const note = outreachDraft({ track: 'design', company: 'Acme', role: 'Product Design Intern', name: 'May Hu',
     portfolio: 'https://may.design/acme', letter });
   assert.match(note.body, /Portfolio: https:\/\/may\.design\/acme/);
@@ -29,4 +29,22 @@ test('without a letter it still writes a short, honest note', () => {
   const note = outreachDraft({ track: 'engineering', company: 'Acme', role: 'SWE Intern', name: 'DY Lee' });
   assert.ok(words(note.body) <= 80);
   assert.match(note.body, /SWE Intern role at Acme/);
+});
+
+test('the proof keeps in-sentence periods and starts at the letter\'s first word', () => {
+  const note = outreachDraft({ track: 'engineering', company: 'Acme', role: 'SWE Intern', name: 'DY Lee',
+    letter: { ...letter, body: [{ text: 'I built a Node.js service that cut latency by 2.5x for 3,000 users. Then I shipped CI. Third.' }] } });
+  assert.equal(note.body.split('\n\n')[0],
+    'I recently applied for the SWE Intern role at Acme. I built a Node.js service that cut latency by 2.5x for 3,000 users. Then I shipped CI.');
+});
+
+test('a long, unpunctuated body item never pushes the note past 120 words', () => {
+  const note = outreachDraft({ track: 'engineering', company: 'Acme', role: 'SWE Intern', name: 'DY Lee', github: 'https://github.com/dy',
+    letter: { ...letter, body: [{ text: 'shipped the thing '.repeat(50) }] } });
+  assert.ok(words(note.body) <= 120, `${words(note.body)} words`);
+  assert.match(note.body, /github\.com\/dy/);
+});
+
+test('an empty name leaves no dangling dash in the subject', () => {
+  assert.equal(outreachDraft({ track: 'engineering', company: 'Acme', role: 'SWE Intern', name: '' }).subject, 'Applied: SWE Intern');
 });

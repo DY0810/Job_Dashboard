@@ -16,7 +16,7 @@ export function postingContacts(description: string) {
   };
 }
 
-const firstSentences = (text: string, count: number) => (text.match(/[^.!?]+[.!?]+(?=\s|$)/g) ?? [text]).slice(0, count).join(' ').trim();
+const firstSentences = (text: string, count: number) => text.split(/(?<=[.!?])\s+/).slice(0, count).join(' ').trim();
 
 type Track = 'engineering' | 'design';
 
@@ -27,17 +27,20 @@ type Track = 'engineering' | 'design';
  */
 export function outreachDraft(input: { track: Track; company: string; role: string; name: string;
   linkedin?: string; github?: string; portfolio?: string; letter?: Letter }) {
-  const proof = firstSentences(input.letter?.body[0]?.text ?? '', 2);
+  const evidence = input.letter?.body[0]?.text ?? '';
   const work = input.track === 'design'
     ? (input.portfolio ? `Portfolio: ${input.portfolio}` : '')
     : (input.github ? `GitHub: ${input.github}` : '');
-  return {
-    subject: `Applied: ${input.role} – ${input.name}`,
+  const draft = (proof: string) => ({
+    subject: `Applied: ${[input.role, input.name].filter(Boolean).join(' – ')}`,
     body: [
       `I recently applied for the ${input.role} role at ${input.company}.${proof ? ` ${proof}` : ''}`,
       ...(work ? [work] : []),
       `I'd appreciate being considered. If someone else handles this role, could you point me to them?`,
       ['Thanks,', input.name, input.linkedin].filter(Boolean).join('\n'),
     ].join('\n\n'),
-  };
+  });
+  // Two sentences, else one, else none: the note never runs past 120 words.
+  return [firstSentences(evidence, 2), firstSentences(evidence, 1), ''].map(draft)
+    .find((note) => note.body.split(/\s+/).filter(Boolean).length <= 120)!;
 }
