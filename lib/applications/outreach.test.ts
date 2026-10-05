@@ -105,6 +105,17 @@ describe('recruiter email after a verified submission', () => {
     expect(calls[0].key).toBe('hunter-test-key');
   });
 
+  it('looks up the registry domain of the board when the posting names none', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    const domains: string[] = [];
+    options.fetch = async (url) => { domains.push(new URL(String(url)).searchParams.get('domain')!);
+      return Response.json({ data: { accept_all: false, emails: [] } }); };
+    options.registryDomain = (ats, tenant) => (ats === 'fixture' && tenant === 'employer' ? 'employer.test' : null);
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft(), options);
+    expect(domains[0]).toBe('employer.test');
+  });
+
   it('keeps the draft when no recruiter is found, then sends to the address the applicant enters', async () => {
     const { token, app } = await application();
     expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))

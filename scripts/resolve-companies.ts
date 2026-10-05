@@ -876,6 +876,10 @@ function writeReport(outcomes: ResolutionOutcome[], ycMeta: YcSelection | null, 
 }
 
 /** Strict CLI-arg validation — a typo must fail loudly, never silently degrade into "0 companies". */
+/** Every hand-written seed, for scripts that read their `website` hints. */
+export const SEEDS: Seed[] = [...VOICE_AI_SEEDS, ...AI_STARTUP_SEEDS, ...STUDIO_SEEDS, ...DESIGN_SEEDS,
+  ...DESIGN_WAVE2_SEEDS, ...WORKDAY_SEEDS, ...INTERNSHIP_SEEDS];
+
 export function parseLimit(raw: string): number | null {
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : null;

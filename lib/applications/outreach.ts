@@ -6,6 +6,7 @@ import type { PrivateDb } from '../private-db/index.ts';
 import { applicationEvents, applicationReceipts, applications, user } from '../private-db/schema.ts';
 import { accountFor, sendAll, type Outgoing } from '../send.ts';
 import { artifactRequestId } from './artifact-protocol.ts';
+import { registryDomain } from './company-domains.ts';
 import { getPolicy, getProfile, hashValue } from './stores.ts';
 import { appScope, fail, nowAt, withWorker, type WorkerOptions } from './worker-store.ts';
 import { OutreachDraftSchema, OutreachSendSchema, type Outreach } from './worker-protocol.ts';
@@ -23,7 +24,8 @@ type Outcome = Partial<Recipient> & { kind: 'outreach'; outreach: 'outcome'; att
 type Entry = (Draft | Attempt | Outcome) & { createdAt: number };
 type State = Outreach & { draft: Draft; attempts: number };
 export type OutreachSender = (addresses: string[]) => ((message: Outgoing) => Promise<void>) | null;
-export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch; resolveMx?: Resolver['resolveMx'] };
+export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch; resolveMx?: Resolver['resolveMx'];
+  registryDomain?: typeof registryDomain };
 
 const UNCONFIRMED_MS = 10 * 60_000;
 const id = (applicationId: string, ...part: unknown[]) => artifactRequestId({ outreach: applicationId, part });
@@ -189,8 +191,10 @@ export async function recordOutreachDraft(db: PrivateDb, token: string, applicat
     if (!(await getPolicy(tx, worker.ownerId, now)).policy.actions.includes('email_recruiters')) {
       fail(403, 'OUTREACH_DISABLED', 'Recruiter email is not enabled in the policy.');
     }
+    // The board's curated domain leads: postings rarely name one, and a company name never stands in for it.
+    const curated = (options.registryDomain ?? registryDomain)(app.ats, app.tenant);
     const entry: Draft = { outreach: 'draft', company: receipt.company, role: receipt.role, subject: draft.subject,
-      body: draft.body, emails: draft.emails, domains: draft.domains };
+      body: draft.body, emails: draft.emails, domains: [...new Set([...(curated ? [curated] : []), ...draft.domains])].slice(0, 5) };
     await tx.insert(applicationEvents).values({ ownerId: worker.ownerId, applicationId, eventId: id(applicationId, 'draft'),
       requestHash: hashValue(entry), acknowledgement: entry, createdAt: now }).onConflictDoNothing();
     return worker.ownerId;
