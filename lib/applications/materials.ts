@@ -14,14 +14,15 @@ type Material = { applicationId: string;
   resume: { documentId: string; mime: string; createdAt: number; changes: { before: string; after: string }[] } | null;
   letter: Omit<Letter, 'letter'> | null };
 
-/** Worker call after a verified receipt: keeps the cover letter that went out, once, in the event log. */
+/** Worker call when the form is filled (or after a verified receipt): keeps the cover letter, once, in the event log. */
 export async function recordSubmittedLetter(db: PrivateDb, token: string, applicationId: string, input: unknown, options: WorkerOptions = {}) {
   const letter = SubmittedLetterSchema.parse(input);
   return withWorker(db, token, options, async (tx, worker, now) => {
     const [app] = await tx.select().from(applications).where(and(appScope(worker.ownerId, applicationId), eq(applications.workerId, worker.id)));
     const [receipt] = await tx.select({ id: applicationReceipts.intentId }).from(applicationReceipts).where(and(
       eq(applicationReceipts.ownerId, worker.ownerId), eq(applicationReceipts.applicationId, applicationId)));
-    if (!app || app.state !== 'submitted' || !receipt) fail(409, 'CONFLICT', 'A cover letter is kept only for a verified submission.');
+    // Kept when the form is filled, so the applicant reviews the exact letter before approving the submit.
+    if (!app || !(app.state === 'filling' || (app.state === 'submitted' && receipt))) fail(409, 'CONFLICT', 'A cover letter is kept only for a filled or submitted application.');
     const entry: Letter = { letter: 'submitted', introduction: letter.introduction, body: letter.body,
       conclusion: letter.conclusion, companyParagraph: letter.companyParagraph };
     await tx.insert(applicationEvents).values({ ownerId: worker.ownerId, applicationId, eventId: artifactRequestId({ letter: applicationId }),
@@ -60,4 +61,13 @@ export async function listMaterials(db: PrivateDb, ownerId: string) {
     material(row.applicationId).letter = { introduction, body, conclusion, companyParagraph };
   }
   return { ownerId, materials: [...byApplication.values()] };
+}
+
+/** The letter kept for this application, which the worker reuses at submit. */
+export async function savedLetter(db: Pick<PrivateDb, 'select'>, ownerId: string, applicationId: string) {
+  const [row] = await db.select().from(applicationEvents).where(and(eq(applicationEvents.ownerId, ownerId),
+    eq(applicationEvents.applicationId, applicationId), eq(applicationEvents.eventId, artifactRequestId({ letter: applicationId }))));
+  if (!row) return null;
+  const { introduction, body, conclusion, companyParagraph } = row.acknowledgement as Letter;
+  return { introduction, body, conclusion, companyParagraph };
 }

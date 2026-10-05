@@ -36,6 +36,7 @@ import {
 import type { ApplicationContext } from "../lib/applications/application-context-protocol.ts";
 import type { PrivateStore } from "./storage.ts";
 import { ApplicationArtifactManifestSchema, artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
+import { SUBMIT_APPROVAL } from "../lib/applications/state.ts";
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 import { renderCoverLetter } from "./documents/cover-letter.ts";
 import { outreachDraft, postingContacts } from "./outreach.ts";
@@ -321,6 +322,11 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }
       const applicant = [application.answers.first_name, application.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
       const writeLetter = async () => {
+        // The letter saved when the form was filled is the one the applicant approved; reuse it.
+        const saved = applicationContext.letter;
+        if (saved) return { task: 'cover_letter' as const, introduction: saved.introduction, body: saved.body.map(text => ({ text, evidenceIds: [] })),
+          conclusion: saved.conclusion, companyParagraph: saved.companyParagraph, confidence: 1,
+          model: 'saved', usage: { input_tokens: 0, output_tokens: 0 } };
         const source = await readFile(localDocuments.resumeMaster);
         const template = await createTemplateManifest(source, applicationContext.documents.resumeMaster.mime, applicationContext.role);
         const evidence = template.anchors.slice(0, 32).map((anchor, index) => ({
@@ -349,7 +355,10 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
           requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId });
         if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
         if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
-        return { state: "ready" as const, reasonCode: "form_verified", evidence: { formVerified: true } };
+        if (letter) await control.letter(lease.applicationId, { protocolVersion: 1, introduction: letter.introduction,
+          body: letter.body.map(item => item.text), conclusion: letter.conclusion, companyParagraph: letter.companyParagraph }, signal);
+        // Nothing is submitted until the applicant reviews the resume and letter and approves it.
+        return { state: "needs_policy_decision" as const, reasonCode: SUBMIT_APPROVAL };
       }
       const result = await runAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
         requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId, submission: {

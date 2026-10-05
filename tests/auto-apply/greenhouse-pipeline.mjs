@@ -143,7 +143,13 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       submissionIntent: async (_application, body) => { calls.submission = body; return { intentId: body.intentId, state: 'submitting', revision: 2, fence: 1 }; },
       receipt: async (_application, body) => { calls.receipt = body; return {}; },
       outreach: async (_application, body) => { calls.outreach.push({ body, afterReceipt: calls.receipt !== null }); return {}; },
-      letter: async (_application, body) => { calls.storedLetter = { body, afterReceipt: calls.receipt !== null }; return { applicationId, stored: true }; },
+      letter: async (_application, body) => {
+        // Mirrors the server: the first stored letter is kept and comes back in the context.
+        calls.storedLetter ??= { body, afterReceipt: calls.receipt !== null };
+        const { protocolVersion: _, ...text } = calls.storedLetter.body;
+        context.letter = text;
+        return { applicationId, stored: true };
+      },
     };
     const usage = { input_tokens: 1, output_tokens: 1 };
     const generate = async (input) => {
@@ -198,7 +204,9 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       assert.deepEqual(asked.questions.map(item => item.originalWording), ['Why are you interested in Fixture Co?']);
       context.answers[asked.questions[0].key] = NARRATIVE; // the inbox answer, as the server returns it
 
-      assert.deepEqual(await stage('filling'), { state: 'ready', reasonCode: 'form_verified', evidence: { formVerified: true } });
+      // A filled form waits for the applicant's approval; the server moves it to ready only after Approve and submit.
+      assert.deepEqual(await stage('filling'), { state: 'needs_policy_decision', reasonCode: 'submit_approval' });
+      assert.equal(calls.storedLetter.afterReceipt, false, 'the letter is kept for review before anything is submitted');
       const printed = [], write = process.stdout.write;
       process.stdout.write = (chunk, ...rest) => { printed.push(String(chunk)); return write.call(process.stdout, chunk, ...rest); };
       const submitted = stage('ready').finally(() => { process.stdout.write = write; });
@@ -227,8 +235,9 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       assert.match(letter, /Software Engineering Intern role at Fixture Co/);
       assert.match(letter, /Sincerely,\s+Test Applicant/);
 
-      // The exact letter that went out is kept for the Applications page.
-      assert.deepEqual(calls.storedLetter, { afterReceipt: true, body: { protocolVersion: 1,
+      // The letter reviewed before approval is the one that went out; it is written once.
+      assert.equal(calls.letter.length, 1);
+      assert.deepEqual(calls.storedLetter, { afterReceipt: false, body: { protocolVersion: 1,
         introduction: 'I am applying for the Software Engineering Intern role at Fixture Co.',
         body: ['I built TypeScript REST APIs for a scheduling product used by students.', 'I reduced dashboard query time by 95 percent with indexed joins.'],
         conclusion: 'Thank you for considering my application.', companyParagraph: 'Fixture Co builds tools that students rely on every day.' } });

@@ -103,10 +103,10 @@ export default function ProfileEditor() {
       check?.abort();
       check = new AbortController();
       const signal = check.signal;
-      setLocked(true);
+      // Re-checks keep an unlocked editor visible and saving; hiding it reset scroll and aborted saves.
+      if (!current.current) setLocked(true);
       setChecking(true);
       setError('');
-      current.current?.writer.pause();
       try {
         const account = applicantSchema.parse(await privateJson('/api/auth/applicant', { signal }));
         if (!alive || signal.aborted) return;
@@ -136,9 +136,9 @@ export default function ProfileEditor() {
           }
           const snapshot = previous.writer.snapshot();
           if (snapshot.pending) previous.writer.retry();
-          else if (response.revision !== snapshot.revision && previous.writer.dirty) {
+          else if (response.revision > snapshot.revision && previous.writer.dirty) {
             previous.writer.pause(new ProfileSaveError('A newer profile exists. Review your draft.', 409, response));
-          } else if (!previous.writer.dirty) previous.writer.reconcile(response, false);
+          } else if (!previous.writer.dirty) { if (response.revision >= snapshot.revision) previous.writer.reconcile(response, false); }
           else previous.writer.retry();
           setLocked(false);
           return;
@@ -227,12 +227,7 @@ export default function ProfileEditor() {
     unlockRef.current = () => { void unlock(); };
     void unlock();
     const focus = () => { if (document.visibilityState === 'visible') void unlock(); };
-    const visibility = () => {
-      if (document.visibilityState === 'hidden') {
-        setLocked(true);
-        current.current?.writer.pause();
-      } else void unlock();
-    };
+    const visibility = () => { if (document.visibilityState === 'visible') void unlock(); };
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (current.current?.writer.dirty || current.current?.vault?.pending) { event.preventDefault(); event.returnValue = ''; }
     };

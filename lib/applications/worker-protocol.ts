@@ -65,7 +65,7 @@ export const EventResponseSchema = z.strictObject({
 export const RunCreateSchema = z.strictObject({ ...command, expectedRevision: z.literal(0), workerId: uuid });
 export const RunCommandSchema = z.strictObject({ ...command, action: z.enum(['pause', 'resume', 'stop', 'emergency-stop']) });
 export const ApplicationCommandSchema = z.strictObject({
-  ...command, action: z.enum(['skip', 'retry-safe', 'cancel', 'emergency-stop']),
+  ...command, action: z.enum(['skip', 'retry-safe', 'cancel', 'emergency-stop', 'approve-submit']),
 });
 export const RunSchema = z.strictObject({
   id: uuid, workerId: uuid, revision, state: z.enum(['running', 'paused', 'stopped']), createdAt: timestamp,

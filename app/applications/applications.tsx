@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
 import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
+import { isAwaitingSubmitApproval } from '../../lib/applications/state';
 import styles from '../workers/workers.module.css';
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -46,7 +47,7 @@ async function request(path: string, ownerId?: string) {
   return body;
 }
 
-/** The tailored resume (and the lines it changed) and the cover letter that went out with this application. */
+/** The tailored resume (and the lines it changed) and the cover letter for this application, before or after it is submitted. */
 function MaterialsPanel({ item }: { item: Material }) {
   const { resume, letter } = item;
   return <>
@@ -60,7 +61,7 @@ function MaterialsPanel({ item }: { item: Material }) {
           <li key={index}><del>{change.before}</del><ins>{change.after}</ins></li>)}</ul>
       </details>}
     </div>}
-    {letter && <details><summary className={styles.muted}>Cover letter sent</summary>
+    {letter && <details><summary className={styles.muted}>Cover letter</summary>
       <pre className={styles.preview}>{['Dear Hiring Manager,', letter.introduction, ...letter.body, letter.conclusion, letter.companyParagraph].join('\n\n')}</pre>
     </details>}
   </>;
@@ -73,8 +74,34 @@ function outreachStatus(item: Outreach) {
   if (item.status === 'skipped') return `Not sent: ${who} was already emailed about another role`;
   if (item.status === 'failed') return `Sending to ${who} failed. Check the address and send again.`;
   if (item.reason === 'scheduled' && item.sendAfter) return `Sends automatically on ${new Date(item.sendAfter).toLocaleString()}, or send it now`;
+  if (item.reason === 'awaiting_approval') return `Draft ready for ${who}. Review it and press Send email; nothing goes out until you do.`;
   return item.reason === 'sender_not_configured' ? `Ready for ${who}, but Gmail sending is not set up for your address`
     : 'Draft ready. No recruiter address was found; add one to send.';
+}
+
+/** A filled form waits here until the applicant has reviewed its resume and letter. */
+function ApprovePanel({ app, ownerId, onChange }: { app: { id: string; runId: string; revision: number }; ownerId: string; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const approve = async () => {
+    if (!window.confirm('Submit this application to the employer now? This cannot be undone.')) return;
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`/api/application-runs/${app.runId}/applications/${app.id}/actions`, {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000),
+        headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
+        body: JSON.stringify({ action: 'approve-submit', requestId: crypto.randomUUID(), expectedRevision: app.revision }),
+      });
+      if (!response.ok) throw new Error(response.status === 403 ? 'Turn on Submit in the Auto Apply policy first.' : 'Could not approve. Refresh and try again.');
+      onChange();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not approve.'); }
+    finally { setBusy(false); }
+  };
+  return <div className={styles.row}>
+    <span>Form filled. Review the resume and cover letter, then approve to submit.</span>
+    <button className={styles.button} type="button" disabled={busy} onClick={() => void approve()}>{busy ? 'Approving...' : 'Approve and submit'}</button>
+    {error && <span role="alert" className={styles.reason}>{error}</span>}
+  </div>;
 }
 
 function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: string; onChange: () => void }) {
@@ -192,6 +219,8 @@ export default function Applications() {
                 {app.receiptId && <span>Receipt {app.receiptId}{app.submittedAt ? ` / ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
               {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
               {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
+              {isAwaitingSubmitApproval(app.state, app.reasonCode) && view.account &&
+                <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
               {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}
                 item={outreach.get(app.id)!} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
             </li>)}

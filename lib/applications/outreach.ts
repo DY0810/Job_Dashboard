@@ -181,6 +181,8 @@ async function deliver(db: PrivateDb, ownerId: string, applicationId: string, ma
       sql`json_extract(${applicationEvents.acknowledgement}, '$.to') = ${recipient.to}`)).limit(1);
     // A second role at the same employer never emails the same recruiter again on its own.
     if (earlier) return hold('skipped', 'already_contacted', recipient);
+    // Nothing is emailed on the applicant's behalf until they review the draft and press Send.
+    return hold('draft', 'awaiting_approval', recipient);
   }
   const send = (options.sender ?? smtpSender)(await senderAddresses(db, ownerId));
   if (!send) return hold('draft', 'sender_not_configured', recipient);
@@ -195,7 +197,7 @@ async function deliver(db: PrivateDb, ownerId: string, applicationId: string, ma
   return settle(id(applicationId, 'outcome', attempt), { attempt, ...outcome, ...recipient });
 }
 
-/** Worker call after a verified receipt: stores the draft once, then sends now or, when scheduled, leaves it to the sweep. */
+/** Worker call after a verified receipt: stores the draft once and finds a recipient; the applicant sends it. */
 export async function recordOutreachDraft(db: PrivateDb, token: string, applicationId: string, input: unknown, options: OutreachOptions = {}) {
   const draft = OutreachDraftSchema.parse(input);
   const ownerId = await withWorker(db, token, options, async (tx, worker, now) => {

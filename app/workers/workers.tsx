@@ -19,7 +19,7 @@ export default function Workers() {
     const item = new WorkerControl(setView);
     control.current = item;
     void item.refresh();
-    const focus = () => { if (document.visibilityState === 'visible') void item.refresh(); };
+    const focus = () => { if (document.visibilityState === 'visible') void item.refresh(!item.view.locked); };
     const visibility = () => { if (document.visibilityState === 'hidden') item.suspend(); else focus(); };
     const clock = setInterval(() => item.tick(), 1000);
     const poll = setInterval(() => {
@@ -185,7 +185,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
                 <button className={styles.button} type="button" key={action}
                   disabled={action === 'emergency-stop' ? view.busy && view.pending?.body.action === action : disabled}
                   onClick={() => void control.commandApplication(app, action)}>
-                  {action === 'retry-safe' ? 'Retry safe' : action === 'emergency-stop' ? 'Emergency stop' :
+                  {action === 'approve-submit' ? 'Approve and submit' : action === 'retry-safe' ? 'Retry safe' : action === 'emergency-stop' ? 'Emergency stop' :
                     action === 'skip' ? 'Skip' : 'Cancel'}
                 </button>)}
             </div>
