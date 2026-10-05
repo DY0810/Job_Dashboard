@@ -18,19 +18,26 @@ export function postingContacts(description: string) {
 
 const firstSentences = (text: string, count: number) => (text.match(/[^.!?]+[.!?]+(?=\s|$)/g) ?? [text]).slice(0, count).join(' ').trim();
 
+type Track = 'engineering' | 'design';
+
 /**
- * The note a recruiter gets after an application: the tailored letter's strongest evidence and its
- * company paragraph, then a short ask. The server adds "Hi <name>," once it knows who reads it.
+ * The note a recruiter gets a few days after an application (docs/research/2026-10-05-cold-email-research.md):
+ * the role in the subject, one proof from the tailored letter, one direct ask, and the work link the
+ * track is judged on. Plain text and at most 120 words. The server adds "Hi <name>," once it knows who reads it.
  */
-export function outreachDraft(input: { company: string; role: string; name: string; linkedin?: string; letter?: Letter }) {
+export function outreachDraft(input: { track: Track; company: string; role: string; name: string;
+  linkedin?: string; github?: string; portfolio?: string; letter?: Letter }) {
+  const proof = firstSentences(input.letter?.body[0]?.text ?? '', 2);
+  const work = input.track === 'design'
+    ? (input.portfolio ? `Portfolio: ${input.portfolio}` : '')
+    : (input.github ? `GitHub: ${input.github}` : '');
   return {
-    subject: `Following up on my ${input.role} application`,
+    subject: `Applied: ${input.role} – ${input.name}`,
     body: [
-      `I just applied for the ${input.role} role at ${input.company} and wanted to reach out directly.`,
-      ...(input.letter ? [firstSentences(input.letter.body[0].text, 2), input.letter.companyParagraph]
-        : ["I'd love to learn more about the team and what the role involves."]),
-      'Would you be open to a quick 15-minute call about the role or the team? If someone else is handling this position, I would appreciate it if you could point me in the right direction.',
-      ['Thank you,', input.name, input.linkedin].filter(Boolean).join('\n'),
+      `I recently applied for the ${input.role} role at ${input.company}.${proof ? ` ${proof}` : ''}`,
+      ...(work ? [work] : []),
+      `I'd appreciate being considered. If someone else handles this role, could you point me to them?`,
+      ['Thanks,', input.name, input.linkedin].filter(Boolean).join('\n'),
     ].join('\n\n'),
   };
 }

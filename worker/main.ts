@@ -372,8 +372,10 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }
       if (result.state === "submitted" && applicationContext.outreach && context.generate && localDocuments.resumeMaster) {
         // Best effort after the verified receipt: a failed note never changes the submitted outcome.
-        const note = outreachDraft({ company: applicationContext.company, role: applicationContext.role, name: applicant,
-          linkedin: typeof application.answers.linkedin === 'string' ? application.answers.linkedin : undefined,
+        const { answers } = application;
+        const link = (key: string) => typeof answers[key] === 'string' ? answers[key] as string : undefined;
+        const note = outreachDraft({ track: applicationContext.track, company: applicationContext.company, role: applicationContext.role,
+          name: applicant, linkedin: link('linkedin'), github: link('github'), portfolio: link('portfolio'),
           letter: letter ?? await writeLetter().catch(() => undefined) });
         await control.outreach(lease.applicationId, { protocolVersion: 1, ...note,
           ...postingContacts(applicationContext.requirements.officialDescription) }, signal).catch(() => {});
