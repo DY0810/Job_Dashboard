@@ -188,7 +188,7 @@ export class WorkerControl {
   }
   suspend() {
     this.operation?.abort();
-    this.update({ locked: true, loading: false, busy: false });
+    this.update({ loading: false, busy: false });
   }
   tick() {
     if (this.sampledAt !== null) this.update({});

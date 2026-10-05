@@ -128,7 +128,7 @@ export class DiscoveryControl {
   async refreshSession() {
     if (this.disposed) return;
     const signal = this.begin();
-    this.update({ busy: true, locked: true });
+    this.update({ busy: true });
     try {
       const account = ApplicantSchema.parse(await request('/api/auth/applicant', signal));
       signal.throwIfAborted();
@@ -139,7 +139,7 @@ export class DiscoveryControl {
   }
   suspend() {
     this.operation?.abort();
-    this.update({ locked: true, busy: false });
+    this.update({ busy: false });
   }
   preventNavigation() { this.update({ error: 'A request is unresolved. Retry it before leaving this page.' }); }
   storageDenied() { this.update({ error: 'Browser storage is unavailable. No marks were imported.' }); }
