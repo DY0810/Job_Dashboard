@@ -273,6 +273,43 @@ describe('recruiter email after a verified submission', () => {
     expect(lookups).toBe(seen);
   });
 
+  it('sends a queued email to a recruiter already contacted, since the applicant approved it knowing that', async () => {
+    const first = await application(), second = await application();
+    const posting = draft({ emails: ['jobs@employer.test'] });
+    await recordOutreachDraft(db, first.token, first.app.id, posting, options);
+    await sendOutreach(db, 'alice', first.app.id, { to: 'jobs@employer.test', name: null, now: true }, options);
+    expect(await recordOutreachDraft(db, second.token, second.app.id, posting, options)).toMatchObject({ status: 'skipped', reason: 'already_contacted' });
+    const queued = await sendOutreach(db, 'alice', second.app.id, { to: 'jobs@employer.test', name: null }, options);
+    now = queued.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(1);
+    expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test', 'jobs@employer.test']);
+  });
+
+  it('keeps a Send pressed while the receipt is still looking for a recruiter', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    const { token, app } = await application();
+    let pressed = false;
+    options.fetch = async () => {
+      if (!pressed) { pressed = true; await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat' }, options); }
+      return Response.json({ data: { accept_all: false, emails: [] } });
+    };
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled', to: 'pat@employer.test' });
+  });
+
+  it('holds a queued email instead of sending it once recruiter email is turned off', async () => {
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    const queued = await sendOutreach(db, 'alice', app.id, { to: 'jobs@employer.test', name: null }, options);
+    const off: Policy = createEmptyPolicy(), hash = hashValue(off);
+    await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash, policy: off, createdAt: now });
+    await db.update(policyHeads).set({ revision: 2, policyVersion: 2, acceptedPolicyVersion: 2, acceptedPolicyHash: hash }).where(eq(policyHeads.ownerId, 'alice'));
+    now = queued.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent).toEqual([]);
+    expect((await listOutreach(db, 'alice', options)).outreach[0]).toMatchObject({ status: 'draft', reason: 'outreach_disabled', to: 'jobs@employer.test' });
+  });
+
   it('Send now skips the wait, even for an email already queued', async () => {
     const { token, app } = await application();
     await recordOutreachDraft(db, token, app.id, draft(), options);

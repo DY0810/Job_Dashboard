@@ -1,6 +1,6 @@
 import 'server-only';
 import { Resolver } from 'node:dns/promises';
-import { and, asc, eq, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationEvents, applicationReceipts, applications, user } from '../private-db/schema.ts';
@@ -178,13 +178,21 @@ async function deliver(db: PrivateDb, ownerId: string, applicationId: string, ma
     settle(id(applicationId, 'hold', state.attempts, state.updatedAt, status, reason, recipient.to ?? null), { attempt: null, status, reason, ...recipient });
   const recipient = manual ?? (state.to && state.source ? { to: state.to, name: state.name, title: state.title, source: state.source }
     : await findRecipient(state.draft, options));
+  if (!manual && !queued) {
+    // The lookup is slow: if the applicant pressed Send meanwhile, their approval stands.
+    // ponytail: re-read, not a lock; a Send landing between this read and the hold's write is still lost.
+    const latest = await read();
+    if (latest!.reason || latest!.status !== 'draft') return view(latest!);
+  }
   if (!recipient) return hold('draft', 'no_recipient');
   if (!manual) {
     const [earlier] = await db.select({ id: applicationEvents.eventId }).from(applicationEvents).where(and(own(ownerId),
       ne(applicationEvents.applicationId, applicationId),
       sql`json_extract(${applicationEvents.acknowledgement}, '$.outreach') = 'outcome'`,
       sql`json_extract(${applicationEvents.acknowledgement}, '$.status') = 'sent'`,
-      sql`json_extract(${applicationEvents.acknowledgement}, '$.to') = ${recipient.to}`)).limit(1);
+      sql`json_extract(${applicationEvents.acknowledgement}, '$.to') = ${recipient.to}`,
+      // The applicant approved knowing of earlier sends; only one since then holds it.
+      queued ? gt(applicationEvents.createdAt, state.updatedAt) : undefined)).limit(1);
     // A second role at the same employer never emails the same recruiter again on its own.
     if (earlier) return hold('skipped', 'already_contacted', recipient);
     // Nothing is emailed on the applicant's behalf until they review the draft and press Send.
@@ -235,11 +243,18 @@ export async function sendDueOutreach(db: PrivateDb, options: OutreachOptions = 
       sql`json_extract(${applicationEvents.acknowledgement}, '$.sendAfter') <= ${now}`));
   let sent = 0;
   for (const { ownerId, applicationId } of rows) {
-    const state = await current(db, ownerId, applicationId, options);
-    if (state?.reason !== 'scheduled' || (state.sendAfter ?? Infinity) > now) continue; // still queued, and due
-    // The applicant may have turned recruiter email off since approving it.
-    if (!(await getPolicy(db, ownerId, now)).policy.actions.includes('email_recruiters')) continue;
-    if ((await deliver(db, ownerId, applicationId, null, options, true)).status === 'sent') sent += 1;
+    try {
+      const state = await current(db, ownerId, applicationId, options);
+      if (state?.reason !== 'scheduled' || (state.sendAfter ?? Infinity) > now) continue; // still queued, and due
+      // The applicant may have turned recruiter email off since approving it: hold it rather than send it weeks later.
+      if (!(await getPolicy(db, ownerId, now)).policy.actions.includes('email_recruiters')) {
+        const { to, name, title, source } = state;
+        await append(db, ownerId, applicationId, id(applicationId, 'hold', state.attempts, state.updatedAt, 'draft', 'outreach_disabled', to),
+          { kind: 'outreach', outreach: 'outcome', attempt: null, status: 'draft', reason: 'outreach_disabled', to: to!, name, title, source: source! }, now);
+        continue;
+      }
+      if ((await deliver(db, ownerId, applicationId, null, options, true)).status === 'sent') sent += 1;
+    } catch (error) { console.error('outreach sweep', applicationId, error); } // one bad row never stops the rest
   }
   return sent;
 }
@@ -258,6 +273,7 @@ export async function sendOutreach(db: PrivateDb, ownerId: string, applicationId
   await append(db, ownerId, applicationId, id(applicationId, 'approval', state.attempts, state.updatedAt, to), { outreach: 'approval', ...recipient, sendAfter }, nowAt(options));
   return view((await current(db, ownerId, applicationId, options))!);
 }
+
 export async function listOutreach(db: PrivateDb, ownerId: string, options: WorkerOptions = {}) {
   return { ownerId, outreach: [...await logs(db, ownerId)].flatMap(([applicationId, log]) => {
     const state = fold(applicationId, log, nowAt(options));
