@@ -51,7 +51,8 @@ beforeEach(async () => {
   now = 1_800_000_000_000;
   sent = [];
   options = { now: () => now, isAllowedApplicant: (email) => ['alice@example.test', 'bob@example.test'].includes(email),
-    sender: (from) => async (message) => { sent.push({ from, ...message }); } };
+    sender: (from) => async (message) => { sent.push({ from, ...message }); },
+    resolveMx: async () => [{ exchange: 'mx.employer.test', priority: 10 }] };
   db = openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   await migratePrivateDb(db);
   for (const id of ['alice', 'bob']) {
@@ -88,9 +89,10 @@ describe('recruiter email after a verified submission', () => {
     const calls: { url: URL; key: string | null }[] = [];
     options.fetch = async (url, init) => {
       calls.push({ url: new URL(String(url)), key: new Headers(init?.headers).get('x-api-key') });
-      return Response.json({ data: { emails: [
+      return Response.json({ data: { accept_all: true, emails: [
         { value: 'pat@employer.test', first_name: 'Pat', last_name: 'Lee', position: 'Head of Finance', confidence: 99 },
-        { value: 'Jane.Doe@employer.test', first_name: 'Jane', last_name: 'Doe', position: 'Technical Recruiter', confidence: 91 },
+        { value: 'Jane.Doe@employer.test', first_name: 'Jane', last_name: 'Doe', position: 'Technical Recruiter', confidence: 91,
+          verification: { status: 'valid' } },
       ] } });
     };
     const { token, app } = await application();
@@ -140,6 +142,58 @@ describe('recruiter email after a verified submission', () => {
     expect((await listOutreach(db, 'bob')).outreach).toEqual([]);
     await expect(sendOutreach(db, 'bob', app.id, { to: 'x@employer.test', name: null }, options)).rejects.toMatchObject({ status: 404 });
     expect(sent).toHaveLength(0);
+  });
+
+  const hunter = (body: object, status = 200) => async () => Response.json(body, { status });
+  const person = (extra: object) => ({ value: 'jane.doe@employer.test', first_name: 'Jane', last_name: 'Doe',
+    position: 'University Recruiter', confidence: 80, sources: [{ uri: 'https://employer.test/team', still_on_page: true }], ...extra });
+
+  it('skips a posting address whose domain takes no mail', async () => {
+    const { token, app } = await application();
+    const noMx: OutreachOptions = { ...options, resolveMx: async () => [] };
+    expect(await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@dead.test'] }), noMx))
+      .toMatchObject({ status: 'draft', reason: 'no_recipient', to: null });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('sends to a Hunter recruiter only when verified, never on a catch-all guess', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    const catchAll = await application();
+    options.fetch = hunter({ data: { accept_all: true, emails: [person({ confidence: 95 })] } });
+    expect(await recordOutreachDraft(db, catchAll.token, catchAll.app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'no_recipient', to: null });
+    const verified = await application();
+    options.fetch = hunter({ data: { accept_all: true, emails: [person({ verification: { status: 'valid' } })] } });
+    expect(await recordOutreachDraft(db, verified.token, verified.app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'sent', to: 'jane.doe@employer.test', source: 'hunter' });
+  });
+
+  it('falls back to Findymail, then a published generic inbox, and treats 451 as an opt-out', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    vi.stubEnv('WORKIE_FINDYMAIL_API_KEY', 'f');
+    const calls: string[] = [];
+    options.fetch = async (url) => {
+      const u = new URL(String(url)); calls.push(`${u.hostname}${u.pathname}?type=${u.searchParams.get('type')}`);
+      if (u.hostname === 'app.findymail.com') return Response.json({ contacts: [] });
+      if (u.searchParams.get('type') === 'personal') return Response.json({}, { status: 451 });
+      return Response.json({ data: { accept_all: false, emails: [
+        { value: 'press@employer.test', position: null, confidence: 99, sources: [{ uri: 'https://employer.test' }] },
+        { value: 'university@employer.test', position: null, confidence: 90, sources: [{ uri: 'https://employer.test/careers' }] },
+      ] } });
+    };
+    const { token, app } = await application();
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'sent', to: 'university@employer.test', source: 'hunter', name: null });
+    expect(calls).toEqual(['api.hunter.io/v2/domain-search?type=personal', 'app.findymail.com/api/search/domain?type=null',
+      'api.hunter.io/v2/domain-search?type=generic']);
+  });
+
+  it('leaves the recipient blank when every source comes up empty', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    options.fetch = hunter({ data: { accept_all: false, emails: [] } });
+    const { token, app } = await application();
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'no_recipient', to: null, name: null, source: null });
   });
 });
 

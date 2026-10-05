@@ -1,4 +1,5 @@
 import 'server-only';
+import { resolveMx } from 'node:dns/promises';
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PrivateDb } from '../private-db/index.ts';
@@ -14,7 +15,7 @@ import { OutreachDraftSchema, OutreachSendSchema, type Outreach } from './worker
  * a draft, then numbered send attempts whose fixed event IDs let only one sender claim attempt N,
  * then an outcome per attempt or hold. Outcomes carry `kind`, so they reach the inbox.
  */
-type Recipient = { to: string; name: string | null; title: string | null; source: 'posting' | 'hunter' | 'manual' };
+type Recipient = { to: string; name: string | null; title: string | null; source: 'posting' | 'hunter' | 'findymail' | 'manual' };
 type Draft = { outreach: 'draft'; company: string; role: string; subject: string; body: string; emails: string[]; domains: string[] };
 type Attempt = Recipient & { outreach: 'attempt'; attempt: number };
 type Outcome = Partial<Recipient> & { kind: 'outreach'; outreach: 'outcome'; attempt: number | null;
@@ -22,7 +23,7 @@ type Outcome = Partial<Recipient> & { kind: 'outreach'; outreach: 'outcome'; att
 type Entry = (Draft | Attempt | Outcome) & { createdAt: number };
 type State = Outreach & { draft: Draft; attempts: number };
 export type OutreachSender = (addresses: string[]) => ((message: Outgoing) => Promise<void>) | null;
-export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch };
+export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch; resolveMx?: typeof resolveMx };
 
 const UNCONFIRMED_MS = 10 * 60_000;
 const id = (applicationId: string, ...part: unknown[]) => artifactRequestId({ outreach: applicationId, part });
@@ -39,31 +40,59 @@ const smtpSender: OutreachSender = (addresses) => {
 };
 
 const RECRUITER = /recruit|talent|university|campus|early career|intern/i;
-const HunterSchema = z.object({ data: z.object({ emails: z.array(z.object({
+const GENERIC = /^(university|campus|early-?careers?|internships?|recruit(ing|ers?)?|talent|careers?|jobs)([._-]|$)/;
+const HunterSchema = z.object({ data: z.object({ accept_all: z.boolean().nullable().optional(), emails: z.array(z.object({
   value: z.string(), first_name: z.string().nullable().optional(), last_name: z.string().nullable().optional(),
   position: z.string().nullable().optional(), confidence: z.number().nullable().optional(),
+  verification: z.object({ status: z.string().nullable() }).nullable().optional(),
+  sources: z.array(z.unknown()).optional(),
 })) }) });
+// app.findymail.com/docs "Find from domain": returns a contact only when its email is valid; at most 3 roles.
+// ponytail: that endpoint is marked deprecated; its successor (search/employees) returns no email.
+const FindymailSchema = z.object({ contacts: z.array(z.object({ email: z.string(), name: z.string().nullable().optional() })) });
+const isEmail = (value: string) => z.email().safeParse(value).success;
+
+async function lookup(url: string, init: RequestInit, options: OutreachOptions) {
+  try {
+    const response = await (options.fetch ?? fetch)(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(5000) });
+    return response.ok ? await response.json() : null; // 451 = the person opted out; never retried
+  } catch { return null; }
+}
+const hunter = (domain: string, type: 'personal' | 'generic', key: string, options: OutreachOptions) =>
+  lookup(`https://api.hunter.io/v2/domain-search?${new URLSearchParams({ domain, type, limit: '10',
+    ...(type === 'personal' ? { department: 'hr' } : {}) })}`, { headers: { 'X-API-KEY': key } }, options)
+    .then((body) => HunterSchema.safeParse(body).data?.data ?? null);
 
 /**
- * A recruiting address the posting itself names, else Hunter's HR people at a domain the posting
- * names. A company-name lookup is never used: "Sage" alone resolves to the wrong employer.
+ * Verified sources only, cheapest and most accurate first; null leaves the recipient blank for the
+ * applicant. Never a company-name lookup ("Sage" alone resolves to the wrong employer) and never a
+ * guessed pattern: catch-all domains accept any address, so a guess cannot be verified.
  */
 export async function findRecipient(draft: Pick<Draft, 'emails' | 'domains'>, options: OutreachOptions = {}): Promise<Recipient | null> {
-  if (draft.emails[0]) return { to: draft.emails[0], name: null, title: null, source: 'posting' };
-  const key = process.env.WORKIE_HUNTER_API_KEY?.trim();
-  if (!key) return null;
+  for (const email of draft.emails) {
+    const mx = await (options.resolveMx ?? resolveMx)(email.split('@')[1]).catch(() => []);
+    if (mx.length) return { to: email, name: null, title: null, source: 'posting' };
+  }
+  const hunterKey = process.env.WORKIE_HUNTER_API_KEY?.trim(), findymailKey = process.env.WORKIE_FINDYMAIL_API_KEY?.trim();
   for (const domain of draft.domains.slice(0, 2)) {
-    try {
-      const response = await (options.fetch ?? fetch)(`https://api.hunter.io/v2/domain-search?${new URLSearchParams({
-        domain, department: 'hr', type: 'personal', limit: '10' })}`,
-      { headers: { 'X-API-KEY': key }, redirect: 'error', signal: AbortSignal.timeout(5000) });
-      const parsed = response.ok ? HunterSchema.safeParse(await response.json()) : null;
-      const best = parsed?.success ? parsed.data.data.emails
-        .filter((item) => RECRUITER.test(item.position ?? '') && z.email().safeParse(item.value).success)
-        .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0] : undefined;
-      if (best) return { to: best.value.toLowerCase(), name: [best.first_name, best.last_name].filter(Boolean).join(' ') || null,
-        title: best.position ?? null, source: 'hunter' };
-    } catch { /* an unreachable lookup leaves the draft for the applicant */ }
+    const people = hunterKey ? await hunter(domain, 'personal', hunterKey, options) : null;
+    const best = people?.emails
+      .filter((item) => RECRUITER.test(item.position ?? '') && isEmail(item.value) && item.value.toLowerCase().endsWith(`@${domain}`) &&
+        (item.verification?.status === 'valid' || (!people.accept_all && (item.confidence ?? 0) >= 90)))
+      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
+    if (best) return { to: best.value.toLowerCase(), name: [best.first_name, best.last_name].filter(Boolean).join(' ') || null,
+      title: best.position ?? null, source: 'hunter' };
+    if (findymailKey) {
+      const body = await lookup('https://app.findymail.com/api/search/domain', { method: 'POST',
+        headers: { authorization: `Bearer ${findymailKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ domain, roles: ['University Recruiter', 'Technical Recruiter', 'Talent Acquisition'] }) }, options);
+      const hit = FindymailSchema.safeParse(body).data?.contacts.find((item) => isEmail(item.email) && item.email.toLowerCase().endsWith(`@${domain}`));
+      if (hit) return { to: hit.email.toLowerCase(), name: hit.name ?? null, title: null, source: 'findymail' };
+    }
+    const generic = hunterKey ? await hunter(domain, 'generic', hunterKey, options) : null;
+    const inbox = generic?.emails.find((item) => isEmail(item.value) && item.value.toLowerCase().endsWith(`@${domain}`) &&
+      GENERIC.test(item.value.split('@')[0].toLowerCase()) && (item.sources?.length ?? 0) > 0);
+    if (inbox) return { to: inbox.value.toLowerCase(), name: null, title: null, source: 'hunter' };
   }
   return null;
 }

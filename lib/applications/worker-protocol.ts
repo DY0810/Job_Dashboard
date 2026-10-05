@@ -112,7 +112,7 @@ export const OutreachSchema = z.strictObject({
   applicationId: uuid, status: z.enum(['draft', 'sending', 'sent', 'failed', 'skipped']),
   company, role, subject: z.string(), body: z.string(),
   to: z.string().nullable(), name: z.string().nullable(), title: z.string().nullable(),
-  source: z.enum(['posting', 'hunter', 'manual']).nullable(), reason: z.string().nullable(),
+  source: z.enum(['posting', 'hunter', 'findymail', 'manual']).nullable(), reason: z.string().nullable(),
   sentAt: timestamp.nullable(), updatedAt: timestamp,
 });
 export const OutreachListSchema = z.strictObject({ ownerId: z.string().min(1), outreach: z.array(OutreachSchema).max(500) });
