@@ -8,8 +8,10 @@ export const AtsIdentitySchema = z.strictObject({
   requisition: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
 });
 export type AtsIdentity = z.infer<typeof AtsIdentitySchema>;
+// Greenhouse names a multi-select question's input "question_123[]"; the suffix is the only punctuation a key may carry.
+export const atsFieldKey = /^[a-z][a-z0-9_-]{0,63}(\[\])?$/;
 export const AtsFieldSchema = z.strictObject({
-  key: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), label: z.string().trim().min(1).max(1000),
+  key: z.string().regex(atsFieldKey), label: z.string().trim().min(1).max(1000),
   kind: z.enum(['text', 'email', 'date', 'select', 'combobox', 'radio', 'checkbox', 'file']), required: z.boolean(),
   name: z.string().regex(/^[a-zA-Z0-9_.-]{1,100}$/).optional(),
   options: z.array(z.string().trim().min(1).max(120)).max(32).optional(),
@@ -53,7 +55,7 @@ export type AtsAdapter = {
 };
 
 export async function locateField(page: Page, field: AtsField) {
-  const byId = page.locator(`#${field.key}`).first();
+  const byId = page.locator(`[id="${field.key}"]`).first();
   if (await byId.count()) return byId;
   const byLabel = page.getByLabel(field.label, { exact: false }).first();
   if (await byLabel.count()) return byLabel;

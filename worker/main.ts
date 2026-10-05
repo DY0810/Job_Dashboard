@@ -15,7 +15,7 @@ import { greenhouse, greenhouseAnswer } from "./ats/greenhouse.ts";
 import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
 import { screenApplication, screeningQuestions, formQuestions } from "./screening.ts";
 import { AtsError } from "./ats/protocol.ts";
-import { AtsIdentitySchema, formQuestionKey, undergraduateTranscript, type AtsApplication } from "./ats/protocol.ts";
+import { AtsIdentitySchema, atsFieldKey, formQuestionKey, undergraduateTranscript, type AtsApplication } from "./ats/protocol.ts";
 import { lever } from "./ats/lever.ts";
 import { jobvite } from "./ats/jobvite.ts";
 import { workday } from "./ats/workday.ts";
@@ -162,7 +162,7 @@ export function providerFailureResult(error: unknown) {
 export function atsFailureReason(error: unknown) {
   if (error instanceof AtsError) {
     // A field key names the failing field; any other message may hold a private value and is dropped.
-    const field = error.message !== error.code && /^[a-z][a-z0-9_-]{0,63}$/.test(error.message) ? `_${error.message}` : '';
+    const field = error.message !== error.code && atsFieldKey.test(error.message) ? `_${error.message}` : '';
     return `ats_${error.code.toLowerCase()}${field}`.replace(/[^a-z0-9_]/g, '_').slice(0, 80);
   }
   if (error instanceof z.ZodError) return "ats_schema_invalid";

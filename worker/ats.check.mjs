@@ -88,6 +88,30 @@ test('a dropdown answer the form does not offer fails with every choice the form
     assert.deepEqual(error.options, ['University of California, Los Angeles', 'Binghamton University', 'Other']);
   } finally { await browser.close(); }
 });
+test('a hosted multi-select question (id ending in []) is observed and filled like a single dropdown', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    // Riot's live markup (2026-10-05): react-select multi input id="question_69351151[]"; a pick becomes a chip and closes the menu.
+    await page.setContent(`<form id="application-form"><label id="question_1[]-label" for="question_1[]">In which language(s) are you business fluent?*</label>
+      <div class="select__control"><div id="chips"></div><input id="question_1[]" role="combobox" aria-required="true"></div><div id="menu"></div></form><script>
+      const choices = ['English', 'French', 'Korean'];
+      const input = document.getElementById('question_1[]'), menu = document.getElementById('menu'), chips = document.getElementById('chips');
+      const render = () => { menu.innerHTML = ''; for (const choice of choices.filter(c => c.toLowerCase().includes(input.value.toLowerCase()))) {
+        const item = document.createElement('div'); item.setAttribute('role', 'option'); item.textContent = choice;
+        item.addEventListener('click', () => { const chip = document.createElement('div'); chip.textContent = choice; chips.append(chip); input.value = ''; menu.innerHTML = ''; });
+        menu.append(item); } };
+      input.addEventListener('input', render); input.addEventListener('click', render);
+    </script>`);
+    const fields = await hostedFields(page.locator('form'));
+    assert.deepEqual(fields, [{ key: 'question_1[]', label: 'In which language(s) are you business fluent?', kind: 'combobox', required: true, options: undefined }]);
+    const [field] = AtsObservationSchema.parse({ identity: { ats: 'greenhouse', tenant: 'riotgamesup', requisition: '8222015' },
+      company: 'Riot Games', role: 'Intern', fields, actions: ['fill'] }).fields;
+    await fillField(page, field, 'English', {});
+    assert.equal(await verifyField(page, field, 'English'), true);
+    assert.equal(await verifyField(page, field, 'French'), false);
+  } finally { await browser.close(); }
+});
 test('an uploaded Greenhouse file verifies by the name shown in place of its input', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });
   try {

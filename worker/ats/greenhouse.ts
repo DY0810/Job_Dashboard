@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
-import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
+import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, atsFieldKey, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
 
 const VERIFICATION_WAIT_MS = 30 * 60_000; // time for the applicant to find the emailed code
 
@@ -100,7 +100,7 @@ export async function hostedFields(form: import('playwright').Locator): Promise<
       options: node instanceof HTMLSelectElement ? [...node.options].map(option => option.label).filter(Boolean) : undefined,
     };
   }));
-  if (raw.some(item => !/^[a-z][a-z0-9_-]{0,63}$/.test(item.key)) || raw.length > 64) throw new AtsError('GREENHOUSE_FIELD_UNSUPPORTED');
+  if (raw.some(item => !atsFieldKey.test(item.key)) || raw.length > 64) throw new AtsError('GREENHOUSE_FIELD_UNSUPPORTED');
   return raw.map(item => ({ ...item, kind: item.kind as AtsField['kind'] }));
 }
 
