@@ -15,6 +15,8 @@ import { beginSubmission, recordReceipt } from './submissions.ts';
 import { getInbox } from './questions.ts';
 import { listOutreach, recordOutreachDraft, sendOutreach, type OutreachOptions } from './outreach.ts';
 import { listMaterials, recordSubmittedLetter } from './materials.ts';
+import { boardKey } from './company-domains.ts';
+import { resolveApplicationIdentity } from './application-identity.ts';
 
 vi.mock('server-only', () => ({}));
 let db: PrivateDb, dir: string, now: number, options: OutreachOptions;
@@ -108,12 +110,21 @@ describe('recruiter email after a verified submission', () => {
   it('looks up the registry domain of the board when the posting names none', async () => {
     vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
     const domains: string[] = [];
-    options.fetch = async (url) => { domains.push(new URL(String(url)).searchParams.get('domain')!);
+    options.fetch = async (url) => { const params = new URL(String(url)).searchParams;
+      domains.push(`${params.get('type')}:${params.get('domain')}`);
       return Response.json({ data: { accept_all: false, emails: [] } }); };
     options.registryDomain = (ats, tenant) => (ats === 'fixture' && tenant === 'employer' ? 'employer.test' : null);
     const { token, app } = await application();
     await recordOutreachDraft(db, token, app.id, draft(), options);
-    expect(domains[0]).toBe('employer.test');
+    expect(domains[0]).toBe('personal:employer.test');
+    domains.length = 0;
+    const named = await application(); // the posting naming the same domain looks it up once
+    await recordOutreachDraft(db, named.token, named.app.id, draft({ domains: ['employer.test'] }), options);
+    expect(domains.filter((item) => item === 'personal:employer.test')).toHaveLength(1);
+    // A Workday board is keyed by the host application-identity.ts takes as its tenant.
+    const { identity } = resolveApplicationIdentity('https://nvidia.wd5.myworkdayjobs.com/NvidiaExternalCareerSite/job/US-CA-Santa-Clara/Intern_JR2001234', []);
+    expect(boardKey({ ats: 'workday', token: 'nvidia', wdN: 'wd5' })).toBe(`${identity!.ats}:${identity!.tenant}`);
+    expect(boardKey({ ats: 'greenhouse', token: 'airbnb' })).toBe('greenhouse:airbnb');
   });
 
   it('keeps the draft when no recruiter is found, then sends to the address the applicant enters', async () => {

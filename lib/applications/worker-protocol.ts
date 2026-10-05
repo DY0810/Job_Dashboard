@@ -102,10 +102,10 @@ export const ReceiptResponseSchema = z.strictObject({
 });
 // Recruiter email after a verified submission. The subject can never carry a header break.
 const email = z.email().max(254).transform((value) => value.toLowerCase());
-const domain = z.string().regex(/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/);
+export const DomainSchema = z.string().regex(/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/);
 export const OutreachDraftSchema = z.strictObject({
   ...protocol, subject: z.string().trim().min(1).max(400).regex(/^[^\r\n]+$/), body: z.string().trim().min(1).max(4000),
-  emails: z.array(email).max(5), domains: z.array(domain).max(5),
+  emails: z.array(email).max(5), domains: z.array(DomainSchema).max(5),
 });
 export const OutreachSendSchema = z.strictObject({ to: email, name: z.string().trim().min(1).max(120).nullable() });
 export const OutreachSchema = z.strictObject({
