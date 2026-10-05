@@ -1,5 +1,5 @@
 import 'server-only';
-import { resolveMx } from 'node:dns/promises';
+import { Resolver } from 'node:dns/promises';
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PrivateDb } from '../private-db/index.ts';
@@ -23,7 +23,7 @@ type Outcome = Partial<Recipient> & { kind: 'outreach'; outreach: 'outcome'; att
 type Entry = (Draft | Attempt | Outcome) & { createdAt: number };
 type State = Outreach & { draft: Draft; attempts: number };
 export type OutreachSender = (addresses: string[]) => ((message: Outgoing) => Promise<void>) | null;
-export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch; resolveMx?: typeof resolveMx };
+export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch; resolveMx?: Resolver['resolveMx'] };
 
 const UNCONFIRMED_MS = 10 * 60_000;
 const id = (applicationId: string, ...part: unknown[]) => artifactRequestId({ outreach: applicationId, part });
@@ -50,6 +50,7 @@ const HunterSchema = z.object({ data: z.object({ accept_all: z.boolean().nullabl
 // app.findymail.com/docs "Find from domain": returns a contact only when its email is valid; at most 3 roles.
 // ponytail: that endpoint is marked deprecated; its successor (search/employees) returns no email.
 const FindymailSchema = z.object({ contacts: z.array(z.object({ email: z.string(), name: z.string().nullable().optional() })) });
+const dns = new Resolver({ timeout: 2000, tries: 1 });
 const isEmail = (value: string) => z.email().safeParse(value).success;
 
 async function lookup(url: string, init: RequestInit, options: OutreachOptions) {
@@ -70,15 +71,16 @@ const hunter = (domain: string, type: 'personal' | 'generic', key: string, optio
  */
 export async function findRecipient(draft: Pick<Draft, 'emails' | 'domains'>, options: OutreachOptions = {}): Promise<Recipient | null> {
   for (const email of draft.emails) {
-    const mx = await (options.resolveMx ?? resolveMx)(email.split('@')[1]).catch(() => []);
-    if (mx.length) return { to: email, name: null, title: null, source: 'posting' };
+    const mx = await (options.resolveMx ?? dns.resolveMx.bind(dns))(email.split('@')[1]).catch(() => []);
+    if (mx.some((r) => r.exchange && r.exchange !== '.')) // RFC 7505 null MX takes no mail
+      return { to: email, name: null, title: null, source: 'posting' };
   }
   const hunterKey = process.env.WORKIE_HUNTER_API_KEY?.trim(), findymailKey = process.env.WORKIE_FINDYMAIL_API_KEY?.trim();
   for (const domain of draft.domains.slice(0, 2)) {
     const people = hunterKey ? await hunter(domain, 'personal', hunterKey, options) : null;
     const best = people?.emails
       .filter((item) => RECRUITER.test(item.position ?? '') && isEmail(item.value) && item.value.toLowerCase().endsWith(`@${domain}`) &&
-        (item.verification?.status === 'valid' || (!people.accept_all && (item.confidence ?? 0) >= 90)))
+        (item.verification?.status === 'valid' || (people.accept_all === false && (item.confidence ?? 0) >= 90)))
       .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
     if (best) return { to: best.value.toLowerCase(), name: [best.first_name, best.last_name].filter(Boolean).join(' ') || null,
       title: best.position ?? null, source: 'hunter' };

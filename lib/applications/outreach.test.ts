@@ -188,6 +188,17 @@ describe('recruiter email after a verified submission', () => {
       'api.hunter.io/v2/domain-search?type=generic']);
   });
 
+  it('takes a Findymail contact at the posting domain when Hunter finds no recruiter', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    vi.stubEnv('WORKIE_FINDYMAIL_API_KEY', 'f');
+    options.fetch = async (url) => new URL(String(url)).hostname === 'app.findymail.com'
+      ? Response.json({ contacts: [{ email: 'x@other.test' }, { email: 'ann@employer.test', name: 'Ann' }] })
+      : Response.json({ data: { accept_all: false, emails: [] } });
+    const { token, app } = await application();
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'sent', to: 'ann@employer.test', source: 'findymail', name: 'Ann' });
+  });
+
   it('leaves the recipient blank when every source comes up empty', async () => {
     vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
     options.fetch = hunter({ data: { accept_all: false, emails: [] } });
