@@ -296,3 +296,17 @@ sync need separate authorization. This acceptance is synthetic/local Phase 3
 proof, not full Auto Apply completion. ATS/provider/document tailoring and
 later release gates remain outstanding. No push/main/rebase/merge/deploy,
 nested agents or `send_message_to_thread` in any namespace/wrapper.
+
+## Recruiter email
+
+Research: `docs/research/2026-10-05-cold-email-research.md`. After a submission
+with `email_recruiters` on, a ≤120-word draft waits on the Applications page;
+nothing is sent until the applicant presses Send, which queues it for a Tue–Thu
+16:00 UTC at least three days after applying (`/api/cron/outreach`, sent once,
+never retried). Send now skips the wait. Recipients are verified only: a
+recruiting address in the posting (with MX) → Hunter recruiters at the curated
+or posting domain → Findymail → a published recruiting inbox. No company-name
+lookups, guessed patterns, SMTP probes or LinkedIn/GitHub sourcing; none found
+leaves To blank for the applicant. Curate `scripts/companies.json` domains with
+`node --env-file-if-exists=.env.local scripts/company-domains.ts > domains.tsv`
+(proposes only), hand-check the TSV, then `node scripts/company-domains.ts --write domains.tsv`.

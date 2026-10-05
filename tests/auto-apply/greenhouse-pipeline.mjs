@@ -246,13 +246,11 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       assert.equal(calls.outreach.length, 1);
       const [{ body: note, afterReceipt }] = calls.outreach;
       assert.equal(afterReceipt, true);
-      assert.equal(note.subject, 'Following up on my Software Engineering Intern application');
+      assert.equal(note.subject, 'Applied: Software Engineering Intern – Test Applicant');
       assert.deepEqual(note.body.split('\n\n'), [
-        'I just applied for the Software Engineering Intern role at Fixture Co and wanted to reach out directly.',
-        'I built TypeScript REST APIs for a scheduling product used by students.',
-        'Fixture Co builds tools that students rely on every day.',
-        'Would you be open to a quick 15-minute call about the role or the team? If someone else is handling this position, I would appreciate it if you could point me in the right direction.',
-        'Thank you,\nTest Applicant\nhttps://linkedin.com/in/test',
+        'I recently applied for the Software Engineering Intern role at Fixture Co. I built TypeScript REST APIs for a scheduling product used by students.',
+        "I'd appreciate being considered. If someone else handles this role, could you point me to them?",
+        'Thanks,\nTest Applicant\nhttps://linkedin.com/in/test',
       ]);
       assert.deepEqual({ emails: note.emails, domains: note.domains }, { emails: ['university-recruiting@fixtureco.com'], domains: ['fixtureco.com'] });
     } finally {

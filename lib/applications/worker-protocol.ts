@@ -102,18 +102,19 @@ export const ReceiptResponseSchema = z.strictObject({
 });
 // Recruiter email after a verified submission. The subject can never carry a header break.
 const email = z.email().max(254).transform((value) => value.toLowerCase());
-const domain = z.string().regex(/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/);
+export const DomainSchema = z.string().regex(/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/);
 export const OutreachDraftSchema = z.strictObject({
   ...protocol, subject: z.string().trim().min(1).max(400).regex(/^[^\r\n]+$/), body: z.string().trim().min(1).max(4000),
-  emails: z.array(email).max(5), domains: z.array(domain).max(5),
+  emails: z.array(email).max(5), domains: z.array(DomainSchema).max(5),
 });
-export const OutreachSendSchema = z.strictObject({ to: email, name: z.string().trim().min(1).max(120).nullable() });
+export const OutreachSendSchema = z.strictObject({ to: email, name: z.string().trim().min(1).max(120).nullable(), now: z.boolean().default(false) });
 export const OutreachSchema = z.strictObject({
   applicationId: uuid, status: z.enum(['draft', 'sending', 'sent', 'failed', 'skipped']),
   company, role, subject: z.string(), body: z.string(),
   to: z.string().nullable(), name: z.string().nullable(), title: z.string().nullable(),
-  source: z.enum(['posting', 'hunter', 'manual']).nullable(), reason: z.string().nullable(),
-  sentAt: timestamp.nullable(), updatedAt: timestamp,
+  source: z.enum(['posting', 'hunter', 'findymail', 'manual']).nullable(), reason: z.string().nullable(),
+  sentAt: timestamp.nullable(), sendAfter: timestamp.nullable(), updatedAt: timestamp,
+  contactedFor: z.string().nullable(), // "Company – Role" of an earlier email to the same address
 });
 export const OutreachListSchema = z.strictObject({ ownerId: z.string().min(1), outreach: z.array(OutreachSchema).max(500) });
 // The cover letter exactly as uploaded with a submitted application, and what the applicant can review.

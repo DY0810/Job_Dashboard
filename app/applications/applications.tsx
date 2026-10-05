@@ -71,9 +71,13 @@ function outreachStatus(item: Outreach) {
   const who = `${item.name ?? item.to}${item.title ? ` (${item.title})` : ''}`;
   if (item.status === 'sent') return `Emailed ${who}${item.sentAt ? ` on ${new Date(item.sentAt).toLocaleDateString()}` : ''}`;
   if (item.status === 'sending') return `Sending to ${who}...`;
-  if (item.status === 'skipped') return `Not sent: ${who} was already emailed about another role`;
+  const earlier = item.contactedFor ? ` Already emailed about ${item.contactedFor}.` : '';
+  if (item.status === 'skipped') return `Not sent: ${who} was already emailed about ${item.contactedFor ?? 'another role'}`;
   if (item.status === 'failed') return `Sending to ${who} failed. Check the address and send again.`;
-  if (item.reason === 'awaiting_approval') return `Draft ready for ${who}. Review it and press Send email; nothing goes out until you do.`;
+  const when = (at: number | null) => at && at > Date.now() ? new Date(at).toLocaleString() : 'the next Tue–Thu morning';
+  if (item.reason === 'scheduled') return `Queued for ${who} on ${when(item.sendAfter)}. Send now to skip the wait.${earlier}`;
+  if (item.reason === 'outreach_disabled') return `Not sent to ${who}: recruiter email is off in the Auto Apply policy. Turn it on and press Send again.`;
+  if (item.reason === 'awaiting_approval') return `Draft ready for ${who}. Send queues it for ${when(item.sendAfter)}; nothing goes out until you press it.${earlier}`;
   return item.reason === 'sender_not_configured' ? `Ready for ${who}, but Gmail sending is not set up for your address`
     : 'Draft ready. No recruiter address was found; add one to send.';
 }
@@ -105,27 +109,29 @@ function ApprovePanel({ app, ownerId, onChange }: { app: { id: string; runId: st
 
 function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: string; onChange: () => void }) {
   const [to, setTo] = useState(item.to ?? '');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'queue' | 'now' | null>(null);
   const [error, setError] = useState('');
-  const send = async () => {
-    setBusy(true); setError('');
+  const send = async (now: boolean) => {
+    setBusy(now ? 'now' : 'queue'); setError('');
     try {
       const response = await fetch(`/api/outreach/${item.applicationId}`, {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(60_000),
         headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
-        body: JSON.stringify({ to: to.trim(), name: to.trim() === item.to ? item.name : null }),
+        body: JSON.stringify({ to: to.trim(), name: to.trim() === item.to ? item.name : null, now }),
       });
       if (!response.ok) throw new Error();
       onChange();
-    } catch { setError('Could not send. Check the address and try again.'); }
-    finally { setBusy(false); }
+    } catch { setError(`Could not ${now ? 'send' : 'queue'}. Check the address and try again.`); }
+    finally { setBusy(null); }
   };
   return <div>
     <div className={styles.row}><span>Recruiter email: {outreachStatus(item)}</span></div>
     <details><summary className={styles.muted}>{item.subject}</summary><pre className={styles.preview}>{item.body}</pre></details>
-    {item.status !== 'sent' && item.status !== 'sending' && <form className={styles.form} onSubmit={(event) => { event.preventDefault(); void send(); }}>
+    {item.status !== 'sent' && item.status !== 'sending' && <form className={styles.form} onSubmit={(event) => {
+      event.preventDefault(); void send((event.nativeEvent as SubmitEvent).submitter?.getAttribute('name') === 'now'); }}>
       <input type="email" required value={to} onChange={(event) => setTo(event.target.value)} placeholder="recruiter@company.com" aria-label={`Recruiter email for ${item.company}`} />
-      <button className={styles.button} type="submit" disabled={busy}>{busy ? 'Sending...' : 'Send email'}</button>
+      <button className={styles.button} type="submit" disabled={!!busy}>{busy === 'queue' ? 'Queueing...' : 'Send'}</button>
+      <button className={styles.button} type="submit" name="now" disabled={!!busy}>{busy === 'now' ? 'Sending...' : 'Send now'}</button>
       {error && <span role="alert" className={styles.reason}>{error}</span>}
     </form>}
   </div>;

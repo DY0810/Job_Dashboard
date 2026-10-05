@@ -56,6 +56,7 @@ export const ApplicationContextSchema = z.strictObject({
   protocolVersion: z.literal(WORKER_PROTOCOL_VERSION), applicationId: uuid, runId: uuid, ownerId: z.string().min(1).max(256),
   policyRevision: z.number().int().positive().safe(), identity: ApplicationIdentitySchema,
   coverLetterAllowed: z.boolean().default(false), outreach: z.boolean().default(false),
+  track: z.enum(['engineering', 'design']).default('engineering'),
   // The cover letter written when the form was filled; the worker submits this one, not a new draft.
   letter: z.strictObject({ introduction: z.string().min(1).max(900), body: z.array(z.string().min(1).max(900)).min(1).max(4),
     conclusion: z.string().min(1).max(900), companyParagraph: z.string().min(1).max(900) }).nullable().default(null),

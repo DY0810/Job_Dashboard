@@ -13,10 +13,13 @@ import { createRun, enqueueApplication } from './runs.ts';
 import { pollWorker } from './leases.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { getInbox } from './questions.ts';
-import { listOutreach, recordOutreachDraft, sendOutreach, type OutreachOptions } from './outreach.ts';
+import { listOutreach, recordOutreachDraft, sendDueOutreach, sendOutreach, sendWindow, type OutreachOptions } from './outreach.ts';
 import { listMaterials, recordSubmittedLetter } from './materials.ts';
+import { boardKey } from './company-domains.ts';
+import { resolveApplicationIdentity } from './application-identity.ts';
 
 vi.mock('server-only', () => ({}));
+const DAY = 86_400_000;
 let db: PrivateDb, dir: string, now: number, options: OutreachOptions;
 let sent: { from: string[]; to: string; subject: string; body: string }[];
 const secret = () => randomBytes(32).toString('base64url');
@@ -51,7 +54,8 @@ beforeEach(async () => {
   now = 1_800_000_000_000;
   sent = [];
   options = { now: () => now, isAllowedApplicant: (email) => ['alice@example.test', 'bob@example.test'].includes(email),
-    sender: (from) => async (message) => { sent.push({ from, ...message }); } };
+    sender: (from) => async (message) => { sent.push({ from, ...message }); },
+    resolveMx: async () => [{ exchange: 'mx.employer.test', priority: 10 }] };
   db = openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   await migratePrivateDb(db);
   for (const id of ['alice', 'bob']) {
@@ -75,7 +79,7 @@ describe('recruiter email after a verified submission', () => {
     const result = await recordOutreachDraft(db, token, app.id, draft({ emails: ['university-recruiting@employer.test'] }), options);
     expect(result).toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'university-recruiting@employer.test', source: 'posting', company: 'Employer Co', sentAt: null });
     expect(sent).toHaveLength(0);
-    expect(await sendOutreach(db, 'alice', app.id, { to: 'university-recruiting@employer.test', name: null }, options)).toMatchObject({ status: 'sent', sentAt: now });
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'university-recruiting@employer.test', name: null, now: true }, options)).toMatchObject({ status: 'sent', sentAt: now });
     expect(sent).toEqual([{ from: ['alice@example.test'], to: 'university-recruiting@employer.test',
       subject: draft().subject, body: `Hi there,\n\n${draft().body}` }]);
     // A retried worker call or a click on Send never emails twice.
@@ -90,16 +94,17 @@ describe('recruiter email after a verified submission', () => {
     const calls: { url: URL; key: string | null }[] = [];
     options.fetch = async (url, init) => {
       calls.push({ url: new URL(String(url)), key: new Headers(init?.headers).get('x-api-key') });
-      return Response.json({ data: { emails: [
+      return Response.json({ data: { accept_all: true, emails: [
         { value: 'pat@employer.test', first_name: 'Pat', last_name: 'Lee', position: 'Head of Finance', confidence: 99 },
-        { value: 'Jane.Doe@employer.test', first_name: 'Jane', last_name: 'Doe', position: 'Technical Recruiter', confidence: 91 },
+        { value: 'Jane.Doe@employer.test', first_name: 'Jane', last_name: 'Doe', position: 'Technical Recruiter', confidence: 91,
+          verification: { status: 'valid' } },
       ] } });
     };
     const { token, app } = await application();
     expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options)).toMatchObject({
       status: 'draft', reason: 'awaiting_approval', to: 'jane.doe@employer.test', name: 'Jane Doe', title: 'Technical Recruiter', source: 'hunter' });
     expect(sent).toHaveLength(0);
-    await sendOutreach(db, 'alice', app.id, { to: 'jane.doe@employer.test', name: 'Jane Doe' }, options);
+    await sendOutreach(db, 'alice', app.id, { to: 'jane.doe@employer.test', name: 'Jane Doe', now: true }, options);
     expect(sent[0].body.startsWith('Hi Jane,\n\n')).toBe(true);
     expect(calls[0].url.searchParams.get('domain')).toBe('employer.test');
     expect(calls[0].url.searchParams.has('company')).toBe(false);
@@ -107,12 +112,32 @@ describe('recruiter email after a verified submission', () => {
     expect(calls[0].key).toBe('hunter-test-key');
   });
 
+  it('looks up the registry domain of the board when the posting names none', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    const domains: string[] = [];
+    options.fetch = async (url) => { const params = new URL(String(url)).searchParams;
+      domains.push(`${params.get('type')}:${params.get('domain')}`);
+      return Response.json({ data: { accept_all: false, emails: [] } }); };
+    options.registryDomain = (ats, tenant) => (ats === 'fixture' && tenant === 'employer' ? 'employer.test' : null);
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft(), options);
+    expect(domains[0]).toBe('personal:employer.test');
+    domains.length = 0;
+    const named = await application(); // the posting naming the same domain looks it up once
+    await recordOutreachDraft(db, named.token, named.app.id, draft({ domains: ['employer.test'] }), options);
+    expect(domains.filter((item) => item === 'personal:employer.test')).toHaveLength(1);
+    // A Workday board is keyed by the host application-identity.ts takes as its tenant.
+    const { identity } = resolveApplicationIdentity('https://nvidia.wd5.myworkdayjobs.com/NvidiaExternalCareerSite/job/US-CA-Santa-Clara/Intern_JR2001234', []);
+    expect(boardKey({ ats: 'workday', token: 'nvidia', wdN: 'wd5' })).toBe(`${identity!.ats}:${identity!.tenant}`);
+    expect(boardKey({ ats: 'greenhouse', token: 'airbnb' })).toBe('greenhouse:airbnb');
+  });
+
   it('keeps the draft when no recruiter is found, then sends to the address the applicant enters', async () => {
     const { token, app } = await application();
     expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
       .toMatchObject({ status: 'draft', reason: 'no_recipient', to: null });
     expect(sent).toHaveLength(0);
-    expect(await sendOutreach(db, 'alice', app.id, { to: 'Recruiter@Employer.test', name: 'Sam Park' }, options))
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'Recruiter@Employer.test', name: 'Sam Park', now: true }, options))
       .toMatchObject({ status: 'sent', to: 'recruiter@employer.test', source: 'manual' });
     expect(sent[0].body.startsWith('Hi Sam,\n\n')).toBe(true);
   });
@@ -121,17 +146,17 @@ describe('recruiter email after a verified submission', () => {
     const first = await application(), second = await application(), third = await application();
     const posting = draft({ emails: ['jobs@employer.test'] });
     await recordOutreachDraft(db, first.token, first.app.id, posting, options);
-    await sendOutreach(db, 'alice', first.app.id, { to: 'jobs@employer.test', name: null }, options);
+    await sendOutreach(db, 'alice', first.app.id, { to: 'jobs@employer.test', name: null, now: true }, options);
     expect(await recordOutreachDraft(db, second.token, second.app.id, posting, options))
       .toMatchObject({ status: 'skipped', reason: 'already_contacted', to: 'jobs@employer.test' });
     const failing: OutreachOptions = { ...options, sender: () => async () => { throw new Error('smtp down'); } };
     expect(await recordOutreachDraft(db, third.token, third.app.id, draft({ emails: ['campus@employer.test'] }), failing))
       .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'campus@employer.test' });
-    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null }, failing))
+    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null, now: true }, failing))
       .toMatchObject({ status: 'failed', reason: 'send_failed', to: 'campus@employer.test' });
-    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null }, { ...options, sender: () => null }))
+    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null, now: true }, { ...options, sender: () => null }))
       .toMatchObject({ status: 'draft', reason: 'sender_not_configured' });
-    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null }, options)).toMatchObject({ status: 'sent' });
+    expect(await sendOutreach(db, 'alice', third.app.id, { to: 'campus@employer.test', name: null, now: true }, options)).toMatchObject({ status: 'sent' });
     expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test', 'campus@employer.test']);
   });
 
@@ -147,6 +172,180 @@ describe('recruiter email after a verified submission', () => {
     expect((await listOutreach(db, 'bob')).outreach).toEqual([]);
     await expect(sendOutreach(db, 'bob', app.id, { to: 'x@employer.test', name: null }, options)).rejects.toMatchObject({ status: 404 });
     expect(sent).toHaveLength(0);
+  });
+
+  const hunter = (body: object, status = 200) => async () => Response.json(body, { status });
+  const person = (extra: object) => ({ value: 'jane.doe@employer.test', first_name: 'Jane', last_name: 'Doe',
+    position: 'University Recruiter', confidence: 80, sources: [{ uri: 'https://employer.test/team', still_on_page: true }], ...extra });
+
+  it('skips a posting address whose domain takes no mail', async () => {
+    const { token, app } = await application();
+    const noMx: OutreachOptions = { ...options, resolveMx: async () => [] };
+    expect(await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@dead.test'] }), noMx))
+      .toMatchObject({ status: 'draft', reason: 'no_recipient', to: null });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('sends to a Hunter recruiter only when verified, never on a catch-all guess', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    const catchAll = await application();
+    options.fetch = hunter({ data: { accept_all: true, emails: [person({ confidence: 95 })] } });
+    expect(await recordOutreachDraft(db, catchAll.token, catchAll.app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'no_recipient', to: null });
+    const verified = await application();
+    options.fetch = hunter({ data: { accept_all: true, emails: [person({ verification: { status: 'valid' } })] } });
+    expect(await recordOutreachDraft(db, verified.token, verified.app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'jane.doe@employer.test', source: 'hunter' });
+  });
+
+  it('falls back to Findymail, then a published generic inbox, and treats 451 as an opt-out', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    vi.stubEnv('WORKIE_FINDYMAIL_API_KEY', 'f');
+    const calls: string[] = [];
+    options.fetch = async (url) => {
+      const u = new URL(String(url)); calls.push(`${u.hostname}${u.pathname}?type=${u.searchParams.get('type')}`);
+      if (u.hostname === 'app.findymail.com') return Response.json({ contacts: [] });
+      if (u.searchParams.get('type') === 'personal') return Response.json({}, { status: 451 });
+      return Response.json({ data: { accept_all: false, emails: [
+        { value: 'press@employer.test', position: null, confidence: 99, sources: [{ uri: 'https://employer.test' }] },
+        { value: 'university@employer.test', position: null, confidence: 90, sources: [{ uri: 'https://employer.test/careers' }] },
+      ] } });
+    };
+    const { token, app } = await application();
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'university@employer.test', source: 'hunter', name: null });
+    expect(calls).toEqual(['api.hunter.io/v2/domain-search?type=personal', 'app.findymail.com/api/search/domain?type=null',
+      'api.hunter.io/v2/domain-search?type=generic']);
+  });
+
+  it('takes a Findymail contact at the posting domain when Hunter finds no recruiter', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    vi.stubEnv('WORKIE_FINDYMAIL_API_KEY', 'f');
+    options.fetch = async (url) => new URL(String(url)).hostname === 'app.findymail.com'
+      ? Response.json({ contacts: [{ email: 'x@other.test' }, { email: 'ann@employer.test', name: 'Ann' }] })
+      : Response.json({ data: { accept_all: false, emails: [] } });
+    const { token, app } = await application();
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'ann@employer.test', source: 'findymail', name: 'Ann' });
+  });
+
+  it('picks a Tue–Thu 16:00 UTC window at least the given delay later', () => {
+    const mon = Date.UTC(2026, 9, 5, 10); // Monday 2026-10-05 10:00 UTC
+    expect(new Date(sendWindow(mon)).toISOString()).toBe('2026-10-08T16:00:00.000Z'); // Thursday
+    const thu = Date.UTC(2026, 9, 8, 10);
+    expect(new Date(sendWindow(thu)).toISOString()).toBe('2026-10-13T16:00:00.000Z'); // next Tuesday
+    expect(new Date(sendWindow(Date.UTC(2026, 9, 2, 16, 0, 0, 1))).toISOString()).toBe('2026-10-06T16:00:00.000Z'); // a ms past 16:00 waits a day
+    expect(new Date(sendWindow(mon, 0)).toISOString()).toBe('2026-10-06T16:00:00.000Z'); // the next window, Tuesday
+    expect(sendWindow(Date.UTC(2026, 9, 7, 16), 0)).toBe(Date.UTC(2026, 9, 7, 16)); // already in one
+  });
+
+  it('queues an approved email for its window and the cron sends it once, but never an unapproved draft', async () => {
+    const { token, app } = await application(), other = await application();
+    const window = sendWindow(now); // three days after the receipt, on a Tue–Thu morning
+    expect(await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'jobs@employer.test', sendAfter: window });
+    await recordOutreachDraft(db, other.token, other.app.id, draft({ emails: ['campus@employer.test'] }), options);
+    now = window;
+    expect(await sendDueOutreach(db, options)).toBe(0); // due, but nobody pressed Send
+    now = window + 3_600_000; // approved an hour after the window: waits for the next one
+    const queued = await sendOutreach(db, 'alice', app.id, { to: 'jobs@employer.test', name: null }, options);
+    expect(queued).toMatchObject({ status: 'draft', reason: 'scheduled', to: 'jobs@employer.test', source: 'posting', sendAfter: sendWindow(now, 0) });
+    expect(queued.sendAfter).toBeGreaterThan(now);
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    now = queued.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(1);
+    const reads = vi.spyOn(db, 'select'); // a settled approval is no longer a candidate, so no log is folded
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(reads).not.toHaveBeenCalled();
+    reads.mockRestore();
+    expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test']);
+    expect((await listOutreach(db, 'alice', options)).outreach.find((item) => item.applicationId === other.app.id))
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval' });
+  });
+
+  it('keeps an approved email queued when the worker retries the receipt', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    let lookups = 0;
+    options.fetch = async () => { lookups += 1; return Response.json({ data: { accept_all: false, emails: [] } }); };
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options);
+    const seen = lookups;
+    const queued = await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat' }, options);
+    now += 60_000;
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled', to: 'pat@employer.test', source: 'manual', sendAfter: queued.sendAfter });
+    expect(lookups).toBe(seen);
+  });
+
+  it('sends a queued email to a recruiter already contacted, since the applicant approved it knowing that', async () => {
+    const first = await application(), second = await application();
+    const posting = draft({ emails: ['jobs@employer.test'] });
+    await recordOutreachDraft(db, first.token, first.app.id, posting, options);
+    await sendOutreach(db, 'alice', first.app.id, { to: 'jobs@employer.test', name: null, now: true }, options);
+    expect(await recordOutreachDraft(db, second.token, second.app.id, posting, options)).toMatchObject({ status: 'skipped', reason: 'already_contacted' });
+    const queued = await sendOutreach(db, 'alice', second.app.id, { to: 'jobs@employer.test', name: null }, options);
+    now = queued.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(1);
+    expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test', 'jobs@employer.test']);
+    const fresh = await application(); // a draft edited to that recruiter says who already got one
+    await recordOutreachDraft(db, fresh.token, fresh.app.id, draft({ emails: ['campus@employer.test'] }), options);
+    await sendOutreach(db, 'alice', fresh.app.id, { to: 'jobs@employer.test', name: null }, options);
+    const listed = new Map((await listOutreach(db, 'alice', options)).outreach.map((item) => [item.applicationId, item.contactedFor]));
+    expect(listed.get(fresh.app.id)).toBe('Employer Co – Software Engineering Intern');
+    expect(listed.get(first.app.id)).toBeNull(); // its own send is not an earlier one
+  });
+
+  it('keeps a Send pressed while the receipt is still looking for a recruiter', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    const { token, app } = await application();
+    let pressed = false;
+    options.fetch = async () => {
+      if (!pressed) { pressed = true; await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat' }, options); }
+      return Response.json({ data: { accept_all: false, emails: [] } });
+    };
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled', to: 'pat@employer.test' });
+  });
+
+  it('holds a queued email instead of sending it once recruiter email is turned off', async () => {
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    const queued = await sendOutreach(db, 'alice', app.id, { to: 'jobs@employer.test', name: null }, options);
+    const off: Policy = createEmptyPolicy(), hash = hashValue(off);
+    await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash, policy: off, createdAt: now });
+    await db.update(policyHeads).set({ revision: 2, policyVersion: 2, acceptedPolicyVersion: 2, acceptedPolicyHash: hash }).where(eq(policyHeads.ownerId, 'alice'));
+    now = queued.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent).toEqual([]);
+    expect((await listOutreach(db, 'alice', options)).outreach[0]).toMatchObject({ status: 'draft', reason: 'outreach_disabled', to: 'jobs@employer.test' });
+    // Neither Send nor Send now gets around the switch.
+    for (const immediately of [false, true]) {
+      now += 60_000;
+      expect(await sendOutreach(db, 'alice', app.id, { to: 'jobs@employer.test', name: null, now: immediately }, options))
+        .toMatchObject({ status: 'draft', reason: 'outreach_disabled', to: 'jobs@employer.test' });
+    }
+    now = sendWindow(now, 7 * DAY);
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent).toEqual([]);
+  });
+
+  it('Send now skips the wait, even for an email already queued', async () => {
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft(), options);
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat' }, options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled', to: 'pat@employer.test', source: 'manual', sendAfter: sendWindow(now) });
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat', now: true }, options)).toMatchObject({ status: 'sent' });
+    now = sendWindow(now);
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent.map((item) => item.to)).toEqual(['pat@employer.test']);
+  });
+
+  it('leaves the recipient blank when every source comes up empty', async () => {
+    vi.stubEnv('WORKIE_HUNTER_API_KEY', 'k');
+    options.fetch = hunter({ data: { accept_all: false, emails: [] } });
+    const { token, app } = await application();
+    expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'no_recipient', to: null, name: null, source: null });
   });
 });
 

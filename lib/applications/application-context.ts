@@ -292,6 +292,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
         protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
         policyRevision: run.policyRevision, profileRevision: profileResponse.revision, identity: candidate.identity, company: official.company, role: official.title,
         coverLetterAllowed: policy.policy.documentKinds.includes('cover_letter'), outreach: policy.policy.actions.includes('email_recruiters'), letter: await savedLetter(tx, worker.ownerId, checked.id),
+        track: policy.policy.filters.tab,
         applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
         tailoredArtifact: { documentId: saved.document.id, version: saved.document.version, sourceDocumentId: selectedDocument.id,
           sourceVersion: selectedDocument.version, sourceHash: selectedDocument.sha256, verificationManifestHash: saved.artifact.manifestHash,
@@ -304,6 +305,7 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
     protocolVersion: 1, applicationId: checked.id, runId: checked.runId, ownerId: worker.ownerId,
     policyRevision: run.policyRevision, profileRevision: profileResponse.revision, identity: candidate.identity, company: official.company, role: official.title,
     coverLetterAllowed: policy.policy.documentKinds.includes('cover_letter'), outreach: policy.policy.actions.includes('email_recruiters'), letter: await savedLetter(tx, worker.ownerId, checked.id),
+    track: policy.policy.filters.tab,
     applicationUrl: candidate.officialUrl, facts, requirements, answers, documents: documentsByKey,
     tailoredArtifact: null, manifestHash: null, artifactHashes: [], createdAt: now,
   });
