@@ -17,7 +17,8 @@ import { OutreachDraftSchema, OutreachSendSchema, type Outreach } from './worker
  * then an outcome per attempt or hold. Outcomes carry `kind`, so they reach the inbox.
  */
 type Recipient = { to: string; name: string | null; title: string | null; source: 'posting' | 'hunter' | 'findymail' | 'manual' };
-type Draft = { outreach: 'draft'; company: string; role: string; subject: string; body: string; emails: string[]; domains: string[] };
+type Draft = { outreach: 'draft'; company: string; role: string; subject: string; body: string; emails: string[]; domains: string[];
+  sendAfter?: number };
 type Attempt = Recipient & { outreach: 'attempt'; attempt: number };
 type Outcome = Partial<Recipient> & { kind: 'outreach'; outreach: 'outcome'; attempt: number | null;
   status: 'sent' | 'failed' | 'draft' | 'skipped'; reason: string | null };
@@ -25,9 +26,9 @@ type Entry = (Draft | Attempt | Outcome) & { createdAt: number };
 type State = Outreach & { draft: Draft; attempts: number };
 export type OutreachSender = (addresses: string[]) => ((message: Outgoing) => Promise<void>) | null;
 export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch; resolveMx?: Resolver['resolveMx'];
-  registryDomain?: typeof registryDomain };
+  registryDomain?: typeof registryDomain; scheduled?: boolean };
 
-const UNCONFIRMED_MS = 10 * 60_000;
+const UNCONFIRMED_MS = 10 * 60_000, DAY = 86_400_000;
 const id = (applicationId: string, ...part: unknown[]) => artifactRequestId({ outreach: applicationId, part });
 const own = (ownerId: string) => eq(applicationEvents.ownerId, ownerId);
 const ofOutreach = sql`json_extract(${applicationEvents.acknowledgement}, '$.outreach') is not null`;
@@ -101,6 +102,16 @@ export async function findRecipient(draft: Pick<Draft, 'emails' | 'domains'>, op
   return null;
 }
 
+/** The first Tue–Thu 16:00 UTC (9am Pacific in summer) at least three days after `after`. */
+// ponytail: one fixed window for every employer; use the posting's location time zone if replies skew late.
+export function sendWindow(after: number) {
+  const at = new Date(after + 3 * DAY);
+  at.setUTCHours(16, 0, 0, 0);
+  if (at.getTime() < after + 3 * DAY) at.setUTCDate(at.getUTCDate() + 1);
+  while (![2, 3, 4].includes(at.getUTCDay())) at.setUTCDate(at.getUTCDate() + 1);
+  return at.getTime();
+}
+
 /** Folds one application's log into its state: any send wins; otherwise the latest attempt or outcome. */
 function fold(applicationId: string, log: Entry[], now: number): State | null {
   const draft = log.find((entry): entry is Draft & { createdAt: number } => entry.outreach === 'draft');
@@ -109,8 +120,8 @@ function fold(applicationId: string, log: Entry[], now: number): State | null {
   const latest = moves.find((entry) => entry.outreach === 'outcome' && entry.status === 'sent') ?? moves.at(-1);
   const base = { applicationId, company: draft.company, role: draft.role, subject: draft.subject, body: draft.body,
     to: latest?.to ?? null, name: latest?.name ?? null, title: latest?.title ?? null, source: latest?.source ?? null,
-    updatedAt: latest?.createdAt ?? draft.createdAt, draft, attempts: moves.filter((entry) => entry.outreach === 'attempt').length };
-  if (!latest) return { ...base, status: 'draft', reason: null, sentAt: null };
+    updatedAt: latest?.createdAt ?? draft.createdAt, sendAfter: draft.sendAfter ?? null, draft, attempts: moves.filter((entry) => entry.outreach === 'attempt').length };
+  if (!latest) return { ...base, status: 'draft', reason: draft.sendAfter && now < draft.sendAfter ? 'scheduled' : null, sentAt: null };
   if (latest.outreach === 'attempt') return now - latest.createdAt < UNCONFIRMED_MS
     ? { ...base, status: 'sending', reason: null, sentAt: null }
     // The process died mid-send: it may have gone out, so only the applicant may retry.
@@ -118,8 +129,8 @@ function fold(applicationId: string, log: Entry[], now: number): State | null {
   return { ...base, status: latest.status, reason: latest.reason, sentAt: latest.status === 'sent' ? latest.createdAt : null };
 }
 function view(state: State): Outreach {
-  const { applicationId, status, company, role, subject, body, to, name, title, source, reason, sentAt, updatedAt } = state;
-  return { applicationId, status, company, role, subject, body, to, name, title, source, reason, sentAt, updatedAt };
+  const { applicationId, status, company, role, subject, body, to, name, title, source, reason, sentAt, sendAfter, updatedAt } = state;
+  return { applicationId, status, company, role, subject, body, to, name, title, source, reason, sentAt, sendAfter, updatedAt };
 }
 
 async function logs(db: PrivateDb, ownerId: string, applicationId?: string) {
@@ -143,12 +154,16 @@ async function senderAddresses(db: PrivateDb, ownerId: string) {
   return [account?.email, personal.state === 'confirmed' ? personal.value : null].filter((item): item is string => !!item);
 }
 
+const current = async (db: PrivateDb, ownerId: string, applicationId: string, options: OutreachOptions) =>
+  fold(applicationId, (await logs(db, ownerId, applicationId)).get(applicationId) ?? [], nowAt(options));
+
 async function deliver(db: PrivateDb, ownerId: string, applicationId: string, manual: Recipient | null, options: OutreachOptions): Promise<Outreach> {
-  const read = async () => fold(applicationId, (await logs(db, ownerId, applicationId)).get(applicationId) ?? [], nowAt(options));
+  const read = () => current(db, ownerId, applicationId, options);
   const state = await read();
   if (!state) fail(404, 'NOT_FOUND', 'No recruiter email draft for this application.');
   // Automatic delivery never retries a failure; the applicant does, from the Applications page.
   if (state.status === 'sent' || state.status === 'sending' || (!manual && state.status !== 'draft')) return view(state);
+  if (!manual && state.reason === 'scheduled') return view(state); // the applicant's Send skips the wait
   const settle = async (eventId: string, outcome: Omit<Outcome, 'kind' | 'outreach'>) => {
     await append(db, ownerId, applicationId, eventId, { kind: 'outreach', outreach: 'outcome', ...outcome }, nowAt(options));
     return view((await read())!);
@@ -180,7 +195,7 @@ async function deliver(db: PrivateDb, ownerId: string, applicationId: string, ma
   return settle(id(applicationId, 'outcome', attempt), { attempt, ...outcome, ...recipient });
 }
 
-/** Worker call after a verified receipt: stores the draft once, then sends when a recipient is found. */
+/** Worker call after a verified receipt: stores the draft once, then sends now or, when scheduled, leaves it to the sweep. */
 export async function recordOutreachDraft(db: PrivateDb, token: string, applicationId: string, input: unknown, options: OutreachOptions = {}) {
   const draft = OutreachDraftSchema.parse(input);
   const ownerId = await withWorker(db, token, options, async (tx, worker, now) => {
@@ -194,12 +209,31 @@ export async function recordOutreachDraft(db: PrivateDb, token: string, applicat
     // The board's curated domain leads: postings rarely name one, and a company name never stands in for it.
     const curated = (options.registryDomain ?? registryDomain)(app.ats, app.tenant);
     const entry: Draft = { outreach: 'draft', company: receipt.company, role: receipt.role, subject: draft.subject,
-      body: draft.body, emails: draft.emails, domains: [...new Set([...(curated ? [curated] : []), ...draft.domains])].slice(0, 5) };
+      body: draft.body, emails: draft.emails, domains: [...new Set([...(curated ? [curated] : []), ...draft.domains])].slice(0, 5),
+      ...(options.scheduled ? { sendAfter: sendWindow(receipt.submittedAt) } : {}) }; // no undefined key: it would change the hash
     await tx.insert(applicationEvents).values({ ownerId: worker.ownerId, applicationId, eventId: id(applicationId, 'draft'),
       requestHash: hashValue(entry), acknowledgement: entry, createdAt: now }).onConflictDoNothing();
     return worker.ownerId;
   });
-  return deliver(db, ownerId, applicationId, null, options);
+  return options.scheduled ? view((await current(db, ownerId, applicationId, options))!) : deliver(db, ownerId, applicationId, null, options);
+}
+
+/** Cron: sends every automatic draft whose window has opened and that nothing has touched yet. */
+// ponytail: unindexed json_extract scan of application_events; fine at a few hundred rows, add an expression index if it grows.
+export async function sendDueOutreach(db: PrivateDb, options: OutreachOptions = {}) {
+  const now = nowAt(options);
+  const rows = await db.select({ ownerId: applicationEvents.ownerId, applicationId: applicationEvents.applicationId })
+    .from(applicationEvents).where(and(sql`json_extract(${applicationEvents.acknowledgement}, '$.outreach') = 'draft'`,
+      sql`json_extract(${applicationEvents.acknowledgement}, '$.sendAfter') <= ${now}`));
+  let sent = 0;
+  for (const { ownerId, applicationId } of rows) {
+    const state = await current(db, ownerId, applicationId, options);
+    if (state?.status !== 'draft' || state.attempts > 0 || state.reason) continue; // only untouched, now-due drafts
+    // The applicant may have turned recruiter email off since the draft was stored.
+    if (!(await getPolicy(db, ownerId, now)).policy.actions.includes('email_recruiters')) continue;
+    if ((await deliver(db, ownerId, applicationId, null, options)).status === 'sent') sent += 1;
+  }
+  return sent;
 }
 
 /** The applicant's own send, to an address they chose. */

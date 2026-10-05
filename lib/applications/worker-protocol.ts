@@ -113,7 +113,7 @@ export const OutreachSchema = z.strictObject({
   company, role, subject: z.string(), body: z.string(),
   to: z.string().nullable(), name: z.string().nullable(), title: z.string().nullable(),
   source: z.enum(['posting', 'hunter', 'findymail', 'manual']).nullable(), reason: z.string().nullable(),
-  sentAt: timestamp.nullable(), updatedAt: timestamp,
+  sentAt: timestamp.nullable(), sendAfter: timestamp.nullable(), updatedAt: timestamp,
 });
 export const OutreachListSchema = z.strictObject({ ownerId: z.string().min(1), outreach: z.array(OutreachSchema).max(500) });
 // The cover letter exactly as uploaded with a submitted application, and what the applicant can review.

@@ -13,7 +13,7 @@ import { createRun, enqueueApplication } from './runs.ts';
 import { pollWorker } from './leases.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { getInbox } from './questions.ts';
-import { listOutreach, recordOutreachDraft, sendOutreach, type OutreachOptions } from './outreach.ts';
+import { listOutreach, recordOutreachDraft, sendDueOutreach, sendOutreach, sendWindow, type OutreachOptions } from './outreach.ts';
 import { listMaterials, recordSubmittedLetter } from './materials.ts';
 import { boardKey } from './company-domains.ts';
 import { resolveApplicationIdentity } from './application-identity.ts';
@@ -219,6 +219,34 @@ describe('recruiter email after a verified submission', () => {
     const { token, app } = await application();
     expect(await recordOutreachDraft(db, token, app.id, draft({ domains: ['employer.test'] }), options))
       .toMatchObject({ status: 'sent', to: 'ann@employer.test', source: 'findymail', name: 'Ann' });
+  });
+
+  it('schedules automatic sends for a Tue–Thu 16:00 UTC at least three days later', () => {
+    const mon = Date.UTC(2026, 9, 5, 10); // Monday 2026-10-05 10:00 UTC
+    expect(new Date(sendWindow(mon)).toISOString()).toBe('2026-10-08T16:00:00.000Z'); // Thursday
+    const thu = Date.UTC(2026, 9, 8, 10);
+    expect(new Date(sendWindow(thu)).toISOString()).toBe('2026-10-13T16:00:00.000Z'); // next Tuesday
+    expect(new Date(sendWindow(Date.UTC(2026, 9, 2, 16, 0, 0, 1))).toISOString()).toBe('2026-10-06T16:00:00.000Z'); // a ms past 16:00 waits a day
+  });
+
+  it('holds the draft until its window, then the sweep sends it once', async () => {
+    options.scheduled = true;
+    const { token, app } = await application();
+    expect(await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled', to: null, sendAfter: sendWindow(now) });
+    expect(sent).toHaveLength(0);
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    now = sendWindow(now);
+    expect(await sendDueOutreach(db, options)).toBe(1);
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test']);
+  });
+
+  it('lets the applicant send a scheduled draft right away', async () => {
+    options.scheduled = true;
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft(), options);
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'pat@employer.test', name: 'Pat' }, options)).toMatchObject({ status: 'sent' });
   });
 
   it('leaves the recipient blank when every source comes up empty', async () => {

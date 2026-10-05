@@ -72,6 +72,7 @@ function outreachStatus(item: Outreach) {
   if (item.status === 'sending') return `Sending to ${who}...`;
   if (item.status === 'skipped') return `Not sent: ${who} was already emailed about another role`;
   if (item.status === 'failed') return `Sending to ${who} failed. Check the address and send again.`;
+  if (item.reason === 'scheduled' && item.sendAfter) return `Sends automatically on ${new Date(item.sendAfter).toLocaleString()}, or send it now`;
   return item.reason === 'sender_not_configured' ? `Ready for ${who}, but Gmail sending is not set up for your address`
     : 'Draft ready. No recruiter address was found; add one to send.';
 }
