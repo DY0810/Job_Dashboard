@@ -127,13 +127,15 @@ function RetryPanel({ app, runs, ownerId, onChange }: { app: { id: string; runId
     setBusy(true); setError('');
     try {
       let response = await post(`/api/application-runs/${app.runId}/applications/${app.id}/actions`, { action: 'retry-safe' });
-      if (response.status === 409 && (await response.clone().json().catch(() => null))?.code === 'POLICY_CHANGED') {
-        const next = runs.find((run) => run.state === 'running' && run.id !== app.runId);
-        if (!next) throw new Error('The Auto Apply policy changed after this run started. Start a new run from Workers, then retry.');
-        response = await post(`/api/application-runs/${next.id}/retry-unsubmitted`, { previousApplicationId: app.id });
-        if (response.status === 409 && (await response.json().catch(() => null))?.code === 'DISCOVERY_REQUIRED') {
-          throw new Error('The new run has not found this role yet. Retry after its discovery finishes.');
+      const code = async () => response.status === 409 ? (await response.clone().json().catch(() => null))?.code : undefined;
+      if (await code() === 'POLICY_CHANGED') {
+        // The server accepts only a run on the current policy; try running runs newest first.
+        for (const run of runs.filter((item) => item.state === 'running' && item.id !== app.runId)) {
+          response = await post(`/api/application-runs/${run.id}/retry-unsubmitted`, { previousApplicationId: app.id });
+          if (await code() !== 'POLICY_CHANGED') break;
         }
+        if (await code() === 'POLICY_CHANGED') throw new Error('The Auto Apply policy changed after this run started. Start a new run from Workers, then retry.');
+        if (await code() === 'DISCOVERY_REQUIRED') throw new Error('The new run has not found this role yet. Retry after its discovery finishes.');
       }
       if (!response.ok) throw new Error('Could not retry. Refresh and try again.');
       onChange();
@@ -264,7 +266,7 @@ export default function Applications() {
                 {app.receiptId && <span>Receipt {app.receiptId}{app.submittedAt ? ` / ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
               {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
               {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
-              {app.state === 'needs_document' && app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && view.account &&
+              {app.state === 'needs_document' && app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3 && view.account &&
                 <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
               {isAwaitingSubmitApproval(app.state, app.reasonCode) && view.account &&
                 <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}

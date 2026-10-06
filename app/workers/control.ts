@@ -47,7 +47,7 @@ export function applicationActions(app: ApplicationSummary, run?: Run): Applicat
   if (isTerminalState(app.state)) return [];
   if (app.state === 'submitting' || app.state === 'submission_unknown') return ['emergency-stop'];
   const actions: ApplicationCommand['action'][] = ['skip', 'cancel'];
-  // Retry budget remains server-authoritative; it is not part of the summary.
+  // Retry budget remains server-authoritative.
   if (run && run.state !== 'stopped' && app.checkpoint && isSafeRetryState(app.state, app.reasonCode)) actions.push('retry-safe');
   if (run && run.state !== 'stopped' && isAwaitingSubmitApproval(app.state, app.reasonCode)) actions.unshift('approve-submit');
   return actions;

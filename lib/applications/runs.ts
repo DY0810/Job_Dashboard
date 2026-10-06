@@ -16,9 +16,9 @@ import {
 
 export const runSummary = ({ id, workerId, revision, state, createdAt }: typeof applicationRuns.$inferSelect): Run =>
   ({ id, workerId, revision, state, createdAt });
-export const applicationSummary = ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint }: ApplicationRow,
+export const applicationSummary = ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint, retries }: ApplicationRow,
   meta: { company?: string | null; role?: string | null; receiptId?: string | null; submittedAt?: number | null } = {}): ApplicationSummary =>
-  ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint,
+  ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint, retries,
     company: meta.company ?? null, role: meta.role ?? null, receiptId: meta.receiptId ?? null, submittedAt: meta.submittedAt ?? null,
     provider: null, costUsd: null });
 

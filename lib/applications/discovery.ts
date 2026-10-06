@@ -327,7 +327,7 @@ export async function abandonDiscovery(db: PrivateDb, ownerId: string, runId: st
 }
 
 /** The next attempt of `previous`'s role in `run`, from the run's complete discovery snapshot. */
-async function nextAttempt(tx: WorkerTx, run: typeof applicationRuns.$inferSelect, previous: ApplicationRow, now: number) {
+async function nextAttempt(tx: WorkerTx, run: typeof applicationRuns.$inferSelect, previous: ApplicationRow, now: number, retries = 0) {
   const ownerId = run.ownerId, runId = run.id;
   const [target] = await tx.select().from(discoveryTargets).where(and(
     eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.runId, runId), eq(discoveryTargets.ats, previous.ats),
@@ -344,7 +344,7 @@ async function nextAttempt(tx: WorkerTx, run: typeof applicationRuns.$inferSelec
     id: randomUUID(), ownerId, runId, workerId: run.workerId, ats: previous.ats, tenant: previous.tenant,
     requisition: previous.requisition, attempt: previous.attempt + 1, previousApplicationId: previous.id,
     snapshotManifestId: target.manifestId, snapshotTargetKey: target.targetKey, snapshotHash: target.candidateHash,
-    employerKey: target.employerKey, availableAt: now, createdAt: now,
+    employerKey: target.employerKey, availableAt: now, createdAt: now, retries,
   }).returning());
   one(await tx.update(discoveryTargets).set({ applicationId: row.id, disposition: 'eligible' })
     .where(and(eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.id, target.id))).returning());
@@ -415,14 +415,18 @@ export async function retryUnsubmittedApplication(
     ));
     if (!previous) fail(404, 'NOT_FOUND', 'Previous application not found.');
     const unsubmitted = previous.state === 'submission_unknown';
-    const documentHold = previous.state === 'needs_document' && isSafeRetryState(previous.state, previous.reasonCode) && previous.runId !== runId;
+    // The retry budget carries over to the new attempt, so moving runs cannot reset it.
+    const documentHold = previous.state === 'needs_document' && isSafeRetryState(previous.state, previous.reasonCode) &&
+      previous.runId !== runId && previous.retries < 3;
     if (previous.revision !== command.expectedRevision || !(unsubmitted || documentHold) || previous.leaseUntil !== null) fail();
+    // Only a run on the current policy can lease the new attempt; an older one would strand it.
+    if (documentHold && !await currentDiscoveryPolicy(tx, run, now)) fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
     const [latest] = await tx.select().from(applications).where(identityMatch(previous)).orderBy(desc(applications.attempt)).limit(1);
     if (latest.id !== previous.id || await manuallySuppressed(tx, previous)) fail(409, 'DUPLICATE_BLOCKED', 'Application is suppressed.');
     one(await tx.update(applications).set({
       state: 'failed', reasonCode: unsubmitted ? 'applicant_confirmed_not_submitted' : 'continued_in_new_run', revision: previous.revision + 1, fence: previous.fence + 1,
     }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, previous.id), eq(applications.revision, previous.revision))).returning());
-    const row = await nextAttempt(tx, run, previous, now);
+    const row = await nextAttempt(tx, run, previous, now, unsubmitted ? 0 : previous.retries + 1);
     const acknowledgement = applicationSummary(row);
     await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
     return acknowledgement;

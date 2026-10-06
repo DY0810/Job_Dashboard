@@ -497,6 +497,9 @@ describe('cap-held backlog and explicit historical attempts', () => {
       .toMatchObject({ state: 'screening' });
     now += 5_000;
     const again = await hold();
+    // A second run still on the old policy cannot take the role: it would never lease it.
+    const stale = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
+    await complete(token, stale.id);
     // Transcripts allowed in a new policy: the old run stays bound to the old one, so the role continues in a new run.
     const policy: Policy = { ...createEmptyPolicy(), actions: ['read_jobs'], destinations: ['job-boards.greenhouse.io'], undisclosedPay: 'include', documentKinds: ['transcript'] };
     await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash: hashValue(policy), policy, createdAt: now });
@@ -508,10 +511,16 @@ describe('cap-held backlog and explicit historical attempts', () => {
     await complete(token, replacement.id);
     const command = { ...request(), previousApplicationId: again.applicationId, expectedRevision: again.revision };
     await expect(retryUnsubmittedApplication(db, 'alice', run.id, command, options)).rejects.toMatchObject({ status: 409 });
+    await expect(retryUnsubmittedApplication(db, 'alice', stale.id, { ...command, ...request() }, options)).rejects.toMatchObject({ code: 'POLICY_CHANGED' });
+    expect((await appRows()).find((a) => a.id === again.applicationId)).toMatchObject({ state: 'needs_document', runId: run.id });
+    // An exhausted retry budget cannot be reset by moving runs.
+    await db.update(applications).set({ retries: 3 }).where(eq(applications.id, again.applicationId));
+    await expect(retryUnsubmittedApplication(db, 'alice', replacement.id, { ...command, ...request() }, options)).rejects.toMatchObject({ status: 409 });
+    await db.update(applications).set({ retries: 1 }).where(eq(applications.id, again.applicationId));
     const next = await retryUnsubmittedApplication(db, 'alice', replacement.id, command, options);
     const history = await appRows();
     expect(history.find((a) => a.id === again.applicationId)).toMatchObject({ state: 'failed', reasonCode: 'continued_in_new_run' });
-    expect(history.find((a) => a.id === next.id)).toMatchObject({ state: 'queued', runId: replacement.id, attempt: 2, previousApplicationId: again.applicationId });
+    expect(history.find((a) => a.id === next.id)).toMatchObject({ state: 'queued', runId: replacement.id, attempt: 2, previousApplicationId: again.applicationId, retries: 2 });
     now += DAY;
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
   });
