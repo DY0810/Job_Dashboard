@@ -104,6 +104,15 @@ export async function hostedFields(form: import('playwright').Locator): Promise<
   return raw.map(item => ({ ...item, kind: item.kind as AtsField['kind'] }));
 }
 
+// A react-select dropdown lists its options only while its menu is open; an autocomplete lists none until typed into.
+async function menuOptions(page: import('playwright').Page, field: AtsField) {
+  await page.locator(`[id="${field.key}"]`).first().click();
+  await page.getByRole('option').first().waitFor({ timeout: 1_000 }).catch(() => {});
+  const options = [...new Set((await page.getByRole('option').allTextContents()).map(item => item.trim()).filter(Boolean))];
+  await page.keyboard.press('Escape');
+  return options.length && options.length <= 100 && options.every(option => option.length <= 300) ? options : undefined;
+}
+
 export const greenhouse: AtsAdapter = {
   id: 'greenhouse',
   async observe(runtime, input, signal) {
@@ -130,7 +139,12 @@ export const greenhouse: AtsAdapter = {
     };
     const company = await form.getAttribute('data-company') ?? input.company;
     const role = await form.getAttribute('data-role') ?? input.role;
-    const observation = AtsObservationSchema.parse({ identity, company, role, fields: live ? await hostedFields(form) : fields, actions: ['fill'] });
+    const observed = live ? await hostedFields(form) : fields;
+    // Only a question that will go to the inbox needs its choices; it must be answered with one of them.
+    for (const field of observed) {
+      if (field.kind === 'combobox' && field.required && !field.options && greenhouseAnswer(input, field) === undefined) field.options = await menuOptions(page, field);
+    }
+    const observation = AtsObservationSchema.parse({ identity, company, role, fields: observed, actions: ['fill'] });
     if (JSON.stringify(observation.identity) !== JSON.stringify(input.identity) || observation.company !== input.company || observation.role !== input.role) {
       throw new AtsError('ATS_IDENTITY_MISMATCH');
     }

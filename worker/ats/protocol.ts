@@ -14,7 +14,7 @@ export const AtsFieldSchema = z.strictObject({
   key: z.string().regex(atsFieldKey), label: z.string().trim().min(1).max(1000),
   kind: z.enum(['text', 'email', 'date', 'select', 'combobox', 'radio', 'checkbox', 'file']), required: z.boolean(),
   name: z.string().regex(/^[a-zA-Z0-9_.-]{1,100}$/).optional(),
-  options: z.array(z.string().trim().min(1).max(120)).max(32).optional(),
+  options: z.array(z.string().trim().min(1).max(300)).max(100).optional(), // the inbox's own choice limits
 });
 export type AtsField = z.infer<typeof AtsFieldSchema>;
 export const formQuestionKey = (field: Pick<AtsField, 'key' | 'label'>) =>

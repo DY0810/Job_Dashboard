@@ -15,6 +15,7 @@ import { createConfiguredJevActionSelector } from './main.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
 import { AtsObservationSchema } from './ats/protocol.ts';
 import { privateStore } from './storage.ts';
+import { formQuestions } from './screening.ts';
 
 const browserReady = existsSync(chromium.executablePath());
 test('hosted fields resolve their exact ID when visible labels collide', { skip: !browserReady }, async () => {
@@ -68,6 +69,40 @@ test('a renamed Greenhouse board passes on the exact role and job URL; a wrong r
     await assert.rejects(observe(`Job Application for Other Internship at SpaceXAI`), /ATS_IDENTITY_MISMATCH/);
     await assert.rejects(observe(`Job Application for ${role} at Night at SpaceXAI`), /ATS_IDENTITY_MISMATCH/);
     await assert.rejects(observe(`Job Application for ${role} at SpaceXAI`, 'https://job-boards.greenhouse.io/xai/jobs/1'), /ATS_IDENTITY_MISMATCH/);
+  } finally { await browser.close(); }
+});
+test('an unanswered required Greenhouse dropdown reaches the inbox as a choice of the options its menu lists', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    const role = 'Software Engineering Intern', job = 'https://job-boards.greenhouse.io/riotgamesup/jobs/8222015';
+    // Riot's live form (2026-10-05): every choice question, acknowledgements included, is a react-select whose
+    // options exist only while its menu is open. The location box is an autocomplete with no menu until typed into.
+    await context.route(job, route => route.fulfill({ contentType: 'text/html', body: `<title>Job Application for ${role} at Riot Games</title>
+      <form id="application-form">
+      <label id="question_1-label" for="question_1">Please select the year you anticipate graduating from your academic program.*</label>
+      <div class="select__control"><input id="question_1" role="combobox" aria-required="true"></div>
+      <label id="question_2[]-label" for="question_2[]">I acknowledge the Riot Games Candidate Privacy Notice.*</label>
+      <div class="select__control"><input id="question_2[]" role="combobox" aria-required="true"></div>
+      <label id="candidate-location-label" for="candidate-location">Location (City)*</label>
+      <div class="select__control"><input id="candidate-location" role="combobox" aria-required="true"></div>
+      <div id="menu"></div></form><script>
+      const choices = { question_1: ['2028', '2027', 'Already Graduated'], 'question_2[]': ['Yes'], 'candidate-location': [] };
+      const menu = document.getElementById('menu');
+      for (const input of document.querySelectorAll('input')) {
+        input.addEventListener('click', () => { menu.innerHTML = ''; for (const choice of choices[input.id]) {
+          const item = document.createElement('div'); item.setAttribute('role', 'option'); item.textContent = choice; menu.append(item); } });
+        input.addEventListener('keydown', event => { if (event.key === 'Escape') menu.innerHTML = ''; });
+      }
+    </script>` }));
+    const observation = await greenhouse.observe({ context, page: () => context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } },
+      { identity: { ats: 'greenhouse', tenant: 'riotgamesup', requisition: '8222015' }, company: 'Riot Games', role, applicationUrl: job, answers: {} });
+    assert.deepEqual(observation.fields.map(field => [field.key, field.options]),
+      [['question_1', ['2028', '2027', 'Already Graduated']], ['question_2[]', ['Yes']], ['candidate-location', undefined]]);
+    const { questions } = formQuestions({ profileRevision: 1, company: 'Riot Games', role, applicationUrl: job, applicationId: crypto.randomUUID(),
+      identity: observation.identity }, observation.fields);
+    assert.deepEqual(questions.map(question => [question.field.type, question.field.options?.map(option => option.value)]),
+      [['select', ['2028', '2027', 'Already Graduated']], ['select', ['Yes']], ['text', undefined]]);
   } finally { await browser.close(); }
 });
 test('a dropdown answer the form does not offer fails with every choice the form does offer', { skip: !browserReady }, async () => {
