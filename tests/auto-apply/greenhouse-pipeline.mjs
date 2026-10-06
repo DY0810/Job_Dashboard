@@ -192,6 +192,11 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       { check() {} }, { signal, generate, chooseAction, advance: value => advanced.push(value) }); };
     try {
       assert.deepEqual(await stage('screening'), { state: 'tailoring', reasonCode: 'screened' });
+      // No master resume on the profile is a hold the applicant can clear and continue, not a provider failure.
+      const master = context.documents.resumeMaster;
+      delete context.documents.resumeMaster;
+      assert.deepEqual(await stage('tailoring'), { state: 'needs_document', reasonCode: 'resume_required' });
+      context.documents.resumeMaster = master;
 
       assert.deepEqual(await stage('tailoring'), { state: 'filling', reasonCode: 'artifact_verified', evidence: { artifactVerified: true } });
       assert.equal(calls.tailor[0].jobSummary, JD, 'tailoring is driven by this posting');

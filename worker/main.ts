@@ -224,7 +224,9 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
     if (lease.state === "tailoring") {
       if (hasVerifiedTailoredArtifact(applicationContext)) return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
       const source = applicationContext.documents.resumeMaster;
-      if (!context.generate || !source) return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
+      // A profile with no master resume is the applicant's to fix, so it must be a hold they can continue once fixed.
+      if (!source) return { state: "needs_document" as const, reasonCode: "resume_required" };
+      if (!context.generate) return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
       try {
         guard.check();
         const bytes = await control.downloadDocument(lease.applicationId, source.documentId, source.path, signal);
