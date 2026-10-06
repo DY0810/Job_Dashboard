@@ -102,7 +102,46 @@ test('an unanswered required Greenhouse dropdown reaches the inbox as a choice o
     const { questions } = formQuestions({ profileRevision: 1, company: 'Riot Games', role, applicationUrl: job, applicationId: crypto.randomUUID(),
       identity: observation.identity }, observation.fields);
     assert.deepEqual(questions.map(question => [question.field.type, question.field.options?.map(option => option.value)]),
-      [['select', ['2028', '2027', 'Already Graduated']], ['select', ['Yes']], ['text', undefined]]);
+      [['select', ['2028', '2027', 'Already Graduated']], ['multiselect', ['Yes']], ['text', undefined]]);
+  } finally { await browser.close(); }
+});
+test('a Riot-like form hydrated after load asks its dropdowns as choices and its multi-select as several, then fills every pick', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    const role = 'Software Engineering Intern - Summer 2027 (Remote)', job = 'https://job-boards.greenhouse.io/riotgamesup/jobs/8222015';
+    // Riot's live form (2026-10-06) is server-rendered; React attaches the menus after the load event, so an early click opens nothing.
+    await context.route(job, route => route.fulfill({ contentType: 'text/html', body: `<title>Job Application for ${role} at Riot Games</title>
+      <form id="application-form">
+      <label id="question_1-label" for="question_1">Please indicate your gender.*</label>
+      <div class="select__control"><input id="question_1" role="combobox" aria-required="true" aria-expanded="false"></div>
+      <label id="question_2[]-label" for="question_2[]">In which language(s) are you business fluent?*</label>
+      <div class="select__control"><span id="chips"></span><input id="question_2[]" role="combobox" aria-required="true" aria-expanded="false"></div>
+      <div id="menu"></div></form><script>
+      const choices = { question_1: ['Male', 'Female', 'Decline to state'], 'question_2[]': ['English', 'French', 'Korean'] };
+      const menu = document.getElementById('menu'), chips = document.getElementById('chips');
+      addEventListener('load', () => setTimeout(() => { for (const input of document.querySelectorAll('input')) {
+        const render = () => { menu.innerHTML = ''; input.setAttribute('aria-expanded', 'true');
+          for (const choice of choices[input.id].filter(c => c.toLowerCase().includes(input.value.toLowerCase()))) {
+            const item = document.createElement('div'); item.setAttribute('role', 'option'); item.textContent = choice;
+            item.addEventListener('click', () => { const chip = document.createElement('div'); chip.className = 'select__multi-value__label';
+              chip.textContent = choice; chips.append(chip); input.value = ''; menu.innerHTML = ''; input.setAttribute('aria-expanded', 'false'); });
+            menu.append(item); } };
+        input.addEventListener('click', render); input.addEventListener('input', render);
+        input.addEventListener('keydown', event => { if (event.key === 'Escape') { menu.innerHTML = ''; input.setAttribute('aria-expanded', 'false'); } });
+      } }, 1_500));
+    </script>` }));
+    const runtime = { context, page: () => context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } };
+    const observation = await greenhouse.observe(runtime,
+      { identity: { ats: 'greenhouse', tenant: 'riotgamesup', requisition: '8222015' }, company: 'Riot Games', role, applicationUrl: job, answers: {} });
+    const { questions } = formQuestions({ profileRevision: 1, company: 'Riot Games', role, applicationUrl: job, applicationId: crypto.randomUUID(),
+      identity: observation.identity }, observation.fields);
+    assert.deepEqual(questions.map(question => [question.field.type, question.field.options?.map(option => option.value), question.field.maxSelections]),
+      [['select', ['Male', 'Female', 'Decline to state'], 1], ['multiselect', ['English', 'French', 'Korean'], 3]]);
+    const page = context.pages()[0], languages = observation.fields[1];
+    await fillField(page, languages, ['English', 'Korean'], {});
+    assert.equal(await verifyField(page, languages, ['English', 'Korean']), true);
+    assert.equal(await verifyField(page, languages, ['English']), false);
   } finally { await browser.close(); }
 });
 test('a dropdown answer the form does not offer fails with every choice the form does offer', { skip: !browserReady }, async () => {

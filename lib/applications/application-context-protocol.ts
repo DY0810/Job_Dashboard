@@ -8,7 +8,8 @@ export const disclosureAnswerKey = (question: string) =>
 const uuid = z.uuid();
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const timestamp = z.number().int().nonnegative().safe();
-const value = z.union([z.string().trim().max(4000), z.boolean()]);
+// A list is a multi-select form question's chosen options.
+const value = z.union([z.string().trim().max(4000), z.boolean(), z.array(z.string().trim().min(1).max(300)).min(1).max(100)]);
 
 export const ScreeningFactsSchema = z.strictObject({
   countries: z.strictObject({ state: z.enum(['confirmed', 'unknown', 'declined']), values: z.array(z.string().trim().min(1).max(160)).max(100) }),

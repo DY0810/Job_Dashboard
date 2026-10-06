@@ -106,8 +106,14 @@ export async function hostedFields(form: import('playwright').Locator): Promise<
 
 // A react-select dropdown lists its options only while its menu is open; an autocomplete lists none until typed into.
 async function menuOptions(page: import('playwright').Page, field: AtsField) {
-  await page.locator(`[id="${field.key}"]`).first().click();
-  await page.getByRole('option').first().waitFor({ timeout: 1_000 }).catch(() => {});
+  const input = page.locator(`[id="${field.key}"]`).first();
+  // The form is server-rendered and React hydrates it after the load event (Riot, 2026-10-06); a click before then
+  // opens nothing, so click again until the menu opens. An autocomplete opens an empty menu, so it stops too.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await input.click();
+    if (await page.getByRole('option').first().waitFor({ timeout: 1_000 }).then(() => true, () => false) ||
+        await input.getAttribute('aria-expanded') === 'true') break;
+  }
   const options = [...new Set((await page.getByRole('option').allTextContents()).map(item => item.trim()).filter(Boolean))];
   await page.keyboard.press('Escape');
   return options.length && options.length <= 100 && options.every(option => option.length <= 300) ? options : undefined;

@@ -59,7 +59,7 @@ function profileFacts(profile: Awaited<ReturnType<typeof getProfile>>['profile']
 
 export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['profile'], authorized: string[], company: string,
   postingCountry: string | null = null) {
-  const answers: Record<string, string | boolean> = {};
+  const answers: Record<string, string | boolean | string[]> = {};
   const first = factValue<string>(profile.identity.legalFirstName) ?? factValue<string>(profile.identity.preferredName);
   const last = factValue<string>(profile.identity.legalLastName);
   const email = factValue<string>(profile.identity.personalEmail) ?? factValue<string>(profile.identity.schoolEmail);
@@ -210,7 +210,13 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
     .where(and(eq(questions.ownerId, worker.ownerId), eq(questions.applicationId, checked.id), eq(questions.active, true)));
   for (const { question, answer } of screeningAnswers) {
     if (!question.resolvedAt || question.policyRevision !== policy.revision || question.descriptor.scope.applicationId !== checked.id ||
-        answer.applicationId !== checked.id || (answer.value.type !== 'text' && answer.value.type !== 'choice')) continue;
+        answer.applicationId !== checked.id) continue;
+    // A form question passes its answer through in the shape its field takes: options for a multi-select, yes/no for a checkbox.
+    if (question.key.startsWith('form-') && (answer.value.type === 'choices' || answer.value.type === 'boolean')) {
+      if (answer.value.type === 'boolean' || answer.value.value.length) answers[question.key] = answer.value.value;
+      continue;
+    }
+    if (answer.value.type !== 'text' && answer.value.type !== 'choice') continue;
     const value = answer.value.value.trim();
     if (!value) continue;
     if (question.key === 'screening-country' && /^[A-Z]{2}$/.test(value)) facts.countries = { state: 'confirmed', values: [value] };

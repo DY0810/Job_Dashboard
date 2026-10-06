@@ -31,7 +31,8 @@ export const AtsReceiptSchema = z.strictObject({
   receiptId: z.string().regex(/^[A-Za-z0-9_-]{1,120}$/), submittedAt: z.number().int().positive(),
 });
 export type AtsReceipt = z.infer<typeof AtsReceiptSchema>;
-export type AtsValue = string | boolean;
+// A list answers a multi-select question (id ending in []), one option per entry.
+export type AtsValue = string | boolean | string[];
 export type AtsApplication = {
   identity: AtsIdentity; company: string; role: string; applicationUrl: string;
   answers: Record<string, AtsValue>; documents: Record<string, string>;
@@ -84,17 +85,19 @@ export async function fillField(page: Page, field: AtsField, value: AtsValue | u
     if (typeof value !== 'boolean') throw new AtsError('ANSWER_TYPE_MISMATCH', field.key);
     if (value) await locator.check(); else await locator.uncheck();
   } else if (field.kind === 'combobox') {
-    if (typeof value !== 'string') throw new AtsError('ANSWER_TYPE_MISMATCH', field.key);
-    await locator.click();
-    await locator.fill(value);
-    const exact = page.getByRole('option', { name: value, exact: true });
-    try { await exact.first().click({ timeout: 3_000 }); }
-    catch {
-      // Clearing the search lists every choice of a fixed dropdown, so the applicant can pick an exact one.
-      await locator.fill('');
-      const options = [...new Set((await page.getByRole('option').allTextContents()).map(item => item.trim()).filter(Boolean))];
-      await page.keyboard.press('Escape');
-      throw new AtsError('ANSWER_OPTION_INVALID', field.key, options.length ? options : undefined);
+    if (typeof value !== 'string' && !(Array.isArray(value) && value.length && field.key.endsWith('[]'))) throw new AtsError('ANSWER_TYPE_MISMATCH', field.key);
+    for (const choice of typeof value === 'string' ? [value] : value) {
+      await locator.click();
+      await locator.fill(choice);
+      const exact = page.getByRole('option', { name: choice, exact: true });
+      try { await exact.first().click({ timeout: 3_000 }); }
+      catch {
+        // Clearing the search lists every choice of a fixed dropdown, so the applicant can pick an exact one.
+        await locator.fill('');
+        const options = [...new Set((await page.getByRole('option').allTextContents()).map(item => item.trim()).filter(Boolean))];
+        await page.keyboard.press('Escape');
+        throw new AtsError('ANSWER_OPTION_INVALID', field.key, options.length ? options : undefined);
+      }
     }
   } else if (field.kind === 'select') {
     if (typeof value !== 'string' || !field.options?.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key, field.options);
@@ -130,6 +133,12 @@ export async function verifyField(page: Page, field: AtsField, value: AtsValue |
     return await option.count() > 0 && await option.isChecked();
   }
   if (field.kind === 'select') return typeof value === 'string' && (await locator.inputValue()) === value;
+  if (field.kind === 'combobox' && Array.isArray(value)) {
+    // react-select shows each pick of a multi-select as a chip.
+    const shown = await locator.evaluate((node) => [...node.closest('.select__control')?.querySelectorAll('.select__multi-value__label') ?? []]
+      .map(chip => chip.textContent?.trim() ?? ''));
+    return shown.length === value.length && value.every(choice => shown.includes(choice));
+  }
   if (field.kind === 'combobox') {
     if (typeof value !== 'string') return false;
     const shown = await locator.evaluate((node) => {

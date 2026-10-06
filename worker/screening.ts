@@ -93,11 +93,14 @@ export function screeningQuestions(context: ApplicationContext, reasons: string[
 }
 
 // Options come from the form (a fixed dropdown, select or radio group); without them the answer is free text.
+// A Greenhouse multi-select (id ending in []) takes several options; a checkbox takes yes or no.
 function formField(field: AtsField, options = field.options) {
   const choices = [...new Set(options ?? [])].filter(option => option.length <= 300);
+  const multiple = field.key.endsWith('[]');
+  if (field.kind === 'checkbox') return { type: 'boolean' as const, allowBlank: false, declineValue: null, units: null, precision: null };
   return choices.length && choices.length <= 100
-    ? { type: 'select' as const, allowBlank: false, declineValue: null, units: null, precision: null,
-      options: choices.map(option => ({ value: option, label: option })), minSelections: 1, maxSelections: 1 }
+    ? { type: multiple ? 'multiselect' as const : 'select' as const, allowBlank: false, declineValue: null, units: null, precision: null,
+      options: choices.map(option => ({ value: option, label: option })), minSelections: 1, maxSelections: multiple ? choices.length : 1 }
     : { type: 'text' as const, allowBlank: false, declineValue: null, units: null, precision: null,
       minLength: 1, maxLength: 4000, format: 'plain' as const };
 }
