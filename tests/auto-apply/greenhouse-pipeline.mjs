@@ -152,7 +152,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       },
     };
     const usage = { input_tokens: 1, output_tokens: 1 };
-    const generate = async (input) => {
+    let generate = async (input) => {
       if (input.task === 'tailor') {
         calls.tailor.push(input);
         const anchor = input.anchors.find(item => item.text === ORIGINAL);
@@ -197,6 +197,16 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       delete context.documents.resumeMaster;
       assert.deepEqual(await stage('tailoring'), { state: 'needs_document', reasonCode: 'resume_required' });
       context.documents.resumeMaster = master;
+      // A resume that cannot be edited safely (here the edit overflows its anchor) is applied with unchanged, not held.
+      const realGenerate = generate;
+      generate = async (input) => input.task === 'tailor'
+        ? { ...(await realGenerate(input)), edits: [{ anchorId: input.anchors[0].id, replacement: 'x'.repeat(5000).slice(0, 2000), evidenceIds: [input.evidence[0].id] }] }
+        : realGenerate(input);
+      assert.deepEqual(await stage('tailoring'), { state: 'filling', reasonCode: 'master_resume_used', evidence: { artifactVerified: true } });
+      assert.equal(context.documents.resume.sha256, master.sha256, 'the untailored master is the attached resume');
+      assert.deepEqual(intent.manifest.request, { untailored: true, reason: 'EDIT_OVERFLOW' });
+      generate = realGenerate; calls.tailor.length = 0; calls.intents.length = 0;
+      Object.assign(context, { tailoredArtifact: null, manifestHash: null, artifactHashes: [] }); context.documents.resume = master;
 
       assert.deepEqual(await stage('tailoring'), { state: 'filling', reasonCode: 'artifact_verified', evidence: { artifactVerified: true } });
       assert.equal(calls.tailor[0].jobSummary, JD, 'tailoring is driven by this posting');

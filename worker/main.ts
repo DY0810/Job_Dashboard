@@ -35,7 +35,7 @@ import {
 } from "../lib/applications/provider-protocol.ts";
 import type { ApplicationContext } from "../lib/applications/application-context-protocol.ts";
 import type { PrivateStore } from "./storage.ts";
-import { ApplicationArtifactManifestSchema, artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
+import { ApplicationArtifactManifestSchema, type ApplicationArtifactManifest, artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { SUBMIT_APPROVAL } from "../lib/applications/state.ts";
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 import { renderCoverLetter } from "./documents/cover-letter.ts";
@@ -195,6 +195,19 @@ export function createApplicationArtifactManifest(input: {
   return { manifest, request };
 }
 
+/** The master resume as the application's artifact, unchanged, when no safe edit could be made to it. */
+export function untailoredArtifactManifest(applicationId: string, source: ApplicationContext["documents"][string],
+  template: Awaited<ReturnType<typeof createTemplateManifest>>, bytes: Uint8Array, reason: string) {
+  return ApplicationArtifactManifestSchema.parse({
+    schemaVersion: 1, applicationId,
+    source: { documentId: source.documentId, version: source.version, sha256: source.sha256 },
+    output: { sha256: source.sha256, mime: source.mime, size: bytes.length },
+    template, request: { untailored: true, reason },
+    checks: { pageCount: template.pageCount, linksPreserved: true, frozenTextPreserved: true, anchorsFit: true },
+    tool: { name: "workie-document-runtime", version: "1" },
+  });
+}
+
 /** Runs one leased stage. Exported so tests can drive the real pipeline against fixture forms. */
 export function createStageDispatch(control: WorkerTransport, directory: string, signal: AbortSignal,
   browser: typeof createBrowserRuntime = createBrowserRuntime): StageDispatch {
@@ -227,11 +240,22 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       // A profile with no master resume is the applicant's to fix, so it must be a hold they can continue once fixed.
       if (!source) return { state: "needs_document" as const, reasonCode: "resume_required" };
       if (!context.generate) return { state: "needs_document" as const, reasonCode: "tailored_artifact_required" };
+      const upload = async (manifest: ApplicationArtifactManifest, output: Uint8Array) => {
+        const requestId = artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256,
+          policyRevision: applicationContext.policyRevision, manifestHash: artifactManifestHash(manifest) });
+        guard.check();
+        const intent = await control.artifactIntent(lease.applicationId, { protocolVersion: 1, requestId, fence: lease.fence,
+          expectedRevision: lease.revision, manifest }, signal);
+        await control.uploadArtifact(lease.applicationId, intent.artifactId, intent.uploadPath,
+          { protocolVersion: 1, requestId, fence: lease.fence, expectedRevision: lease.revision }, output, source.mime, signal);
+      };
+      let master: { bytes: Uint8Array; template: Awaited<ReturnType<typeof createTemplateManifest>> } | undefined;
       try {
         guard.check();
         const bytes = await control.downloadDocument(lease.applicationId, source.documentId, source.path, signal);
         if (bytes.length !== source.size || createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw new DocumentRuntimeError("DOCUMENT_RECONCILIATION_FAILED");
         const template = await createTemplateManifest(bytes, source.mime, applicationContext.role);
+        master = { bytes, template };
         const evidence = template.anchors.slice(0, 32).map((anchor, index) => ({
           id: artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256, anchorId: anchor.id, index }),
           confirmed: true as const, excerpt: anchor.text.slice(0, 1000),
@@ -247,18 +271,23 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         const tailored = await tailorDocument({ bytes, mime: source.mime, manifest: template, request });
         const artifact = createApplicationArtifactManifest({ applicationId: lease.applicationId, source, template,
           evidence, generated, tailored });
-        const requestId = artifactRequestId({ applicationId: lease.applicationId, sourceHash: source.sha256,
-          policyRevision: applicationContext.policyRevision, manifestHash: artifactManifestHash(artifact.manifest) });
-        guard.check();
-        const intent = await control.artifactIntent(lease.applicationId, { protocolVersion: 1, requestId, fence: lease.fence,
-          expectedRevision: lease.revision, manifest: artifact.manifest }, signal);
-        await control.uploadArtifact(lease.applicationId, intent.artifactId, intent.uploadPath,
-          { protocolVersion: 1, requestId, fence: lease.fence, expectedRevision: lease.revision }, tailored.bytes, source.mime, signal);
+        await upload(artifact.manifest, tailored.bytes);
         return { state: "filling" as const, reasonCode: "artifact_verified", evidence: { artifactVerified: true } };
-      } catch (error) {
+      } catch (caught) {
+        let error = caught;
         if (signal.aborted) throw error;
         const providerFailure = providerFailureResult(error);
         if (providerFailure) return providerFailure;
+        if (error instanceof DocumentRuntimeError && master) {
+          // The resume could not be edited safely (e.g. a compressed PDF), so apply with the verified master unchanged.
+          try {
+            await upload(untailoredArtifactManifest(lease.applicationId, source, master.template, master.bytes, error.code), master.bytes);
+            return { state: "filling" as const, reasonCode: "master_resume_used", evidence: { artifactVerified: true } };
+          } catch (fallback) {
+            if (signal.aborted) throw fallback;
+            error = fallback;
+          }
+        }
         if (error instanceof DocumentRuntimeError) return { state: "needs_document" as const, reasonCode: "document_tailoring_unavailable" };
         return { state: "retryable_failure" as const, reasonCode: error instanceof TransportError ? `tailoring_transport_${error.status}` :
           error instanceof z.ZodError ? "tailoring_schema_invalid" : "tailoring_failed" };
