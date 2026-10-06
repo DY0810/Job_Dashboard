@@ -13,7 +13,9 @@ const waiting: readonly ApplicationState[] = [
 ];
 export function isWaitingState(state: ApplicationState): boolean { return waiting.includes(state); }
 /** Document holds the applicant clears outside the worker: a document added to the profile, or its kind allowed in the policy. */
-export const APPLICANT_DOCUMENT_HOLDS = ['transcript_unavailable', 'required_document_unavailable', 'resume_required', 'cover_letter_unavailable'];
+// A resume that could not be tailored retries from tailoring, which sends nothing, once the resume or worker changes.
+export const APPLICANT_DOCUMENT_HOLDS = ['transcript_unavailable', 'required_document_unavailable', 'resume_required', 'cover_letter_unavailable',
+  'document_tailoring_unavailable'];
 /** Failures a retry from the checkpoint can clear. `provider_inspect_required` came from a removed
  * fill/inspect model gate that parked answered forms; a real verification hold stays excluded. */
 export function isSafeRetryState(state: ApplicationState, reasonCode: string | null): boolean {
