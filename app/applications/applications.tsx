@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
-import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach } from '../../lib/applications/worker-protocol';
+import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
-import { isAwaitingSubmitApproval } from '../../lib/applications/state';
+import { isAwaitingSubmitApproval, isSafeRetryState } from '../../lib/applications/state';
 import styles from '../workers/workers.module.css';
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -103,6 +103,46 @@ function ApprovePanel({ app, ownerId, onChange }: { app: { id: string; runId: st
   return <div className={styles.row}>
     <span>Form filled. Review the resume and cover letter, then approve to submit.</span>
     <button className={styles.button} type="button" disabled={busy} onClick={() => void approve()}>{busy ? 'Approving...' : 'Approve and submit'}</button>
+    {error && <span role="alert" className={styles.reason}>{error}</span>}
+  </div>;
+}
+
+const documentHelp: Record<string, string> = {
+  transcript_unavailable: 'The form requires a transcript. Add it to your profile and allow transcripts in the Auto Apply policy, then retry.',
+  required_document_unavailable: 'The form requires an upload Workie has no document for (often a transcript). Add it to your profile and allow its kind in the Auto Apply policy, then retry.',
+  resume_required: 'Add a resume to your profile, then retry.',
+  cover_letter_unavailable: 'The form asks for a cover letter. Allow cover letters in the Auto Apply policy, then retry.',
+};
+
+/** A document hold the applicant has fixed resumes here, in its own run or, after a policy change, in the newest running run. */
+function RetryPanel({ app, runs, ownerId, onChange }: { app: { id: string; runId: string; revision: number; reasonCode: string | null }; runs: Run[]; ownerId: string; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const post = (path: string, body: object) => fetch(path, {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000),
+    headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
+    body: JSON.stringify({ requestId: crypto.randomUUID(), expectedRevision: app.revision, ...body }),
+  });
+  const retry = async () => {
+    setBusy(true); setError('');
+    try {
+      let response = await post(`/api/application-runs/${app.runId}/applications/${app.id}/actions`, { action: 'retry-safe' });
+      if (response.status === 409 && (await response.clone().json().catch(() => null))?.code === 'POLICY_CHANGED') {
+        const next = runs.find((run) => run.state === 'running' && run.id !== app.runId);
+        if (!next) throw new Error('The Auto Apply policy changed after this run started. Start a new run from Workers, then retry.');
+        response = await post(`/api/application-runs/${next.id}/retry-unsubmitted`, { previousApplicationId: app.id });
+        if (response.status === 409 && (await response.json().catch(() => null))?.code === 'DISCOVERY_REQUIRED') {
+          throw new Error('The new run has not found this role yet. Retry after its discovery finishes.');
+        }
+      }
+      if (!response.ok) throw new Error('Could not retry. Refresh and try again.');
+      onChange();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not retry.'); }
+    finally { setBusy(false); }
+  };
+  return <div className={styles.row}>
+    <span>{documentHelp[app.reasonCode ?? ''] ?? 'Fix the missing document, then retry.'}</span>
+    <button className={styles.button} type="button" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying...' : 'Retry'}</button>
     {error && <span role="alert" className={styles.reason}>{error}</span>}
   </div>;
 }
@@ -224,6 +264,8 @@ export default function Applications() {
                 {app.receiptId && <span>Receipt {app.receiptId}{app.submittedAt ? ` / ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
               {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
               {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
+              {app.state === 'needs_document' && app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && view.account &&
+                <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
               {isAwaitingSubmitApproval(app.state, app.reasonCode) && view.account &&
                 <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
               {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}

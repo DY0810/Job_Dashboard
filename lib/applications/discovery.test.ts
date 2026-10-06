@@ -483,6 +483,39 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
   });
 
+  it('resumes a document hold the applicant fixed: in its own run, or after a policy change in a run started under it', async () => {
+    const { token, run, worker } = await prepared(); addPostings(1); await complete(token, run.id);
+    const hold = async () => {
+      const lease = (await poll(token)).lease!;
+      return recordWorkerEvent(db, token, lease.applicationId, { protocolVersion: 1, eventId: randomUUID(), fence: lease.fence,
+        expectedRevision: lease.revision, state: 'needs_document', checkpoint: { stage: lease.state as 'screening', sequence: (lease.checkpoint?.sequence ?? 0) + 1 },
+        reasonCode: 'required_document_unavailable' }, options);
+    };
+    const held = await hold();
+    // The transcript was added to the profile: the same run retries from its checkpoint.
+    expect(await commandApplication(db, 'alice', run.id, held.applicationId, { ...request(), expectedRevision: held.revision, action: 'retry-safe' }, options))
+      .toMatchObject({ state: 'screening' });
+    now += 5_000;
+    const again = await hold();
+    // Transcripts allowed in a new policy: the old run stays bound to the old one, so the role continues in a new run.
+    const policy: Policy = { ...createEmptyPolicy(), actions: ['read_jobs'], destinations: ['job-boards.greenhouse.io'], undisclosedPay: 'include', documentKinds: ['transcript'] };
+    await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash: hashValue(policy), policy, createdAt: now });
+    await db.update(policyHeads).set({ revision: 2, policyVersion: 2, acceptedPolicyVersion: 2, acceptedPolicyHash: hashValue(policy) })
+      .where(eq(policyHeads.ownerId, 'alice'));
+    await expect(commandApplication(db, 'alice', run.id, again.applicationId, { ...request(), expectedRevision: again.revision, action: 'retry-safe' }, options))
+      .rejects.toMatchObject({ code: 'POLICY_CHANGED' });
+    const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
+    await complete(token, replacement.id);
+    const command = { ...request(), previousApplicationId: again.applicationId, expectedRevision: again.revision };
+    await expect(retryUnsubmittedApplication(db, 'alice', run.id, command, options)).rejects.toMatchObject({ status: 409 });
+    const next = await retryUnsubmittedApplication(db, 'alice', replacement.id, command, options);
+    const history = await appRows();
+    expect(history.find((a) => a.id === again.applicationId)).toMatchObject({ state: 'failed', reasonCode: 'continued_in_new_run' });
+    expect(history.find((a) => a.id === next.id)).toMatchObject({ state: 'queued', runId: replacement.id, attempt: 2, previousApplicationId: again.applicationId });
+    now += DAY;
+    expect((await poll(token)).lease?.applicationId).toBe(next.id);
+  });
+
   it('keeps default suppression even after cooldown and rejects cross-owner and unapproved reapply', async () => {
     const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
     const previous = await skip((await appRows())[0].id); now += 400 * DAY;

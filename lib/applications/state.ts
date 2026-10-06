@@ -12,11 +12,14 @@ const waiting: readonly ApplicationState[] = [
   'provider_unavailable', 'retryable_failure', 'blocked_unsupported',
 ];
 export function isWaitingState(state: ApplicationState): boolean { return waiting.includes(state); }
+/** Document holds the applicant clears outside the worker: a document added to the profile, or its kind allowed in the policy. */
+export const APPLICANT_DOCUMENT_HOLDS = ['transcript_unavailable', 'required_document_unavailable', 'resume_required', 'cover_letter_unavailable'];
 /** Failures a retry from the checkpoint can clear. `provider_inspect_required` came from a removed
  * fill/inspect model gate that parked answered forms; a real verification hold stays excluded. */
 export function isSafeRetryState(state: ApplicationState, reasonCode: string | null): boolean {
   return state === 'provider_unavailable' || state === 'retryable_failure' ||
-    (state === 'needs_verification' && reasonCode === 'provider_inspect_required');
+    (state === 'needs_verification' && reasonCode === 'provider_inspect_required') ||
+    (state === 'needs_document' && APPLICANT_DOCUMENT_HOLDS.includes(reasonCode ?? ''));
 }
 /** A filled, verified form the worker will not submit until the applicant approves it. */
 export const SUBMIT_APPROVAL = 'submit_approval';

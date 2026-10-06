@@ -7,7 +7,7 @@ import {
 } from '../private-db/schema.ts';
 import { captureCandidateSnapshot, type DiscoveryCandidate } from './discovery-source.ts';
 import { getPolicy, hashValue } from './stores.ts';
-import { isTerminalState } from './state.ts';
+import { isSafeRetryState, isTerminalState } from './state.ts';
 import type { Policy } from './policy.ts';
 import { applicationSummary, releaseRunApplications } from './runs.ts';
 import {
@@ -394,7 +394,9 @@ export async function reapplyApplication(
 
 /** An applicant-confirmed unsubmitted application (no receipt; Greenhouse sent only a security code, or refused the
  * form) closes as failed and its role gets a fresh attempt. The employer never received it, so this is not a
- * reapplication: no reapplication policy or cooldown, but the same suppression and latest-attempt checks. */
+ * reapplication: no reapplication policy or cooldown, but the same suppression and latest-attempt checks.
+ * A document hold the applicant cleared by changing the policy continues the same way in a run started under it,
+ * since the held application's run stays bound to the old policy. */
 export async function retryUnsubmittedApplication(
   db: PrivateDb, ownerId: string, runId: string, input: ReapplyRequest, options: WorkerOptions = {},
 ) {
@@ -412,11 +414,13 @@ export async function retryUnsubmittedApplication(
       eq(applications.ownerId, ownerId), eq(applications.id, command.previousApplicationId),
     ));
     if (!previous) fail(404, 'NOT_FOUND', 'Previous application not found.');
-    if (previous.revision !== command.expectedRevision || previous.state !== 'submission_unknown' || previous.leaseUntil !== null) fail();
+    const unsubmitted = previous.state === 'submission_unknown';
+    const documentHold = previous.state === 'needs_document' && isSafeRetryState(previous.state, previous.reasonCode) && previous.runId !== runId;
+    if (previous.revision !== command.expectedRevision || !(unsubmitted || documentHold) || previous.leaseUntil !== null) fail();
     const [latest] = await tx.select().from(applications).where(identityMatch(previous)).orderBy(desc(applications.attempt)).limit(1);
     if (latest.id !== previous.id || await manuallySuppressed(tx, previous)) fail(409, 'DUPLICATE_BLOCKED', 'Application is suppressed.');
     one(await tx.update(applications).set({
-      state: 'failed', reasonCode: 'applicant_confirmed_not_submitted', revision: previous.revision + 1, fence: previous.fence + 1,
+      state: 'failed', reasonCode: unsubmitted ? 'applicant_confirmed_not_submitted' : 'continued_in_new_run', revision: previous.revision + 1, fence: previous.fence + 1,
     }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, previous.id), eq(applications.revision, previous.revision))).returning());
     const row = await nextAttempt(tx, run, previous, now);
     const acknowledgement = applicationSummary(row);

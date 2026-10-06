@@ -317,8 +317,10 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         if (field.kind === 'file' && localDocuments.transcript && undergraduateTranscript(field.label)) currentApplication.documents[field.key] = localDocuments.transcript;
       }
       // A required upload Workie has no document for would fail the form's own check after submit.
-      if (observed.fields.some(field => field.kind === 'file' && field.required && field.key !== 'cover_letter' && !currentApplication.documents[field.key])) {
-        return { state: "needs_document" as const, reasonCode: "required_document_unavailable" };
+      const unavailable = observed.fields.find(field => field.kind === 'file' && field.required && field.key !== 'cover_letter' && !currentApplication.documents[field.key]);
+      if (unavailable) {
+        // Named so the applicant knows to add a transcript or allow transcripts in the policy.
+        return { state: "needs_document" as const, reasonCode: undergraduateTranscript(unavailable.label) ? "transcript_unavailable" : "required_document_unavailable" };
       }
       const applicant = [application.answers.first_name, application.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
       const writeLetter = async () => {

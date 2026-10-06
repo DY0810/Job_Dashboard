@@ -127,6 +127,11 @@ export async function commandApplication(
       const [run] = await tx.select().from(applicationRuns).where(and(eq(applicationRuns.id, runId), eq(applicationRuns.ownerId, ownerId)));
       if (!run || run.state === 'stopped' || !isSafeRetryState(row.state, row.reasonCode) ||
           !row.checkpoint || row.retries >= 3) fail(409, 'CONFLICT', 'No safe retry is available.');
+      // A run stays bound to the policy it started with; after a policy change only a run started under the new one can continue.
+      const policy = await getPolicy(tx, ownerId, now);
+      if (!policy.enabled || policy.revision !== run.policyRevision || policy.policyVersion !== run.policyVersion || policy.policyHash !== run.policyHash) {
+        fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
+      }
       next = row.checkpoint.stage; retries += 1; availableAt = now + 5000 * 2 ** row.retries;
     } else if (command.action === 'approve-submit') {
       // The worker parks every filled form here; only the applicant's approval lets it submit.
