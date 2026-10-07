@@ -110,6 +110,55 @@ describe('recruiter email after a verified submission', () => {
       .toMatchObject({ status: 'sent' });
   });
 
+  it('never auto-sends to a recruiter another role is emailing or may have emailed', async () => {
+    await setActions(['email_recruiters', 'auto_send_recruiter_email'], 2);
+    const a = await application(), b = await application();
+    const qa = await recordOutreachDraft(db, a.token, a.app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    await recordOutreachDraft(db, b.token, b.app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    now = qa.sendAfter!;
+    let overlap: Promise<number> | null = null;
+    // A second cron run starts while the first is still sending A.
+    const slow: OutreachOptions = { ...options, sender: (from) => async (message) => {
+      overlap ??= sendDueOutreach(db, options);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      sent.push({ from, ...message });
+    } };
+    await sendDueOutreach(db, slow);
+    await overlap;
+    expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test']);
+    expect((await listOutreach(db, 'alice', options)).outreach.map((item) => `${item.status}:${item.reason}`).sort())
+      .toEqual(['sent:null', 'skipped:already_contacted']);
+  });
+
+  it('never auto-sends after an unconfirmed send to that recruiter, but does after a definite failure', async () => {
+    const a = await application(), b = await application(), c = await application(), d = await application();
+    await recordOutreachDraft(db, a.token, a.app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    // The process dies mid-send: the attempt never settles.
+    void sendOutreach(db, 'alice', a.app.id, { to: 'jobs@employer.test', name: null, now: true }, { ...options, sender: () => () => new Promise(() => {}) });
+    await vi.waitFor(async () => expect((await listOutreach(db, 'alice', options)).outreach[0]).toMatchObject({ status: 'sending' }));
+    await recordOutreachDraft(db, c.token, c.app.id, draft({ emails: ['campus@employer.test'] }), options);
+    await sendOutreach(db, 'alice', c.app.id, { to: 'campus@employer.test', name: null, now: true },
+      { ...options, sender: () => async () => { throw new Error('smtp down'); } });
+    now += 11 * 60_000;
+    await setActions(['email_recruiters', 'auto_send_recruiter_email'], 2);
+    const qb = await recordOutreachDraft(db, b.token, b.app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    expect(qb).toMatchObject({ status: 'skipped', reason: 'already_contacted' });
+    expect(await recordOutreachDraft(db, d.token, d.app.id, draft({ emails: ['campus@employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled' });
+  });
+
+  it('keeps an email the applicant sent queued even after automatic sending is turned off', async () => {
+    await setActions(['email_recruiters', 'auto_send_recruiter_email'], 2);
+    const { token, app } = await application();
+    await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    now += 60_000;
+    const approved = await sendOutreach(db, 'alice', app.id, { to: 'jobs@employer.test', name: null }, options);
+    expect(approved).toMatchObject({ reason: 'scheduled' });
+    await setActions(['email_recruiters'], 3);
+    now = approved.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(1);
+  });
+
   it('sends nothing on its own while the policy is not enabled, like submit', async () => {
     await setActions(['email_recruiters', 'auto_send_recruiter_email'], 2);
     const first = await application(), second = await application();
