@@ -7,7 +7,9 @@
  * URL should show the unfiltered table, not an error page.
  */
 
-import { z } from 'zod';
+// `zod/mini`: this module runs in the browser on every board load, and classic Zod's
+// eager initialisation cost about as much main-thread time as React DOM itself.
+import * as z from 'zod/mini';
 
 export const TABS = ['design', 'engineering'] as const;
 export type Tab = (typeof TABS)[number];
@@ -151,22 +153,26 @@ export interface Params {
   unfiltered?: true;
 }
 
-const value = z.string().max(200).optional();
+const value = z.catch(z.optional(z.string().check(z.maxLength(200))), undefined);
 
 const Raw = z.object({
-  tab: z.enum(TABS).catch(DEFAULT_TAB),
-  basis: z.enum(BASES).optional().catch(undefined),
-  posted: value.catch(undefined),
-  type: value.catch(undefined),
-  pay: value.catch(undefined),
-  mode: value.catch(undefined),
-  season: value.catch(undefined),
-  level: value.catch(undefined),
-  badge: z.string().regex(/^[a-z0-9-]{1,32}$/).optional().catch(undefined),
-  job: z
-    .preprocess((v) => (v === undefined || v === '' ? undefined : v), z.coerce.number().int().positive().optional())
-    .catch(undefined),
-  page: z.coerce.number().int().min(1).max(10_000).catch(1),
+  tab: z.catch(z.enum(TABS), DEFAULT_TAB),
+  basis: z.catch(z.optional(z.enum(BASES)), undefined),
+  posted: value,
+  type: value,
+  pay: value,
+  mode: value,
+  season: value,
+  level: value,
+  badge: z.catch(z.optional(z.string().check(z.regex(/^[a-z0-9-]{1,32}$/))), undefined),
+  job: z.catch(
+    z.pipe(
+      z.transform((v: unknown) => (v === undefined || v === '' ? undefined : v)),
+      z.optional(z.pipe(z.coerce.number(), z.int().check(z.positive()))),
+    ),
+    undefined,
+  ),
+  page: z.catch(z.pipe(z.coerce.number(), z.int().check(z.gte(1), z.lte(10_000))), 1),
 });
 
 /** Next hands repeated params through as arrays; for a single-valued param the first wins. */
