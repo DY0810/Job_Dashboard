@@ -246,6 +246,18 @@ describe('hashed owner-approved pairings', () => {
     now += p.HEARTBEAT_MS * 3;
     expect((await listWorkers(db, 'alice', options)).workers.find((w) => w.id === current.workerId)?.online).toBe(false);
   });
+  it('refuses a grant made for another applicant before registering or consuming it', async () => {
+    const grant = await createPairing(db, 'alice', { ...revision(0), expectedRevision: 0, label: 'Set up for Bob' }, options);
+    const input: p.PairRequest = {
+      protocolVersion: 1, workerId: randomUUID(), requestId: randomUUID(), grant: grant.grant,
+      workerToken: secret(), workerVersion: '0.1.0', capabilities: ['control-v1'],
+    };
+    await expect(pairWorker(db, { ...input, expectedOwnerId: 'bob' }, options))
+      .rejects.toMatchObject({ status: 409, code: 'OWNER_MISMATCH' });
+    expect((await listWorkers(db, 'alice', options)).workers).toEqual([]);
+    // The grant still works for the applicant it was made for.
+    await expect(pairWorker(db, { ...input, expectedOwnerId: 'alice' }, options)).resolves.toMatchObject({ ownerId: 'alice' });
+  });
 });
 describe('async leases, checkpoints and stable identity', () => {
   it('reclaims one active lease before assigning another role to the same worker', async () => {

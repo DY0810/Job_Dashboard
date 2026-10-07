@@ -26,6 +26,8 @@ export const PairingGrantSchema = z.strictObject({
 export const PairRequestSchema = z.strictObject({
   ...protocol, requestId: uuid, workerId: uuid, grant: secret, workerToken: secret,
   workerVersion: z.string().regex(/^[a-zA-Z0-9.+_-]{1,40}$/), capabilities,
+  // A precondition, never authority: the grant alone decides the owner. Optional so a worker built before it still pairs.
+  expectedOwnerId: z.string().min(1).max(256).optional(),
 });
 export const PairResponseSchema = z.strictObject({ ...clock, workerId: uuid, ownerId: z.string(), revision });
 export const RevisionCommandSchema = z.strictObject(command);

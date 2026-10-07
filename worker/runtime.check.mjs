@@ -46,11 +46,23 @@ test("pairing saves credential before registration and reconciles identical requ
   await assert.rejects(pairWorker({ scope: s, store, vault, transport, readGrant: async () => "G".repeat(43) }));
   await pairWorker({ scope: s, store, vault, transport, readGrant: async () => { throw new Error("must not prompt again"); } });
   assert.deepEqual(calls[0], calls[1]);
+  assert.equal(calls[0].expectedOwnerId, s.ownerId);
   const metadata = await readFile(store.path("pairing"), "utf8");
   assert(!metadata.includes(calls[0].workerToken));
   assert(!metadata.includes(calls[0].grant));
   assert.equal(JSON.parse(metadata).status, "paired");
   assert(!vault.get("worker").includes('"grant"'));
+});
+
+test("a refused grant is forgotten so the next pair asks for a new one", async () => {
+  const s = scope(), store = await storeFor(s), vault = credentials(s, backend());
+  let prompts = 0;
+  const readGrant = async () => { prompts++; return "G".repeat(43); };
+  await assert.rejects(pairWorker({ scope: s, store, vault, readGrant,
+    transport: { pair: async () => { throw new TransportError("HTTP_409", 409); } } }), /HTTP_409/);
+  assert.equal(vault.get("worker"), null);
+  await pairWorker({ scope: s, store, vault, readGrant, transport: { pair: async () => pairResponse(s) } });
+  assert.equal(prompts, 2);
 });
 
 test("wrong owner pairing response never marks local metadata paired", async () => {
