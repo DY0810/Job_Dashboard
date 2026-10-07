@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleared, href, parseParams, toggleFilter, withPage, withTab } from '../lib/params';
 import {
+  activeOwner,
   appliedKey,
   defaultFiltersHref,
   readApplied,
@@ -19,6 +20,18 @@ function store() {
 }
 
 describe('personal board state', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('retries a failed applicant lookup and only treats 401 as signed out', async () => {
+    const responses = [new Response(null, { status: 503 }), new Response(null, { status: 401 })];
+    const request = vi.fn(async () => responses.shift()!);
+    vi.stubGlobal('fetch', request);
+    await expect(activeOwner()).rejects.toThrow('503');
+    expect(await activeOwner()).toBeNull();
+    expect(await activeOwner()).toBeNull(); // signed out is cached for the page
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it('persists checked and unchecked applications independently by stable posting ID', () => {
     const storage = store();
     expect(readApplied(12, null, storage)).toBe(false);

@@ -7,6 +7,18 @@ export const APPLIED_EVENT = 'workie-applied-change';
 export const appliedKey = (id: number, owner: string | null = null) =>
   owner ? `workie-applied:${owner}:${id}` : `workie-applied:${id}`;
 
+// One request per page for every row; switching applicant reloads the page. Only 401 means signed out:
+// any other failure is forgotten so a later mount retries, rather than saving a signed-in tick unscoped.
+let ownerRequest: Promise<string | null> | undefined;
+export const activeOwner = () => ownerRequest ??= fetch('/api/auth/applicant',
+  { credentials: 'same-origin', cache: 'no-store', redirect: 'error' })
+  .then(async (response) => {
+    if (response.status === 401) return null;
+    if (!response.ok) throw new Error(`applicant lookup ${response.status}`);
+    return (await response.json() as { ownerId: string }).ownerId;
+  })
+  .catch((error: unknown) => { ownerRequest = undefined; throw error; });
+
 function localStore(): Store | null {
   try {
     return typeof window === 'undefined' ? null : window.localStorage;
