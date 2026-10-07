@@ -303,8 +303,10 @@ Research: `docs/research/2026-10-05-cold-email-research.md`. After a submission
 with `email_recruiters` on, a ≤120-word draft waits on the Applications page;
 nothing is sent until the applicant presses Send, which queues it for a Tue–Thu
 16:00 UTC at least three days after applying (`/api/cron/outreach`, sent once,
-never retried). Send now skips the wait. Recipients are verified only: a
-recruiting address in the posting (with MX) → Hunter recruiters at the curated
+never retried). Send now skips the wait. With "Auto send recruiter email" on in
+the policy, a draft with a verified recipient is queued for that window without
+Send; turning it off puts those emails back to waiting for Send. Recipients are
+verified only: a recruiting address in the posting (with MX) → Hunter recruiters at the curated
 or posting domain → Findymail → a published recruiting inbox. No company-name
 lookups, guessed patterns, SMTP probes or LinkedIn/GitHub sourcing; none found
 leaves To blank for the applicant. Curate `scripts/companies.json` domains with
