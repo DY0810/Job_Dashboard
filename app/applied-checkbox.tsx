@@ -1,13 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { APPLIED_EVENT, appliedKey, readApplied, saveApplied } from './board-storage';
-
-// One request per page for every row; switching applicant reloads the page.
-let ownerRequest: Promise<string | null> | undefined;
-const activeOwner = () => ownerRequest ??= fetch('/api/auth/applicant', { credentials: 'same-origin', cache: 'no-store' })
-  .then(async (response) => response.ok ? (await response.json() as { ownerId: string }).ownerId : null)
-  .catch(() => null);
+import { activeOwner, APPLIED_EVENT, appliedKey, readApplied, saveApplied } from './board-storage';
 
 export function AppliedCheckbox({
   postingId, title, company, compact = false,
@@ -40,7 +34,7 @@ export function AppliedCheckbox({
       setOwner(resolved);
       update();
       setReady(true);
-    });
+    }, () => { /* lookup failed: stay disabled until a later mount retries */ });
     window.addEventListener('storage', storage);
     window.addEventListener(APPLIED_EVENT, changed);
     return () => {

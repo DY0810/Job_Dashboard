@@ -70,7 +70,8 @@ export function AppliedSync() {
         try { void syncApplied(window.localStorage, fetch, signal).catch(() => {}); } catch { /* storage unavailable */ }
       }, delay);
     };
-    const changed = () => schedule(5000);
+    // A null detail is syncApplied's own "moved" event; rescheduling would abort the run that sent it.
+    const changed = (event: Event) => { if ((event as CustomEvent<number | null>).detail != null) schedule(5000); };
     schedule(1000);
     window.addEventListener(APPLIED_EVENT, changed);
     return () => { clearTimeout(timer); controller.abort(); window.removeEventListener(APPLIED_EVENT, changed); };
