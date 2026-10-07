@@ -195,6 +195,7 @@
     clip-path: inset(50%);
   }
   .rows[data-track] tbody { display: block; }
+  .rows[data-track] tr.band th { display: block; }
   .rows[data-track] tbody tr:not(.band) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -318,6 +319,13 @@
 
 .posting-location { display: none; }
 
+/* The summary is clipped to ~30ch anyway; below 1440px it is what pushed location under the
+   pinned company column, so it goes and the table fits without a hidden sideways scroll. */
+@media (min-width: 901px) and (max-width: 1439px) {
+  .rows[data-track="engineering"] { min-width: 1112px !important; }
+  .rows[data-track="engineering"] [data-field="summary"] { display: none; }
+}
+
 @media (min-width: 901px) and (max-width: 1151px) {
   .rows[data-track="design"] [data-field="location"] { display: none; }
   .rows[data-track="design"] .posting-title,
@@ -367,12 +375,12 @@
   text-align: left;
   padding-top: 14px;
   color: var(--fg-dim);
-  border-bottom-color: var(--rule);
+  border-bottom: 0;
 }
 
 .band-fresh th {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  border-bottom: 1px solid var(--accent);
 }
 
 .band:first-child th {
@@ -645,9 +653,6 @@ dialog.drawer[open]::backdrop {
   align-items: center;
   flex: none;
   min-height: 28px;
-  padding: 3px 8px;
-  border: 1px solid var(--fg);
-  border-radius: 5px;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.04em;
@@ -685,12 +690,16 @@ dialog.drawer[open]::backdrop {
 }
 
 .app-account {
+  display: inline-flex;
+  align-items: center;
   flex: none;
+  min-height: 38px;
+  border-bottom: 2px solid transparent;
   color: var(--fg-dim);
   font-size: 12px;
   font-weight: 500;
 }
-.app-account:hover, .app-account[aria-current="page"] { color: var(--fg); text-decoration: underline; text-underline-offset: 4px; }
+.app-account:hover, .app-account[aria-current="page"] { color: var(--fg); border-bottom-color: var(--fg); }
 
 .app-tools {
   display: flex;
@@ -706,6 +715,12 @@ dialog.drawer[open]::backdrop {
   color: var(--fg-dim);
   font-size: 11px;
   white-space: nowrap;
+}
+
+#main-content {
+  width: min(100%, 1720px);
+  margin-inline: auto;
+  padding-inline: 24px;
 }
 
 .board-page {
@@ -763,15 +778,13 @@ dialog.drawer[open]::backdrop {
 }
 .loading-head { color: var(--fg-dim); font-size: 10px; font-weight: 600; text-transform: uppercase; }
 .board-switches { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.board-track, .board-basis { display: inline-flex; align-items: center; gap: 8px; }
-.board-track { gap: 0; }
-.board-track-link, .board-basis .chip {
+.board-track { display: inline-flex; align-items: center; }
+.board-track-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 98px;
-  height: 32px;
-  padding: 0 8px;
+  min-height: 28px;
+  padding: 0 12px;
   border: 1px solid var(--fg-faint);
   border-radius: 4px;
   color: var(--fg-dim);
@@ -780,8 +793,9 @@ dialog.drawer[open]::backdrop {
 }
 .board-track-link:first-child { border-radius: 4px 0 0 4px; }
 .board-track-link + .board-track-link { border-left: 0; border-radius: 0 4px 4px 0; }
-.board-track-link:hover, .board-basis .chip:hover { color: var(--fg); background: var(--surface); }
-.board-track-link[aria-current="page"], .board-basis .chip[aria-current="true"] { color: var(--fg); background: var(--surface); border-color: var(--fg); }
+.board-track-link:hover { color: var(--fg); background: var(--surface); }
+.board-track-link[aria-current] { color: var(--fg); background: var(--surface); border-color: var(--fg); }
+.board-track-link + .board-track-link[aria-current] { border-left: 1px solid var(--fg); margin-left: -1px; }
 
 .filter-form {
   display: flex;
@@ -789,9 +803,7 @@ dialog.drawer[open]::backdrop {
   flex: none;
   flex-wrap: wrap;
   gap: 9px 17px;
-  padding: 12px 0 15px;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
+  padding: 4px 0 14px;
 }
 
 .filter-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; }
@@ -854,7 +866,8 @@ dialog.drawer .chip { min-height: 30px; }
   .app-nav { flex-basis: 100%; gap: 20px; }
   .app-header .app-nav-links { flex: 1; }
   .app-tools { width: 100%; justify-content: flex-end; }
-  .board-page { height: auto; min-height: 100dvh; padding-inline: 16px; }
+  .board-page { height: auto; min-height: 100dvh; }
+  #main-content { padding-inline: 16px; }
 }
 
 @media (max-width: 700px) {
@@ -880,10 +893,8 @@ dialog.drawer .chip { min-height: 30px; }
 }
 
 @media (pointer: coarse) {
-  .app-brand { min-height: 44px; }
-  .app-nav-links a, .board-track-link, .chip, .chip-check, .select-box { min-height: 44px; }
-  .chip.app-icon-button { width: 44px; height: 44px; min-height: 44px; }
-  .rows[data-track] td[data-field="apply"] .chip { min-height: 44px; }
+  .app-nav-links a, .app-account, .board-track-link, .chip, .chip-check, .select-box { min-height: 32px; }
+  .chip.app-icon-button { width: 32px; height: 32px; min-height: 32px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

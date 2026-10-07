@@ -1,4 +1,4 @@
-.page { min-height: 100dvh; padding: 0 16px 40px; letter-spacing: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.page { min-height: 100dvh; padding-bottom: 40px; letter-spacing: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 .header, .toolbar, .row, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
 .header { padding: 10px 0; border-bottom: 1px solid var(--rule); }
 .header > a { font-size: 16px; }
@@ -17,10 +17,10 @@
 .page :focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .page a:hover { text-decoration: underline; }
 .page strong { font-weight: 500; }
-.button { flex: none; min-height: 36px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--fg-faint); border-radius: 5px; background: var(--canvas); color: var(--fg); font: inherit; font-size: 12px; cursor: pointer; line-height: 1.5; }
+.button { flex: none; min-height: 28px; max-width: 100%; padding: 4px 10px; border: 1px solid var(--fg-faint); border-radius: 4px; background: var(--canvas); color: var(--fg); font: inherit; font-size: 12px; cursor: pointer; line-height: 1.5; }
 .button:hover:not(:disabled) { background: var(--surface); }
 .button:disabled { cursor: not-allowed; opacity: .65; color: var(--fg-dim); }
-.icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
+.icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; }
 .message { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 10px 0; margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .secret { display: grid; gap: 8px; max-width: 560px; padding: 12px 0; }
 .secret textarea { width: 100%; max-width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--fg-faint); background: transparent; color: var(--fg); font: 16px/1.5 monospace; resize: none; }
@@ -31,15 +31,14 @@
 .applications > li { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
 .reason { overflow-wrap: anywhere; }
 @media (max-width: 800px) {
-  .page { padding-inline: 12px; }
   .header { gap: 12px; }
   .list > li { grid-template-columns: minmax(0, 1fr) 112px; gap: 8px 12px; padding: 12px 0; }
   .form label { width: 100%; }
 }
 @media (pointer: coarse) {
-  .button { min-height: 40px; }
+  .button { min-height: 32px; }
   .page input:not([type="checkbox"]):not([type="radio"]), .page select { min-height: 44px; font-size: 16px; }
-  .icon { width: 40px; height: 40px; }
+  .icon { width: 32px; height: 32px; }
 }
 .preview { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--fg-dim); }
 .page .form input[type="email"] { width: 270px; }

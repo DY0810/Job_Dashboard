@@ -7,7 +7,7 @@
   width: 28px;
   height: 28px;
   border: 1px solid var(--fg-faint);
-  border-radius: 3px;
+  border-radius: 4px;
   color: var(--fg);
   background: var(--canvas);
   cursor: pointer;
@@ -70,17 +70,17 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 32px;
-  padding: 4px 9px;
+  min-height: 28px;
+  padding: 4px 10px;
   border: 1px solid var(--fg-faint);
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent;
   color: var(--fg);
   font: inherit;
   cursor: pointer;
   text-align: start;
 }
-.icon { width: 32px; flex: 0 0 32px; padding: 0; }
+.icon { width: 28px; flex: 0 0 28px; padding: 0; }
 .button:disabled { opacity: .55; cursor: not-allowed; }
 .button:hover:not(:disabled), .bell:hover { background: var(--surface); }
 .button:focus-visible, .bell:focus-visible, .form :is(input, textarea, select):focus-visible {
@@ -104,7 +104,7 @@
 .documents { margin-top: 12px; overflow-x: auto; }
 @media (max-width: 480px) {
   .toolbar, .content { padding: 12px; }
-  .bell { width: 44px; height: 44px; }
+  .bell { width: 32px; height: 32px; }
   .detail { grid-template-columns: 1fr; gap: 1px; }
   .detail dd { margin-bottom: 6px; }
 }

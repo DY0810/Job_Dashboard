@@ -1,4 +1,4 @@
-.page { min-height: 100dvh; padding: 0 16px 56px; letter-spacing: 0; }
+.page { min-height: 100dvh; padding-bottom: 56px; letter-spacing: 0; }
 .header, .toolbar, .row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .header { border-bottom: 1px solid var(--rule); padding: 10px 0; }
 .header nav { display: flex; gap: 18px; font-size: 12px; }
@@ -33,15 +33,15 @@
 .collection > .row { justify-content: space-between; margin-bottom: 12px; }
 .entry { border-top: 1px solid var(--rule); padding: 12px 0; min-width: 0; }
 .entry > .row { justify-content: space-between; margin-bottom: 12px; }
-.button { border: 1px solid var(--fg-faint); border-radius: 5px; background: var(--canvas); color: var(--fg); padding: 6px 10px; min-height: 36px; font: inherit; font-size: 12px; cursor: pointer; }
-.icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; flex-shrink: 0; }
+.button { border: 1px solid var(--fg-faint); border-radius: 4px; background: var(--canvas); color: var(--fg); padding: 4px 10px; min-height: 28px; font: inherit; font-size: 12px; line-height: 1.4; cursor: pointer; }
+.icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; flex-shrink: 0; }
 .button:disabled { color: var(--fg-dim); opacity: 0.65; cursor: not-allowed; }
 .button:hover:not(:disabled) { background: var(--surface); }
 .meta { font-size: 11px; line-height: 1.5; color: var(--fg-dim); min-width: 0; }
 .meta summary { cursor: pointer; padding: 4px 0; }
 .meta[open] { grid-column: 1 / -1; }
 .meta p, .alert p { overflow-wrap: anywhere; }
-.alert { border-left: 3px solid var(--fg); padding: 8px 12px; margin: 8px 0 16px; line-height: 1.5; }
+.alert { padding: 8px 0; margin: 8px 0 16px; line-height: 1.5; }
 .error { font-size: 12px; line-height: 1.5; margin: 0; text-decoration: underline; text-decoration-style: dotted; }
 .table { width: 100%; border-collapse: collapse; margin: 12px 0; table-layout: fixed; }
 .table th, .table td { text-align: left; vertical-align: top; padding: 10px 8px 10px 0; border-bottom: 1px solid var(--rule); overflow-wrap: anywhere; line-height: 1.5; }
@@ -54,7 +54,6 @@
   .layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .navigation { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fields { grid-template-columns: minmax(0, 1fr); }
-  .page { padding-inline: 12px; }
   .table { table-layout: auto; }
   .table th:first-child { width: auto !important; }
   .table td:not(:first-child) { overflow-wrap: normal; }
@@ -63,5 +62,5 @@
   .field input:not([type="checkbox"]):not([type="radio"]), .field select, .field textarea, .control { font-size: 16px; min-height: 38px; }
   .state { grid-template-columns: minmax(0, 1fr); }
   .state > select { font-size: 14px; }
-  .button { min-height: 36px; }
+  .button { min-height: 32px; }
 }

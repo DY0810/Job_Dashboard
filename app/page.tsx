@@ -403,14 +403,14 @@ export default async function Page({
             tabs and not in the filter row: there is no "any", one side is always showing, and
             `clear` does not reset it. Absent on Engineering, where `basis` is null. */}
         {p.basis ? (
-          <nav className="board-basis" aria-label="Engagement">
+          <nav className="board-track" aria-label="Engagement">
             {BASES.map((basis) => (
               <Link
                 key={basis}
                 href={withBasis(p, basis)}
                 scroll={false}
                 aria-current={basis === p.basis ? "true" : undefined}
-                className="chip"
+                className="board-track-link"
               >
                 {basis}
               </Link>
@@ -460,7 +460,8 @@ export default async function Page({
               {rows.slice(0, freshCount).map((row) => (
                 <PostingRow key={row.id} row={row} p={p} now={now} />
               ))}
-              {freshCount < rows.length ? (
+              {/* "earlier" only means something next to a fresh band; alone it is a label for everything. */}
+              {freshCount > 0 && freshCount < rows.length ? (
                 <Band label="earlier" span={columns.length} />
               ) : null}
               {rows.slice(freshCount).map((row) => (
@@ -472,7 +473,7 @@ export default async function Page({
       )}
 
       {capped || p.page > 1 ? (
-        <nav aria-label="Job pages" className="flex shrink-0 items-center justify-end gap-3 border-t border-rule py-3 text-[11px]">
+        <nav aria-label="Job pages" className="flex shrink-0 items-center justify-end gap-3 py-3 text-[11px]">
           {p.page > 1 ? <Link className="chip" href={withPage(p, p.page - 1)}>previous</Link> : null}
           <span className="nums">page {p.page}</span>
           {capped ? <Link className="chip" href={withPage(p, p.page + 1)}>next</Link> : null}
