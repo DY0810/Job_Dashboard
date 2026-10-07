@@ -4,6 +4,7 @@ import { PairResponseSchema, WORKER_PROTOCOL_VERSION, WORKER_CAPABILITIES } from
 import type { WorkerScope, credentials } from "./credentials.ts";
 import type { PrivateStore } from "./storage.ts";
 import type { WorkerTransport } from "./transport.ts";
+import { TransportError } from "./transport.ts";
 
 export const ScopeSchema = z.strictObject({ origin: z.string(), ownerId: z.string().min(1).max(256), workerId: z.uuid() });
 export const PairingMetadataSchema = z.strictObject({
@@ -46,11 +47,21 @@ export async function pairWorker(options: {
   }
   if (!credential.grant) throw new Error("PAIRING_INCOMPLETE");
   signal?.throwIfAborted();
-  const response = PairResponseSchema.parse(await transport.pair({
-    protocolVersion: WORKER_PROTOCOL_VERSION, requestId: metadata.requestId,
-    workerId: scope.workerId, workerVersion: metadata.workerVersion,
-    capabilities: [...WORKER_CAPABILITIES], grant: credential.grant, workerToken: credential.workerToken,
-  }, signal));
+  let response;
+  try {
+    response = PairResponseSchema.parse(await transport.pair({
+      protocolVersion: WORKER_PROTOCOL_VERSION, requestId: metadata.requestId,
+      workerId: scope.workerId, expectedOwnerId: scope.ownerId, workerVersion: metadata.workerVersion,
+      capabilities: [...WORKER_CAPABILITIES], grant: credential.grant, workerToken: credential.workerToken,
+    }, signal));
+  } catch (error) {
+    // A definite refusal (another applicant's, expired or used grant) never registered anything:
+    // drop the saved grant so the next `pair` asks for a new one. Network faults keep it to reconcile.
+    if (error instanceof TransportError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)) {
+      vault.remove("worker");
+    }
+    throw error;
+  }
   signal?.throwIfAborted();
   if (response.ownerId !== scope.ownerId || response.workerId !== scope.workerId) throw new Error("BINDING_CHANGED");
   metadata = { ...metadata, status: "paired", revision: response.revision };

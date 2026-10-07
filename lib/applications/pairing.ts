@@ -39,6 +39,10 @@ export async function pairWorker(db: PrivateDb, input: PairRequest, options: Wor
     const now = nowAt(options), registrationHash = hashValue(command);
     const [pairing] = await tx.select().from(workerPairings).where(eq(workerPairings.grantHash, secretHash(command.grant)));
     if (!pairing || pairing.revokedAt !== null) fail(401, 'WORKER_UNAUTHORIZED', 'Invalid pairing grant.');
+    // A worker set up for one applicant must not consume, or register under, another applicant's grant.
+    if (command.expectedOwnerId !== undefined && command.expectedOwnerId !== pairing.ownerId) {
+      fail(409, 'OWNER_MISMATCH', 'This pairing grant was created for a different applicant.');
+    }
     const binding = await credentialBinding(tx, pairing.ownerId, options);
     const [existing] = await tx.select().from(workers).where(eq(workers.pairingId, pairing.id));
     if (!binding || pairing.credentialBinding !== binding) {
