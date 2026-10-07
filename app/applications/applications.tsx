@@ -17,7 +17,6 @@ const PolicyResponseSchema = z.strictObject({
   acceptedAt: z.string().nullable(), runnerAvailable: z.boolean(),
 });
 const label = (value: string) => value.replaceAll('_', ' ');
-const short = (value: string) => value.slice(0, 8);
 
 type View = {
   account: z.infer<typeof ApplicantSchema> | null;
@@ -238,41 +237,39 @@ export default function Applications() {
     </p>}
     {!view.locked && <>
       <section className={styles.section} aria-labelledby="status-heading">
-        <h2 id="status-heading">Execution status</h2>
+        <h2 id="status-heading">Status</h2>
         <div className={styles.row}>
           <span>{onlineWorkers.length ? `${onlineWorkers.length} worker${onlineWorkers.length === 1 ? '' : 's'} online` : 'No worker online'}</span>
-          <span>{view.policy?.enabled ? 'Policy enabled' : 'Policy disabled'}</span>
-          <span>{view.policy?.enabled && view.policy.runnerAvailable ? 'Execution available' : 'Waiting for worker'}</span>
+          <span className={styles.muted}>{view.policy?.enabled ? 'Policy enabled' : 'Policy disabled'}</span>
+          <Link href="/workers" prefetch={false}>Manage workers</Link>
         </div>
-        <p className={styles.muted}>The provider key is checked by the paired local worker when a run needs it; this page does not read or expose credentials.</p>
-      </section>
-      <section className={styles.section} aria-labelledby="counts-heading">
-        <div className={styles.row}><h2 id="counts-heading">Current queue</h2><Link href="/workers" prefetch={false}>Manage workers and runs</Link></div>
-        <div className={styles.row} aria-label="Application state counts">
-          {Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([state, count]) => <span key={state}>{label(state)}: {count}</span>)}
-          {!applications.length && <span className={styles.muted}>No applications yet.</span>}
-        </div>
+        {applications.length > 0 && <div className={styles.row} aria-label="Application state counts">
+          {Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([state, count]) =>
+            <span key={state}>{count} <span className={styles.muted}>{label(state)}</span></span>)}
+        </div>}
       </section>
       <section className={styles.section} aria-labelledby="history-heading">
-        <div className={styles.row}><h2 id="history-heading">Application history</h2><span className={styles.muted}>Latest {applications.length} records</span></div>
+        <h2 id="history-heading">History</h2>
         {!applications.length ? <p className={styles.muted}>Start a run from Workers after enabling a policy.</p> :
           <ul className={styles.applications} aria-label="Application history">
-            {applications.map((app) => <li key={app.id}>
-              <div className={styles.row}><strong>{app.company ?? 'Company pending official context'}</strong><span>{label(app.state)}</span></div>
-              <div className={styles.row}><span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>{app.ats} / {app.tenant}</span></div>
-              <div className={styles.row}><span className={styles.muted}>Application {short(app.id)} / run {short(app.runId)} / revision {app.revision}</span>
-                {app.checkpoint && <span className={styles.muted}>Checkpoint: {app.checkpoint.stage}</span>}</div>
-              <div className={styles.row}><span className={styles.muted}>Provider: worker-local configuration / cost: not reported</span>
-                {app.receiptId && <span>Receipt {app.receiptId}{app.submittedAt ? ` / ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
-              {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
-              {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
-              {app.state === 'needs_document' && app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3 && view.account &&
-                <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
-              {isAwaitingSubmitApproval(app.state, app.reasonCode) && view.account &&
-                <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
-              {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}
-                item={outreach.get(app.id)!} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
-            </li>)}
+            {applications.map((app) => {
+              const retry = app.state === 'needs_document' && !!app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3;
+              const approve = isAwaitingSubmitApproval(app.state, app.reasonCode);
+              return <li key={app.id}>
+                <div className={styles.row}><strong>{app.company ?? app.tenant}</strong><span className={styles.muted}>{label(app.state)}</span></div>
+                <div className={styles.row}><span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>{app.ats}</span>
+                  {app.receiptId && <span className={styles.muted}>Receipt {app.receiptId}{app.submittedAt ? `, ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
+                {/* The retry and approve panels explain their own hold, so the raw reason would repeat them. */}
+                {app.reasonCode && !retry && !approve && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
+                {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
+                {retry && view.account &&
+                  <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
+                {approve && view.account &&
+                  <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
+                {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}
+                  item={outreach.get(app.id)!} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
+              </li>;
+            })}
           </ul>}
       </section>
     </>}

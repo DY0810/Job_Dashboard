@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { TURSO_ENV, getDb, needsTurso } from '@/lib/db';
@@ -6,8 +7,10 @@ import { Calendar } from '../icons';
 import { Board } from './board';
 import { NotificationBell } from '../notification-bell';
 import { AppNav } from '../app-nav';
+import { ThemeToggle } from '../theme-toggle';
 
 export const dynamic = 'force-dynamic';
+export const metadata: Metadata = { title: 'Notes | Workie' };
 
 /**
  * Talkie: the shared notes board. Its own route rather than a `?tab=`: the job tabs are held
@@ -53,6 +56,7 @@ export default async function Talkie({
             ))}
           </div>
         </details>
+        <ThemeToggle />
         <NotificationBell />
       </header>
       <h1 className="board-title mt-6">Notes</h1>

@@ -296,13 +296,12 @@ export default function ProfileEditor() {
   }
   return <>
     <div className={styles.toolbar}><h1 className={styles.title}>Applicant profile</h1>
-      <Link href="/workers" prefetch={false}>Workers</Link>
       {!locked && writer && <p role="status" aria-live="polite" className={styles.muted}>
         {writer.status === 'saved' ? `Saved / revision ${snapshot?.revision}` : writer.status === 'saving' ? 'Saving...' :
           writer.status === 'conflict' ? 'Conflict / review required' : writer.status === 'paused' ? 'Saving paused' : 'Changes pending'}
         {session?.vault?.pending ? ' / Encrypting draft...' : ''}
       </p>}
-      {!locked && <button className={styles.button} type="button" onClick={retry} disabled={!!Object.keys(issues).length || writer?.status === 'conflict'}>Retry save</button>}
+      {!locked && writer?.status !== 'saved' && <button className={styles.button} type="button" onClick={retry} disabled={!!Object.keys(issues).length || writer?.status === 'conflict'}>Retry save</button>}
     </div>
     {locked && <section className={styles.alert}>
       <p role={checking ? 'status' : 'alert'}>{checking ? 'Checking applicant session...' : error || 'Profile locked.'}</p>
@@ -331,13 +330,15 @@ export default function ProfileEditor() {
           <button className={styles.button} onClick={() => writer?.reconcile(conflict, false)}>Use server profile</button>
         </div>
       </section>}
-      <section className={styles.section} aria-label="Review resume import">
-        <h2>Review resume import</h2>
-        <p>Paste a local resume extraction in JSON. Preview every change before adding it as an unconfirmed candidate. Existing answers stay intact.</p>
-        <label htmlFor="resume-import-json">Resume extraction JSON</label>
-        <textarea id="resume-import-json" value={resumeJson} rows={4} onChange={event => {
-          setResumeJson(event.target.value); setResumeReview(null); setResumeError('');
-        }} />
+      <details className={styles.section} aria-label="Review resume import">
+        <summary className={styles.muted}>Import from a resume extraction</summary>
+        <p className={styles.muted}>Paste a local resume extraction in JSON. Preview every change before adding it as an unconfirmed candidate. Existing answers stay intact.</p>
+        <div className={styles.field}>
+          <label htmlFor="resume-import-json">Resume extraction JSON</label>
+          <textarea id="resume-import-json" value={resumeJson} rows={4} onChange={event => {
+            setResumeJson(event.target.value); setResumeReview(null); setResumeError('');
+          }} />
+        </div>
         <div className={styles.row}><button className={styles.button} type="button" onClick={() => {
           try {
             const imported = importResumeCandidates(ProfileSchema.parse(profile), JSON.parse(resumeJson));
@@ -354,7 +355,7 @@ export default function ProfileEditor() {
             Add reviewed candidates
           </button>
         </>}
-      </section>
+      </details>
       <div className={styles.layout}>
         <nav className={styles.navigation} aria-label="Profile sections">
           {sections.map((key) => {

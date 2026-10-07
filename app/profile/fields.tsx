@@ -165,7 +165,8 @@ function FactField({ fact, meta, path, name, onChange, issues, documents }: {
     </div>
     {issue && <p id={`${id}-error`} className={styles.error} role="alert">{issue}</p>}
     <details className={styles.meta}>
-      <summary>Source: {fact.provenance.source} / {labelFor(fact.state)} / v{fact.version}</summary>
+      <summary>Details</summary>
+      <p>Source: {fact.provenance.source} / v{fact.version}</p>
       <p>Fact ID: {fact.id}</p>
       {fact.confirmedAt && <p>Confirmed: <time dateTime={fact.confirmedAt}>{new Date(fact.confirmedAt).toLocaleString()}</time></p>}
       {fact.provenance.sourceId && <p>Source: {fact.provenance.sourceId} / v{fact.provenance.sourceVersion}</p>}

@@ -62,12 +62,11 @@ export default function Settings() {
       <h1>Settings</h1><span className={styles.muted}>{account.email}</span>
       <button className={styles.button} type="button" onClick={() => void load()}>Refresh</button>
     </div>
-    <p className={styles.muted}>Execution stays disabled until the saved policy, paired worker, documents and provider checks all agree.</p>
     <section className={styles.section} aria-labelledby="provider-heading">
       <h2 id="provider-heading">Provider</h2>
-    <div className={styles.row}><strong>{configured ? 'Provider policy configured' : 'No provider selected'}</strong><span>{display(policy.policy.privacy)}</span></div>
-    <p className={styles.muted}>Provider keys are read only by the paired worker from its OS keychain. This page never reads, stores or displays them.</p>
-      <p><Link href="/profile" prefetch={false}>Edit provider and policy in Profile</Link></p>
+      <div className={styles.row}><span>{configured ? 'Provider policy configured' : 'No provider selected'}</span><span className={styles.muted}>{display(policy.policy.privacy)}</span>
+        <Link href="/profile" prefetch={false}>Edit in Profile</Link></div>
+      <p className={styles.muted}>Provider keys are read only by the paired worker from its OS keychain. This page never reads, stores or displays them.</p>
     </section>
     <section className={styles.section} aria-labelledby="budget-heading">
       <h2 id="budget-heading">Budget</h2>
@@ -80,9 +79,9 @@ export default function Settings() {
     </section>
     <section className={styles.section} aria-labelledby="runner-heading">
       <h2 id="runner-heading">Runner</h2>
-      <div className={styles.row}><span>{online.length ? `${online.length} worker${online.length === 1 ? '' : 's'} online` : 'No worker online'}</span><span>{policy.runnerAvailable ? 'Available' : 'Offline'}</span></div>
+      <div className={styles.row}><span>{online.length ? `${online.length} worker${online.length === 1 ? '' : 's'} online` : 'No worker online'}</span>
+        <Link href="/workers" prefetch={false}>Manage workers</Link></div>
       <p className={styles.muted}>The runner is a separate local process. Closing this page does not stop it; sleeping the host does.</p>
-      <p><Link href="/workers" prefetch={false}>Pair, start or revoke workers</Link></p>
     </section>
     <section className={styles.section} aria-labelledby="privacy-heading">
       <h2 id="privacy-heading">Privacy and account policy</h2>
@@ -91,7 +90,7 @@ export default function Settings() {
     </section>
     <section className={styles.section} aria-labelledby="support-heading">
       <h2 id="support-heading">Support and recovery</h2>
-      <p><Link href="/applications" prefetch={false}>View application history</Link> / <Link href="/inbox" prefetch={false}>Open answer inbox</Link></p>
+      <div className={styles.row}><Link href="/applications" prefetch={false}>Application history</Link><Link href="/inbox" prefetch={false}>Answer inbox</Link></div>
       <p className={styles.muted}>Receipt evidence is required for a sent status. A timeout or missing confirmation remains submission unknown and is never retried blindly.</p>
     </section>
   </>;

@@ -51,11 +51,11 @@ export default function Workers() {
   return <>
     <div className={styles.toolbar}>
       <h1>Workers</h1>
-      <Link href="/applications/import" prefetch={false}>Import browser marks</Link>
       {!view.locked && <span className={styles.muted}>{view.account?.email}</span>}
       <button type="button" className={styles.button} disabled={view.loading} onClick={() => void control.current?.refresh()}>
         Refresh status
       </button>
+      <Link href="/applications/import" prefetch={false}>Import browser marks</Link>
     </div>
     {view.loading && view.locked && <p role="status">Checking applicant session...</p>}
     {view.error && <p role="alert" className={styles.message}>{view.error}</p>}
@@ -107,7 +107,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
       </div>}
       {!view.workers?.pairings.length ? <p className={styles.muted}>No pairing grants.</p> :
         <ul className={styles.list} aria-label="Pairing grants">{view.workers.pairings.map((pairing) => <li key={pairing.id}>
-          <div><strong>{pairing.label}</strong><span className={styles.muted}> / {short(pairing.id)}</span></div>
+          <strong>{pairing.label}</strong>
           <span>{pairingStatus(pairing, view.now)}</span>
           <span className={styles.muted}>Expires {date(pairing.expiresAt)}</span>
           <div>{pairing.revokedAt === null && pairing.consumedAt === null &&
@@ -119,8 +119,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
       <h2 id="paired-heading">Paired workers</h2>
       {!workers.length ? <p className={styles.muted}>Unpaired / no workers.</p> : <ul className={styles.list} aria-label="Workers">
         {workers.map((worker) => <li key={worker.id}>
-          <div><strong>{worker.label}</strong><span className={styles.muted}> / {short(worker.id)}</span>
-            <div className={styles.muted}>Version {worker.workerVersion} / {worker.capabilities.join(', ')}</div></div>
+          <div><strong>{worker.label}</strong> <span className={styles.muted}>v{worker.workerVersion}</span></div>
           <span>{workerStatus(worker, view.now)}</span>
           <span className={styles.muted}>Last heartbeat {date(worker.lastSeenAt)}</span>
           <div>{worker.revokedAt === null && <button type="button" className={styles.button} disabled={disabled}
@@ -131,7 +130,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
     <section className={styles.section} aria-labelledby="runs-heading">
       <h2 id="runs-heading">Runs</h2>
       <p className={styles.muted}>
-        {view.policy?.enabled ? 'Policy intent enabled' : 'Policy disabled'} / {runnerAvailable ? 'Execution available' : 'Runner offline'}
+        {view.policy?.enabled ? 'Policy enabled' : 'Policy disabled'} / {runnerAvailable ? 'Runner online' : 'Runner offline'}
       </p>
       <form className={styles.form} onSubmit={(event) => { event.preventDefault(); void control.createRun(selected); }}>
         <label>Run worker
@@ -142,14 +141,14 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
           </select>
         </label>
         <button type="submit" className={styles.button} disabled={disabled || !selectedWorker || !view.policy?.enabled}>Create run</button>
-        <Link href="/profile#auto-apply-policy" prefetch={false}>Policy</Link>
+        <Link href="/profile#auto-apply-policy" prefetch={false}>Edit policy</Link>
       </form>
       {!runs.length ? <p className={styles.muted}>No runs.</p> : <ul className={styles.runs} aria-label="Runs">
         {runs.map((run) => <li key={run.id} aria-label={`Run ${short(run.id)}`}>
           <div className={styles.row}>
             <strong>Run {short(run.id)}</strong>
             <span>{label(run.state)}</span>
-            <span className={styles.muted}>Revision {run.revision} / {workers.find((w) => w.id === run.workerId)?.label ?? short(run.workerId)}</span>
+            <span className={styles.muted}>{workers.find((w) => w.id === run.workerId)?.label ?? short(run.workerId)}</span>
             <span className={styles.muted}>{date(run.createdAt)}</span>
           </div>
           <div className={styles.actions}>
@@ -174,11 +173,10 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
       {!view.runs?.applications.length ? <p className={styles.muted}>No applications.</p> :
         <ul className={styles.applications} aria-label="Application states">
           {view.runs.applications.map((app) => <li key={app.id} aria-label={`Application ${app.requisition}`}>
-            <div className={styles.row}><strong>{app.tenant} / {app.requisition}</strong>
-              <span className={styles.muted}>{app.ats} / Run {short(app.runId)} / Revision {app.revision}</span></div>
-            <div className={styles.row}><span>{label(app.state)}</span>
-              {app.reasonCode && <span className={styles.reason}>Reason: {app.reasonCode}</span>}
-              {app.checkpoint && <span className={styles.muted}>Checkpoint: {app.checkpoint.stage}</span>}
+            <div className={styles.row}><strong>{app.company ?? app.tenant}</strong>
+              <span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>Run {short(app.runId)}</span></div>
+            <div className={styles.row}><span className={styles.muted}>{label(app.state)}</span>
+              {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
             </div>
             <div className={styles.actions}>
               {applicationActions(app, runs.find((run) => run.id === app.runId)).map((action) =>
