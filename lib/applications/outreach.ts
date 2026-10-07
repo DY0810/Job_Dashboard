@@ -197,8 +197,15 @@ async function deliver(db: PrivateDb, ownerId: string, applicationId: string, ma
   if (!manual) {
     const [earlier] = await db.select({ id: applicationEvents.eventId }).from(applicationEvents).where(and(own(ownerId),
       ne(applicationEvents.applicationId, applicationId),
-      sql`json_extract(${applicationEvents.acknowledgement}, '$.outreach') = 'outcome'`,
-      sql`json_extract(${applicationEvents.acknowledgement}, '$.status') = 'sent'`,
+      // A send, or an attempt that may have gone out (in flight, or unconfirmed); never one that definitely failed.
+      // ponytail: read-then-claim, not a lock; two sweeps checking two roles in the same instant can still both pass.
+      sql`(json_extract(${applicationEvents.acknowledgement}, '$.outreach') = 'outcome'
+        and json_extract(${applicationEvents.acknowledgement}, '$.status') = 'sent'
+        or json_extract(${applicationEvents.acknowledgement}, '$.outreach') = 'attempt' and not exists (select 1
+          from private_application_event settled where settled.owner_id = ${applicationEvents.ownerId}
+          and settled.application_id = ${applicationEvents.applicationId}
+          and json_extract(settled.acknowledgement, '$.outreach') = 'outcome' and json_extract(settled.acknowledgement, '$.status') = 'failed'
+          and json_extract(settled.acknowledgement, '$.attempt') = json_extract(${applicationEvents.acknowledgement}, '$.attempt')))`,
       sql`json_extract(${applicationEvents.acknowledgement}, '$.to') = ${recipient.to}`,
       // The applicant approved knowing of earlier sends; only one since then holds it.
       queued ? gt(applicationEvents.createdAt, state.updatedAt) : undefined)).limit(1);
@@ -212,8 +219,9 @@ async function deliver(db: PrivateDb, ownerId: string, applicationId: string, ma
       if (!live.enabled || !live.policy.actions.includes('auto_send_recruiter_email')) {
         return hold('draft', 'awaiting_approval', recipient);
       }
-      await append(db, ownerId, applicationId, id(applicationId, 'approval', state.attempts, state.updatedAt, recipient.to),
-        { outreach: 'approval', ...recipient, sendAfter: state.draft.sendAfter ?? sendWindow(nowAt(options), 0), auto: true }, nowAt(options));
+      // Its own ID: the applicant's later Send must land as a new approval, not collide with this one.
+      await append(db, ownerId, applicationId, id(applicationId, 'approval', 'auto', state.attempts, state.updatedAt, recipient.to),
+        { outreach: 'approval', ...recipient, sendAfter: Math.max(state.draft.sendAfter ?? 0, sendWindow(nowAt(options), 0)), auto: true }, nowAt(options));
       return view((await read())!);
     }
   }
