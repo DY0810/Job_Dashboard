@@ -21,14 +21,18 @@ function store() {
 describe('personal board state', () => {
   it('persists checked and unchecked applications independently by stable posting ID', () => {
     const storage = store();
-    expect(readApplied(12, storage)).toBe(false);
-    expect(saveApplied(12, true, storage)).toBe(true);
-    expect(readApplied(12, storage)).toBe(true);
-    expect(readApplied(13, storage)).toBe(false);
-    expect(saveApplied(12, false, storage)).toBe(true);
-    expect(readApplied(12, storage)).toBe(false);
+    expect(readApplied(12, null, storage)).toBe(false);
+    expect(saveApplied(12, true, null, storage)).toBe(true);
+    expect(readApplied(12, null, storage)).toBe(true);
+    expect(readApplied(13, null, storage)).toBe(false);
+    expect(saveApplied(12, false, null, storage)).toBe(true);
+    expect(readApplied(12, null, storage)).toBe(false);
     storage.setItem(appliedKey(12), 'invalid');
-    expect(readApplied(12, storage)).toBe(false);
+    expect(readApplied(12, null, storage)).toBe(false);
+    expect(saveApplied(12, true, 'dy', storage)).toBe(true);
+    expect(readApplied(12, 'dy', storage)).toBe(true);
+    expect(readApplied(12, 'may', storage)).toBe(false);
+    expect(readApplied(12, null, storage)).toBe(false);
   });
 
   it('reports storage failure instead of claiming a preference or checkmark was saved', () => {
@@ -37,11 +41,11 @@ describe('personal board state', () => {
       setItem: () => { throw new Error('full'); },
       removeItem: () => { throw new Error('blocked'); },
     };
-    expect(readApplied(1, unavailable)).toBe(false);
+    expect(readApplied(1, null, unavailable)).toBe(false);
     expect(readDefaultFilters(unavailable)).toBeNull();
-    expect(saveApplied(1, true, unavailable)).toBe(false);
+    expect(saveApplied(1, true, null, unavailable)).toBe(false);
     expect(saveDefaultFilters(parseParams({ pay: 'paid' }), unavailable)).toBe(false);
-    expect(saveApplied(1, true, null)).toBe(false);
+    expect(saveApplied(1, true, null, null)).toBe(false);
   });
 
   it('restores entry, junior, mid and paid-or-unknown without stealing the tab, split, or drawer', () => {

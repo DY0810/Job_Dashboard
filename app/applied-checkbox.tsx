@@ -3,6 +3,12 @@
 import { useEffect, useState } from 'react';
 import { APPLIED_EVENT, appliedKey, readApplied, saveApplied } from './board-storage';
 
+// One request per page for every row; switching applicant reloads the page.
+let ownerRequest: Promise<string | null> | undefined;
+const activeOwner = () => ownerRequest ??= fetch('/api/auth/applicant', { credentials: 'same-origin', cache: 'no-store' })
+  .then(async (response) => response.ok ? (await response.json() as { ownerId: string }).ownerId : null)
+  .catch(() => null);
+
 export function AppliedCheckbox({
   postingId, title, company, compact = false,
 }: {
@@ -12,22 +18,33 @@ export function AppliedCheckbox({
   compact?: boolean;
 }) {
   const [applied, setApplied] = useState(false);
+  const [owner, setOwner] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const update = () => setApplied(readApplied(postingId));
+    let current: string | null = null;
+    let live = true;
+    const update = () => setApplied(readApplied(postingId, current));
     const storage = (event: StorageEvent) => {
-      if (event.key === null || event.key === appliedKey(postingId)) update();
+      if (event.key === null || event.key === appliedKey(postingId, current)) update();
     };
     const changed = (event: Event) => {
-      if ((event as CustomEvent<number>).detail === postingId) update();
+      // No detail (null): the sync moved old checks, so every row re-reads.
+      const detail = (event as CustomEvent<number | null>).detail;
+      if (detail == null || detail === postingId) update();
     };
-    update();
-    setReady(true);
+    void activeOwner().then((resolved) => {
+      if (!live) return;
+      current = resolved;
+      setOwner(resolved);
+      update();
+      setReady(true);
+    });
     window.addEventListener('storage', storage);
     window.addEventListener(APPLIED_EVENT, changed);
     return () => {
+      live = false;
       window.removeEventListener('storage', storage);
       window.removeEventListener(APPLIED_EVENT, changed);
     };
@@ -47,7 +64,7 @@ export function AppliedCheckbox({
           disabled={!ready}
           onChange={(event) => {
             const next = event.currentTarget.checked;
-            const saved = saveApplied(postingId, next);
+            const saved = saveApplied(postingId, next, owner);
             setError(!saved);
             if (!saved) return;
             setApplied(next);

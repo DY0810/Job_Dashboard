@@ -3,7 +3,9 @@ import { FILTERS, hasFilters, href, parseParams, type Params } from '../lib/para
 type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 const DEFAULTS_KEY = 'workie-default-filters';
 export const APPLIED_EVENT = 'workie-applied-change';
-export const appliedKey = (id: number) => `workie-applied:${id}`;
+/** Signed in, a check belongs to the applicant who made it; signed out it stays in this browser only. */
+export const appliedKey = (id: number, owner: string | null = null) =>
+  owner ? `workie-applied:${owner}:${id}` : `workie-applied:${id}`;
 
 function localStore(): Store | null {
   try {
@@ -13,19 +15,19 @@ function localStore(): Store | null {
   }
 }
 
-export function readApplied(id: number, store: Store | null = localStore()): boolean {
+export function readApplied(id: number, owner: string | null, store: Store | null = localStore()): boolean {
   try {
-    return store?.getItem(appliedKey(id)) === '1';
+    return store?.getItem(appliedKey(id, owner)) === '1';
   } catch {
     return false;
   }
 }
 
-export function saveApplied(id: number, applied: boolean, store: Store | null = localStore()): boolean {
+export function saveApplied(id: number, applied: boolean, owner: string | null, store: Store | null = localStore()): boolean {
   try {
     if (!store) return false;
-    if (applied) store.setItem(appliedKey(id), '1');
-    else store.removeItem(appliedKey(id));
+    if (applied) store.setItem(appliedKey(id, owner), '1');
+    else store.removeItem(appliedKey(id, owner));
     return true;
   } catch {
     return false;
