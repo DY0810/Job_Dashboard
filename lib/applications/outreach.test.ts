@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
 import { account, applicationArtifacts, applications, documents, policyHeads, policyVersions, user } from '../private-db/schema.ts';
-import { createEmptyPolicy, type Policy } from './policy.ts';
+import { createEmptyPolicy, PolicySchema, type Policy } from './policy.ts';
 import { hashValue } from './stores.ts';
 import { createPairing, pairWorker } from './pairing.ts';
 import { createRun, enqueueApplication } from './runs.ts';
@@ -73,7 +73,58 @@ afterEach(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();
 });
 
+async function setActions(actions: Policy['actions'], version: number) {
+  const policy: Policy = { ...createEmptyPolicy(), actions }, hash = hashValue(policy);
+  await db.insert(policyVersions).values({ ownerId: 'alice', version, hash, policy, createdAt: now });
+  await db.update(policyHeads).set({ revision: version, policyVersion: version, acceptedPolicyVersion: version, acceptedPolicyHash: hash })
+    .where(eq(policyHeads.ownerId, 'alice'));
+}
+
 describe('recruiter email after a verified submission', () => {
+  it('sends a verified recruiter email in its window without Send only when the policy turns that on', async () => {
+    expect(PolicySchema.safeParse({ ...createEmptyPolicy(), actions: ['auto_send_recruiter_email'] }).success).toBe(false);
+    await setActions(['email_recruiters', 'auto_send_recruiter_email'], 2);
+    const { token, app } = await application(), unknown = await application();
+    const window = sendWindow(now);
+    expect(await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'scheduled', to: 'jobs@employer.test', source: 'posting', sendAfter: window });
+    // No verified recruiter: still the applicant's call.
+    expect(await recordOutreachDraft(db, unknown.token, unknown.app.id, draft(), options)).toMatchObject({ status: 'draft', reason: 'no_recipient' });
+    expect(await sendDueOutreach(db, options)).toBe(0); // never on application day
+    now = window;
+    expect(await sendDueOutreach(db, options)).toBe(1);
+    expect(sent.map((item) => item.to)).toEqual(['jobs@employer.test']);
+  });
+
+  it('puts an email the policy queued back to waiting for Send once automatic sending is off', async () => {
+    await setActions(['email_recruiters', 'auto_send_recruiter_email'], 2);
+    const { token, app } = await application();
+    const queued = await recordOutreachDraft(db, token, app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    await setActions(['email_recruiters'], 3);
+    now = queued.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent).toEqual([]);
+    expect((await listOutreach(db, 'alice', options)).outreach[0])
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval', to: 'jobs@employer.test' });
+    expect(await sendOutreach(db, 'alice', app.id, { to: 'jobs@employer.test', name: null, now: true }, options))
+      .toMatchObject({ status: 'sent' });
+  });
+
+  it('sends nothing on its own while the policy is not enabled, like submit', async () => {
+    await setActions(['email_recruiters', 'auto_send_recruiter_email'], 2);
+    const first = await application(), second = await application();
+    const queued = await recordOutreachDraft(db, first.token, first.app.id, draft({ emails: ['jobs@employer.test'] }), options);
+    expect(queued).toMatchObject({ reason: 'scheduled' });
+    // Save without Enable, or Disable, clears the acceptance with it.
+    await db.update(policyHeads).set({ enabled: false, acceptedPolicyVersion: null, acceptedPolicyHash: null, acceptedAt: null })
+      .where(eq(policyHeads.ownerId, 'alice'));
+    expect(await recordOutreachDraft(db, second.token, second.app.id, draft({ emails: ['campus@employer.test'] }), options))
+      .toMatchObject({ status: 'draft', reason: 'awaiting_approval' });
+    now = queued.sendAfter!;
+    expect(await sendDueOutreach(db, options)).toBe(0);
+    expect(sent).toEqual([]);
+  });
+
   it('holds the draft for a recruiting address the posting names, sends it once the applicant presses Send, and notifies the inbox', async () => {
     const { token, app } = await application();
     const result = await recordOutreachDraft(db, token, app.id, draft({ emails: ['university-recruiting@employer.test'] }), options);

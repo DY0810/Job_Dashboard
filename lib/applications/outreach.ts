@@ -21,11 +21,11 @@ type Recipient = { to: string; name: string | null; title: string | null; source
 type Draft = { outreach: 'draft'; company: string; role: string; subject: string; body: string; emails: string[]; domains: string[];
   sendAfter?: number };
 type Attempt = Recipient & { outreach: 'attempt'; attempt: number };
-type Approval = Recipient & { outreach: 'approval'; sendAfter: number };
+type Approval = Recipient & { outreach: 'approval'; sendAfter: number; auto?: true };
 type Outcome = Partial<Recipient> & { kind: 'outreach'; outreach: 'outcome'; attempt: number | null;
   status: 'sent' | 'failed' | 'draft' | 'skipped'; reason: string | null };
 type Entry = (Draft | Attempt | Approval | Outcome) & { createdAt: number };
-type State = Omit<Outreach, 'contactedFor'> & { draft: Draft; attempts: number };
+type State = Omit<Outreach, 'contactedFor'> & { draft: Draft; attempts: number; autoApproved: boolean };
 export type OutreachSender = (addresses: string[]) => ((message: Outgoing) => Promise<void>) | null;
 export type OutreachOptions = WorkerOptions & { sender?: OutreachSender; fetch?: typeof fetch; resolveMx?: Resolver['resolveMx'];
   registryDomain?: typeof registryDomain };
@@ -122,7 +122,8 @@ function fold(applicationId: string, log: Entry[], now: number): State | null {
   const latest = moves.find((entry) => entry.outreach === 'outcome' && entry.status === 'sent') ?? moves.at(-1);
   const base = { applicationId, company: draft.company, role: draft.role, subject: draft.subject, body: draft.body,
     to: latest?.to ?? null, name: latest?.name ?? null, title: latest?.title ?? null, source: latest?.source ?? null,
-    updatedAt: latest?.createdAt ?? draft.createdAt, sendAfter: latest?.outreach === 'approval' ? latest.sendAfter : draft.sendAfter ?? null, draft, attempts: moves.filter((entry) => entry.outreach === 'attempt').length };
+    updatedAt: latest?.createdAt ?? draft.createdAt, sendAfter: latest?.outreach === 'approval' ? latest.sendAfter : draft.sendAfter ?? null, draft, attempts: moves.filter((entry) => entry.outreach === 'attempt').length,
+    autoApproved: latest?.outreach === 'approval' && latest.auto === true };
   if (!latest) return { ...base, status: 'draft', reason: null, sentAt: null };
   if (latest.outreach === 'approval') return { ...base, status: 'draft', reason: 'scheduled', sentAt: null };
   if (latest.outreach === 'attempt') return now - latest.createdAt < UNCONFIRMED_MS
@@ -137,10 +138,11 @@ function view(state: State, contactedFor: string | null = null): Outreach {
 }
 const enabled = async (db: PrivateDb, ownerId: string, now: number) =>
   (await getPolicy(db, ownerId, now)).policy.actions.includes('email_recruiters');
-/** Holds the email because recruiter email is off in the policy; Send again once it is back on. */
-async function holdDisabled(db: PrivateDb, ownerId: string, state: State, { to, name, title, source }: Recipient, now: number) {
-  await append(db, ownerId, state.applicationId, id(state.applicationId, 'hold', state.attempts, state.updatedAt, 'draft', 'outreach_disabled', to),
-    { kind: 'outreach', outreach: 'outcome', attempt: null, status: 'draft', reason: 'outreach_disabled', to, name, title, source }, now);
+/** Holds a queued email: recruiter email is off (Send again once it is back on), or automatic sending is off (press Send). */
+async function holdDisabled(db: PrivateDb, ownerId: string, state: State, { to, name, title, source }: Recipient, now: number,
+  reason = 'outreach_disabled') {
+  await append(db, ownerId, state.applicationId, id(state.applicationId, 'hold', state.attempts, state.updatedAt, 'draft', reason, to),
+    { kind: 'outreach', outreach: 'outcome', attempt: null, status: 'draft', reason, to, name, title, source }, now);
 }
 
 async function logs(db: PrivateDb, ownerId: string, applicationId?: string) {
@@ -202,8 +204,18 @@ async function deliver(db: PrivateDb, ownerId: string, applicationId: string, ma
       queued ? gt(applicationEvents.createdAt, state.updatedAt) : undefined)).limit(1);
     // A second role at the same employer never emails the same recruiter again on its own.
     if (earlier) return hold('skipped', 'already_contacted', recipient);
-    // Nothing is emailed on the applicant's behalf until they review the draft and press Send.
-    if (!queued) return hold('draft', 'awaiting_approval', recipient);
+    // Nothing is emailed on the applicant's behalf until they review the draft and press Send, unless their
+    // policy sends it for them; then it still waits for the draft's Tue–Thu window, and the cron sends it.
+    if (!queued) {
+      const live = await getPolicy(db, ownerId, nowAt(options));
+      // Like submit (runs.ts), only an enabled policy acts without a click.
+      if (!live.enabled || !live.policy.actions.includes('auto_send_recruiter_email')) {
+        return hold('draft', 'awaiting_approval', recipient);
+      }
+      await append(db, ownerId, applicationId, id(applicationId, 'approval', state.attempts, state.updatedAt, recipient.to),
+        { outreach: 'approval', ...recipient, sendAfter: state.draft.sendAfter ?? sendWindow(nowAt(options), 0), auto: true }, nowAt(options));
+      return view((await read())!);
+    }
   }
   const send = (options.sender ?? smtpSender)(await senderAddresses(db, ownerId));
   if (!send) return hold('draft', 'sender_not_configured', recipient);
@@ -258,8 +270,12 @@ export async function sendDueOutreach(db: PrivateDb, options: OutreachOptions = 
       const state = await current(db, ownerId, applicationId, options);
       if (state?.reason !== 'scheduled' || (state.sendAfter ?? Infinity) > now) continue; // still queued, and due
       // The applicant may have turned recruiter email off since approving it: hold it rather than send it weeks later.
-      if (!await enabled(db, ownerId, now)) {
-        await holdDisabled(db, ownerId, state, { to: state.to!, name: state.name, title: state.title, source: state.source! }, now);
+      const { enabled: active, policy: { actions } } = await getPolicy(db, ownerId, now);
+      const recipient: Recipient = { to: state.to!, name: state.name, title: state.title, source: state.source! };
+      if (!actions.includes('email_recruiters')) { await holdDisabled(db, ownerId, state, recipient, now); continue; }
+      // The policy queued it and automatic sending is off or the policy is disabled now: it waits for Send again.
+      if (state.autoApproved && !(active && actions.includes('auto_send_recruiter_email'))) {
+        await holdDisabled(db, ownerId, state, recipient, now, 'awaiting_approval');
         continue;
       }
       if ((await deliver(db, ownerId, applicationId, null, options, true)).status === 'sent') sent += 1;
