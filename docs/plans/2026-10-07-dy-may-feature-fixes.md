@@ -36,6 +36,17 @@ Test suites on clean `a506a25`: `npx vitest run --exclude '.claude/**'` → 1775
 
 ---
 
+## As built (2026-10-07, branch `fix/dy-may-applicant-isolation`)
+
+Tasks 1–4 Step 3 are done. Where the code differs from the snippets below, the code wins:
+
+- **Task 1** (afd4225, 34467b7): `activeOwner` lives in `app/board-storage.ts`, not the checkbox. Only a 401 means signed out (null); any other failure rejects and clears the cache so the next mount retries, and the checkbox stays disabled. The plan's `response.ok ? … : null` / `.catch(() => null)` would save a signed-in tick unscoped on a transient 503. `AppliedSync` ignores the sync's own no-detail "moved" event.
+- **Task 3** (5590bab, 8358cea): the auto approval's event id has an extra `'auto'` part (otherwise the applicant's Send collides with it and is dropped), and `sendAfter` uses the same `Math.max` floor as `sendOutreach`. The already-contacted check also counts another application's attempt to the same address that is in flight or unconfirmed (only a definite `send_failed` doesn't count), so overlapping cron runs or an unconfirmed send never lead to a second email.
+- **Task 4**: the full vitest run went from 1775 to 1785 tests.
+- **Rollback:** once anyone saves a policy with `auto_send_recruiter_email`, a build from before this change cannot parse it and that applicant's policy, runs and outreach fail to load. Untick it (Save or Disable) before rolling back.
+
+---
+
 ## File map
 
 | File                                     | Change                                                                                      |
@@ -81,7 +92,7 @@ All later paths are relative to `/Users/dyl/Workie/.claude/worktrees/dy-may-fixe
 - Modify: `app/applied-checkbox.tsx:1-55`
 - Test: `app/applied-sync.test.ts`, `app/board-storage.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `app/applied-sync.test.ts`:
 
@@ -197,12 +208,12 @@ expect(readApplied(12, "may", storage)).toBe(false);
 expect(readApplied(12, null, storage)).toBe(false);
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `npx vitest run app/applied-sync.test.ts app/board-storage.test.ts`
 Expected: FAIL. The new sync tests import DY's check as May's (or see 0 reported because the old `saveApplied` takes the owner as its store), and the owner isolation assertion fails.
 
-- [ ] **Step 3: Scope the storage keys** — `app/board-storage.ts`, replace `appliedKey`, `readApplied`, `saveApplied`:
+- [x] **Step 3: Scope the storage keys** — `app/board-storage.ts`, replace `appliedKey`, `readApplied`, `saveApplied`:
 
 ```ts
 /** Signed in, a check belongs to the applicant who made it; signed out it stays in this browser only. */
@@ -238,7 +249,7 @@ export function saveApplied(
 }
 ```
 
-- [ ] **Step 4: Sync only the active applicant's checks** — `app/applied-sync.tsx`
+- [x] **Step 4: Sync only the active applicant's checks** — `app/applied-sync.tsx`
 
 Change the import to `import { APPLIED_EVENT, appliedKey } from './board-storage';` and the store type to `type Store = Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'>;`. Then replace the body of `syncApplied` up to (not including) `const post = …`:
 
@@ -287,12 +298,12 @@ Replace the doc comment above it with:
  */
 ```
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 Run: `npx vitest run app/applied-sync.test.ts app/board-storage.test.ts`
 Expected: PASS, all tests.
 
-- [ ] **Step 6: Make the checkbox read and write the active applicant's key** — `app/applied-checkbox.tsx`
+- [x] **Step 6: Make the checkbox read and write the active applicant's key** — `app/applied-checkbox.tsx`
 
 Above `export function AppliedCheckbox`:
 
@@ -352,12 +363,12 @@ useEffect(() => {
 
 and in `onChange`: `const saved = saveApplied(postingId, next, owner);`
 
-- [ ] **Step 7: Type-check and lint**
+- [x] **Step 7: Type-check and lint**
 
 Run: `npx tsc --noEmit && npm run lint`
 Expected: no errors. `readApplied`/`saveApplied` have no other callers (`grep -rn "readApplied\|saveApplied" app lib tests`). `readLegacyMarks` and `tests/discovery-ui` use the unscoped key and are unaffected.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add app/board-storage.ts app/board-storage.test.ts app/applied-sync.tsx app/applied-sync.test.ts app/applied-checkbox.tsx
@@ -383,7 +394,7 @@ The browser check happens after deploy (Task 4, Step 4): no local dev server her
 - Modify: `worker/pairing.ts:1-6,49-55`
 - Test: `lib/applications/worker-server.test.ts`, `worker/runtime.check.mjs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `lib/applications/worker-server.test.ts`, inside `describe('hashed owner-approved pairings', …)`:
 
@@ -459,12 +470,12 @@ test("a refused grant is forgotten so the next pair asks for a new one", async (
 });
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `npx vitest run lib/applications/worker-server.test.ts -t "another applicant"; node --test worker/runtime.check.mjs`
 Expected: vitest FAILs, because the strict schema rejects the unknown `expectedOwnerId` with a ZodError, not `OWNER_MISMATCH`. The runtime check FAILs twice: `undefined !== 'synthetic-owner-a'`, and the refused grant is still saved (`vault.get("worker")` is not null).
 
-- [ ] **Step 3: Add the precondition to the protocol** — `lib/applications/worker-protocol.ts`:
+- [x] **Step 3: Add the precondition to the protocol** — `lib/applications/worker-protocol.ts`:
 
 ```ts
 export const PairRequestSchema = z.strictObject({
@@ -480,7 +491,7 @@ export const PairRequestSchema = z.strictObject({
 });
 ```
 
-- [ ] **Step 4: Refuse before anything is written** — `lib/applications/pairing.ts`, right after `if (!pairing || pairing.revokedAt !== null) fail(401, 'WORKER_UNAUTHORIZED', 'Invalid pairing grant.');`:
+- [x] **Step 4: Refuse before anything is written** — `lib/applications/pairing.ts`, right after `if (!pairing || pairing.revokedAt !== null) fail(401, 'WORKER_UNAUTHORIZED', 'Invalid pairing grant.');`:
 
 ```ts
 // A worker set up for one applicant must not consume, or register under, another applicant's grant.
@@ -496,7 +507,7 @@ if (
 }
 ```
 
-- [ ] **Step 5: Send it from the worker, and forget a refused grant** — `worker/pairing.ts`
+- [x] **Step 5: Send it from the worker, and forget a refused grant** — `worker/pairing.ts`
 
 Add `import { TransportError } from "./transport.ts";` and change the existing `import type { WorkerTransport } from "./transport.ts";` to keep it. Then replace the `const response = PairResponseSchema.parse(await transport.pair({ … }, signal));` statement with:
 
@@ -535,12 +546,12 @@ try {
 
 Keep the existing `BINDING_CHANGED` check after it: a server without this change still answers with the grant's owner.
 
-- [ ] **Step 6: Run the tests and watch them pass**
+- [x] **Step 6: Run the tests and watch them pass**
 
 Run: `npx vitest run lib/applications/worker-server.test.ts; npm run test:worker`
 Expected: PASS (worker: 103/103).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add lib/applications/worker-protocol.ts lib/applications/pairing.ts lib/applications/worker-server.test.ts worker/pairing.ts worker/runtime.check.mjs
@@ -568,7 +579,7 @@ Decided 2026-10-07: the applicant presses **Send** unless they turn automatic se
 - Modify: `docs/auto-apply-workflow.md:304`
 - Test: `lib/applications/outreach.test.ts`
 
-- [ ] **Step 1: Write the failing tests** — `lib/applications/outreach.test.ts`
+- [x] **Step 1: Write the failing tests** — `lib/applications/outreach.test.ts`
 
 Change the import to `import { createEmptyPolicy, PolicySchema, type Policy } from './policy.ts';`. Above `describe('recruiter email after a verified submission', …)` add:
 
@@ -627,12 +638,12 @@ Inside the `describe`:
   });
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `npx vitest run lib/applications/outreach.test.ts`
 Expected: the three new tests FAIL. `setActions` stores an action the schema doesn't know, so `getPolicy` fails to parse it, or the draft holds as `awaiting_approval` instead of `scheduled`. The other tests still PASS.
 
-- [ ] **Step 3: Add the policy action** — `lib/applications/policy.ts`
+- [x] **Step 3: Add the policy action** — `lib/applications/policy.ts`
 
 ```ts
   // email_recruiters: after a verified submission, email a recruiter from your own Gmail asking for a chat.
@@ -650,7 +661,7 @@ and in `superRefine`:
 
 Stored policies still parse: they only use the old values.
 
-- [ ] **Step 4: Mark and fold an approval the policy made** — `lib/applications/outreach.ts`
+- [x] **Step 4: Mark and fold an approval the policy made** — `lib/applications/outreach.ts`
 
 ```ts
 type Approval = Recipient & { outreach: 'approval'; sendAfter: number; auto?: true };
@@ -671,7 +682,7 @@ async function holdDisabled(db: PrivateDb, ownerId: string, state: State, { to, 
 }
 ```
 
-- [ ] **Step 5: Queue instead of holding when the policy says so** — in `deliver`, replace
+- [x] **Step 5: Queue instead of holding when the policy says so** — in `deliver`, replace
 
 ```ts
     // Nothing is emailed on the applicant's behalf until they review the draft and press Send.
@@ -695,7 +706,7 @@ with
     }
 ```
 
-- [ ] **Step 6: Re-check the switch when the cron sends** — in `sendDueOutreach`, replace
+- [x] **Step 6: Re-check the switch when the cron sends** — in `sendDueOutreach`, replace
 
 ```ts
       if (!await enabled(db, ownerId, now)) {
@@ -719,14 +730,14 @@ with
 
 `enabled` stays; `sendOutreach` still uses it.
 
-- [ ] **Step 7: Run the tests and watch them pass**
+- [x] **Step 7: Run the tests and watch them pass**
 
 Run: `npx vitest run lib/applications/outreach.test.ts && npx tsc --noEmit`
 Expected: PASS, all outreach tests (old ones unchanged: with the action off, nothing sends without Send), and types clean.
 
-- [ ] **Step 8: Update the doc** — `docs/auto-apply-workflow.md`, in "Recruiter email", after "Send now skips the wait." add: `With "Auto send recruiter email" on in the policy, a draft with a verified recipient is queued for that window without Send; turning it off puts those emails back to waiting for Send.`
+- [x] **Step 8: Update the doc** — `docs/auto-apply-workflow.md`, in "Recruiter email", after "Send now skips the wait." add: `With "Auto send recruiter email" on in the policy, a draft with a verified recipient is queued for that window without Send; turning it off puts those emails back to waiting for Send.`
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add lib/applications/policy.ts lib/applications/outreach.ts lib/applications/outreach.test.ts docs/auto-apply-workflow.md
@@ -744,7 +755,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 4: Full verification, PR, deploy check
 
-- [ ] **Step 1: Stop vitest collecting other worktrees** — `vitest.config.ts`:
+- [x] **Step 1: Stop vitest collecting other worktrees** — `vitest.config.ts`:
 
 ```ts
 import { configDefaults, defineConfig } from "vitest/config";
@@ -758,12 +769,12 @@ import { configDefaults, defineConfig } from "vitest/config";
   },
 ```
 
-- [ ] **Step 2: Run everything**
+- [x] **Step 2: Run everything**
 
 Run: `npm test && npm run test:worker && npx tsc --noEmit && npm run lint && npm run build`
-Expected: vitest all pass with 0 failures (6 more than before; under heavy machine load a real-process test such as `questions-http.test.ts` can time out, so rerun once before investigating), worker 103/103, and types, lint and build all clean.
+Expected: vitest all pass with 0 failures (10 more than before; under heavy machine load a real-process test such as `questions-http.test.ts` can time out, so rerun once before investigating), worker 103/103, and types, lint and build all clean.
 
-- [ ] **Step 3: Commit, push and open the PR**
+- [x] **Step 3: Commit, push and open the PR**
 
 ```bash
 cp /Users/dyl/Workie/docs/plans/2026-10-07-dy-may-feature-fixes.md docs/plans/   # the worktree's copy predates later edits
@@ -796,7 +807,7 @@ Only DY can do steps 2–4: Claude never handles grants or API keys. Run this on
 cd ~/Workie && git pull && export WORKIE_WORKER_ORIGIN=https://job-dashboard-one-sigma.vercel.app WORKIE_WORKER_OWNER=household-dy-v1 WORKIE_WORKER_DIRECTORY="$HOME/.local/share/workie-worker-dy" && umask 077 && mkdir -p "$WORKIE_WORKER_DIRECTORY" && npm run worker -- pair
 ```
 
-DY presses **Copy grant** and pastes it at the hidden prompt. If it prints `HTTP_409`, the grant was made under May: switch to DY, create a new grant and run `pair` again; it asks for the grant again.
+DY presses **Copy grant** and pastes it at the hidden prompt. If it prints `HTTP_409`, the grant was made under May: switch to DY, create a new grant and run `pair` again; it asks for the grant again. If `HTTP_409` repeats with a grant made under DY, start over with a fresh `WORKIE_WORKER_DIRECTORY`: this one's worker id is already registered.
 
 - [ ] **Step 3:** `WORKIE_PROVIDER_ID=byok:compatible npm run worker -- set-provider-key` (DY pastes his key), then `npm run worker -- start`.
 - [ ] **Step 4:** `/workers` shows the new worker Online. Press **Create run**: the paused run `31e85aae` is bound to the revoked worker.
