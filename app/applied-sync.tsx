@@ -2,29 +2,46 @@
 
 import { useEffect } from 'react';
 import { EXPECTED_APPLICANT_HEADER } from '../lib/applications/applicant-precondition';
-import { APPLIED_EVENT } from './board-storage';
+import { APPLIED_EVENT, appliedKey } from './board-storage';
 
 const SYNCED = 'workie-applied-synced';
-type Store = Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem'>;
+type Store = Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'>;
 
 /**
- * Reports board "applied" checks to the signed-in applicant's auto-apply, which then never applies
+ * Reports the active applicant's board "applied" checks to their auto-apply, which then never applies
  * to those jobs. It reuses the import preview/confirm endpoints. Server marks are permanent, so
- * unchecking stays in this browser; signed out, the checkbox stays browser-only as before.
+ * unchecking stays in this browser. Checks are stored per applicant because DY and May share a browser.
+ * Unscoped checks (signed out, or from before this change) are never reported automatically; the
+ * Applications page import can still report them on purpose.
  */
 export async function syncApplied(store: Store, request: typeof fetch = fetch, signal?: AbortSignal) {
-  const checked: number[] = [];
+  const ticked: string[] = [];
   for (let index = 0; index < store.length; index++) {
     const key = store.key(index);
-    if (key && /^workie-applied:[1-9]\d*$/.test(key) && store.getItem(key) === '1') checked.push(Number(key.slice('workie-applied:'.length)));
+    if (key?.startsWith('workie-applied:') && store.getItem(key) === '1') ticked.push(key);
   }
-  if (!checked.length) return 0;
+  if (!ticked.length) return 0;
   const init = { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal } as const;
   const account = await request('/api/auth/applicant', init);
   if (!account.ok) return 0;
   const { ownerId } = await account.json() as { ownerId: string };
   let synced: string[] = [];
   try { synced = JSON.parse(store.getItem(SYNCED) ?? '[]'); } catch { /* resend; confirming a mark twice is harmless */ }
+  const prefix = `workie-applied:${ownerId}:`, checked: number[] = [];
+  let moved = false;
+  for (const key of ticked) {
+    // A check from before checks were per applicant moves to the applicant it was already reported to.
+    const legacy = /^workie-applied:([1-9]\d*)$/.exec(key)?.[1];
+    if (legacy && synced.includes(`${ownerId}:${legacy}`)) {
+      store.setItem(appliedKey(Number(legacy), ownerId), '1');
+      store.removeItem(key);
+      moved = true;
+    }
+    const id = key.startsWith(prefix) ? key.slice(prefix.length) : '';
+    if (/^[1-9]\d*$/.test(id)) checked.push(Number(id));
+  }
+  // Same-tab storage writes fire no event; tell the rows to re-read.
+  if (moved && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(APPLIED_EVENT));
   const pending = checked.filter((id) => !synced.includes(`${ownerId}:${id}`)).slice(0, 1000);
   if (!pending.length) return 0;
   const post = async (path: string, body: unknown) => {
