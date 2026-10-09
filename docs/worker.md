@@ -5,19 +5,18 @@ Codex session. Closing a client does not stop it. Host sleep or disconnect is
 not continuous operation: a lost heartbeat, unsafe clock, expired lease, or
 revocation closes mutation authority. Nothing is installed as a service.
 
-The worker currently has qualified synthetic Greenhouse/Ashby, Lever, Jobvite,
-Workday, Oracle Candidate Experience and iCIMS browser fixtures, an
-owner-approved structured provider contract (TypeSafe Jev, local Ollama,
-OmniRoute-compatible and BYOK adapters), and immutable PDF/DOCX artifact
-verification. A master resume alone is not treated as tailored: the application
-stays at `needs_document` until a real edited artifact and verification manifest
-are persisted. Jev receives only redacted form shape and current action IDs; it
-does not write answers, edit documents, submit forms, or authorize an action. A
-choice below the 0.75 confidence floor, a stale observation, or a provider fault
-becomes resumable `provider_unavailable` state, and the worker can continue with
-the next application. iCIMS account creation and unapproved browser egress fail
-closed. TypeSafe is the only configured remote provider in the current owner
-policy. Local Ollama requires a numeric loopback endpoint; remote OmniRoute/BYOK
+The worker currently has a qualified Greenhouse browser adapter (any other ATS
+lands in `blocked_unsupported`/`adapter_unavailable`), an owner-approved
+structured provider contract (local Ollama, OmniRoute-compatible and BYOK
+adapters) used for tailoring, cover letters and outreach, and immutable PDF/DOCX
+artifact verification. A master resume alone is not treated as tailored: the
+application stays at `needs_document` until a real edited artifact and
+verification manifest are persisted. Filling is deterministic: the runner
+observes the form and fills confirmed answers; no model chooses the action. A
+low-confidence generation or a provider fault becomes resumable
+`provider_unavailable` state, and the worker can continue with the next
+application. Unapproved browser egress fails closed. Local Ollama requires a
+numeric loopback endpoint; remote OmniRoute/BYOK
 requires explicit consent and trusted non-unknown pricing, so it stays disabled
 until those settings are persisted. Fallback execution and hosted encrypted
 credential envelopes are not implemented. All ATS fixtures are synthetic; live
@@ -49,12 +48,9 @@ command-argument secret, credential enumeration, or volatile fallback. Store
 failure stops pairing before registration. Provider credentials must use a
 different purpose reference and never enter stage inputs.
 
-The TypeSafe key is read only by the paired local worker from the exact
-`Workie TypeSafe API` / `dongyeop0810@gmail.com` keychain entry when Jev is
-enabled. On September 21, 2026, a live synthetic canary read that entry and
-received `jev-1.13.0` with 401 input tokens and 32 output tokens; its state and
-labels were synthetic and no applicant, resume or employer data was sent. This
-does not qualify a production run or any employer submission.
+The TypeSafe Jev provider and its `Workie TypeSafe API` keychain entry were
+removed in October 2026; a stored `typesafe_jev` profile choice now yields a
+disabled (`none`) provider config.
 
 Compatible providers use the same schema-validated structured contract. The
 worker sends no tools, rejects truncated or malformed output, bounds requests
@@ -162,7 +158,6 @@ and checks before/after awaited operations detect these conditions.
 Compiled adapters receive `lease` and `guard`:
 
 - `guard.boundary(() => operation())` checks before and after awaited work.
-- `guard.mutate(() => operation())` also refuses reconciliation-only work.
 - Pass `guard.signal` to cancellable browser/provider operations.
 - Invoke the guard for **each** mutation, including after every awaited lookup;
   wrapping a whole multi-action callback is not sufficient.
@@ -192,7 +187,7 @@ Do not run one worker identity in two data directories/hosts.
 Ctrl-C or SIGTERM closes the local guard and stops the worker; a crashed worker
 loses the server lease. Restart with `start` to reconcile durable checkpoints.
 Network/protocol/credential faults exit visibly instead of running an
-unbounded retry loop. Provider and Jev decision faults are checkpointed as
+unbounded retry loop. Provider faults are checkpointed as
 `provider_unavailable` for explicit recovery; they do not authorize a fallback
 action. Retain the same data directory and keychain for recovery.
 
@@ -212,7 +207,6 @@ read-only reconciliation must prove the outcome.
 
 ```sh
 npm run test:worker
-npm run test:worker:keyring
 ```
 
 Normal tests use an injected in-memory credential backend, synthetic identities,
@@ -243,8 +237,8 @@ directory outside the checkout; tests remove their stores and stop child
 processes/listeners. The 120-second input deadline uses Node's experimental
 MockTimers in one test; process heartbeats and suspension use real time.
 
-`test:worker:keyring` only loads the native binding and inspects its declared
-export/method surface. No entry constructor or credential operation runs.
+CI no longer loads the real `@napi-rs/keyring` native binding; every check
+injects a fake backend and only `tsc` checks the declared Entry surface.
 The scripts do not prove real keychain persistence, Linux/Windows qualification,
 24/7 laptop availability or any live employer submission. The separate live
 synthetic canary above is not a substitute for a configured production pilot.

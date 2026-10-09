@@ -10,7 +10,6 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { chromium } from 'playwright';
 import { createBrowserRuntime } from '../../worker/browser.ts';
 import { createStageDispatch } from '../../worker/main.ts';
-import { createJevActionSelector } from '../../worker/jev.ts';
 import { artifactManifestHash } from '../../lib/applications/artifact-protocol.ts';
 import { postingContacts } from '../../worker/outreach.ts';
 
@@ -106,7 +105,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
     const applicationId = randomUUID(), runId = randomUUID(), master = masterDocx();
     const masterRef = { documentId: randomUUID(), version: 1, sha256: sha256(master), size: master.length, mime: DOCX, path: '/master' };
     const stored = new Map([[masterRef.documentId, master]]);
-    const calls = { tailor: [], letter: [], jev: 0, intents: [], submission: null, receipt: null, captured: null, outreach: [] };
+    const calls = { tailor: [], letter: [], intents: [], submission: null, receipt: null, captured: null, outreach: [] };
     const context = {
       protocolVersion: 1, applicationId, runId, ownerId: 'owner', policyRevision: 1, profileRevision: 1,
       identity: { ats: 'greenhouse', tenant: 'fixtureco', requisition: '4000001' }, company: 'Fixture Co', role: 'Software Engineering Intern',
@@ -166,9 +165,6 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
         conclusion: 'Thank you for considering my application.', companyParagraph: `${input.company} builds tools that students rely on every day.`,
         confidence: 0.9, model: 'fixture', usage };
     };
-    // A model that would park the form if it were ever asked.
-    const chooseAction = createJevActionSelector({ evaluate: async () => { calls.jev += 1; return { model: 'jev', usage,
-      answers: { select_action: { type: 'choice', choice: 'inspect', probabilities: { fill: 0, inspect: 1 }, confidence: 1 } } }; } });
     let submitPage; const submitPageOpened = new Promise(resolve => { submitPage = resolve; });
     const visible = {};
     const browser = async (options) => {
@@ -189,7 +185,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
     const dispatch = createStageDispatch(control, directory, signal, browser);
     let stageNow, advanced = [];
     const stage = (state) => { stageNow = state; return dispatch({ applicationId, runId, fence: 1, revision: 1, state, checkpoint: null },
-      { check() {} }, { signal, generate, chooseAction, advance: value => advanced.push(value) }); };
+      { check() {} }, { signal, generate, advance: value => advanced.push(value) }); };
     try {
       assert.deepEqual(await stage('screening'), { state: 'tailoring', reasonCode: 'screened' });
       // No master resume on the profile is a hold the applicant can clear and continue, not a provider failure.
@@ -235,7 +231,6 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       assert.deepEqual(visible, { filling: false, ready: true }, 'only the submit stage opens a window for the applicant');
       assert.deepEqual(advanced, [{ revision: 2, fence: 1, state: 'submitting' }], 'heartbeats move to the revision the intent created');
 
-      assert.equal(calls.jev, 0, 'a fully answered form is filled without a fill/inspect model call');
       assert.equal(calls.receipt.intentId, applicationId);
       assert.deepEqual(calls.receipt.identity, context.identity);
       assert.equal(calls.receipt.evidence.pageUrl, `${URL_BASE}${JOB}/confirmation`);

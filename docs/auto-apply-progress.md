@@ -1,5 +1,12 @@
 # Auto Apply Progress
 
+October 2026 removals (the sections below are history): the TypeSafe Jev
+provider and the fill/inspect action selector, the Ashby/Lever/Jobvite/Workday/
+Oracle/iCIMS stub adapters and `tests/auto-apply/controlled-flow.mjs`, the DOCX
+reference-PDF check, the worker focus-observer hook and `test:worker:keyring`
+were deleted. Filling is now observe-then-fill with no model call; a reopened
+login/verification intervention needs a new observer seam.
+
 ## TypeSafe Authorization
 
 September 21, 2026: the user requested Jev integration, installed the TypeSafe
@@ -102,9 +109,8 @@ live submission remain outstanding.
 September 21, 2026: the portable document runtime is implemented on
 `DY/workie-auto-apply`. Each source gets a versioned hash/anchor/frozen-text
 manifest; edits require confirmed evidence IDs and the original master hash.
-DOCX edits preserve the OOXML package and, when a reference PDF is supplied,
-qualify the source before editing and compare the rendered output's page,
-geometry, font and link signatures. Fixed-PDF editing is intentionally limited
+DOCX edits preserve the OOXML package. (The optional reference-PDF
+qualification described at the time was removed in October 2026.) Fixed-PDF editing is intentionally limited
 to printable-ASCII literals with unchanged byte width, extracted text and font
 resources; unsupported PDFs fail closed. Active PDF links are read from parsed
 Link annotations, not raw URI text matches. Python subprocesses receive no
@@ -115,7 +121,7 @@ ambient secrets and every attempt owns a private scratch directory.
 | Document checks | 5/5 substantive PASS; `npm run test:documents` |
 | Hostile/parallel behavior | Evidence binding, overflow/stale-master rejection and concurrent scratch isolation PASS |
 | Source checks | TypeScript, focused ESLint, Python compile and `git diff --check` PASS |
-| Environment boundary | Positive DOCX reference-render test skipped because this host's `soffice` wrapper has no LibreOffice binary; production fails closed when the renderer is unavailable |
+| Environment boundary | The DOCX reference-render test (skipped here for lack of LibreOffice) was removed with the reference-PDF check in October 2026 |
 
 No real applicant documents, provider requests, ATS submissions, production
 writes or deployments were performed. Phase 8 is now in progress; this
@@ -158,7 +164,7 @@ receipt, and fails closed for unsupported account creation or browser egress.
 | Accepted evidence | Result / reference |
 | --- | --- |
 | Existing ATS fixtures | 4/4 PASS; `npm run test:ats` |
-| Additional ATS fixtures | 2/2 PASS; `npm run test:e2e` covers Lever, Jobvite, Workday, Oracle and iCIMS |
+| Additional ATS fixtures | 2/2 PASS at the time; those adapters and `controlled-flow.mjs` were removed in October 2026 |
 | Source/runtime checks | Node 22 TypeScript, lint, build, whitespace, worker and document checks PASS; lint retains two pre-existing warnings |
 | Scope | Local synthetic forms and provider canary only; no live employer read, application submission, production write or deployment |
 

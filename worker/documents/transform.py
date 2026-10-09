@@ -202,41 +202,9 @@ def replace_paragraph(root: ET.Element, anchor: str, replacement: str) -> bool:
     return False
 
 
-def normalized_text(value: str) -> str:
-    return " ".join(value.split())
-
-
-def pdf_signature(value: dict[str, Any]) -> tuple[Any, ...]:
-    return (
-        value["pageCount"], value["pageGeometry"], value["fonts"],
-        value["fontDetails"], value["links"],
-    )
-
-
-def render_docx(input_path: Path, render_dir: Path) -> Path:
-    render_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    command("soffice", [
-        "--headless", "--norestore", "--nofirststartwizard", "--nodefault", "--nolockcheck",
-        "--convert-to", "pdf", "--outdir", str(render_dir), str(input_path),
-    ], 12.0)
-    candidate = render_dir / f"{input_path.stem}.pdf"
-    if not candidate.is_file():
-        fail("DOCX render did not produce a PDF")
-    return candidate
-
-
-def transform_docx(input_path: Path, output_path: Path, edits: list[dict[str, Any]], reference: str | None) -> dict[str, Any]:
+def transform_docx(input_path: Path, output_path: Path, edits: list[dict[str, Any]]) -> dict[str, Any]:
     files = read_zip(input_path)
     root = xml_root(files["word/document.xml"])
-    if reference:
-        source_pdf = render_docx(input_path, output_path.parent / "source-rendered")
-        source_info = inspect_pdf(source_pdf)
-        reference_info = inspect_pdf(safe_path(reference))
-        if (
-            pdf_signature(source_info) != pdf_signature(reference_info)
-            or normalized_text(source_info["text"]) != normalized_text(reference_info["text"])
-        ):
-            fail("DOCX source does not match reference PDF")
     for edit in edits:
         anchor = edit["anchorText"]
         replacement = edit["replacement"]
@@ -249,15 +217,7 @@ def transform_docx(input_path: Path, output_path: Path, edits: list[dict[str, An
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in files.items():
             archive.writestr(name, data)
-    rendered = None
-    if reference:
-        candidate = render_docx(output_path, output_path.parent / "rendered")
-        output_info = inspect_pdf(candidate)
-        source_info = inspect_pdf(output_path.parent / "source-rendered" / f"{input_path.stem}.pdf")
-        if pdf_signature(output_info) != pdf_signature(source_info):
-            fail("DOCX output changed fixed layout resources")
-        rendered = str(candidate)
-    return {"rendered": rendered}
+    return {"rendered": None}
 
 
 def pdf_literal(value: str) -> bytes:
@@ -295,7 +255,7 @@ def main() -> None:
         if not isinstance(edits, list) or len(edits) > 64:
             fail("invalid edit list")
         if fmt == "docx":
-            result = transform_docx(input_path, output_path, edits, request.get("reference"))
+            result = transform_docx(input_path, output_path, edits)
         elif fmt == "pdf":
             result = transform_pdf(input_path, output_path, edits)
         else:

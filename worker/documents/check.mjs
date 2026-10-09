@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { zipSync, strToU8 } from 'fflate';
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from './runtime.ts';
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF = 'application/pdf';
-const hasSoffice = spawnSync('soffice', ['--version'], { stdio: 'ignore' }).status === 0;
 const evidence = () => ({ id: crypto.randomUUID(), confirmed: true, excerpt: 'Confirmed synthetic evidence.' });
 
 function syntheticDocx(doubleSpace = false) {
@@ -68,15 +66,6 @@ test('DOCX edits reject missing evidence, overflow and stale masters before invo
   await assert.rejects(tailorDocument({ bytes, mime: DOCX, manifest, request: { ...base, masterHash: 'a'.repeat(64) } }), /MASTER_HASH_MISMATCH/);
   await assert.rejects(tailorDocument({ bytes, mime: DOCX, manifest, request: { ...base, edits: [{ ...base.edits[0], replacement: 'Build SDKs', evidenceIds: [crypto.randomUUID()] }] } }), /UNCONFIRMED_EVIDENCE/);
   await assert.rejects(tailorDocument({ bytes, mime: DOCX, manifest, request: { ...base, edits: [{ ...base.edits[0], replacement: 'Build APIs' }] } }), /NO_SUBSTANTIVE_EDIT/);
-});
-
-test('DOCX tailoring rejects a source that does not match its reference PDF', { skip: !hasSoffice }, async () => {
-  const bytes = syntheticDocx(), manifest = await createTemplateManifest(bytes, DOCX, 'role');
-  const item = evidence();
-  await assert.rejects(tailorDocument({ bytes, mime: DOCX, manifest, referenceBytes: syntheticPdf(), request: {
-    role: 'role', masterHash: manifest.sourceHash, evidence: [item],
-    edits: [{ anchorId: manifest.anchors[0].id, replacement: 'Build SDKs', evidenceIds: [item.id] }],
-  } }), /DOCX source does not match reference PDF/);
 });
 
 test('fixed PDF editing preserves the exact byte width, page count and active link targets', async () => {

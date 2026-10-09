@@ -613,7 +613,9 @@ Resume Tailoring section. Original scripts are research inputs, not runtime impo
    PDF and fonts. Patch only approved text anchors while preserving OOXML
    structure/styles/relationships, then render with a pinned LibreOffice
    process and unique user-profile directory. Qualify the unchanged source
-   against the reference PDF first. This adapter is new work, not a capability
+   against the reference PDF first. (October 2026: the partial reference-PDF
+   check was removed as unused; this step is unimplemented again by deliberate
+   scope cut.) This adapter is new work, not a capability
    supplied by the old scripts. Unqualified/unsupported sources require a
    compatible source/template through `needs_document`; never silently reflow.
 6. Run document conversion in a constrained, network-disabled environment,
@@ -727,9 +729,9 @@ the Lever/Jobvite entries in the authorization matrix.
 **What to implement**
 
 1. Copy the qualified adapter structure, state guards and receipt contract into
-   `/Users/dyl/Workie/worker/ats/lever.ts` and
-   `/Users/dyl/Workie/worker/ats/jobvite.ts`. Only selectors/question mappings
-   established by form inspection become adapter facts.
+   new `worker/ats/lever.ts` and `worker/ats/jobvite.ts` adapters (the earlier
+   fixture-only stubs were deleted in October 2026). Only selectors/question
+   mappings established by form inspection become adapter facts.
 2. Cover tenant variations, custom/repeated fields, multi-step validation,
    uploads and permitted existing sessions. Treat source/contact-address fields
    as context-specific rather than changing the master applicant email.
@@ -1025,6 +1027,8 @@ resume generation or the first two adapters. The release record must contain:
 - Live receipt references if a pilot was authorized; otherwise no live-submit claim.
 
 ## Optional Jev Experiment
+
+October 2026: the Jev provider and action selector were removed; this section is history.
 
 Only after the baseline passes Phase 12 and profiling shows decision inference is
 a material bottleneck. Read D9 again; current terms/cost/account access must be

@@ -130,11 +130,11 @@ test("monotonic lease guard rejects sleep, wall jumps, expired leases, identity 
   const guard = createLeaseGuard(value, scope, 0, clock(), clock);
   guard.check();
   let mutations = 0;
-  await guard.mutate(() => { mutations++; });
+  await guard.boundary(() => { mutations++; });
   assert.equal(mutations, 1);
   wall += 3000;
   assert.throws(() => guard.check(), /CLOCK_UNSAFE/);
-  await assert.rejects(guard.mutate(() => { mutations++; }));
+  await assert.rejects(guard.boundary(() => { mutations++; }));
   assert.equal(mutations, 1);
   for (const delta of [31000, 121000]) {
     mono = 0; wall = 0;
@@ -149,14 +149,10 @@ test("monotonic lease guard rejects sleep, wall jumps, expired leases, identity 
   assert.throws(() => g.renew({ ...value, policyRevision: 2 }, 0, clock()), /BINDING_CHANGED/);
 });
 
-test("guard revocation after an await prevents the following mutation and reconciliation is read-only", async () => {
+test("guard revocation after an await prevents the following mutation", async () => {
   const g = createLeaseGuard(lease(), scope, 0, { mono: 0, wall: 0 }, () => ({ mono: 0, wall: 0 }));
   let writes = 0;
   await assert.rejects(g.boundary(async () => { g.revoke("STOPPED"); }));
-  await assert.rejects(g.mutate(() => { writes++; }));
-  assert.equal(writes, 0);
-  const readOnly = createLeaseGuard({ ...lease(), mode: "reconcile", state: "submission_unknown" },
-    scope, 0, { mono: 0, wall: 0 }, () => ({ mono: 0, wall: 0 }));
-  await assert.rejects(readOnly.mutate(() => { writes++; }), /RECONCILIATION_ONLY/);
+  await assert.rejects(g.boundary(() => { writes++; }));
   assert.equal(writes, 0);
 });

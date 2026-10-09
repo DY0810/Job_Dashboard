@@ -39,7 +39,6 @@ export type AtsValue = string | boolean | string[];
 export type AtsApplication = {
   identity: AtsIdentity; company: string; role: string; applicationUrl: string;
   answers: Record<string, AtsValue>; documents: Record<string, string>;
-  accountPolicy?: 'skip_new_accounts' | 'existing_only' | 'allow_new_with_consent';
   manifestHash?: string; artifactHashes?: string[]; submissionIntentId?: string;
 };
 

@@ -15,8 +15,7 @@ import type { PrivateStore } from "./storage.ts";
 import { TransportError } from "./transport.ts";
 import type { WorkerTransport } from "./transport.ts";
 import { QuestionBatchSchema } from "../lib/applications/question-protocol.ts";
-import { questionClient, QuestionDispatchSchema, abortable, type FocusObserver } from "./question-client.ts";
-import type { JevActionSelector } from "./jev.ts";
+import { questionClient, QuestionDispatchSchema, abortable } from "./question-client.ts";
 import type { StructuredGenerationResult, StructuredTaskInput } from "./providers.ts";
 
 const transient = (error: unknown) => error instanceof TransportError && (error.message === "NETWORK_UNAVAILABLE" || error.status >= 500);
@@ -38,12 +37,12 @@ const DispatchResultSchema = z.union([QuestionDispatchSchema, z.strictObject({
 type DispatchResult = z.infer<typeof DispatchResultSchema>;
 export type StructuredGenerator = (input: StructuredTaskInput, options?: { signal?: AbortSignal; runId?: string }) => Promise<StructuredGenerationResult>;
 export type StageDispatchContext = {
-  signal: AbortSignal; chooseAction?: JevActionSelector; generate?: StructuredGenerator;
+  signal: AbortSignal; generate?: StructuredGenerator;
   /** Record a server transition made under this lease (a submission intent) so heartbeats keep it alive. */
   advance?: (value: Pick<Lease, "revision" | "fence" | "state">) => void;
 };
 export type StageDispatch = (lease: Lease, guard: LeaseGuard, context: StageDispatchContext) => Promise<DispatchResult>;
-export type WorkerSetup = (transport: WorkerTransport, signal: AbortSignal) => Promise<{ chooseAction?: JevActionSelector; generate?: StructuredGenerator; dispatch?: StageDispatch }>;
+export type WorkerSetup = (transport: WorkerTransport, signal: AbortSignal) => Promise<{ generate?: StructuredGenerator; dispatch?: StageDispatch }>;
 export const unsupportedStage: StageDispatch = async () => ({
   state: "blocked_unsupported", reasonCode: "adapter_unavailable",
 });
@@ -51,8 +50,8 @@ export const unsupportedStage: StageDispatch = async () => ({
 export async function runWorker(options: {
   scope: WorkerScope; store: PrivateStore;
   transport: WorkerTransport | (() => Promise<WorkerTransport>); signal: AbortSignal;
-  dispatch?: StageDispatch; chooseAction?: JevActionSelector; generate?: StructuredGenerator; configure?: WorkerSetup;
-  clock?: () => ClockSample; observeFocus?: FocusObserver;
+  dispatch?: StageDispatch; generate?: StructuredGenerator; configure?: WorkerSetup;
+  clock?: () => ClockSample;
   status?: (status: "idle" | "active" | "waiting" | "reconciliation-required" | "stopped") => void;
 }) {
   const { scope, store } = options;
@@ -72,7 +71,6 @@ export async function runWorker(options: {
   signal.addEventListener("abort", stop);
   let journal: z.infer<typeof JournalSchema>;
   let transport: WorkerTransport;
-  let chooseAction = options.chooseAction;
   let generate = options.generate;
   let dispatch = options.dispatch ?? unsupportedStage;
   try {
@@ -80,7 +78,6 @@ export async function runWorker(options: {
     transport = typeof options.transport === "function" ? await options.transport() : options.transport;
     if (options.configure) {
       const configured = await options.configure(transport, signal);
-      chooseAction = configured.chooseAction ?? chooseAction;
       generate = configured.generate ?? generate;
       dispatch = configured.dispatch ?? dispatch;
     }
@@ -141,7 +138,7 @@ export async function runWorker(options: {
       });
     }
   })().catch(error => { if (!signal.aborted) fail(error); });
-  const questions = questionClient({ scope, store, transport, signal, observeFocus: options.observeFocus });
+  const questions = questionClient({ scope, store, transport, signal });
   let interventions = Promise.resolve();
   try {
     await questions.recoverBatch();
@@ -193,7 +190,7 @@ export async function runWorker(options: {
       if (!SAFE_STAGES.includes(lease.state as typeof SAFE_STAGES[number])) throw new Error("INVALID_STAGE");
       options.status?.("active");
       const result = DispatchResultSchema.parse(await abortable(
-        guard.boundary(() => dispatch(lease, guard, { signal, chooseAction, generate, advance: value => {
+        guard.boundary(() => dispatch(lease, guard, { signal, generate, advance: value => {
           guard.advance(value);
           if (active?.guard === guard) active.lease = { ...active.lease, ...value };
         } })), signal,

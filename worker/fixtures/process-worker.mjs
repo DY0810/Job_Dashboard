@@ -24,7 +24,7 @@ try {
     dispatch: async (lease, guard) => {
       while (!controller.signal.aborted) {
         await guard.boundary(() => sleep(100, undefined, { signal: guard.signal }));
-        await guard.mutate(() => appendFile(join(config.directory, "mutations"), "synthetic\n", { mode: 0o600 }));
+        await guard.boundary(() => appendFile(join(config.directory, "mutations"), "synthetic\n", { mode: 0o600 }));
       }
       return { state: "blocked_unsupported", reasonCode: "fixture_finished" };
     },

@@ -10,27 +10,16 @@ import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, S
 import { readMaskedGrant, readMaskedSecret } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
 import { createBrowserRuntime } from "./browser.ts";
-import { ashby } from "./ats/ashby.ts";
 import { greenhouse, greenhouseAnswer } from "./ats/greenhouse.ts";
 import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
 import { screenApplication, screeningQuestions, formQuestions } from "./screening.ts";
 import { AtsError } from "./ats/protocol.ts";
 import { AtsIdentitySchema, atsFieldKey, formQuestionKey, undergraduateTranscript, type AtsApplication } from "./ats/protocol.ts";
-import { lever } from "./ats/lever.ts";
-import { jobvite } from "./ats/jobvite.ts";
-import { workday } from "./ats/workday.ts";
-import { oracle } from "./ats/oracle.ts";
-import { icims } from "./ats/icims.ts";
 import type { StageDispatch, StructuredGenerator } from "./runtime.ts";
 import type { StructuredGenerationResult } from "./providers.ts";
-import { createJevActionSelector, type JevActionSelector } from "./jev.ts";
+import { createStructuredProvider, ProviderError, storeProviderApiKey, structuredBudgetLedger } from "./providers.ts";
 import {
-  createStructuredProvider, createTypesafeProvider, ProviderError, StructuredTaskInputSchema, storeProviderApiKey,
-  typesafeBudgetLedger, structuredBudgetLedger, type TypesafeProvider,
-} from "./providers.ts";
-import type { StructuredProvider } from "./providers.ts";
-import {
-  BYOK_PROVIDER_ID, LOCAL_OLLAMA_PROVIDER_ID, OMNIROUTE_PROVIDER_ID, TYPESAFE_ENDPOINT,
+  BYOK_PROVIDER_ID, LOCAL_OLLAMA_PROVIDER_ID, OMNIROUTE_PROVIDER_ID,
   ProviderCapabilitySchema, type ProviderCapability, type ProviderConfig,
 } from "../lib/applications/provider-protocol.ts";
 import type { ApplicationContext } from "../lib/applications/application-context-protocol.ts";
@@ -56,53 +45,8 @@ const ERROR_CODES = new Set([
   "PROVIDER_RESERVATION_MISSING", "PROVIDER_LOW_CONFIDENCE", "PROVIDER_POLICY_INVALID", "PROVIDER_CAPABILITY_MISMATCH", "INVALID_PROVIDER_ENDPOINT", "FETCH_UNAVAILABLE",
   "PROVIDER_FALLBACK_UNSUPPORTED", "PROVIDER_UNKNOWN_COST", "PROVIDER_AUTH_UNAVAILABLE", "PROVIDER_QUOTA_EXCEEDED",
   "PROVIDER_CREDENTIAL_INVALID", "PROVIDER_MODEL_INVALID", "PROVIDER_ID_INVALID", "LOCAL_PROVIDER_POLICY_INVALID", "LOCAL_PROVIDER_ENDPOINT_REQUIRED",
-  "REMOTE_PROVIDER_ENDPOINT_INVALID", "ACCOUNT_CREATION_BLOCKED",
+  "REMOTE_PROVIDER_ENDPOINT_INVALID",
 ]);
-
-export function createConfiguredJevActionSelector(
-  scope: WorkerScope, config: ProviderConfig, providerStore: PrivateStore, credentialBackend: CredentialBackend,
-  fetchImpl?: typeof fetch,
-) {
-  const provider = createConfiguredJevProvider(scope, config, providerStore, credentialBackend, fetchImpl);
-  return provider ? createJevActionSelector(provider) : undefined;
-}
-
-export function createConfiguredJevProvider(
-  scope: WorkerScope, config: ProviderConfig, providerStore: PrivateStore, credentialBackend: CredentialBackend,
-  fetchImpl?: typeof fetch,
-): TypesafeProvider | undefined {
-  if (!config.enabled || config.provider !== "typesafe_jev") return undefined;
-  return createTypesafeProvider({
-    scope, approvedOwnerId: config.ownerId,
-    policy: {
-      enabled: config.enabled, privacy: config.privacy,
-      remoteProviderConsent: config.remoteProviderConsent,
-      allowedProviders: config.allowedProviders, fallbackOrder: config.fallbackOrder,
-      budget: { currency: "USD", maxUsd: config.maxUsd },
-    },
-    ledger: typesafeBudgetLedger(providerStore), credentialBackend,
-    endpoint: config.endpoint ?? TYPESAFE_ENDPOINT, fetchImpl,
-  });
-}
-
-export function createStructuredActionSelector(provider: StructuredProvider): JevActionSelector {
-  return async (input, options = {}) => {
-    const ids = input.actions.map((item) => item.id);
-    if (ids.length === 1) {
-      if (options.isCurrent && !options.isCurrent(ids)) throw new ProviderError("PROVIDER_DECISION_STALE");
-      return { actionId: ids[0], confidence: 1, probabilities: { [ids[0]]: 1 }, model: "deterministic", usage: { input_tokens: 0, output_tokens: 0 } };
-    }
-    const result = await provider.generate(StructuredTaskInputSchema.parse({
-      task: "interpret_form", fields: input.state.fields, observedActions: ids,
-    }), { signal: options.signal, runId: options.runId });
-    if (options.isCurrent && !options.isCurrent(ids)) throw new ProviderError("PROVIDER_DECISION_STALE");
-    if (result.task !== "interpret_form" || !ids.includes(result.actionId)) throw new ProviderError("PROVIDER_INVALID_DECISION");
-    const minConfidence = options.minConfidence ?? 0.75;
-    if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) throw new ProviderError("PROVIDER_POLICY_INVALID");
-    if (result.confidence < minConfidence) throw new ProviderError("PROVIDER_LOW_CONFIDENCE");
-    return { actionId: result.actionId, confidence: result.confidence, probabilities: { [result.actionId]: 1 }, model: result.model, usage: result.usage };
-  };
-}
 
 const PROVIDER_CAPABILITY_CACHE = "provider-capability";
 const PROVIDER_CAPABILITY_TTL_MS = 24 * 60 * 60_000;
@@ -224,7 +168,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }
       throw error;
     }
-    const adapters = { greenhouse, ashby, lever, jobvite, workday, oracle, icims } as const;
+    const adapters = { greenhouse } as const;
     const adapter = adapters[applicationContext.identity.ats as keyof typeof adapters];
     if (!adapter) return { state: "blocked_unsupported" as const, reasonCode: "adapter_unavailable" };
     const identity = AtsIdentitySchema.parse(applicationContext.identity);
@@ -385,7 +329,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }
       if (lease.state === "filling") {
         const result = await fillAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
-          requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId });
+          requirements: applicationContext.requirements, signal, runId: lease.runId });
         if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
         if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
         if (letter) await control.letter(lease.applicationId, { protocolVersion: 1, introduction: letter.introduction,
@@ -394,7 +338,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         return { state: "needs_policy_decision" as const, reasonCode: SUBMIT_APPROVAL };
       }
       const result = await runAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
-        requirements: applicationContext.requirements, chooseAction: context.chooseAction, signal, runId: lease.runId, submission: {
+        requirements: applicationContext.requirements, signal, runId: lease.runId, submission: {
           begin: async ({ intentId, identity, company, role, manifestHash, artifactHashes }) => {
             submissionStarted = true;
             const intent = await control.submissionIntent(lease.applicationId, { protocolVersion: 1, intentId, fence: lease.fence,
@@ -430,9 +374,6 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       return { state: "retryable_failure" as const, reasonCode: "application_failed" };
     } catch (error) {
       if (signal.aborted) throw error;
-      if (error instanceof AtsError && error.code === "PROVIDER_INSPECT_SELECTED") {
-        return { state: "needs_verification" as const, reasonCode: "provider_inspect_required" };
-      }
       const providerFailure = providerFailureResult(error);
       if (providerFailure) return providerFailure;
       if (error instanceof AtsError && /REQUIRED_ANSWER|ANSWER_/.test(error.code)) {
@@ -558,37 +499,20 @@ export async function main(args = process.argv.slice(2)) {
       }
       if (!providerConfig.enabled) return {};
       const providerStore = await privateStore(directory, { ...scope, workerId: `${scope.workerId}:provider` });
-      const configuredFor = (current: ProviderConfig): { chooseAction?: JevActionSelector; generate?: StructuredGenerator; check?: CapabilityChecker } | null => {
-        if (!current.enabled) return null;
-        if (current.provider === "typesafe_jev") {
-          const provider = createConfiguredJevProvider(scope, current, providerStore, backend);
-          return provider ? { chooseAction: createJevActionSelector(provider), check: provider } : null;
-        }
-        const provider = createConfiguredStructuredProvider(scope, current, providerStore, backend);
-        return provider ? { chooseAction: createStructuredActionSelector(provider), generate: provider.generate, check: provider } : null;
-      };
       const configuredForChecked = async (current: ProviderConfig, checkSignal?: AbortSignal) => {
-        const configured = configuredFor(current);
-        if (!configured) return null;
-        if (configured.check) await ensureProviderCapability(current, configured.check, providerStore, checkSignal);
-        return configured;
-      };
-      const chooseAction: JevActionSelector = async (input, options) => {
-        const current = await control.providerConfig(options?.signal);
-        const configured = input.actions.length > 1
-          ? await configuredForChecked(current, options?.signal)
-          : configuredFor(current);
-        if (!configured?.chooseAction) throw new ProviderError("PROVIDER_DISABLED");
-        return configured.chooseAction(input, options);
+        const provider = current.enabled ? createConfiguredStructuredProvider(scope, current, providerStore, backend) : undefined;
+        if (!provider) return null;
+        await ensureProviderCapability(current, provider, providerStore, checkSignal);
+        return provider;
       };
       const generate: StructuredGenerator = async (input, options) => {
         const current = await control.providerConfig(options?.signal);
         const configured = await configuredForChecked(current, options?.signal);
-        if (!configured?.generate) throw new ProviderError("PROVIDER_DISABLED");
+        if (!configured) throw new ProviderError("PROVIDER_DISABLED");
         return configured.generate(input, options);
       };
       const dispatch = createStageDispatch(control, directory, signal);
-      return { chooseAction, generate, dispatch };
+      return { generate, dispatch };
     };
     await runWorker({ scope, store, transport, configure: setup,
       signal: controller.signal, status: status => process.stdout.write(JSON.stringify({ status }) + "\n") });

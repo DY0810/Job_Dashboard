@@ -24,12 +24,6 @@ try {
     dispatch: config.mode === "register" ? async lease => lease.requisition === "ask" && !lease.checkpoint
       ? { kind: "questions", expectedProfileRevision: 0, company: "Synthetic", role: "Engineer", questions: [config.descriptor] }
       : { state: "blocked_unsupported", reasonCode: "adapter_unavailable" } : undefined,
-    observeFocus: config.mode === "observe" ? async command => ({
-      result: "observed", reason: null, observation: {
-        kind: command.descriptor.kind === "needs_login" ? "login_complete" : "verification_complete",
-        ats: "fixture", tenant: "synthetic", requisition: "ask", observedAt: Date.now(),
-      },
-    }) : undefined,
   });
 } catch {
   process.stderr.write('{"error":"fixture_worker_failed"}\n');

@@ -326,7 +326,7 @@ it('real Node 22 process releases question waits, progresses other work and resu
   expect(await f.store.read('lock')).toBeNull();
 }, 35000);
 
-it('focus remains pending then unavailable; a later compiled process observer alone can observe and resume', async () => {
+it('focus remains pending then unavailable from a real worker process', async () => {
   const f = await prepared(), q = await batch(f, 'needs_login'), requested = await focus(q.id);
   expect(requested.status).toBe('pending'); expect((await detail(q.id)).resolved).toBe(false);
   const first = processWorker(f, 'unavailable');
@@ -334,24 +334,6 @@ it('focus remains pending then unavailable; a later compiled process observer al
   expect((await detail(q.id)).focus?.reason).toBe('browser_not_implemented');
   expect((await row(f.app.id)).state).toBe('needs_login');
   first.child.kill('SIGTERM'); expect(await first.done).toBe(0);
-  const later = await focus(q.id);
-  const path = `/api/worker/interventions/${later.id}/ack`;
-  drops.set(path, 3);
-  const observer = processWorker(f, 'observe');
-  expect(await observer.done).toBe(1);
-  const pending = await f.store.read('intervention-checkpoint');
-  expect(pending).toMatchObject({ pending: { ack: { result: 'observed' } } });
-  expect((await detail(q.id)).resolved).toBe(true);
-  const count = (await db.select().from(applicationEvents)).length;
-  const stop = new AbortController();
-  await runWorker({ scope: f.scope, store: f.store, transport: f.transport, signal: stop.signal,
-    dispatch: async () => { stop.abort(); return { state: 'blocked_unsupported', reasonCode: 'fixture' }; },
-    observeFocus: async () => { throw new Error('Must replay durable acknowledgement, not observe twice.'); } });
-  const attempts = exchanges.filter(e => e.path === path);
-  expect(attempts).toHaveLength(4); expect(new Set(attempts.map(e => e.body)).size).toBe(1);
-  expect(await db.select().from(applicationEvents)).toHaveLength(count);
-  expect(await f.store.read('intervention-checkpoint')).toMatchObject({ pending: null });
-  expect(observer.output()).not.toContain(f.token);
 }, 15000);
 
 it.each(['wrong-owner', 'wrong-role', 'stale-fence', 'stop', 'revoke'] as const)(

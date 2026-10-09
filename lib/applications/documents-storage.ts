@@ -4,6 +4,7 @@ import { open, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { get, del, put } from '@vercel/blob';
+import { readCapped } from '../read-capped.ts';
 
 export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 export class DocumentError extends Error {
@@ -72,27 +73,10 @@ export function assertDocumentBlobUrl(storage: DocumentStorage, key: string, url
 }
 export async function boundedDocumentBytes(stream: ReadableStream<Uint8Array> | null, limit = MAX_DOCUMENT_BYTES, timeoutMs = 8000): Promise<Uint8Array> {
   if (!stream) throw new DocumentError(400, 'Document bytes required.');
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { void reader.cancel().catch(() => {}); reject(new DocumentError(408, 'Upload timed out.')); }, timeoutMs);
-    });
-    for (;;) {
-      const { done, value } = await Promise.race([reader.read(), deadline]);
-      if (done) break;
-      total += value.byteLength;
-      if (total > limit) throw new DocumentError(413, 'Document exceeds the byte limit.');
-      chunks.push(value);
-    }
-    return Buffer.concat(chunks, total);
-  } finally {
-    clearTimeout(timer);
-    void reader.cancel().catch(() => {});
-    reader.releaseLock();
-  }
+  return readCapped(stream, limit, {
+    overflow: () => new DocumentError(413, 'Document exceeds the byte limit.'),
+    timeout: { ms: timeoutMs, error: () => new DocumentError(408, 'Upload timed out.') },
+  });
 }
 export async function writeDocumentObject(storage: DocumentStorage, key: string, bytes: Uint8Array) {
   assertDocumentKey(key);

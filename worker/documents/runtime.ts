@@ -76,7 +76,7 @@ async function privateTemp(prefix: string) {
   return directory;
 }
 
-async function python(request: Record<string, unknown>, timeoutMs = 15_000) {
+async function python(request: Record<string, unknown>) {
   const executable = process.env.WORKIE_PYTHON?.trim() || 'python3';
   const payload = JSON.stringify(request);
   const env = {
@@ -88,7 +88,7 @@ async function python(request: Record<string, unknown>, timeoutMs = 15_000) {
     });
     const stdout: Buffer[] = [], stderr: Buffer[] = [];
     let size = 0;
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new DocumentRuntimeError('DOCUMENT_TOOL_TIMEOUT')); }, timeoutMs);
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new DocumentRuntimeError('DOCUMENT_TOOL_TIMEOUT')); }, 15_000);
     child.stdout.on('data', (chunk: Buffer) => { size += chunk.length; if (size > 64 * 1024) child.kill('SIGKILL'); else stdout.push(chunk); });
     child.stderr.on('data', (chunk: Buffer) => { if (Buffer.concat(stderr).length < 16 * 1024) stderr.push(chunk); });
     child.once('error', (error) => { clearTimeout(timer); reject(new DocumentRuntimeError('DOCUMENT_TOOL_UNAVAILABLE', error.message)); });
@@ -178,7 +178,7 @@ function validateRequest(manifest: TemplateManifest, requestInput: unknown, sour
 }
 
 export async function tailorDocument(input: {
-  bytes: Uint8Array; mime: string; manifest: TemplateManifest; request: unknown; referenceBytes?: Uint8Array;
+  bytes: Uint8Array; mime: string; manifest: TemplateManifest; request: unknown;
 }): Promise<TailoredArtifact> {
   const bytes = Uint8Array.from(input.bytes);
   const manifest = TemplateManifestSchema.parse(input.manifest);
@@ -190,12 +190,7 @@ export async function tailorDocument(input: {
   try {
     const source = join(directory, `master.${fmt}`), output = join(directory, `tailored.${fmt}`);
     await writeFile(source, bytes, { mode: 0o600, flag: 'wx' });
-    let reference: string | undefined;
-    if (input.referenceBytes) {
-      reference = join(directory, 'reference.pdf');
-      await writeFile(reference, input.referenceBytes, { mode: 0o600, flag: 'wx' });
-    }
-    await python({ operation: 'transform', input: source, output, format: fmt, edits, reference });
+    await python({ operation: 'transform', input: source, output, format: fmt, edits });
     const resultBytes = await readFile(output);
     if (resultBytes.length > MAX_BYTES) throw new DocumentRuntimeError('OUTPUT_TOO_LARGE');
     const result = await inspectBytes(resultBytes, fmt, directory);

@@ -47,7 +47,7 @@ async function fixture() {
   return { scope, store, signal: stop.signal, stop, command, calls, transport };
 }
 
-test("default observer acknowledges unavailable durably, never observed", async () => {
+test("a focus command is acknowledged unavailable durably, never observed", async () => {
   const f = await fixture();
   await questionClient(f).pollInterventions();
   assert.equal(f.calls.length, 1);
@@ -57,13 +57,13 @@ test("default observer acknowledges unavailable durably, never observed", async 
   assert.equal((await f.store.read("intervention-checkpoint")).pending, null);
 });
 
-test("pending ack is replayed byte-for-byte without running the compiled observer again", async () => {
+test("pending ack is replayed byte-for-byte before fresh commands", async () => {
   const f = await fixture();
   let original;
   await assert.rejects(questionClient({ ...f, transport: { ...f.transport, ackIntervention: async (_id, ack) => {
     original = ack; throw new TransportError("NETWORK_UNAVAILABLE");
   } } }).pollInterventions(), /NETWORK_UNAVAILABLE/);
-  await questionClient({ ...f, observeFocus: async () => assert.fail("Do not observe a pending acknowledgement twice"),
+  await questionClient({ ...f,
     transport: { ...f.transport, interventions: async () => ({ questionProtocolVersion: 1, commands: [] }) },
   }).pollInterventions();
   assert.deepEqual(f.calls[0].ack, original);
@@ -89,24 +89,10 @@ test("startup completes durable intervention recovery before polling for fresh w
   assert.equal((await f.store.read("intervention-checkpoint")).pending, null);
 });
 
-test("wrong worker and wrong login/tenant observation do not post or persist an acknowledgement", async () => {
-  for (const fault of ["worker", "kind", "tenant"]) {
-    const f = await fixture();
-    if (fault === "worker") f.command.workerId = randomUUID();
-    await assert.rejects(questionClient({ ...f, observeFocus: async () => ({
-      result: "observed", reason: null, observation: { kind: fault === "kind" ? "verification_complete" : "login_complete",
-        ats: "fixture", tenant: fault === "tenant" ? "other" : "synthetic", requisition: "role", observedAt: Date.now() },
-    }) }).pollInterventions(), /BINDING_CHANGED/);
-    assert.equal(f.calls.length, 0);
-    assert.equal(await f.store.read("intervention-checkpoint"), null);
-  }
-});
-
-test("observer results cannot supply runtime-owned event keys or revision fences", async () => {
+test("a command for another worker does not post or persist an acknowledgement", async () => {
   const f = await fixture();
-  await assert.rejects(questionClient({ ...f, observeFocus: async () => ({
-    result: "focused", reason: null, observation: null, eventId: randomUUID(), expectedRevision: 99,
-  }) }).pollInterventions());
+  f.command.workerId = randomUUID();
+  await assert.rejects(questionClient(f).pollInterventions(), /BINDING_CHANGED/);
   assert.equal(f.calls.length, 0);
   assert.equal(await f.store.read("intervention-checkpoint"), null);
 });
@@ -127,35 +113,7 @@ test("failed local persistence prevents ack; mismatched response leaves exact pe
   }
 });
 
-test("compiled observer deadline reports unavailable and ignores a late observation", async t => {
-  const f = await fixture();
-  let started, complete, callbackSignal;
-  const called = new Promise(resolve => { started = resolve; });
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const polling = questionClient({ ...f, observeFocus: (_command, signal) => {
-    callbackSignal = signal; started();
-    return new Promise(resolve => { complete = resolve; });
-  } }).pollInterventions();
-  await called;
-  t.mock.timers.tick(8000);
-  await polling;
-  assert.equal(callbackSignal.aborted, true);
-  assert.equal(f.calls[0].ack.result, "unavailable");
-  assert.equal(f.calls[0].ack.reason, "focus_observer_unavailable");
-  complete({ result: "observed", reason: null, observation: {
-    kind: "login_complete", ats: "fixture", tenant: "synthetic", requisition: "role", observedAt: Date.now(),
-  } });
-  await Promise.resolve();
-  assert.equal(f.calls.length, 1);
-});
-
-test("stop during observation exits without acknowledgement and stale server denial never grants authority", async () => {
-  const f = await fixture();
-  await assert.rejects(questionClient({ ...f, observeFocus: async () => {
-    f.stop.abort();
-    return { result: "focused", reason: null, observation: null };
-  } }).pollInterventions());
-  assert.equal(f.calls.length, 0);
+test("stale server denial never grants authority", async () => {
   const stale = await fixture();
   await questionClient({ ...stale, transport: { ...stale.transport, ackIntervention: async () => {
     throw new TransportError("HTTP_409", 409);

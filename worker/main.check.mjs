@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { atsFailureReason, createApplicationArtifactManifest, createConfiguredJevActionSelector, createStructuredActionSelector, ensureProviderCapability, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
+import { atsFailureReason, createApplicationArtifactManifest, ensureProviderCapability, hasVerifiedTailoredArtifact, providerFailureResult } from "./main.ts";
 import { AtsError } from "./ats/protocol.ts";
 import { artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { ProviderError } from "./providers.ts";
@@ -14,9 +14,9 @@ import { runWorker } from "./runtime.ts";
 const scope = { origin: "https://workie.example", ownerId: "synthetic-owner", workerId: "synthetic-worker" };
 const config = {
   providerProtocolVersion: 1, ownerId: scope.ownerId, profileRevision: 2, policyRevision: 3,
-  policyVersion: 1, policyHash: null, enabled: true, provider: "typesafe_jev", model: "jev-latest",
-  endpoint: null, privacy: "approved_remote", remoteProviderConsent: true,
-  allowedProviders: ["typesafe:jev"], fallbackOrder: [], maxUsd: 10,
+  policyVersion: 1, policyHash: null, enabled: true, provider: "byok", model: "synthetic-model",
+  endpoint: "https://provider.example/v1/chat/completions", privacy: "approved_remote", remoteProviderConsent: true,
+  allowedProviders: ["byok:compatible"], fallbackOrder: [], maxUsd: 0,
 };
 
 test("ATS failures report bounded codes without including field values", () => {
@@ -39,48 +39,21 @@ test("tailored artifact verification binds the output to the selected master and
   assert.equal(hasVerifiedTailoredArtifact({ ...valid, artifactHashes: [] }), false);
 });
 
-test("structured selector stays inside the observed action set and fails closed on stale or weak decisions", async () => {
-  const input = {
-    state: { company: "[redacted]", role: "[redacted]", ats: "candidate-form", tenant: "redacted",
-      fields: [{ label: "Full name", kind: "text" }], observedActions: ["fill", "inspect"] },
-    actions: [{ id: "fill", label: "Fill confirmed fields" }, { id: "inspect", label: "Inspect the form" }],
-  };
-  let calls = 0;
-  const selector = createStructuredActionSelector({
-    generate: async (request, options) => {
-      calls++;
-      assert.equal(request.task, "interpret_form");
-      assert.deepEqual(request.observedActions, ["fill", "inspect"]);
-      if (options?.runId !== undefined) assert.equal(options.runId, "synthetic-run");
-      return { task: "interpret_form", actionId: "fill", confidence: 0.9, model: "synthetic", usage: { input_tokens: 10, output_tokens: 2 } };
-    },
-    check: async () => ({ checkedAt: new Date().toISOString(), protocol: "openai_compatible", model: "synthetic", locality: "remote", structuredOutput: true, tools: false, maxContextTokens: 100, maxOutputTokens: 10 }),
-  });
-  assert.equal((await selector(input, { runId: "synthetic-run" })).actionId, "fill");
-  assert.equal(calls, 1);
-  await assert.rejects(selector(input, { isCurrent: () => false }), /PROVIDER_DECISION_STALE/);
-  await assert.rejects(selector(input, { minConfidence: 0.95 }), /PROVIDER_LOW_CONFIDENCE/);
-  const single = { ...input, state: { ...input.state, observedActions: ["fill"] }, actions: [input.actions[0]] };
-  assert.equal((await selector(single)).model, "deterministic");
-  assert.equal(calls, 3);
-  await assert.rejects(selector(single, { isCurrent: () => false }), /PROVIDER_DECISION_STALE/);
-});
-
 test("provider capability checks are cached per owner-approved configuration", async () => {
   const localDirectory = await mkdtemp(join(tmpdir(), "main-provider-capability-"));
   const store = await privateStore(localDirectory, { ...scope, workerId: `${scope.workerId}:provider` });
   const capabilityConfig = {
-    ...config, protocol: "typesafe_systemone", locality: "remote", credential: "os_keychain",
+    ...config, protocol: "openai_compatible", locality: "remote", credential: "os_keychain",
     budget: { perRequestUsd: 1, perRunUsd: 1, perDayUsd: 1, allowUnknownCost: false },
     pricing: { known: true, inputUsdPerMillion: 0.042, outputUsdPerMillion: 0 }, capability: null,
   };
   let checks = 0;
-  const checker = { check: async () => { checks++; return { checkedAt: new Date().toISOString(), protocol: "typesafe_systemone", model: "jev-1.13.0", locality: "remote", structuredOutput: true, tools: false, maxContextTokens: null, maxOutputTokens: null }; } };
+  const checker = { check: async () => { checks++; return { checkedAt: new Date().toISOString(), protocol: "openai_compatible", model: "synthetic-model", locality: "remote", structuredOutput: true, tools: false, maxContextTokens: null, maxOutputTokens: null }; } };
   try {
     await ensureProviderCapability(capabilityConfig, checker, store);
     await ensureProviderCapability(capabilityConfig, checker, store);
     assert.equal(checks, 1);
-    await ensureProviderCapability({ ...capabilityConfig, model: "jev-next" }, checker, store);
+    await ensureProviderCapability({ ...capabilityConfig, model: "synthetic-next" }, checker, store);
     assert.equal(checks, 2);
   } finally {
     await rm(localDirectory, { recursive: true, force: true });
@@ -106,45 +79,6 @@ test("tailoring manifest binds the generated edits to the selected master and ou
   assert.notEqual(requestId(result.manifest), requestId({ ...result.manifest,
     output: { ...result.manifest.output, sha256: "c".repeat(64) } }));
 });
-
-const directory = await mkdtemp(join(tmpdir(), "main-jev-"));
-try {
-  const providerStore = await privateStore(directory, { ...scope, workerId: `${scope.workerId}:provider` });
-  let keyReads = 0;
-  const selector = createConfiguredJevActionSelector(scope, config, providerStore, (service, account) => {
-    assert.equal(service, "Workie TypeSafe API");
-    assert.equal(account, "dongyeop0810@gmail.com");
-    keyReads++;
-    return { getPassword: () => "synthetic-typesafe-key" };
-  }, async (_url, init) => {
-    const request = JSON.parse(init.body);
-    assert.equal(request.state.fields[0].label, "Full name");
-    assert(!JSON.stringify(request).includes("synthetic-typesafe-key"));
-    return new Response(JSON.stringify({
-      model: "jev-1.13.0",
-      answers: { select_action: {
-        type: "choice", choice: "field_focused", probabilities: { field_focused: 0.8, question_detected: 0.2 }, confidence: 0.8,
-      } },
-      usage: { input_tokens: 20, output_tokens: 0 },
-    }), { status: 200, headers: { "content-type": "application/json" } });
-  });
-  assert(selector);
-  assert.equal(keyReads, 0);
-  const result = await selector({
-    state: {
-      company: "Synthetic Co", role: "Engineer", ats: "fixture", tenant: "synthetic",
-      fields: [{ label: "Full name", kind: "text" }], observedActions: ["field_focused", "question_detected"],
-    },
-    actions: [
-      { id: "field_focused", label: "Focus the next field" },
-      { id: "question_detected", label: "Inspect a question" },
-    ],
-  });
-  assert.equal(result.actionId, "field_focused");
-  assert.equal(keyReads, 1);
-} finally {
-  await rm(directory, { recursive: true, force: true });
-}
 
 test("provider failures checkpoint as resumable state and do not block the next application", async () => {
   const localScope = { ...scope, workerId: randomUUID() };

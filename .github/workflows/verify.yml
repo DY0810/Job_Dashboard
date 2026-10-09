@@ -39,7 +39,6 @@ jobs:
       - name: Install PDF verification tools
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - run: npm run test:worker
-      - run: npm run test:worker:keyring
       - run: npm run test:documents
       - run: npm run test:ats
       - run: npm run test:e2e

@@ -75,7 +75,7 @@ export default function Settings() {
         <span>Per run: {policy.policy.budget.currency} {policy.policy.budget.perRun}</span>
         <span>Per day: {policy.policy.budget.currency} {policy.policy.budget.perDay}</span>
       </div>
-      <p className={styles.muted}>Jev has a hard cumulative worker ledger cap of USD 10. Current spend is local to the worker and is not exposed to the browser.</p>
+      <p className={styles.muted}>Current spend is local to the worker and is not exposed to the browser.</p>
     </section>
     <section className={styles.section} aria-labelledby="runner-heading">
       <h2 id="runner-heading">Runner</h2>

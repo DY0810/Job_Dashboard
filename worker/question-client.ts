@@ -17,13 +17,6 @@ export const QuestionDispatchSchema = z.strictObject({
   questions: QuestionBatchSchema.shape.questions,
 });
 export type QuestionDispatch = z.infer<typeof QuestionDispatchSchema>;
-// Compiled integration only. No module paths, model code, or UI completion assertions.
-export type FocusObserver = (command: InterventionCommand, signal: AbortSignal) =>
-  Promise<Pick<InterventionAck, "result" | "reason" | "observation">>;
-const ObservationSchema = z.strictObject({
-  result: InterventionAckSchema.shape.result, reason: InterventionAckSchema.shape.reason,
-  observation: InterventionAckSchema.shape.observation,
-});
 const BatchJournalSchema = z.strictObject({
   version: z.literal(1), scope: ScopeSchema,
   pending: z.strictObject({ applicationId: z.uuid(), batch: QuestionBatchSchema }).nullable(),
@@ -46,7 +39,6 @@ export async function abortable<T>(action: Promise<T>, signal: AbortSignal): Pro
 
 export function questionClient(options: {
   scope: WorkerScope; store: PrivateStore; transport: WorkerTransport; signal: AbortSignal;
-  observeFocus?: FocusObserver;
 }) {
   const { scope, store, transport, signal } = options;
   const empty = { version: 1 as const, scope, pending: null };
@@ -117,29 +109,13 @@ export function questionClient(options: {
       const command = page.commands[(page.commands.findIndex(c => c.id === lastCommand) + 1) % page.commands.length];
       if (!command) return;
       lastCommand = command.id;
-      let result: Awaited<ReturnType<FocusObserver>> = {
-        result: "unavailable", reason: "browser_not_implemented", observation: null,
-      };
-      if (options.observeFocus) {
-        const observerStop = new AbortController();
-        const observerSignal = AbortSignal.any([signal, observerStop.signal]);
-        const timer = setTimeout(() => observerStop.abort(), 8000);
-        try { result = await abortable(Promise.resolve().then(() => options.observeFocus!(command, observerSignal)), observerSignal); }
-        catch {
-          signal.throwIfAborted();
-          result = { result: "unavailable", reason: "focus_observer_unavailable", observation: null };
-        } finally { clearTimeout(timer); observerStop.abort(); }
-      }
       signal.throwIfAborted();
+      // No browser observer exists, so every focus command is acknowledged as unavailable.
       const ack = InterventionAckSchema.parse({
         questionProtocolVersion: 1, eventId: randomUUID(), expectedRevision: command.revision,
-        expectedApplicationRevision: command.expectedApplicationRevision, fence: command.fence, ...ObservationSchema.parse(result),
+        expectedApplicationRevision: command.expectedApplicationRevision, fence: command.fence,
+        result: "unavailable", reason: "browser_not_implemented", observation: null,
       });
-      if (ack.observation && (ack.observation.ats !== command.descriptor.scope.ats ||
-        ack.observation.tenant !== command.descriptor.scope.tenant ||
-        ack.observation.kind !== (command.descriptor.kind === "needs_login" ? "login_complete" : "verification_complete"))) {
-        throw new Error("BINDING_CHANGED");
-      }
       // Server checks exact requisition, freshness, policy, owner, fence and stop/revoke state.
       const pending = { ...empty, pending: { command, ack } };
       await store.write("intervention-checkpoint", pending);

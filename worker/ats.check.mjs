@@ -7,15 +7,11 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
-import { ashby } from './ats/ashby.ts';
 import { greenhouse, hostedFields, hostedTitle } from './ats/greenhouse.ts';
 import { fillField, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
-import { createJevActionSelector } from './jev.ts';
-import { createConfiguredJevActionSelector } from './main.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
 import { AtsIdentitySchema, AtsObservationSchema } from './ats/protocol.ts';
 import { resolveApplicationIdentity } from '../lib/applications/application-identity.ts';
-import { privateStore } from './storage.ts';
 import { formQuestions } from './screening.ts';
 
 const browserReady = existsSync(chromium.executablePath());
@@ -197,6 +193,19 @@ test('a hosted multi-select question (id ending in []) is observed and filled li
     assert.equal(await verifyField(page, field, 'French'), false);
   } finally { await browser.close(); }
 });
+test('a radio question fills and verifies the exact option the answer names', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<fieldset><legend>Are you authorized to work?</legend><label><input type="radio" name="authorized" value="Yes">Yes</label>' +
+      '<label><input type="radio" name="authorized" value="No">No</label></fieldset>');
+    const field = { key: 'authorized', label: 'Are you authorized to work?', kind: 'radio', required: true, name: 'authorized', options: ['Yes', 'No'] };
+    await fillField(page, field, 'Yes', {});
+    assert.equal(await verifyField(page, field, 'Yes'), true);
+    assert.equal(await verifyField(page, field, 'No'), false);
+    await assert.rejects(fillField(page, field, 'Maybe', {}), error => error.code === 'ANSWER_OPTION_INVALID');
+  } finally { await browser.close(); }
+});
 test('an uploaded Greenhouse file verifies by the name shown in place of its input', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -223,7 +232,7 @@ const requirements = {
   authorizationRequired: true, paid: true, payFloor: { currency: 'USD', amount: 20, period: 'hour' },
 };
 
-test('long official questions retain exact wording while action selection stays bounded', async () => {
+test('long official questions retain exact wording and fill without a model choosing the action', async () => {
   const label = 'Export controls: '.repeat(20);
   const observation = AtsObservationSchema.parse({
     identity: { ats: 'greenhouse', tenant: 'fixture', requisition: '123' },
@@ -234,10 +243,7 @@ test('long official questions retain exact wording while action selection stays 
   const result = await fillAtsApplication({ runtime: {}, adapter: {
     observe: async () => observation,
     fill: async () => { selected = true; },
-  }, application: {}, facts, requirements, chooseAction: async ({ state }) => {
-    assert.equal(state.fields[0].label, observation.fields[0].label.slice(0, 200));
-    return { actionId: 'fill', confidence: 1 };
-  } });
+  }, application: {}, facts, requirements });
   assert.equal(result.state, 'ready');
   assert.equal(selected, true);
   assert.equal(observation.fields[0].label, label.trim());
@@ -245,9 +251,7 @@ test('long official questions retain exact wording while action selection stays 
 
 function pageMarkup(ats, wrongRole = false) {
   const role = wrongRole ? 'Other role' : 'Software Engineering Intern';
-  const authorized = ats === 'greenhouse'
-    ? '<label>Work authorization<select><option value="Yes">Yes</option><option value="No">No</option></select></label>'
-    : '<fieldset><legend>Are you authorized to work?</legend><label><input type="radio" name="authorized" value="Yes">Yes</label><label><input type="radio" name="authorized" value="No">No</label></fieldset>';
+  const authorized = '<label>Work authorization<select><option value="Yes">Yes</option><option value="No">No</option></select></label>';
   return `<!doctype html><form data-ats="${ats}" data-tenant="fixture" data-requisition="123" data-company="Fixture Co" data-role="${role}">
     <label>First name<input name="firstName"></label><label>Last name<input name="lastName"></label><label>Email<input type="email" name="email"></label>
     ${authorized}<label>Resume<input type="file" name="resume"></label>
@@ -259,9 +263,8 @@ function pageMarkup(ats, wrongRole = false) {
 async function fixtureServer() {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-    const ats = url.pathname.includes('ashby') ? 'ashby' : 'greenhouse';
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end(pageMarkup(ats, url.searchParams.get('wrong') === '1'));
+    response.end(pageMarkup('greenhouse', url.searchParams.get('wrong') === '1'));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -273,75 +276,26 @@ function application(origin, ats, query = '') {
   return {
     identity: { ats, tenant: 'fixture', requisition: '123' }, company: 'Fixture Co', role: 'Software Engineering Intern',
     applicationUrl: `${origin}/${ats}${query}`,
-    answers: { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', work_authorization: 'Yes', authorized: 'Yes' },
+    answers: { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', work_authorization: 'Yes' },
     documents: {},
   };
 }
 
-test('Greenhouse and Ashby fixtures fill an uploaded document and verify exact-role receipts', { skip: !browserReady }, async () => {
+test('the Greenhouse fixture fills an uploaded document and verifies an exact-role receipt', { skip: !browserReady }, async () => {
   const fixture = await fixtureServer();
   const directory = await mkdtemp(join(tmpdir(), 'workie-ats-'));
   const resume = join(directory, 'resume.pdf');
   await writeFile(resume, '%PDF-1.4 synthetic resume', { mode: 0o600 });
   try {
-    for (const [ats, adapter] of [['greenhouse', greenhouse], ['ashby', ashby]]) {
-      const runtime = await createBrowserRuntime({ userDataDir: join(directory, ats), approvedOrigins: [fixture.origin], allowLoopback: true });
-      const input = application(fixture.origin, ats);
-      input.documents.resume = resume;
-      let sentState;
-      const chooseAction = createJevActionSelector({
-        evaluate: async (state) => { sentState = state; return { model: 'jev-1.0.0', answers: { select_action: {
-          type: 'choice', choice: 'fill', probabilities: { fill: 1, inspect: 0 }, confidence: 1,
-        } }, usage: { input_tokens: 1, output_tokens: 1 } }; },
-      });
-      try {
-        const result = await runAtsApplication({ runtime, adapter, application: input, facts, requirements, chooseAction });
-        assert.equal(result.state, 'submitted');
-        assert.equal(result.receipt.identity.ats, ats);
-        assert.equal(result.receipt.identity.requisition, '123');
-        assert.equal(result.receipt.role, input.role);
-        assert.equal(sentState, undefined, 'fill is the only offered action, so no form state reaches a model');
-      } finally { await runtime.close(); }
-    }
-  } finally {
-    await new Promise((resolve) => fixture.server.close(resolve));
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('configured TypeSafe Jev selector is neither called nor billed when fill is the only action', { skip: !browserReady }, async () => {
-  const fixture = await fixtureServer();
-  const directory = await mkdtemp(join(tmpdir(), 'workie-ats-typesafe-'));
-  const resume = join(directory, 'resume.pdf');
-  await writeFile(resume, '%PDF-1.4 synthetic resume', { mode: 0o600 });
-  const scope = { origin: 'https://workie.example', ownerId: 'synthetic-owner', workerId: 'synthetic-worker' };
-  const config = {
-    providerProtocolVersion: 1, ownerId: scope.ownerId, profileRevision: 2, policyRevision: 3,
-    policyVersion: 1, policyHash: null, enabled: true, provider: 'typesafe_jev', model: 'jev-latest',
-    endpoint: null, privacy: 'approved_remote', remoteProviderConsent: true,
-    allowedProviders: ['typesafe:jev'], fallbackOrder: [], maxUsd: 10,
-  };
-  try {
-    const providerStore = await privateStore(directory, { ...scope, workerId: `${scope.workerId}:provider` });
-    let request;
-    const selector = createConfiguredJevActionSelector(scope, config, providerStore, (service, account) => {
-      assert.equal(service, 'Workie TypeSafe API');
-      assert.equal(account, 'dongyeop0810@gmail.com');
-      return { getPassword: () => 'synthetic-typesafe-key' };
-    }, async (_url, init) => {
-      request = JSON.parse(init.body);
-      return new Response(JSON.stringify({ model: 'jev-1.13.0', answers: { select_action: {
-        type: 'choice', choice: 'fill', probabilities: { fill: 1, inspect: 0 }, confidence: 1,
-      } }, usage: { input_tokens: 12, output_tokens: 4 } }), { status: 200, headers: { 'content-type': 'application/json' } });
-    });
-    const runtime = await createBrowserRuntime({ userDataDir: join(directory, 'browser'), approvedOrigins: [fixture.origin], allowLoopback: true });
+    const runtime = await createBrowserRuntime({ userDataDir: join(directory, 'greenhouse'), approvedOrigins: [fixture.origin], allowLoopback: true });
     const input = application(fixture.origin, 'greenhouse');
     input.documents.resume = resume;
     try {
-      const result = await runAtsApplication({ runtime, adapter: greenhouse, application: input, facts, requirements, chooseAction: selector });
+      const result = await runAtsApplication({ runtime, adapter: greenhouse, application: input, facts, requirements });
       assert.equal(result.state, 'submitted');
-      assert.equal(request, undefined, 'a deterministic fill makes no paid Jev request');
-      assert.equal((await providerStore.read('typesafe-budget'))?.requests ?? 0, 0);
+      assert.equal(result.receipt.identity.ats, 'greenhouse');
+      assert.equal(result.receipt.identity.requisition, '123');
+      assert.equal(result.receipt.role, input.role);
     } finally { await runtime.close(); }
   } finally {
     await new Promise((resolve) => fixture.server.close(resolve));
@@ -372,7 +326,7 @@ test('screening and receipt binding refuse ineligible or wrong-role applications
   }
 });
 
-test('submission uses one deterministic intent and a model is never asked to park an answered form', { skip: !browserReady }, async () => {
+test('submission uses one deterministic intent', { skip: !browserReady }, async () => {
   const fixture = await fixtureServer();
   const directory = await mkdtemp(join(tmpdir(), 'workie-ats-submit-'));
   const resume = join(directory, 'resume.pdf');
@@ -398,19 +352,6 @@ test('submission uses one deterministic intent and a model is never asked to par
       assert.equal(calls[1].value.evidence.pageUrl, input.applicationUrl);
       assert.equal(calls[1].value.evidence.observedText, 'Application received');
     } finally { await runtime.close(); }
-    const inspectRuntime = await createBrowserRuntime({ userDataDir: join(directory, 'inspect-browser'), approvedOrigins: [fixture.origin], allowLoopback: true });
-    try {
-      let asked = 0;
-      const chooseInspect = createJevActionSelector({ evaluate: async () => { asked += 1; return { model: 'jev-1.13.0', answers: { select_action: {
-        type: 'choice', choice: 'inspect', probabilities: { fill: 0, inspect: 1 }, confidence: 1,
-      } }, usage: { input_tokens: 1, output_tokens: 0 } }; } });
-      const result = await runAtsApplication({ runtime: inspectRuntime, adapter: greenhouse, application: input, facts, requirements,
-        chooseAction: chooseInspect,
-      });
-      // Fill is the only action the adapter offers, so the selector decides deterministically.
-      assert.equal(asked, 0);
-      assert.equal(result.state, 'submitted');
-    } finally { await inspectRuntime.close(); }
   } finally {
     await new Promise((resolve) => fixture.server.close(resolve));
     await rm(directory, { recursive: true, force: true });

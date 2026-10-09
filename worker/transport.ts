@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
+import { readCapped } from "../lib/read-capped.ts";
 import {
   QuestionBatchSchema, QuestionBatchResultSchema, InterventionPollSchema,
   InterventionPageSchema, InterventionAckSchema, FocusResultSchema,
@@ -66,30 +67,22 @@ export function workerTransport(options: {
           body: payload,
           signal: deadline,
         });
-        const reader = response.body?.getReader();
         try {
           if (!response.ok) throw new TransportError(`HTTP_${response.status}`, response.status);
-          if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "") || !reader) {
+          if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "") || !response.body) {
             throw new TransportError("INVALID_RESPONSE");
           }
           const length = Number(response.headers.get("content-length"));
           if (!Number.isFinite(length) || length > 128 * 1024) throw new TransportError("RESPONSE_LIMIT");
-          const chunks: Uint8Array[] = [];
-          let size = 0;
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            size += value.length;
-            if (size > 128 * 1024) throw new TransportError("RESPONSE_LIMIT");
-            chunks.push(value);
-          }
+          const bytes = await readCapped(response.body, 128 * 1024, { overflow: () => new TransportError("RESPONSE_LIMIT") });
           let parsed;
-          try { parsed = schema.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)))); }
+          try { parsed = schema.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))); }
           catch { throw new TransportError("INVALID_RESPONSE"); }
           if (!parsed.success) throw new TransportError("INVALID_RESPONSE");
           return parsed.data;
         } finally {
-          if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+          // An unread body (an early throw above) is released; readCapped already cancelled a read one.
+          if (response.body && !response.body.locked) void response.body.cancel().catch(() => {});
         }
       } catch (error) {
         const safe = error instanceof TransportError ? error : new TransportError(signal?.aborted ? "STOPPED" : "NETWORK_UNAVAILABLE");
@@ -159,20 +152,10 @@ export function workerTransport(options: {
       if (!response.ok) throw new TransportError(`HTTP_${response.status}`, response.status);
       const length = Number(response.headers.get("content-length"));
       if (!Number.isSafeInteger(length) || length < 1 || length > 10 * 1024 * 1024) throw new TransportError("INVALID_DOCUMENT");
-      const reader = response.body?.getReader();
-      if (!reader) throw new TransportError("INVALID_DOCUMENT");
-      const chunks: Uint8Array[] = []; let size = 0;
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          size += value.byteLength;
-          if (size > 10 * 1024 * 1024) throw new TransportError("RESPONSE_LIMIT");
-          chunks.push(value);
-        }
-      } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
-      if (size !== length) throw new TransportError("INVALID_DOCUMENT");
-      return Buffer.concat(chunks);
+      if (!response.body) throw new TransportError("INVALID_DOCUMENT");
+      const bytes = await readCapped(response.body, 10 * 1024 * 1024, { overflow: () => new TransportError("RESPONSE_LIMIT") });
+      if (bytes.length !== length) throw new TransportError("INVALID_DOCUMENT");
+      return bytes;
     },
     event: (applicationId: string, input: EventRequest, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");

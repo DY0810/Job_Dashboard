@@ -203,6 +203,7 @@ export const ProfileSections = {
       document: fact(docRef, 'document', null, 'document'),
     })),
     formatPolicy: choice(['preserve_exact', 'approved_template']),
+    // 'typesafe_jev' is legacy: stored profiles may still hold it, so it still parses; buildProviderConfig maps it to 'none'.
     provider: choice(['none', 'local', 'omniroute', 'remote', 'typesafe_jev']),
     model: text(), endpoint: link(), allowedFallbackProviders: list(),
     privacy: choice(['local_inference_only', 'fully_local', 'approved_remote']),

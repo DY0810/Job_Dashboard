@@ -66,13 +66,6 @@ export function createLeaseGuard(
       check();
       return result;
     },
-    async mutate<T>(action: () => T | Promise<T>): Promise<T> {
-      check();
-      if (lease.mode !== "safe") fail("RECONCILIATION_ONLY");
-      const result = await action();
-      check();
-      return result;
-    },
   };
 }
 export type LeaseGuard = ReturnType<typeof createLeaseGuard>;

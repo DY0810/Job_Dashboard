@@ -13,7 +13,6 @@ type BrowserOptions = {
   approvedOrigins: readonly string[];
   headless?: boolean;
   allowLoopback?: boolean;
-  timeoutMs?: number;
 };
 
 function privateAddress(value: string) {
@@ -80,7 +79,7 @@ export async function createBrowserRuntime(options: BrowserOptions): Promise<Bro
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     headless: options.headless ?? true,
     serviceWorkers: 'block',
-    timeout: options.timeoutMs ?? 15_000,
+    timeout: 15_000,
   });
   await context.route('**/*', async (route) => {
     try {
@@ -95,7 +94,7 @@ export async function createBrowserRuntime(options: BrowserOptions): Promise<Bro
     page: () => context.newPage(),
     navigate: async (page, url) => {
       await assertUrl(url, origins, allowLoopback);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs ?? 15_000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
       await assertUrl(page.url(), origins, allowLoopback);
       return page;
     },

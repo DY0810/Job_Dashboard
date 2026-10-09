@@ -6,6 +6,7 @@ import { getPrivateDb } from '../private-db/index.ts';
 import { rateLimit } from '../private-db/schema.ts';
 import { readDraftKeyConfig } from './draft-key.ts';
 import { ApplicantPreconditionError, assertExpectedApplicant } from './applicant-precondition.ts';
+import { readCapped } from '../read-capped.ts';
 
 export const MAX_PRIVATE_JSON = 128 * 1024;
 export class PrivateInputError extends Error {
@@ -15,42 +16,22 @@ export async function readPrivateJson<T>(request: Request, schema: z.ZodType<T>)
   if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') {
     throw new PrivateInputError(415, 'JSON required.');
   }
-  const reader = request.body?.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  if (reader) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let abortRead: (() => void) | undefined;
+  let bytes: Uint8Array = new Uint8Array();
+  if (request.body) {
+    const invalid = () => new PrivateInputError(400, 'Invalid request body.');
     try {
-      if (request.signal.aborted) throw new PrivateInputError(400, 'Invalid request body.');
-      const deadline = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new PrivateInputError(408, 'Request body timed out.')), 8000);
-        abortRead = () => reject(new PrivateInputError(400, 'Invalid request body.'));
-        request.signal.addEventListener('abort', abortRead, { once: true });
+      bytes = await readCapped(request.body, MAX_PRIVATE_JSON, {
+        overflow: () => new PrivateInputError(413, 'Request too large.'),
+        timeout: { ms: 8000, error: () => new PrivateInputError(408, 'Request body timed out.') },
+        abort: { signal: request.signal, error: invalid },
       });
-      for (;;) {
-        const { done, value } = await Promise.race([reader.read(), deadline]);
-        if (request.signal.aborted) throw new PrivateInputError(400, 'Invalid request body.');
-        if (done) break;
-        size += value.byteLength;
-        if (size > MAX_PRIVATE_JSON) {
-          throw new PrivateInputError(413, 'Request too large.');
-        }
-        chunks.push(value);
-      }
     } catch (error) {
       if (error instanceof PrivateInputError) throw error;
-      throw new PrivateInputError(400, 'Invalid request body.');
-    } finally {
-      clearTimeout(timer);
-      if (abortRead) request.signal.removeEventListener('abort', abortRead);
-      // A source's cancellation promise must not delay the response or lock release.
-      void reader.cancel().catch(() => {});
-      reader.releaseLock();
+      throw invalid();
     }
   }
   let input: unknown;
-  try { input = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))); }
+  try { input = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
   catch { throw new PrivateInputError(400, 'Invalid JSON.'); }
   const parsed = schema.safeParse(input);
   if (!parsed.success) throw new PrivateInputError(400, 'Invalid request fields.');

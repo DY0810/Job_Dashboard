@@ -1,10 +1,6 @@
 import { z } from 'zod';
 
 export const PROVIDER_PROTOCOL_VERSION = 1;
-export const TYPESAFE_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
-export const TYPESAFE_MODEL = 'jev-latest';
-export const TYPESAFE_PROVIDER_ID = 'typesafe:jev';
-export const TYPESAFE_INPUT_PRICE_USD_PER_BILLION = 42;
 export const LOCAL_OLLAMA_PROVIDER_ID = 'local:ollama';
 export const OMNIROUTE_PROVIDER_ID = 'omniroute:compatible';
 export const BYOK_PROVIDER_ID = 'byok:compatible';
@@ -12,8 +8,8 @@ export const LOCAL_OLLAMA_ENDPOINT = 'http://127.0.0.1:11434/api/chat';
 const revision = z.number().int().nonnegative().safe();
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const provider = z.string().trim().min(1).max(100);
-const providerKind = z.enum(['none', 'typesafe_jev', 'local_ollama', 'omniroute', 'byok']);
-const providerProtocol = z.enum(['typesafe_systemone', 'ollama_native', 'openai_compatible']);
+const providerKind = z.enum(['none', 'local_ollama', 'omniroute', 'byok']);
+const providerProtocol = z.enum(['ollama_native', 'openai_compatible']);
 const locality = z.enum(['none', 'local', 'remote']);
 const credential = z.enum(['none', 'os_keychain', 'hosted_envelope']);
 const budget = z.strictObject({
