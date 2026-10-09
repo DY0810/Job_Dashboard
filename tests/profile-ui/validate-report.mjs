@@ -32,6 +32,7 @@ export const cases = [
   'unknown upload outcome retains the file and waits for its own status before a fresh expired grant',
   'lost grant response retries the same idempotent request before uploading once',
   'consumed rejected upload retires pending intent but retains the selected file',
+  'portfolio artwork accepts PNG and requests a portfolio upload grant',
 ];
 const required = projects.flatMap(project => cases.map(title => `${project}::profile.pw.ts::${title}`)).sort();
 
@@ -83,7 +84,7 @@ function selfTest() {
         results: [{ status: 'passed', retry: 0, errors: [] }] })),
     })) }],
   };
-  assert.equal(validateReport(fixture).passed, 128);
+  assert.equal(validateReport(fixture).passed, 132);
   const negatives = {
     missing: report => { report.suites[0].specs.pop(); },
     duplicate: report => { report.suites[0].specs.push(report.suites[0].specs[0]); },

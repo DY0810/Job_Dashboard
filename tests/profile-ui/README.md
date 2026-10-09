@@ -19,8 +19,8 @@ From the designated worktree, using the qualified Node runtime:
 /Users/dyl/.nvm/versions/node/v22.23.2/bin/node tests/profile-ui/run.mjs
 ```
 
-The config has no `webServer` stanza. Expect exactly 32 named cases in each
-of four projects (390px/1440px, light/dark): 128 passes, zero skipped, flaky,
+The config has no `webServer` stanza. Expect exactly 33 named cases in each
+of four projects (390px/1440px, light/dark): 132 passes, zero skipped, flaky,
 focused or unexpected cases. `validate-report.mjs` checks every identity, not
 just totals. Its self-test rejects missing, renamed, duplicate and invalid
 results. Review the nine-section, document, nullable policy and cross-field
@@ -56,7 +56,7 @@ readiness marker. The build uses scratch HOME/TMP/DB paths, rejects `.env`,
 and permits external build traffic only through the prepared public-font
 proxy. It removes generated `.next` before building, with no in-repo backup.
 Types, focused lint, draft units and the identity-validator self-test must pass.
-The final browser run still enforces all 128 identities and exact source hashes.
+The final browser run still enforces all 132 identities and exact source hashes.
 
 For test-only diagnostics, append `--diagnostic --project=mobile390-light`
 to either runner command. Only profile test/config hash changes are permitted;
