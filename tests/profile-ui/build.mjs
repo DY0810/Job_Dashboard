@@ -7,13 +7,15 @@ import { once } from 'node:events';
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = process.cwd();
-assert.equal(root, '/Users/dyl/.codex/worktrees/workie-auto-apply/Workie');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+assert.equal(process.cwd(), root, 'Run from the Workie checkout root');
 assert.equal(process.version, 'v22.23.2');
 assert.deepEqual(readdirSync(root).filter(name => /^\.env(?:$|\.)/.test(name) && name !== '.env.example'), []);
 const gate = join(root, 'logs/auto-apply-gate');
+mkdirSync(gate, { recursive: true });
 const out = mkdtempSync(join(gate, 'phase2-ui-build-'));
 const scratch = mkdtempSync('/private/tmp/workie-phase2-ui-build-');
 mkdirSync(join(scratch, 'home'));
@@ -79,7 +81,7 @@ await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 const port = proxy.address().port;
 const marker = join(gate, 'phase2-ui-rendered-build.json');
 const result = { mode: 'build', buildReady: false, phaseAccepted: false, root, node: process.version,
-  source, output: out, env, commands: join(out, 'commands.json'), priorBuildId: readFileSync('.next/BUILD_ID', 'utf8').trim() };
+  source, output: out, env, commands: join(out, 'commands.json'), priorBuildId: existsSync('.next/BUILD_ID') ? readFileSync('.next/BUILD_ID', 'utf8').trim() : null };
 save(marker, result);
 save(join(out, 'inputs.json'), result);
 try {

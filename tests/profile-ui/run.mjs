@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +14,6 @@ import { validateReport } from './validate-report.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 assert.equal(process.cwd(), root);
-assert.equal(root, '/Users/dyl/.codex/worktrees/workie-auto-apply/Workie');
 assert.equal(process.version, 'v22.23.2');
 const gate = join(root, 'logs/auto-apply-gate');
 const json = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -56,11 +56,13 @@ await new Promise((resolve, reject) => { reservation.once('error', reject); rese
 const { port } = reservation.address();
 await new Promise(resolve => reservation.close(resolve));
 const baseURL = `http://127.0.0.1:${port}`;
+// The gate's own browser install when prepared, else the user's Playwright cache (HOME is overridden below).
+const browsers = existsSync(join(gate, 'playwright')) ? join(gate, 'playwright') : join(homedir(), 'Library/Caches/ms-playwright');
 const env = {
   PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: join(out, 'home'), TMPDIR: join(out, 'tmp'),
   NODE_ENV: 'production', NEXT_TELEMETRY_DISABLED: '1', CI: '1',
   PROFILE_UI_BASE_URL: baseURL, PROFILE_UI_OUTPUT_DIR: out,
-  PLAYWRIGHT_BROWSERS_PATH: join(gate, 'playwright'), WORKIE_DB: join(out, 'must-not-create.db'),
+  PLAYWRIGHT_BROWSERS_PATH: browsers, WORKIE_DB: join(out, 'must-not-create.db'),
 };
 const policy = `(version 1) (allow default) (deny network*)
   (allow network-bind (local ip "localhost:*"))
