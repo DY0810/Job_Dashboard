@@ -19,6 +19,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { parseArgs } from "node:util";
 import { resolveCompany } from "./ats-probe.js";
 import Database from "better-sqlite3";
 
@@ -891,15 +892,24 @@ export function shouldWriteRegistry(resolvedCount: number): boolean {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
-  const skipYc = args.includes("--skip-yc");
-  const noReport = args.includes("--no-report");
+  const { values } = parseArgs({
+    strict: true,
+    options: {
+      "dry-run": { type: "boolean" },
+      "skip-yc": { type: "boolean" },
+      "no-report": { type: "boolean" },
+      limit: { type: "string" },
+      groups: { type: "string" },
+      "extra-ats": { type: "string" },
+    },
+  });
+  const dryRun = values["dry-run"] === true;
+  const skipYc = values["skip-yc"] === true;
+  const noReport = values["no-report"] === true;
 
-  const limitArg = args.find((a) => a.startsWith("--limit="));
   let limit: number | undefined;
-  if (limitArg) {
-    const raw = limitArg.split("=")[1];
+  if (values.limit !== undefined) {
+    const raw = values.limit;
     const parsed = parseLimit(raw);
     if (parsed === null) {
       console.error(
@@ -911,21 +921,19 @@ async function main(): Promise<void> {
     limit = parsed;
   }
 
-  const groupsArg = args.find((a) => a.startsWith("--groups="));
-  const onlyGroups = groupsArg
+  const groupsArg = values.groups;
+  const onlyGroups = groupsArg !== undefined
     ? new Set(
         groupsArg
-          .split("=")[1]
           .split(",")
           .map((s) => s.trim().toLowerCase())
           .filter(Boolean),
       )
     : null;
 
-  const extraAtsArg = args.find((a) => a.startsWith("--extra-ats="));
-  const extraAts = extraAtsArg
+  const extraAtsArg = values["extra-ats"];
+  const extraAts = extraAtsArg !== undefined
     ? extraAtsArg
-        .split("=")[1]
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -40,6 +40,7 @@ function request(method = 'GET', body?: unknown, cookie = a?.cookie, path = '/ap
   });
 }
 beforeEach(async () => {
+  mkdirSync(join(process.cwd(), 'logs/auto-apply-gate'), { recursive: true });
   dir = mkdtempSync(join(process.cwd(), 'logs/auto-apply-gate/profile-http-'));
   vi.stubEnv('VERCEL', '');
   vi.stubEnv('WORKIE_DB', join(dir, 'corpus.db')); vi.stubEnv('TURSO_DATABASE_URL', '');

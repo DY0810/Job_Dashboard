@@ -22,9 +22,11 @@
  *   npm run linkcheck
  *   npm run linkcheck -- --limit=200      check a sample instead of the whole DB
  *   npm run linkcheck -- --dry-run        report only, do not mark anything delisted
+ *   npm run linkcheck -- --ids=12,34      audited IDs only; skips rows off the board, dead exits 0
  */
 
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 
 import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 
@@ -292,6 +294,8 @@ export interface LinkcheckOptions {
   ids?: readonly number[];
   /** Report only — do not write `delisted_at`. */
   dryRun?: boolean;
+  /** With `ids`: skip IDs already off the board (ghost-delisted or dropped) instead of throwing. */
+  skipUncheckable?: boolean;
   concurrency?: number;
   log?: (record: Record<string, unknown>) => void;
 }
@@ -352,7 +356,10 @@ export async function runLinkcheck(
     const eligible = new Set(queue.map((row) => row.id));
     const unavailable = ids.filter((id) => !eligible.has(id));
     if (unavailable.length > 0) {
-      throw new Error(`posting ids are not currently checkable: ${unavailable.join(',')}`);
+      if (!options.skipUncheckable) {
+        throw new Error(`posting ids are not currently checkable: ${unavailable.join(',')}`);
+      }
+      log({ skipped: unavailable, reason: 'already excluded from the board' });
     }
   } else {
     queue = (options.limit === undefined ? base.where(recheckable) : base.where(recheckable).limit(options.limit)).all();
@@ -440,12 +447,6 @@ export function formatSummary(summary: LinkcheckSummary, dryRun: boolean): strin
 // CLI
 // ---------------------------------------------------------------------------------------
 
-function flag(argv: string[], name: string): string | undefined {
-  const match = argv.find((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`));
-  if (match === undefined) return undefined;
-  return match.includes('=') ? match.slice(match.indexOf('=') + 1) : '';
-}
-
 /** Strict CLI grammar: positive decimal SQLite IDs, comma-separated, no whitespace or dupes. */
 export function parseAuditedIds(raw: string): number[] {
   if (!/^[1-9]\d*(?:,[1-9]\d*)*$/.test(raw)) throw new Error(`bad --ids: ${raw}`);
@@ -456,20 +457,25 @@ export function parseAuditedIds(raw: string): number[] {
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
-  const dryRun = flag(argv, 'dry-run') !== undefined;
-  const rawLimit = flag(argv, 'limit');
-  const limit = rawLimit === undefined || rawLimit === '' ? undefined : Number.parseInt(rawLimit, 10);
-  if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) throw new Error(`bad --limit: ${rawLimit}`);
-  const rawIds = flag(argv, 'ids');
-  const ids = rawIds === undefined ? undefined : parseAuditedIds(rawIds);
-  if (ids !== undefined && rawLimit !== undefined) throw new Error('--ids cannot be combined with --limit');
+  const { values } = parseArgs({
+    args: argv,
+    strict: true,
+    options: { limit: { type: 'string' }, ids: { type: 'string' }, 'dry-run': { type: 'boolean' } },
+  });
+  const dryRun = values['dry-run'] === true;
+  const limit = values.limit === undefined ? undefined : Number.parseInt(values.limit, 10);
+  if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) throw new Error(`bad --limit: ${values.limit}`);
+  const ids = values.ids === undefined ? undefined : parseAuditedIds(values.ids);
+  if (ids !== undefined && limit !== undefined) throw new Error('--ids cannot be combined with --limit');
 
-  const db = openDb();
-  const summary = await runLinkcheck(db, createRuntime(), { limit, ids, dryRun });
+  const db = openDb(undefined, { migrate: true });
+  const summary = await runLinkcheck(db, createRuntime(), { limit, ids, dryRun, skipUncheckable: ids !== undefined });
   console.log(formatSummary(summary, dryRun));
 
-  // A dead link is a real finding, not a crash: exit 1 so a cron wrapper can notice.
-  return summary.dead > 0 ? 1 : 0;
+  // A dead link is a real finding, not a crash: exit 1 so a cron wrapper can notice. An
+  // audited `--ids` run is the verify-before-publish step, where a dead link is the expected
+  // finding and must not stop the publish that follows; only a throw fails it.
+  return summary.dead > 0 && ids === undefined ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

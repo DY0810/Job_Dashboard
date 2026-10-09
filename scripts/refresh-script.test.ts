@@ -9,12 +9,12 @@ it('only increases source batch size for an explicit manual catch-up run', () =>
   expect(workflow).toContain("WORKIE_CATCH_UP_PAGES: ${{ inputs.catch_up && '1000' || '100' }}");
 });
 
-it('passes targeted source names through the environment and validates them before ingestion', () => {
+it('passes manual dispatch inputs through the environment to the CLIs, never into run:', () => {
   const workflow = readFileSync('.github/workflows/refresh.yml', 'utf8');
   expect(workflow).toContain('REFRESH_SOURCES: ${{ inputs.refresh_sources }}');
-  expect(workflow).toContain("process.env.REFRESH_SOURCES.split(',')");
-  expect(workflow).toContain('selected.length !== names.length');
-  expect(workflow).toContain('selected.map(connector => ({ ...connector, minIntervalMs: undefined }))');
+  expect(workflow).toContain('node scripts/ingest.ts --only="$REFRESH_SOURCES"');
+  expect(workflow).toContain('LINKCHECK_IDS: ${{ inputs.linkcheck_ids }}');
+  expect(workflow).toContain('node scripts/linkcheck.ts --ids="$LINKCHECK_IDS"');
 });
 
 it.each([

@@ -1,4 +1,4 @@
-// Shared probing primitives for scripts/resolve-companies.ts and scripts/refresh-registry.ts.
+// Shared probing primitives for scripts/resolve-companies.ts and scripts/connectors/ats.ts.
 //
 // Plain JS (not .ts) on purpose: Node's native TS type-stripping requires relative imports
 // to carry the literal ".ts" extension, which tsc then rejects (TS5097) under this repo's

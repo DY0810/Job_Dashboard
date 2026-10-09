@@ -66,63 +66,18 @@ and the full plan's Phases 5-12 remain outstanding.
   Phase 5 is READY, NOT STARTED; questions/bell requires its own assignment.
   No main/production release or submissions; release conventions grant no authority.
 
-## Historical Setup Gate
+## Checks
 
-This unchanged Phase 0 runner is NOT the accepted combined Phase 1 invocation.
-Its deny-loopback tests cannot run the HTTP fixture, and its `full` command
-still requires future scripts. The qualified Phase 1 commands are below.
-
-The plain Node runner uses fixed command/argv lists with `shell: false`. It
-prints each package script body and real exit/signal result, records raw output
-and `results.json` under ignored `logs/auto-apply-gate/`, and exits nonzero if
-any check fails. It never installs dependencies, starts app/worker services, provisions
-resources, migrates live data, commits, pushes, or marks a phase accepted.
+The Phase 0 gate runner (`scripts/auto-apply-gate.mjs`) was removed; CI
+(`.github/workflows/verify.yml`) runs the same checks. Locally:
 
 ```bash
-node scripts/auto-apply-gate.mjs --self-test
-node scripts/auto-apply-gate.mjs baseline
-node scripts/auto-apply-gate.mjs phase 0 lib/auto-apply.test.ts app/board-storage.test.ts
-node scripts/auto-apply-gate.mjs full
+npm test && npx tsc --noEmit && npm run lint && npm run build && git diff --check
+npx vitest run --passWithNoTests=false <test-file...>   # focused; a wrong path fails
 ```
 
-- `baseline`: `npm test -- --passWithNoTests=false`, `npx tsc --noEmit`, `npm run lint`,
-  `npm run build`, then `git diff --check`; all commands are attempted even
-  when an earlier command fails.
-- `phase N <test-file...>`: existing explicit in-worktree test files only,
-  with `--passWithNoTests=false`, followed by typecheck, lint and diff checks.
-  No guessed future paths or empty-test success. It is a focused command gate,
-  not proof that the phase's entire acceptance checklist passed.
-- `full`: refuses to run if `test:worker`, `test:documents` or `test:e2e`
-  is missing; otherwise runs baseline plus all three. Missing checks are
-  BLOCKED/NOT RUN, never PASS. A full command pass still needs the plan's
-  security, document, browser, support-matrix and independent review evidence.
-- `--self-test`: verifies command selection, missing-check rejection, test-file
-  boundaries, environment allowlisting, failed/signaled child handling, and
-  compiler loopback with an externally denied TEST-NET socket.
-
-The runner rejects worktree `.env*` files other than `.env.example`, and
-`.npmrc`, without reading them. Its child environment is an allowlist: Node's
-binary directory plus system tools, isolated HOME/TMPDIR/npm config/cache,
-CI/telemetry flags, a scratch `WORKIE_DB` and disabled local refresh. Ambient
-provider/mail/database credentials, `NODE_OPTIONS` and hosted flags are absent.
-An unconfigured scratch database is not seeded or migrated by the runner.
-
-On this Mac the runner requires `/usr/bin/sandbox-exec`, denies external
-network, and permits file writes only within the worktree and `/dev/null`.
-Only the build gets loopback access for Turbopack compiler IPC; other commands
-deny loopback too. This build exception is host-wide loopback, not per-port
-isolation. No provider code/configuration is exercised by this baseline.
-There is no silent unsandboxed fallback. Existing mocked/file-DB tests can run;
-Archivo's build-time Google Fonts download cannot. Record offline build
-limitations as environment failures, not invented source defects. Later
-HTTP/browser fixture phases must explicitly qualify isolated fixture ports
-before changing the test rule; never probe real local services or enable
-unrestricted network.
-
-`git diff --check` does not inspect untracked files. Review newly added files
-explicitly before the independent gate; do not stage them merely to hide this
-limitation. The runner is task-local and macOS-only, not a new cross-platform
-test framework or a replacement for CI.
+The removed runner also denied external network, allowlisted the child
+environment and refused `.env*`/`.npmrc` files. These commands do not.
 
 ## Accepted Build Qualification
 
@@ -132,22 +87,19 @@ and review closure: 1,246 tests, typecheck/lint, harness self-test, focused
 `logs/auto-apply-gate/verification-K5dFOm/results.json`; later reviewer-fix
 checks are in `auto-apply-progress.md`. Parent rechecked baseline/full
 `--passWithNoTests=false` and normalized option-filename rejection against
-gate SHA-256 `3926e07f3d8565cc76ecfa77b37f6c17ca76b791d9fcffaa97f0b89aea5b9f7d`.
+the since-removed gate, SHA-256 `3926e07f3d8565cc76ecfa77b37f6c17ca76b791d9fcffaa97f0b89aea5b9f7d`.
 
 The successful build used network enabled solely to obtain normal public
 Google Fonts. It does not establish an offline build: the network-denied
-baseline still fails its Archivo download by design. The gate's network
-policy is unchanged; this qualification is not standing permission for
-general egress, production access, deployment or employer submissions.
+baseline failed its Archivo download by design. This qualification is not
+standing permission for general egress, production access, deployment or employer submissions.
 Absent worker/document/e2e suites remain NOT RUN, never PASS.
 
 ## Exact Dependency Installation
 
 Phase 0 uses the existing lockfile, Node 22, and no new package scripts.
 Run from the write root. Installation may access package distribution
-servers; application checks use the externally network-denied gate above.
-The separately accepted public-font build qualification is documented above
-and does not change the repeatable gate's network policy.
+servers.
 
 ```bash
 mkdir -p logs/auto-apply-gate/home logs/auto-apply-gate/tmp logs/auto-apply-gate/npm-cache

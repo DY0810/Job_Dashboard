@@ -16,6 +16,7 @@
 
 import { existsSync, linkSync, renameSync, rmSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import Database from 'better-sqlite3';
 
 import { createClient } from '@libsql/client';
@@ -120,17 +121,13 @@ export async function pullRemote(
   }
 }
 
-function arg(name: string): string | undefined {
-  const found = process.argv.slice(2).find((value) => value.startsWith(`--${name}=`));
-  return found?.slice(name.length + 3);
-}
-
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const url = arg('from') ?? process.env.TURSO_DATABASE_URL;
+  const { values } = parseArgs({ strict: true, options: { from: { type: 'string' }, 'check-cache': { type: 'boolean' } } });
+  const url = values.from ?? process.env.TURSO_DATABASE_URL;
   if (!url) throw new Error('no source: set TURSO_DATABASE_URL, or pass --from=file:/path.db');
 
   const path = process.env.WORKIE_DB ?? 'workie.db';
-  if (process.argv.includes('--check-cache')) {
+  if (values['check-cache']) {
     if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('--check-cache is restricted to the cloud writer');
     const restored = await ensureCachedState(url, process.env.TURSO_AUTH_TOKEN, path);
     console.log(restored ? 'Recovered writer state from Turso' : 'Cached writer state is current or ahead of the mirror');

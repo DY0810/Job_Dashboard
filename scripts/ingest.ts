@@ -14,6 +14,7 @@
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
 import { and, eq, sql } from 'drizzle-orm';
 
@@ -51,6 +52,7 @@ export interface IngestOptions {
   runtime: Runtime;
   runId: string;
   env?: Record<string, string | undefined>;
+  /** One connector name, or a comma-separated list. Bypasses the cadence gate. */
   only?: string;
   pendingOnly?: boolean;
   dryRun?: boolean;
@@ -180,13 +182,20 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
   const startedAt = new Date(now());
   const checkpoints = readCheckpoints(db, options.connectors);
 
-  const selected =
+  // `only` is one name or a comma list (the manual `refresh_sources` dispatch). Every name
+  // must be known: a typo must not quietly run the rest and report success.
+  const only =
     options.only === undefined
+      ? undefined
+      : [...new Set(options.only.split(',').map((name) => name.trim()).filter(Boolean))];
+  const selected =
+    only === undefined
       ? options.connectors.filter((connector) => !options.pendingOnly || checkpoints.get(connector.name)?.pending)
-      : options.connectors.filter((connector) => connector.name === options.only);
+      : options.connectors.filter((connector) => only.includes(connector.name));
 
-  if (options.only !== undefined && selected.length === 0) {
-    throw new Error(`no connector named ${options.only}`);
+  if (only !== undefined && (only.length === 0 || selected.length !== only.length)) {
+    const unknown = only.filter((name) => !selected.some((connector) => connector.name === name));
+    throw new Error(`no connector named ${unknown.join(',') || options.only}`);
   }
 
   // Neither kind of skip writes a `connector_runs` row, so ghost detection cannot read the
@@ -722,19 +731,22 @@ function persist(
 // CLI
 // ---------------------------------------------------------------------------------------
 
-function flag(argv: string[], name: string): string | undefined {
-  const match = argv.find((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`));
-  if (match === undefined) return undefined;
-  return match.includes('=') ? match.slice(match.indexOf('=') + 1) : '';
-}
-
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
-  const only = flag(argv, 'only');
-  const dryRun = flag(argv, 'dry-run') !== undefined;
-  const record = flag(argv, 'record') !== undefined;
-  const sinceRaw = flag(argv, 'since');
-  const since = sinceRaw === undefined ? undefined : Date.parse(sinceRaw);
-  if (since !== undefined && !Number.isFinite(since)) throw new Error(`bad --since: ${sinceRaw}`);
+  const { values } = parseArgs({
+    args: argv,
+    strict: true,
+    options: {
+      only: { type: 'string' },
+      since: { type: 'string' },
+      'dry-run': { type: 'boolean' },
+      record: { type: 'boolean' },
+      pending: { type: 'boolean' },
+    },
+  });
+  const { only, record } = values;
+  const dryRun = values['dry-run'] === true;
+  const since = values.since === undefined ? undefined : Date.parse(values.since);
+  if (since !== undefined && !Number.isFinite(since)) throw new Error(`bad --since: ${values.since}`);
 
   const runId = new Date().toISOString();
   const runtime = createRuntime();
@@ -747,7 +759,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     runtime,
     runId,
     only,
-    pendingOnly: flag(argv, 'pending') !== undefined,
+    pendingOnly: values.pending === true,
     dryRun,
     since,
     runtimeFor: record

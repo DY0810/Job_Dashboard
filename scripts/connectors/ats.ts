@@ -1,5 +1,5 @@
 /**
- * Tier-1 ATS connectors (plan Phase 3) — greenhouse · lever · ashby · smartrecruiters ·
+ * Tier-1 ATS connectors (plan Phase 3) — greenhouse · lever · ashby ·
  * workable · recruitee. `source_priority = 1`: when the same job also arrives from an
  * aggregator, these URLs win the `canonical_url`.
  *
@@ -44,7 +44,6 @@ export interface RegistryEntry {
   careersUrl?: string;
   tags: string[];
   verified_at: string;
-  flagged_at?: string;
 }
 
 const REGISTRY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'companies.json');
@@ -216,8 +215,7 @@ function atsConnector(name: string, map: Mapper): Connector {
 
       if (targets.length > 0 && failed === targets.length) {
         // A wall of robots refusals is policy, not an outage. Name the cause so
-        // `npm run status` can render it as `refused` instead of ERROR — smartrecruiters
-        // publishes `Disallow: /` and sat in every table looking broken.
+        // `npm run status` can render it as `refused` instead of ERROR.
         throw new Error(
           refused === failed
             ? `all ${targets.length} ${name} targets refused by robots.txt`
@@ -436,95 +434,6 @@ export const ashby = atsConnector('ashby', async (entry, context) => {
     });
   }
   return jobs;
-});
-
-interface SmartRecruitersPosting {
-  id?: string;
-  name?: string;
-  releasedDate?: string;
-  location?: { fullLocation?: string };
-}
-
-interface SmartRecruitersDetail {
-  postingUrl?: string;
-  applyUrl?: string;
-  jobAd?: { sections?: Record<string, { title?: string; text?: string }> };
-  typeOfEmployment?: { label?: string };
-  department?: { label?: string };
-  location?: { remote?: boolean; city?: string; region?: string; country?: string };
-}
-
-/**
- * NEEDS A HUMAN SIGN-OFF, and is called out in the PR rather than left in a diff.
- *
- * `api.smartrecruiters.com/robots.txt` is `User-agent: * / Disallow: /`, with an explicit
- * `Allow: /v1/companies/` carved out for LinkedInBot. Taken literally that refuses us, and
- * the runtime does refuse it by default — this is the one ATS connector that has to opt out.
- *
- * The case for opting out: `/v1/companies/{id}/postings` is SmartRecruiters' documented,
- * unauthenticated Posting API, it is what a company's own careers page calls, we identify
- * ourselves with a contact address, and the registry has exactly one SmartRecruiters company
- * — one request per run. The case against is that `Disallow: /` is `Disallow: /`.
- *
- * The call went against opting out. `Disallow: /` is `Disallow: /`, and the `Allow:` line
- * for LinkedInBot shows SmartRecruiters decided deliberately who reaches this path rather
- * than leaving a careless blanket rule. This connector therefore reports a clean refusal
- * per target and the rest of the run is unaffected. Cost: one company out of 74.
- *
- * To reverse, restore `{ respectRobots: false }` here.
- */
-const SMARTRECRUITERS_FETCH = {} as const;
-
-export const smartrecruiters = atsConnector('smartrecruiters', async (entry, context) => {
-  const body = await context.runtime.fetchJson<{ content?: SmartRecruitersPosting[] }>(
-    endpoint('smartrecruiters', entry.token, { limit: '100' }),
-    SMARTRECRUITERS_FETCH,
-  );
-  const postings: ConnectorPosting[] = [];
-
-  // ponytail: the list endpoint carries no description, so the body costs one extra request
-  // per posting. Fine at the registry's current SmartRecruiters volume (one company); if
-  // that grows past a few dozen openings, cache detail bodies on `id` between runs.
-  for (const posting of sourceList(body.content, 'content')) {
-    if (!posting.id) continue;
-    const detail = await context.runtime.fetchJson<SmartRecruitersDetail>(
-      `${endpoint('smartrecruiters', entry.token)}/${posting.id}`,
-      SMARTRECRUITERS_FETCH,
-    );
-    const url = detail.postingUrl ?? detail.applyUrl;
-    if (!url) continue;
-    postings.push(
-      row('smartrecruiters', entry, {
-        publisherId: posting.id,
-        title: posting.name,
-        location: posting.location?.fullLocation,
-        url,
-        postedAt: toEpochMs(posting.releasedDate),
-        description: Object.values(detail.jobAd?.sections ?? {})
-          .map((section) => `${section.title ?? ''}\n${section.text ?? ''}`)
-          .join('\n'),
-        structured: {
-          employmentType: employmentTypeFrom(detail.typeOfEmployment?.label),
-          workMode: workModeFrom(undefined, detail.location?.remote),
-          // `fullLocation` is the already-joined whole, not a fourth part. Passing both gave
-          // "San Francisco, California, United States, San Francisco, California, United
-          // States", because locationFrom only dedupes on exact per-argument equality.
-          location:
-            locationFrom(detail.location?.city, detail.location?.region, detail.location?.country) ??
-            text(posting.location?.fullLocation),
-          department: text(detail.department?.label),
-          // `jobAd.sections` is already {title, html} per section — no parsing of the whole
-          // body, just of each section's own markup.
-          sections: Object.values(detail.jobAd?.sections ?? {}).flatMap((section) => {
-            const items = parseSections(section.text).flatMap((parsed) => parsed.items);
-            const heading = text(section.title);
-            return heading && items.length > 0 ? [{ heading, items }] : [];
-          }),
-        },
-      }),
-    );
-  }
-  return postings;
 });
 
 interface WorkableJob {
@@ -873,7 +782,6 @@ export const atsConnectors: Connector[] = [
   greenhouse,
   lever,
   ashby,
-  smartrecruiters,
   workable,
   recruitee,
   workday,

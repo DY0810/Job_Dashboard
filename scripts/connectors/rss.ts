@@ -1,13 +1,12 @@
 /**
- * RSS feeds (plan Phase 6), parsed with the already-installed `rss-parser`.
+ * RSS feeds (plan Phase 6), parsed with `sax` (already a direct dependency).
  * `source_priority = 3` — below the ATS and the JSON aggregators.
  *
- * The feed body goes through `context.runtime.fetchText` and then `parseString`, never
- * `parser.parseURL`: parseURL does its own fetch, which would sidestep the timeout, the rate
- * limiter, the robots check and the fixture replay all at once.
+ * The feed body always goes through `context.runtime.fetchText`, so the timeout, the rate
+ * limiter, the robots check and the fixture replay all apply.
  */
 
-import Parser from 'rss-parser';
+import sax from 'sax';
 
 import type { EmploymentType, WorkMode } from '../../lib/extract.ts';
 import { normalizeDescription } from '../../lib/normalize.ts';
@@ -23,15 +22,84 @@ interface FeedItem {
   title?: string;
   link?: string;
   pubDate?: string;
-  isoDate?: string;
   content?: string;
-  contentSnippet?: string;
   creator?: string;
   region?: string;
   type?: string;
-  category?: string;
   location?: string;
   jobId?: string;
+}
+
+/**
+ * The item fields rss-parser produced, read the way it read them: direct children of
+ * `<item>` only, first occurrence wins, text and CDATA joined as-is (no trim). `content` is
+ * `<description>`, never `content:encoded`; `creator` is `dc:creator`, else `author`. A
+ * malformed or truncated document throws, and so does anything that is not RSS 1 or 2, so a
+ * broken source is an error rather than a healthy empty feed (or a partial one that ghost
+ * detection would read as withdrawn postings).
+ */
+export function parseFeed(xml: string): FeedItem[] {
+  const parser = sax.parser(true);
+  const stack: string[] = [];
+  const items: FeedItem[] = [];
+  let root = '';
+  let version = '';
+  let channel = false;
+  let item: Record<string, string> | null = null;
+  let itemDepth = 0;
+  let field: string | null = null;
+  let text = '';
+
+  parser.onerror = (error) => {
+    throw error;
+  };
+  parser.onopentag = ({ name, attributes }) => {
+    if (stack.length === 0) {
+      root = name;
+      version = typeof attributes.version === 'string' ? attributes.version : '';
+    }
+    if (name === 'channel' && stack.length === 1) channel = true;
+    const path = stack.join(' ');
+    if (!item && name === 'item' && (path === 'rss channel' || path === 'rdf:RDF')) {
+      item = {};
+      itemDepth = stack.length;
+    } else if (item && stack.length === itemDepth + 1) {
+      field = name;
+      text = '';
+    }
+    stack.push(name);
+  };
+  parser.ontext = parser.oncdata = (chunk) => {
+    if (field !== null) text += chunk;
+  };
+  parser.onclosetag = () => {
+    stack.pop();
+    if (!item) return;
+    if (field !== null && stack.length === itemDepth + 1) {
+      if (!(field in item)) item[field] = text;
+      field = null;
+    } else if (stack.length === itemDepth) {
+      const f = item;
+      items.push({
+        title: f.title,
+        link: f.link,
+        pubDate: f.pubDate || f['dc:date'],
+        content: f.description,
+        creator: f['dc:creator'] ?? f.author,
+        region: f.region,
+        type: f.type,
+        location: f.location,
+        jobId: f.jobId,
+      });
+      item = null;
+    }
+  };
+  parser.write(xml).close();
+
+  if (!channel || !(root === 'rdf:RDF' || (root === 'rss' && /^(2|0\.9)/.test(version)))) {
+    throw new Error('Feed not recognized as RSS 1 or 2.');
+  }
+  return items;
 }
 
 /**
@@ -55,7 +123,6 @@ function rssConnector(
   map: FeedMapper,
   fetchOptions: FetchOptions = {},
 ): Connector {
-  const parser = new Parser<unknown, FeedItem>({ customFields: { item: ['region', 'type', 'category', 'location', 'jobId'] } });
   return {
     name,
     kind: 'rss',
@@ -63,18 +130,17 @@ function rssConnector(
     // response — re-fetching it twice an hour cannot surface anything a single fetch missed.
     minIntervalMs: 60 * 60 * 1000,
     async fetch(context: ConnectorContext): Promise<ConnectorPosting[]> {
-      const feed = await parser.parseString(await context.runtime.fetchText(url, fetchOptions));
-      return (feed.items ?? [])
+      return parseFeed(await context.runtime.fetchText(url, fetchOptions))
         .filter((item) => item.link)
         .map((item) => {
           const mapped = map(item);
-          const body = normalizeDescription(item.content ?? item.contentSnippet ?? '');
+          const body = normalizeDescription(item.content ?? '');
           return {
             source: name,
             sourceKind: 'rss' as const,
             sourceUrl: item.link!,
             ...(typeof item.jobId === 'string' ? { publisherId: item.jobId } : {}),
-            postedAt: toEpochMs(item.isoDate ?? item.pubDate),
+            postedAt: toEpochMs(item.pubDate),
             company: mapped.company,
             title: mapped.title,
             location: mapped.location,
@@ -241,7 +307,7 @@ export const designjobsCareers = rssConnector(
   'designjobs-careers',
   'https://designjobs.careers/rss',
   (item) => {
-    const body = item.content ?? item.contentSnippet ?? '';
+    const body = item.content ?? '';
     return {
       // `dc:creator` is the employer; the title is the role alone, already separated.
       company: (item.creator ?? '').trim(),

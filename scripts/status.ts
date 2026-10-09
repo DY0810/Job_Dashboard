@@ -14,6 +14,7 @@
  */
 
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 
 import { and, desc, eq, gte, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
 
@@ -241,9 +242,9 @@ export function formatStatus(status: Status): string {
 }
 
 function main(): void {
-  const raw = process.argv.slice(2).find((arg) => arg.startsWith('--runs='));
-  const runs = raw === undefined ? undefined : Number.parseInt(raw.slice('--runs='.length), 10);
-  if (runs !== undefined && (!Number.isFinite(runs) || runs <= 0)) throw new Error(`bad --runs: ${raw}`);
+  const { values } = parseArgs({ strict: true, options: { runs: { type: 'string' } } });
+  const runs = values.runs === undefined ? undefined : Number.parseInt(values.runs, 10);
+  if (runs !== undefined && (!Number.isFinite(runs) || runs <= 0)) throw new Error(`bad --runs: ${values.runs}`);
   console.log(formatStatus(collectStatus(openDb(), { runs })));
 }
 

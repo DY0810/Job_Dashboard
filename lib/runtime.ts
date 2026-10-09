@@ -170,7 +170,7 @@ async function assertPublicDestination(
 /**
  * A URL safe to put in a log line or an error: origin + path, never the query string.
  *
- * Adzuna, Careerjet and Jooble all carry their credential in the query, so "log the URL that
+ * A keyed source can carry its credential in the query, so "log the URL that
  * failed" is exactly how a key ends up in a log file. Dropping the query outright is one line
  * and cannot be got wrong later by adding a new keyed source.
  */

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
@@ -40,6 +40,7 @@ async function document(ownerId = 'one') {
   return id;
 }
 beforeEach(async () => {
+  mkdirSync(join(process.cwd(), 'logs/auto-apply-gate'), { recursive: true });
   dir = mkdtempSync(join(process.cwd(), 'logs/auto-apply-gate/profile-'));
   vi.stubEnv('VERCEL', '');
   vi.stubEnv('WORKIE_DB', join(dir, 'corpus.db'));

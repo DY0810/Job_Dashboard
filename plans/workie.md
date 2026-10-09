@@ -226,7 +226,7 @@ proves it with fake connectors before any real one exists.
 - `scripts/ingest.ts`: runs all enabled connectors under `Promise.allSettled`, writes one
   `connector_runs` row per connector per run (status · fetched · new · merged · duration ·
   error), exits 0 when *any* connector succeeded, exits 1 only when *all* fail.
-- Flags: `--only=<name>` · `--dry-run` (fetch and normalize, write nothing) · `--since=`.
+- Flags: `--only=<name>[,<name>...]` · `--dry-run` (fetch and normalize, write nothing) · `--since=`.
 - Structured JSON log line per connector. Errors carry the connector name and never a key.
 
 **Gate.**
@@ -374,7 +374,7 @@ reality. **The "zero cross-source duplicates" acceptance criterion is verified h
 **Build.**
 - API/JSON: HN "Who is Hiring" via `hn.algolia.com/api/v1` (best signal-to-noise for
   AI/infra) · RemoteOK JSON · Remotive · Arbeitnow · Adzuna · Careerjet · Jooble · USAJobs.
-- RSS via `rss-parser`: We Work Remotely · Jobspresso · Working Nomads.
+- RSS via a `sax` item collector: We Work Remotely · Jobspresso · Working Nomads.
 - GitHub README table parsers: SimplifyJobs/Summer-Internships and siblings.
 - YC company directory JSON + Work at a Startup.
 - Keyed sources (Adzuna, Careerjet, Jooble, USAJobs) read from `.env.local` and **skip

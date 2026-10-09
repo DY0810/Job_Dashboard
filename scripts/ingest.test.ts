@@ -213,22 +213,13 @@ describe('keyed connectors without a key', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.skipped.map((entry) => entry.connector).sort()).toEqual([
-      'adzuna',
-      'careerjet',
-      'jooble',
-      'usajobs',
-    ]);
-    // Jooble needs a key; the other three are refused regardless of credentials.
+    expect(result.skipped.map((entry) => entry.connector)).toEqual(['jooble']);
     for (const entry of result.skipped) {
-      expect(entry.reason).toMatch(/not configured|robots\.txt disallows/);
+      expect(entry.reason).toMatch(/not configured/);
     }
-    expect(
-      result.skipped.filter((entry) => /robots\.txt disallows/.test(entry.reason ?? '')).map((e) => e.connector).sort(),
-    ).toEqual(['adzuna', 'careerjet', 'usajobs']);
 
     // A skip is logged as a notice...
-    expect(lines.filter((line) => line.status === 'skipped')).toHaveLength(4);
+    expect(lines.filter((line) => line.status === 'skipped')).toHaveLength(1);
     // ...but writes no row, so ghost detection cannot read the silence as a real absence.
     expect(db.select().from(connectorRuns).all().map((row) => row.connector)).toEqual(['healthy']);
   });
@@ -248,26 +239,14 @@ describe('secrets never reach a log line', () => {
       }),
       runId: 'run-secret',
       env: {
-        ADZUNA_APP_ID: 'app-id-1234',
-        ADZUNA_APP_KEY: 'SUPERSECRETADZUNA',
-        CAREERJET_AFFID: 'SUPERSECRETAFFID',
         JOOBLE_KEY: 'SUPERSECRETJOOBLE',
-        USAJOBS_KEY: 'SUPERSECRETUSAJOBS',
-        USAJOBS_EMAIL: 'someone@example.com',
       },
       log: (record) => lines.push(JSON.stringify(record)),
     });
 
     const captured = lines.join('\n');
-    expect(captured).toMatch(/adzuna/);
-    for (const secret of [
-      'SUPERSECRETADZUNA',
-      'SUPERSECRETAFFID',
-      'SUPERSECRETJOOBLE',
-      'SUPERSECRETUSAJOBS',
-    ]) {
-      expect(captured).not.toContain(secret);
-    }
+    expect(captured).toMatch(/jooble/);
+    expect(captured).not.toContain('SUPERSECRETJOOBLE');
 
     // The stored error column is the other place a URL could leak.
     const stored = db.select().from(connectorRuns).all().map((row) => row.error ?? '').join('\n');
@@ -683,7 +662,7 @@ describe('review regressions', () => {
   });
 
   it('a bare --only or --since fails loudly instead of being read as absent', async () => {
-    // `flag()` returns '' for a valueless flag; both paths must reject rather than quietly
+    // An empty --only and a valueless --since must both reject rather than quietly
     // fall back to "run everything" / "no date filter".
     await expect(
       runIngest({
@@ -696,7 +675,7 @@ describe('review regressions', () => {
         log: silent,
       }),
     ).rejects.toThrow(/no connector named/);
-    await expect(main(['--since'])).rejects.toThrow(/bad --since/);
+    await expect(main(['--since'])).rejects.toThrow(/--since/);
   });
 });
 
@@ -713,6 +692,18 @@ describe('flags', () => {
       log: silent,
     });
     expect(result.runs.map((run) => run.connector)).toEqual(['healthy']);
+  });
+
+  it('--only takes a comma list and rejects the whole list if any name is unknown', async () => {
+    const options = { connectors: [healthy, fiveHundred], runtime: flakyRuntime(), env: {}, log: silent };
+    const result = await runIngest({ ...options, db: memoryDb(), runId: 'run-list', only: 'healthy, five-hundred' });
+    expect(result.runs.map((run) => run.connector).sort()).toEqual(['five-hundred', 'healthy']);
+
+    const db = memoryDb();
+    await expect(runIngest({ ...options, db, runId: 'run-typo', only: 'healthy,nope' })).rejects.toThrow(
+      'no connector named nope',
+    );
+    expect(db.select().from(connectorRuns).all()).toHaveLength(0);
   });
 
   it('--dry-run fetches and normalizes but writes nothing at all', async () => {

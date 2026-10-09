@@ -73,8 +73,7 @@ as a fallback and verify the external job's execution history after enabling it.
 ### Source Configuration And Catch-up
 
 Collection keys belong in **GitHub repository Actions secrets**, not only in Vercel.
-The workflow forwards `JOOBLE_KEY`, `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`,
-`USAJOBS_KEY`, `USAJOBS_EMAIL`, and `MUSE_API_KEY` when present. A configured key does not override a source's
+The workflow forwards `JOOBLE_KEY` and `MUSE_API_KEY` when present. A configured key does not override a source's
 robots policy.
 
 Remotive uses its explicitly published public RSS feed, not its robots-blocked JSON API.
@@ -82,10 +81,9 @@ Listings retain Remotive links and attribution, and an entry aging out of the fe
 treated as a closed job. Glean uses the `gleanwork` Greenhouse board linked by its own
 careers page; the former SmartRecruiters mapping was not its current board.
 
-SmartRecruiters, Adzuna, Careerjet and USAJobs still require a permitted data source before they can
-be enabled. API documentation alone does not override this project's robots policy.
-Careerjet's legacy endpoint failed verification; its current v4 API also refuses crawling.
-An old affiliate ID therefore cannot enable it. Muse and Jooble still need their
+SmartRecruiters, Adzuna, Careerjet and USAJobs connectors were removed: each API host's robots.txt refuses
+crawling, and API documentation alone does not override this project's robots policy. The
+`smartrecruiters` entries left in `scripts/companies.json` are not polled. Muse and Jooble still need their
 provider-issued API keys in GitHub Actions secrets.
 
 The Muse requires app registration beyond testing. It is disabled without its
@@ -224,13 +222,13 @@ cannot have changed are not asked.
 
 | Source | Interval | Why |
 | --- | --- | --- |
-| ATS boards — Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee | every cycle | Where a new posting appears first. This is the point of the tool. |
+| ATS boards — Greenhouse, Lever, Ashby, Workable, Recruitee | every cycle | Where a new posting appears first. This is the point of the tool. |
 | `hn` | 6h | "Who is Hiring" is one thread a month. |
 | Repository lists: Simplify, Vansh, SpeedyApply, Jobright | 3h | Curated GitHub job tables. |
 | RSS + smaller aggregators — Remotive, WeWorkRemotely, Dribbble, Jobspresso, Working Nomads, RemoteOK, Arbeitnow, Braintrust, Jobicy | 1h | Provider feeds may expose a bounded window rather than the full catalog. |
 | Himalayas | 24h after a completed sweep | Daily provider cache; pending cursor imports advance on intervening runs. |
 | Muse | 1h after a completed sweep | Design and Science-and-Engineering scopes, with resumable category pagination. |
-| Keyed aggregators — Adzuna, Careerjet, Jooble, USAJobs | 6h | Metered free tiers, measured in calls per month. |
+| Keyed aggregators — Jooble | 6h | Metered free tiers, measured in calls per month. |
 
 A cadence skip and a missing-key skip are logged apart (`kind: cadence` / `kind: config`) and
 neither writes a `connector_runs` row — ghost detection counts a posting absent only against

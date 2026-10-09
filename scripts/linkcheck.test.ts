@@ -329,6 +329,22 @@ describe('runLinkcheck', () => {
     expect(db.select().from(postings).where(eq(postings.id, untouched)).get()!.delistedAt).toBeNull();
   });
 
+  it('skipUncheckable drops IDs already off the board and checks the rest', async () => {
+    const db = memoryDb();
+    const checked = seed(db, URL_FOR.lever);
+    const dropped = seed(db, URL_FOR.workable, null);
+    const runtime = runtimeWith(() => ({ status: 404, body: '' }));
+    const lines: Record<string, unknown>[] = [];
+
+    const summary = await runLinkcheck(db, runtime, { ids: [checked, dropped], skipUncheckable: true, log: (r) => lines.push(r) });
+    expect(summary).toMatchObject({ checked: 1, dead: 1, marked: 1 });
+    expect(lines).toContainEqual({ skipped: [dropped], reason: 'already excluded from the board' });
+    await expect(runLinkcheck(db, runtime, { ids: [dropped], skipUncheckable: true, log: () => {} })).resolves.toMatchObject({ checked: 0 });
+    await expect(runLinkcheck(db, runtime, { ids: [9_999_999], skipUncheckable: true, log: () => {} })).rejects.toThrow(
+      'unknown posting ids: 9999999',
+    );
+  });
+
   it('rechecks and restores only a linkcheck-delisted selected ID after a verified-live result', async () => {
     const db = memoryDb();
     const linkcheckId = seed(db, URL_FOR.ashby);

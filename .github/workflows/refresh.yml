@@ -42,11 +42,7 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
       TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
       TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-      ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
-      ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
       JOOBLE_KEY: ${{ secrets.JOOBLE_KEY }}
-      USAJOBS_KEY: ${{ secrets.USAJOBS_KEY }}
-      USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
       MUSE_API_KEY: ${{ secrets.MUSE_API_KEY }}
       # Larger manual batches avoid re-enriching and mirroring after every 2,000 feed rows.
       # This does not change per-host rate limits or the resumable checkpoint contract.
@@ -82,58 +78,24 @@ jobs:
             mkdir -p logs && touch logs/.linkcheck-stamp
           fi
 
-      # Claims a pending hosted-button request if one is waiting, then runs the ordinary
-      # cycle either way — ingest, enrich, weekly linkcheck, mirror to Turso.
+      # Dead links are the expected finding here and exit 0; IDs already off the board are
+      # skipped. Unknown or malformed IDs throw and stop the dispatch before publishing.
       - name: Verify selected application links
         if: inputs.linkcheck_ids != ''
         env:
           LINKCHECK_IDS: ${{ inputs.linkcheck_ids }}
-        run: |
-          node --input-type=module <<'JS'
-          import { inArray } from 'drizzle-orm';
-          import { openDb } from './lib/db/index.ts';
-          import { postings } from './lib/db/schema.ts';
-          import { createRuntime } from './lib/runtime.ts';
-          import { parseAuditedIds, runLinkcheck, formatSummary } from './scripts/linkcheck.ts';
-          const ids = parseAuditedIds(process.env.LINKCHECK_IDS);
-          const db = openDb(undefined, { migrate: true });
-          const rows = db.select({ id: postings.id, track: postings.track,
-            delistedAt: postings.delistedAt, reason: postings.delistedReason })
-            .from(postings).where(inArray(postings.id, ids)).all();
-          if (rows.length !== ids.length) throw new Error('Some requested posting IDs do not exist');
-          const checkable = rows.filter(r => r.track && (!r.delistedAt || r.reason === 'linkcheck')).map(r => r.id);
-          if (checkable.length) {
-            console.log(formatSummary(await runLinkcheck(db, createRuntime(), { ids: checkable }), false));
-          } else {
-            console.log('Selected postings are already excluded from the board');
-          }
-          JS
+        run: node scripts/linkcheck.ts --ids="$LINKCHECK_IDS"
 
+      # A named manual poll bypasses cadence only, never credentials or robots rules.
+      # Every name must be a known connector, or nothing runs.
       - name: Refresh selected sources
         if: inputs.refresh_sources != ''
         env:
           REFRESH_SOURCES: ${{ inputs.refresh_sources }}
-        run: |
-          node --input-type=module <<'JS'
-          import { openDb } from './lib/db/index.ts';
-          import { createRuntime } from './lib/runtime.ts';
-          import { connectors } from './scripts/connectors/index.ts';
-          import { runIngest } from './scripts/ingest.ts';
-          const names = [...new Set(process.env.REFRESH_SOURCES.split(',').map(name => name.trim()).filter(Boolean))];
-          const selected = connectors.filter(connector => names.includes(connector.name));
-          if (!names.length || selected.length !== names.length) {
-            throw new Error('refresh_sources must contain known connector names');
-          }
-          // A named manual poll bypasses cadence only, never credentials or robots rules.
-          const result = await runIngest({
-            connectors: selected.map(connector => ({ ...connector, minIntervalMs: undefined })),
-            db: openDb(undefined, { migrate: true }),
-            runtime: createRuntime(),
-            runId: new Date().toISOString(),
-          });
-          process.exitCode = result.exitCode;
-          JS
+        run: node scripts/ingest.ts --only="$REFRESH_SOURCES"
 
+      # Claims a pending hosted-button request if one is waiting, then runs the ordinary
+      # cycle either way — ingest, enrich, weekly linkcheck, mirror to Turso.
       - name: Run refresh cycle
         run: |
           args=(--always)

@@ -560,8 +560,7 @@ const JOBICY_TYPE: Record<string, EmploymentType> = {
  * either (checked 2026-08-20). The API path itself answers 200 to this User-Agent, so whatever
  * their edge is protecting, it is not this endpoint.
  *
- * Running it anyway follows the precedent this project already set for SmartRecruiters, whose
- * robots.txt taken literally refuses us over a documented public API: an API the vendor
+ * It runs anyway because an API the vendor
  * publishes and documents for programmatic use — Jobicy's is documented at
  * github.com/Jobicy/remote-jobs-api — is the stronger statement of intent. That is a judgement,
  * not a rule, and it is the one thing here worth reversing first if the maintainer disagrees:

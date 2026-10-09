@@ -4,18 +4,18 @@
  * `npm run ingest -- --dry-run --record --only=<name>`.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { extract } from '../../lib/extract.ts';
 import { normalizeCompany, normalizeTitle } from '../../lib/normalize.ts';
 import { HttpError, RobotsDisallowedError } from '../../lib/runtime.ts';
 import type { Connector, ConnectorContext, ConnectorPosting, FetchOptions, Runtime } from '../../lib/runtime.ts';
 
-import { ashby, greenhouse, lever, recruitee, registry, smartrecruiters, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
+import { ashby, greenhouse, lever, recruitee, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
 import { braintrust, himalayas, hn, jobicy, jobicyEngineering, muse, remoteok, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
-import { adzuna, careerjet, jooble, usajobs } from './keyed.ts';
+import { jooble } from './keyed.ts';
 import { parseReadmeTable, simplifyInternships, simplifyNewGrads } from './repo.ts';
 import { designjobsCareers, dribbble, jobspresso, remotive, weworkremotely, weworkremotelyDesign } from './rss.ts';
 
@@ -81,7 +81,6 @@ const RECORDED: Connector[] = [
   greenhouse,
   lever,
   ashby,
-  smartrecruiters,
   workable,
   recruitee,
   hn,
@@ -104,17 +103,6 @@ const RECORDED: Connector[] = [
 describe.each(RECORDED.map((connector) => [connector.name, connector] as const))(
   '%s (recorded fixture)',
   (name, connector) => {
-    // Keep the recorded tenant in this offline test, not in the current employer registry.
-    const recordedTenant = {
-      name: 'Glean (historical fixture)', ats: 'smartrecruiters', token: 'glean',
-      tags: [], verified_at: '2026-08-18T04:01:19.383Z',
-    };
-    beforeAll(() => { if (connector === smartrecruiters) registry().push(recordedTenant); });
-    afterAll(() => {
-      const index = registry().indexOf(recordedTenant);
-      if (index >= 0) registry().splice(index, 1);
-    });
-
     it('returns at least one posting in the canonical shape', async () => {
       const { context } = replay(name);
       const results = await connector.fetch(context);
@@ -200,21 +188,10 @@ describe('ATS per-target isolation (Phase 3 gate)', () => {
 
 describe('keyed connectors', () => {
   const KEYS: Record<string, Record<string, string>> = {
-    adzuna: { ADZUNA_APP_ID: 'a', ADZUNA_APP_KEY: 'b' },
-    careerjet: { CAREERJET_API_KEY: 'a' },
     jooble: { JOOBLE_KEY: 'a' },
-    usajobs: { USAJOBS_KEY: 'a', USAJOBS_EMAIL: 'b@c.d' },
   };
 
   const KEYED = [jooble];
-  /**
-   * The two that are refused by robots.txt on the API host itself, so no key can enable them.
-   * `api.adzuna.com` and `data.usajobs.gov` both publish `User-agent: * / Disallow: /`
-   * (checked 2026-08-20), which the runtime's robots check honours on every call. Before they
-   * were skipped for this reason, supplying a key produced a RobotsDisallowedError per cycle
-   * instead of postings.
-   */
-  const ROBOTS_BLOCKED = [adzuna, careerjet, usajobs];
 
   it.each(KEYED)('$name skips when its key is absent', (connector) => {
     const reason = connector.skip?.({});
@@ -225,18 +202,6 @@ describe('keyed connectors', () => {
 
   it.each(KEYED)('$name runs once its key is present', (connector) => {
     expect(connector.skip?.(KEYS[connector.name])).toBeNull();
-  });
-
-  it.each(ROBOTS_BLOCKED)('$name skips for robots even WITH a key present', (connector) => {
-    const reason = connector.skip?.(KEYS[connector.name]);
-    // The whole point: a key does not unlock it, and the notice says why rather than
-    // implying a missing variable.
-    expect(reason).toMatch(/robots\.txt disallows/);
-    expect(reason).not.toMatch(/not configured/);
-  });
-
-  it.each(ROBOTS_BLOCKED)('$name names the host that refused it', (connector) => {
-    expect(connector.skip?.({})).toMatch(/^(api\.adzuna\.com|search\.api\.careerjet\.net|data\.usajobs\.gov)/);
   });
 });
 
@@ -384,8 +349,8 @@ describe('HN row marking', () => {
  * from a field rather than guessed from prose, and a location chosen from several.
  */
 /**
- * A minimal but *valid* RSS 2.0 document. `rss-parser` refuses a bare `<rss>` with "Feed not
- * recognized as RSS 1 or 2", and `dc:creator` is dropped unless its namespace is declared.
+ * A minimal but *valid* RSS 2.0 document. `parseFeed` refuses a bare `<rss>` with "Feed not
+ * recognized as RSS 1 or 2".
  */
 function rssFeed(items: string): string {
   return (
@@ -394,6 +359,22 @@ function rssFeed(items: string): string {
     `${items}</channel></rss>`
   );
 }
+
+describe('RSS parsing', () => {
+  // A cut-off body must fail the run: a partial feed with rows counts as a healthy poll, and
+  // ghost detection would then delist every posting in the missing tail.
+  it('rejects a truncated feed instead of returning the items before the cut', async () => {
+    const item = '<item><title>Studio: Designer</title><link>https://weworkremotely.com/remote-jobs/1</link></item>';
+    const body = rssFeed(item + item).slice(0, -40);
+    await expect(weworkremotely.fetch({ ...replay('weworkremotely').context, runtime: stubRuntime(body) })).rejects.toThrow();
+  });
+
+  it('rejects a body that is not RSS', async () => {
+    await expect(
+      weworkremotely.fetch({ ...replay('weworkremotely').context, runtime: stubRuntime('<html><body></body></html>') }),
+    ).rejects.toThrow('Feed not recognized as RSS 1 or 2.');
+  });
+});
 
 describe('design and freelance sources', () => {
   describe('dribbble', () => {
@@ -1485,14 +1466,14 @@ describe('direct application URLs', () => {
 // When every target of an ATS connector is refused by robots.txt, the aggregate error names
 // the cause instead of discarding it — that is what lets `npm run status` say `refused`.
 describe('a fully robots-refused connector says so', () => {
-  it('smartrecruiters throws a refusal, not a generic failure', async () => {
+  it('greenhouse throws a refusal, not a generic failure', async () => {
     const refusing: Runtime = {
       fetchText: async (url) => { throw new RobotsDisallowedError(url); },
       fetchJson: async (url: string) => { throw new RobotsDisallowedError(url); },
       isAllowed: async () => false,
     };
     const context = { runtime: refusing, env: {}, log: () => {}, degraded: () => {} };
-    await expect(smartrecruiters.fetch(context as Parameters<typeof smartrecruiters.fetch>[0]))
+    await expect(greenhouse.fetch(context as Parameters<typeof greenhouse.fetch>[0]))
       .rejects.toThrow(/refused by robots\.txt/);
   });
 });

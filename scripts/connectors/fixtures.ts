@@ -93,7 +93,7 @@ export function fixtureRuntime(fixture: Fixture): Runtime {
  *
  * `limit` caps how many URLs one connector contributes. The ATS connectors walk all 74
  * registry entries; recording every board would commit megabytes to prove a mapper that one
- * board already proves. Two is enough to cover SmartRecruiters' list-then-detail pair.
+ * board already proves. Two is enough to cover a list-then-detail pair.
  */
 export function recordingRuntime(inner: Runtime, sink: Fixture, limit = 2): Runtime {
   const fetchText = async (url: string, options?: FetchOptions): Promise<string> => {

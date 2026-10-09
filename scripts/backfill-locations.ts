@@ -12,7 +12,7 @@
  * "The next ingest will fix it" is not true for every row. A posting whose connector is
  * erroring, or whose company has left the registry, is never re-fetched — and `ghost.ts` will
  * not delist it either, because it only ages postings absent from *successful* polls.
- * SmartRecruiters is the live example: it is robots-blocked, so nothing it ever gave us will
+ * SmartRecruiters is the live example: its connector was removed, so nothing it ever gave us will
  * be re-ingested by any run. Those rows stay wrong until something walks the table.
  *
  * WHAT IT DOES NOT DO — and this is deliberate.

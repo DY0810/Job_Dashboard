@@ -30,6 +30,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 
 import { createClient } from '@libsql/client';
 import { getTableColumns, getTableName, inArray, sql } from 'drizzle-orm';
@@ -221,13 +222,8 @@ export async function pushRemote(
   return counts;
 }
 
-function arg(name: string): string | undefined {
-  const found = process.argv.slice(2).find((value) => value.startsWith(`--${name}=`));
-  return found?.slice(name.length + 3);
-}
-
-async function main(): Promise<void> {
-  const url = arg('to') ?? process.env.TURSO_DATABASE_URL;
+async function main(to: string | undefined): Promise<void> {
+  const url = to ?? process.env.TURSO_DATABASE_URL;
   if (!url) {
     throw new Error(
       'no target: set TURSO_DATABASE_URL (and TURSO_AUTH_TOKEN), or pass --to=file:/path.db',
@@ -259,12 +255,12 @@ async function main(): Promise<void> {
  *
  * A cycle already running will push when it finishes, so refusing here loses nothing.
  */
-function takeLock(): (() => void) | null {
+function takeLock(inCycle: boolean): (() => void) | null {
   // `refresh.sh` holds this lock for its whole cycle and calls this script at the end of it.
   // Without this the cycle's own mirror refuses its own lock — exit 0, nothing pushed, the
   // hosted site frozen at the previous cycle. Caught only by checking the remote's newest
   // run against the local one after a cycle that reported success.
-  if (process.argv.includes('--in-cycle')) return () => {};
+  if (inCycle) return () => {};
 
   const dir = join(process.cwd(), 'logs');
   const lock = join(dir, '.refresh.lock');
@@ -286,13 +282,14 @@ function takeLock(): (() => void) | null {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const release = takeLock();
+  const { values } = parseArgs({ strict: true, options: { to: { type: 'string' }, 'in-cycle': { type: 'boolean' } } });
+  const release = takeLock(values['in-cycle'] === true);
   if (!release) {
     console.log('a refresh cycle is running; it will mirror when it finishes');
     process.exit(0);
   }
   try {
-    await main();
+    await main(values.to);
   } finally {
     release();
   }
