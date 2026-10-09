@@ -12,7 +12,7 @@ import {
 } from '@/lib/params';
 import { AutoApply } from './auto-apply';
 import { FilterDefaults } from './filter-defaults';
-import { Chevron } from './icons';
+import { ChevronRight } from 'lucide-react';
 
 const WINDOW_LABEL: Record<string, string> = { hour: '1h', day: '24h', week: '7d', month: '30d' };
 
@@ -84,7 +84,7 @@ function Select({ p, filter, values }: { p: Params; filter: 'posted'; values: re
             </option>
           ))}
         </select>
-        <Chevron />
+        <ChevronRight size={12} strokeWidth={1.25} absoluteStrokeWidth />
       </span>
     </span>
   );

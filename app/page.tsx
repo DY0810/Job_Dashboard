@@ -22,7 +22,7 @@ import { listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } f
 import { RefreshButton } from "./refresh-button";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
-import { Chevron, ExternalLink } from "./icons";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
 import { NotificationBell } from "./notification-bell";
 import { ApplicantSwitcher } from "./applicant-switcher";
@@ -175,7 +175,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
           className="inline-flex max-w-full items-center gap-1 hover:text-fg-dim"
         >
           <span>{row.company}</span>
-          <Chevron />
+          <ChevronRight size={12} strokeWidth={1.25} absoluteStrokeWidth />
         </Link>
       </td>
       <td data-field="apply">
@@ -187,7 +187,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
           rel="noreferrer noopener"
         >
           {row.canonicalUrl.startsWith("https://remotive.com/") ? "apply via Remotive" : "apply"}
-          <ExternalLink />
+          <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
         </a>
       </td>
       <td data-field="applied">

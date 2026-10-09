@@ -8,16 +8,15 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import * as authModule from '../auth.ts';
 import * as dbModule from '../private-db/index.ts';
-import { handleAuthRequest } from '../auth-http.ts';
-import type { AuthMail } from '../auth-mail.ts';
-import { user, applications, applicationEvents, policyHeads, policyVersions, questions, rateLimit } from '../private-db/schema.ts';
+import { applications, applicationEvents, policyHeads, policyVersions, questions, rateLimit } from '../private-db/schema.ts';
 import { createEmptyPolicy } from './policy.ts';
 import { hashValue } from './stores.ts';
 import { createPairing, pairWorker, revokeWorker } from './pairing.ts';
-import { createRun, enqueueApplication, commandRun } from './runs.ts';
+import { createRun, commandRun } from './runs.ts';
+import { enqueueApplication } from './test-enqueue.ts';
 import * as p from './question-protocol.ts';
+import { householdApplicant, stubHousehold } from '../test-household.ts';
 import { workerTransport } from '../../worker/transport.ts';
 import { privateStore } from '../../worker/storage.ts';
 import { runWorker } from '../../worker/runtime.ts';
@@ -37,7 +36,7 @@ import { POST as eventRoute } from '../../app/api/worker/applications/[id]/event
 
 vi.mock('server-only', () => ({}));
 type Applicant = { id: string; cookie: string };
-let dir: string, origin: string, server: Server, db: dbModule.PrivateDb, auth: authModule.ApplicantAuth;
+let dir: string, origin: string, server: Server, db: dbModule.PrivateDb;
 let alice: Applicant, bob: Applicant, children: ChildProcess[], errors: unknown[];
 let exchanges: { path: string; body: string; status: number }[], drops: Map<string, number>;
 const nativeFetch = globalThis.fetch;
@@ -59,7 +58,7 @@ async function http(path: string, body?: unknown, owner?: Applicant, headers: Re
     body: body === undefined ? undefined : JSON.stringify(body) });
 }
 async function prepared(owner = alice) {
-  const options = { isAllowedApplicant: auth.isAllowedApplicant };
+  const options = {};
   const grant = await createPairing(db, owner.id, { ...fresh(), expectedRevision: 0, label: 'Synthetic' }, options);
   const token = randomBytes(32).toString('base64url');
   const worker = await pairWorker(db, { requestId: randomUUID(), protocolVersion: 1, workerId: randomUUID(),
@@ -141,14 +140,13 @@ beforeEach(async () => {
       const w = path.match(/^\/api\/worker\/applications\/([^/]+)\/(questions|events)$/);
       const a = path.match(/^\/api\/worker\/interventions\/([^/]+)\/ack$/);
       let response: Response;
-      if (path.startsWith('/api/auth/')) response = await handleAuthRequest(request, () => auth);
-      else if (q) response = await ({ answer: answerRoute, review: reviewRoute, focus: focusRoute }[q[2]] ?? questionRoute)(
+      if (q) response = await ({ answer: answerRoute, review: reviewRoute, focus: focusRoute }[q[2]] ?? questionRoute)(
         request, { params: Promise.resolve({ id: q[1] }) });
       else if (w) response = await (w[2] === 'questions' ? batchRoute : eventRoute)(request, { params: Promise.resolve({ id: w[1] }) });
       else if (a) response = await ackRoute(request, { params: Promise.resolve({ id: a[1] }) });
       else response = await routes[path]?.(request) ?? new Response(null, { status: 404 });
       const bytes = Buffer.from(await response.arrayBuffer());
-      if (!path.startsWith('/api/auth/')) exchanges.push({ path, body: body.toString(), status: response.status });
+      exchanges.push({ path, body: body.toString(), status: response.status });
       if (response.ok && (drops.get(path) ?? 0) > 0) { drops.set(path, drops.get(path)! - 1); res.destroy(); return; }
       res.statusCode = response.status;
       for (const [key, value] of response.headers) if (key !== 'set-cookie') res.setHeader(key, value);
@@ -165,27 +163,17 @@ beforeEach(async () => {
     if (new URL(url instanceof Request ? url.url : url).origin !== origin) throw new Error('External network forbidden.');
     return nativeFetch(url, init);
   });
-  const mail: AuthMail[] = [], scheduled: (() => Promise<void>)[] = [];
-  auth = authModule.createAuth({ baseURL: origin, secret: randomBytes(32).toString('hex'), mailFrom: 'fixture@example.test',
-    allowedEmails: ['alice@example.test', 'bob@example.test'] }, db,
-  { sendMail: async m => { mail.push(m); }, scheduleMail: task => { scheduled.push(task); } });
-  vi.spyOn(authModule, 'getAuth').mockReturnValue(auth);
+  stubHousehold(origin);
   vi.spyOn(dbModule, 'getPrivateDb').mockReturnValue(db);
-  async function enroll(email: string) {
-    const password = 'synthetic-question-password-123';
-    expect((await http('/api/auth/sign-up/email', { email, password, name: 'Synthetic' })).status).toBe(200);
-    while (scheduled.length) await scheduled.shift()!();
-    expect((await fetch(mail.findLast(m => m.to === email)!.url, { redirect: 'manual' })).status).toBe(302);
-    const response = await http('/api/auth/sign-in/email', { email, password });
-    const cookie = response.headers.getSetCookie().find(c => c.startsWith('workie.session_token='))!.split(';')[0];
-    const [owner] = await db.select().from(user).where(eq(user.email, email));
+  async function enroll(profile: 'dy' | 'may') {
+    const owner = await householdApplicant(db, profile);
     const policy = { ...createEmptyPolicy(), actions: ['read_jobs', 'fill_forms'] }, hash = hashValue(policy), now = Date.now();
     await db.insert(policyVersions).values({ ownerId: owner.id, version: 1, policy, hash, createdAt: now });
     await db.insert(policyHeads).values({ ownerId: owner.id, revision: 1, policyVersion: 1, enabled: true,
       acceptedPolicyVersion: 1, acceptedPolicyHash: hash, acceptedAt: now });
-    return { id: owner.id, cookie };
+    return owner;
   }
-  alice = await enroll('alice@example.test'); bob = await enroll('bob@example.test');
+  alice = await enroll('dy'); bob = await enroll('may');
 });
 afterEach(async () => {
   for (const child of children) {
@@ -313,7 +301,9 @@ it('real Node 22 process releases question waits, progresses other work and resu
   const f = await prepared();
   const other = await enqueueApplication(db, alice.id, f.run.id, { ats: 'fixture', tenant: 'other', requisition: 'other' });
   const child = processWorker(f, 'register');
-  await until(async () => (await row(f.app.id)).state === 'needs_answer' && (await row(other.id)).state === 'blocked_unsupported');
+  // Answer only once the worker is idle; an answer that beats its next poll resumes before any heartbeat.
+  await until(async () => (await row(f.app.id)).state === 'needs_answer' && (await row(other.id)).state === 'blocked_unsupported' &&
+    child.output().includes('"status":"idle"'));
   const [q] = await db.select().from(questions).where(eq(questions.applicationId, f.app.id));
   expect((await row(f.app.id)).leaseUntil).toBeNull();
   const response = await http(`/api/questions/${q.id}/answer`, await answerInput(q.id), alice);

@@ -4,9 +4,7 @@ import type { PrivateDb } from '../private-db/index.ts';
 import { applicationEvents, applications } from '../private-db/schema.ts';
 import { hashValue } from './stores.ts';
 import { canTransition, isTerminalState, isWaitingState } from './state.ts';
-import {
-  EventRequestSchema, SubmitIntentSchema, type EventRequest, type EventResponse, type SubmitIntent,
-} from './worker-protocol.ts';
+import { EventRequestSchema, type EventRequest, type EventResponse } from './worker-protocol.ts';
 import { checkedLease } from './leases.ts';
 import { withWorker, appScope, one, leaseOf, fail, WorkerError, type WorkerOptions } from './worker-store.ts';
 
@@ -52,16 +50,5 @@ export async function recordWorkerEvent(
       acknowledgement: { ...acknowledgement, lease: null }, createdAt: now,
     }).returning({ eventId: applicationEvents.eventId }));
     return acknowledgement;
-  });
-}
-export async function submitIntent(
-  db: PrivateDb, token: string, applicationId: string, input: SubmitIntent, options: WorkerOptions = {},
-): Promise<never> {
-  const command = SubmitIntentSchema.parse(input);
-  return withWorker<never>(db, token, options, async (tx, worker, now) => {
-    const app = await checkedLease(tx, worker, { applicationId, fence: command.fence, expectedRevision: command.expectedRevision }, now);
-    if (app instanceof WorkerError) return app;
-    // Phase 3 has no qualified adapter, immutable sent manifest, budget reservation or receipt verifier.
-    fail(409, 'EXECUTION_DISABLED', 'Submission execution is not available.');
   });
 }

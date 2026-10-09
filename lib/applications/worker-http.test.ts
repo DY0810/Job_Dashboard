@@ -5,11 +5,8 @@ import { join } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import * as authModule from '../auth.ts';
 import * as dbModule from '../private-db/index.ts';
-import { handleAuthRequest } from '../auth-http.ts';
-import type { AuthMail } from '../auth-mail.ts';
-import { user, session, workers, workerPairings, policyHeads, policyVersions, applicationRuns, applications, rateLimit } from '../private-db/schema.ts';
+import { workers, workerPairings, policyHeads, policyVersions, applicationRuns, applications, rateLimit } from '../private-db/schema.ts';
 import { POST as createPairingRoute } from '../../app/api/workers/pairings/route.ts';
 import { GET as listWorkersRoute } from '../../app/api/workers/route.ts';
 import { POST as pairRoute } from '../../app/api/worker/pair/route.ts';
@@ -20,39 +17,26 @@ import { POST as submissionIntentRoute } from '../../app/api/worker/applications
 import { POST as receiptRoute } from '../../app/api/worker/applications/[id]/receipt/route.ts';
 import { DELETE as revokeRoute } from '../../app/api/workers/[id]/route.ts';
 import { POST as createRunRoute } from '../../app/api/application-runs/route.ts';
-import { enqueueApplication } from './runs.ts';
+import { enqueueApplication } from './test-enqueue.ts';
 import { createEmptyPolicy } from './policy.ts';
 import { createEmptyProfile } from './profile.ts';
 import { hashValue } from './stores.ts';
 import { ProviderConfigSchema } from './provider-protocol.ts';
 import { buildProviderConfig } from './worker-http.ts';
 import * as p from './worker-protocol.ts';
+import { householdApplicant, stubHousehold } from '../test-household.ts';
 
 vi.mock('server-only', () => ({}));
-let db: dbModule.PrivateDb, auth: authModule.ApplicantAuth, dir: string, origin: string, server: Server;
-let mail: AuthMail[], scheduled: (() => Promise<void>)[], allowed: string[];
+let db: dbModule.PrivateDb, dir: string, origin: string, server: Server;
 let alice: { id: string; cookie: string }, bob: { id: string; cookie: string };
-const password = 'synthetic-password-fixture-only-123';
 const nativeFetch = globalThis.fetch;
 const fresh = (expectedRevision = 0) => ({ requestId: randomUUID(), expectedRevision });
-async function drain() { while (scheduled.length) await scheduled.shift()!(); }
 async function http(path: string, body?: unknown, cookie = '', extra: Record<string, string> = {}) {
   return fetch(`${origin}${path}`, {
     method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
     headers: { origin, ...body === undefined ? {} : { 'content-type': 'application/json' }, cookie, ...extra },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-}
-async function enroll(email: string) {
-  expect((await http('/api/auth/sign-up/email', { email, password, name: 'Synthetic applicant' })).status).toBe(200);
-  await drain();
-  const link = mail.findLast((entry) => entry.kind === 'verification' && entry.to === email)!.url;
-  expect((await fetch(link, { redirect: 'manual' })).status).toBe(302);
-  const response = await http('/api/auth/sign-in/email', { email, password });
-  expect(response.status).toBe(200);
-  const cookie = response.headers.getSetCookie().find((entry) => entry.startsWith('workie.session_token='))!.split(';')[0];
-  const [owner] = await db.select().from(user).where(eq(user.email, email));
-  return { id: owner.id, cookie };
 }
 async function paired(owner = alice) {
   const approved = await http('/api/workers/pairings', { ...fresh(), label: 'Synthetic host' }, owner.cookie,
@@ -83,7 +67,6 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'phase3-http-'));
   db = dbModule.openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   await dbModule.migratePrivateDb(db);
-  mail = []; scheduled = []; allowed = ['alice@example.test', 'bob@example.test'];
   server = createServer(async (req, res) => {
     try {
       const chunks: Buffer[] = [];
@@ -94,8 +77,7 @@ beforeEach(async () => {
         body: ['GET', 'HEAD'].includes(req.method!) ? undefined : Buffer.concat(chunks) });
       const path = new URL(request.url).pathname;
       let response: Response;
-      if (path.startsWith('/api/auth/')) response = await handleAuthRequest(request, () => auth);
-      else if (path === '/api/workers/pairings') response = await createPairingRoute(request);
+      if (path === '/api/workers/pairings') response = await createPairingRoute(request);
       else if (path === '/api/workers') response = await listWorkersRoute(request);
       else if (path === '/api/worker/pair') response = await pairRoute(request);
       else if (path === '/api/worker/poll') response = await pollRoute(request);
@@ -125,22 +107,19 @@ beforeEach(async () => {
     if (target.origin !== origin) throw new Error('External network forbidden.');
     return nativeFetch(url, init);
   });
-  auth = authModule.createAuth({
-    baseURL: origin, secret: randomBytes(32).toString('hex'), mailFrom: 'auth@example.test', allowedEmails: allowed,
-  }, db, { sendMail: async (message) => { mail.push(message); }, scheduleMail: (task) => { scheduled.push(task); }, allowedEmails: () => allowed });
-  vi.spyOn(authModule, 'getAuth').mockReturnValue(auth);
+  stubHousehold(origin);
   vi.spyOn(dbModule, 'getPrivateDb').mockReturnValue(db);
-  alice = await enroll('alice@example.test');
-  bob = await enroll('bob@example.test');
+  alice = await householdApplicant(db, 'dy');
+  bob = await householdApplicant(db, 'may');
 });
 afterEach(async () => {
   server?.closeAllConnections();
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   db?.$client.close();
   if (dir) rmSync(dir, { recursive: true, force: true });
-  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers();
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers();
 });
-describe('Phase 3 real route handlers over loopback with Better Auth 1.7.5', () => {
+describe('Phase 3 real route handlers over loopback with household auth', () => {
   it('requires session owner precondition and origin, rejects owner authority and never returns credential material', async () => {
     const deniedHeaders: Record<string, string>[] = [{}, { 'x-workie-applicant': bob.id }, { 'x-workie-applicant': alice.id, origin: 'https://evil.example.test' }];
     for (const headers of deniedHeaders) {
@@ -218,19 +197,12 @@ describe('Phase 3 real route handlers over loopback with Better Auth 1.7.5', () 
     expect(p.ReceiptResponseSchema.parse(await receipt.json())).toMatchObject({ state: 'submitted', replayed: false });
     expect((await db.select().from(applications).where(eq(applications.id, lease.applicationId)))[0]).toMatchObject({ state: 'submitted' });
   });
-  it('ordinary logout leaves worker valid; actual reset consumes the token, deletes sessions, revokes workers and pauses leases', async () => {
+  it('PIN rotation revokes workers and pauses leases, while browser sessions stay valid', async () => {
     const worker = await paired();
     const run = await running(worker.workerId);
     const lease = p.PollResponseSchema.parse(await (await poll(worker.token)).json()).lease!;
-    expect((await http('/api/auth/sign-out', {}, alice.cookie)).status).toBe(200);
     expect((await poll(worker.token)).status).toBe(200);
-    expect((await http('/api/auth/request-password-reset', { email: 'alice@example.test', redirectTo: '/sign-in?mode=reset' })).status).toBe(200);
-    await drain();
-    const reset = mail.findLast((message) => message.kind === 'reset')!;
-    const token = new URL(reset.url).searchParams.get('token')!;
-    expect((await http('/api/auth/reset-password', { token, newPassword: `${password}-new` })).status).toBe(200);
-    expect(await db.select().from(session).where(eq(session.userId, alice.id))).toEqual([]);
-    expect((await http('/api/auth/reset-password', { token, newPassword: `${password}-new` })).status).toBe(400);
+    vi.stubEnv('WORKIE_HOUSEHOLD_PASSCODE', '1357');
     expect((await poll(worker.token)).status).toBe(401);
     const heartbeat = await http('/api/worker/heartbeat', { protocolVersion: 1, lease: {
       applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
@@ -242,19 +214,12 @@ describe('Phase 3 real route handlers over loopback with Better Auth 1.7.5', () 
     expect((await db.select().from(workerPairings))[0].revokedAt).not.toBeNull();
     expect((await http('/api/workers', undefined, bob.cookie)).status).toBe(200);
   });
-  it('the installed real password-change flow invalidates prior worker credentials without a reset hook', async () => {
+  it('PIN rotation also invalidates pending pairing grants', async () => {
     const worker = await paired();
     const approved = await http('/api/workers/pairings', { ...fresh(), label: 'Unconsumed host' }, alice.cookie,
       { 'x-workie-applicant': alice.id });
     const pending = p.PairingGrantSchema.parse(await approved.json());
-    // Workie's public wrapper deliberately does not expose change-password yet.
-    // Exercise the installed handler, not a mock mutation of the credential table.
-    const changed = await auth.handler(new Request(`${origin}/api/auth/change-password`, {
-      method: 'POST', headers: { origin, cookie: alice.cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ currentPassword: password, newPassword: `${password}-changed`, revokeOtherSessions: true }),
-    }));
-    expect(changed.status).toBe(200);
-    expect('onPasswordReset' in auth.options.emailAndPassword).toBe(false);
+    vi.stubEnv('WORKIE_HOUSEHOLD_PASSCODE', '1357');
     expect((await http('/api/worker/pair', { ...worker.input, requestId: randomUUID(), workerId: randomUUID(),
       workerToken: randomBytes(32).toString('base64url'), grant: pending.grant })).status).toBe(401);
     expect((await db.select().from(workerPairings).where(eq(workerPairings.id, pending.pairingId)))[0].revokedAt).not.toBeNull();
@@ -274,12 +239,6 @@ describe('Phase 3 real route handlers over loopback with Better Auth 1.7.5', () 
     const before = (await db.select().from(rateLimit)).length;
     for (let i = 0; i < 3; i++) expect((await poll(randomBytes(32).toString('base64url'))).status).toBe(401);
     expect((await db.select().from(rateLimit)).length).toBe(before);
-    vi.spyOn(auth, 'handler').mockResolvedValueOnce(Response.json({ error: 'Rate limited.' },
-      { status: 429, headers: { 'Retry-After': '37' } }));
-    const authLimited = await http('/api/workers', undefined, alice.cookie);
-    expect(authLimited.status).toBe(429);
-    expect(authLimited.headers.get('retry-after')).toBe('37');
-    expect(await authLimited.json()).toMatchObject({ code: 'RATE_LIMITED' });
   });
   it('times out an unending JSON body and does not pair from a URL or revoke on a forged session', async () => {
     const input = new Request(`${origin}/api/worker/pair`, {

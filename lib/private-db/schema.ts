@@ -1,9 +1,9 @@
 import { sql } from 'drizzle-orm';
 import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-// Adapted from Better Auth v1.7.5's generated SQLite snapshot (core fields only):
-// https://github.com/better-auth/better-auth/blob/v1.7.5/packages/cli/test/__snapshots__/auth-schema-sqlite.txt
-// Runtime date defaults avoid a server SQLite-version dependency; rateLimit uses getAuthTables.
+// Adapted from Better Auth v1.7.5's generated SQLite snapshot (core fields only). Better Auth is gone:
+// household PIN auth uses only user and rateLimit; session/account/verification stay until a migration drops them.
+// Runtime date defaults avoid a server SQLite-version dependency.
 // Logical field names stay intact; only physical table/column names are private.
 export const user = sqliteTable('private_user', {
   id: text('id').primaryKey(),

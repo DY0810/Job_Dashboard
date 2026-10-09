@@ -7,9 +7,10 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { describe, expect, it } from 'vitest';
 
-import type { Db } from './db/index.ts';
+import { driver, type Db } from './db/index.ts';
+import { noteComments } from './db/schema.ts';
 import {
-  CommentInput, MAX_NOTES_PER_WEEK, NoteInput, NotePatch, addComment, countActivitySince, createNote,
+  CommentInput, MAX_NOTES_PER_WEEK, NoteInput, NotePatch, addComment, createNote,
   deleteComment, deleteNote, findNoteByClientKey, listNotes, listWeeks, updateNote, weekKey, weekLabel, weekRange,
 } from './notes.ts';
 
@@ -135,16 +136,6 @@ describe('the board', () => {
     expect(await listNotes(db, '2026-W34')).toEqual([]);
   });
 
-  it('counts what a viewer has not seen — notes AND replies, strictly after their cursor', async () => {
-    const db = memoryDb();
-    const a = await createNote(db, NOTE, T('2026-08-20T10:00:00Z'));
-    await createNote(db, NOTE, T('2026-08-20T12:00:00Z'));
-    await addComment(db, a.id, { body: 'on it', author: 'sam' }, T('2026-08-20T13:00:00Z'));
-    expect(await countActivitySince(db, T('2026-08-20T10:00:00Z'))).toBe(2); // one note, one reply
-    expect(await countActivitySince(db, 0)).toBe(3);
-    expect(await countActivitySince(db, T('2026-08-20T13:00:00Z'))).toBe(0);
-  });
-
   it('publishes the per-week cap the public route enforces', () => {
     expect(MAX_NOTES_PER_WEEK).toBeGreaterThanOrEqual(100);
   });
@@ -216,6 +207,6 @@ describe('comments', () => {
     expect((await listNotes(db, '2026-W34'))[0].comments.map((c) => c.body)).toEqual(['two']);
 
     await deleteNote(db, a.id, T('2026-08-20T13:00:00Z'));
-    expect(await countActivitySince(db, 0)).toBe(0); // no orphaned replies counted as activity
+    expect(await driver(db).select().from(noteComments).all()).toHaveLength(0); // no orphaned replies
   });
 });

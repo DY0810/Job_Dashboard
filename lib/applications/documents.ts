@@ -6,6 +6,7 @@ import type { PrivateDb } from '../private-db';
 import { documents, documentUploadGrants } from '../private-db/document-schema';
 import { DOCUMENT_KINDS, DOCUMENT_MIMES, allowedDocumentMimes } from './document-types';
 import { validateDocumentBytes } from './documents-validation';
+import { transaction } from './stores.ts';
 import {
   assertDocumentBlobUrl, boundedDocumentBytes, DocumentError, MAX_DOCUMENT_BYTES,
   readDocumentObject, removeDocumentObject, writeDocumentObject, type DocumentStorage,
@@ -72,63 +73,51 @@ export async function createDocumentGrant(db: PrivateDb, ownerId: string, raw: u
   await cleanupExpiredGrants(db, ownerId, storage);
   // libSQL write transactions reserve quota/version and create the grant atomically.
   // Local SQLite can report BUSY rather than wait; bounded retries also cover peers.
-  for (let attempt = 0; ; attempt++) {
-    try {
-      if (db.$client.protocol === 'file') await db.run(sql`pragma journal_mode = WAL`);
-      return await db.transaction(async (tx) => {
-        const [existing] = await tx.select().from(documentUploadGrants).where(and(
-          eq(documentUploadGrants.ownerId, ownerId), eq(documentUploadGrants.requestId, input.requestId),
-        ));
-        if (existing) {
-          const [row] = await tx.select().from(documents).where(owned(ownerId, existing.documentId));
-          if (!row || existing.inputHash !== inputHash || row.storage !== storage.mode ||
-            row.state !== 'pending' || existing.expiresAt <= Date.now()) {
-            throw new DocumentError(409, 'Upload request already used or expired.');
-          }
-          return grantResponse(row, existing.id);
-        }
-        let parent: DocumentRow | undefined;
-        if (input.parentId) {
-          [parent] = await tx.select().from(documents).where(owned(ownerId, input.parentId));
-          if (!parent) throw new DocumentError(404, 'Parent document not found.');
-          if (parent.state !== 'available' || parent.kind !== input.kind) {
-            throw new DocumentError(409, 'Parent must be an available document of the same kind.');
-          }
-        }
-        const [usage] = await tx.select({
-          bytes: sql<number>`coalesce(sum(${documents.size}), 0)`, count: sql<number>`count(*)`,
-        }).from(documents).where(and(eq(documents.ownerId, ownerId), sql`${documents.state} != 'expired'`));
-        if (usage.bytes + input.size > 100 * 1024 * 1024 || usage.count >= 100) {
-          throw new DocumentError(429, 'Private document quota exceeded.');
-        }
-        const id = randomUUID(), grantId = randomUUID(), now = Date.now();
-        let version = 1;
-        if (parent) {
-          const [latest] = await tx.select({ version: sql<number>`max(${documents.version})` }).from(documents)
-            .where(and(eq(documents.ownerId, ownerId), eq(documents.masterId, parent.masterId)));
-          version = latest.version + 1;
-        }
-        const [row] = await tx.insert(documents).values({
-          id, ownerId, kind: input.kind, name: input.name, role: input.role ?? null,
-          parentId: parent?.id ?? null, masterId: parent?.masterId ?? id, version,
-          objectKey: `documents/${randomUUID()}`, storage: storage.mode as 'local' | 'blob',
-          mime: input.mime, size: input.size, createdAt: now,
-        }).returning();
-        await tx.insert(documentUploadGrants).values({
-          id: grantId, ownerId, documentId: id, requestId: input.requestId, inputHash,
-          expiresAt: now + 15 * 60_000, createdAt: now,
-        });
-        return grantResponse(row, grantId);
-      });
-    } catch (error) {
-      let cause: unknown = error;
-      while (cause && typeof cause === 'object' && !('code' in cause) && 'cause' in cause) cause = cause.cause;
-      // The pinned Drizzle driver rolls back failed transactions, including BUSY commits.
-      // Never replay an ambiguous transport/commit error.
-      if (attempt >= 12 || !cause || typeof cause !== 'object' || !('code' in cause) || cause.code !== 'SQLITE_BUSY') throw error;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(10 * (attempt + 1), 100)));
+  return transaction(db, async (tx) => {
+    const [existing] = await tx.select().from(documentUploadGrants).where(and(
+      eq(documentUploadGrants.ownerId, ownerId), eq(documentUploadGrants.requestId, input.requestId),
+    ));
+    if (existing) {
+      const [row] = await tx.select().from(documents).where(owned(ownerId, existing.documentId));
+      if (!row || existing.inputHash !== inputHash || row.storage !== storage.mode ||
+        row.state !== 'pending' || existing.expiresAt <= Date.now()) {
+        throw new DocumentError(409, 'Upload request already used or expired.');
+      }
+      return grantResponse(row, existing.id);
     }
-  }
+    let parent: DocumentRow | undefined;
+    if (input.parentId) {
+      [parent] = await tx.select().from(documents).where(owned(ownerId, input.parentId));
+      if (!parent) throw new DocumentError(404, 'Parent document not found.');
+      if (parent.state !== 'available' || parent.kind !== input.kind) {
+        throw new DocumentError(409, 'Parent must be an available document of the same kind.');
+      }
+    }
+    const [usage] = await tx.select({
+      bytes: sql<number>`coalesce(sum(${documents.size}), 0)`, count: sql<number>`count(*)`,
+    }).from(documents).where(and(eq(documents.ownerId, ownerId), sql`${documents.state} != 'expired'`));
+    if (usage.bytes + input.size > 100 * 1024 * 1024 || usage.count >= 100) {
+      throw new DocumentError(429, 'Private document quota exceeded.');
+    }
+    const id = randomUUID(), grantId = randomUUID(), now = Date.now();
+    let version = 1;
+    if (parent) {
+      const [latest] = await tx.select({ version: sql<number>`max(${documents.version})` }).from(documents)
+        .where(and(eq(documents.ownerId, ownerId), eq(documents.masterId, parent.masterId)));
+      version = latest.version + 1;
+    }
+    const [row] = await tx.insert(documents).values({
+      id, ownerId, kind: input.kind, name: input.name, role: input.role ?? null,
+      parentId: parent?.id ?? null, masterId: parent?.masterId ?? id, version,
+      objectKey: `documents/${randomUUID()}`, storage: storage.mode as 'local' | 'blob',
+      mime: input.mime, size: input.size, createdAt: now,
+    }).returning();
+    await tx.insert(documentUploadGrants).values({
+      id: grantId, ownerId, documentId: id, requestId: input.requestId, inputHash,
+      expiresAt: now + 15 * 60_000, createdAt: now,
+    });
+    return grantResponse(row, grantId);
+  }, 12, (attempt) => Math.min(10 * (attempt + 1), 100));
 }
 export async function cleanupExpiredGrants(db: PrivateDb, ownerId: string, storage: DocumentStorage, now = Date.now()) {
   const stale = await db.select({ document: documents }).from(documentUploadGrants)

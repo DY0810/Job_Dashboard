@@ -54,13 +54,10 @@ export interface FetchOptions {
 
 export interface RuntimeOptions {
   fetchImpl?: FetchLike;
-  /** Minimum ms between two requests to one host (a burst-1 token bucket). */
+  /** Minimum ms between two requests to one host. */
   minGapMs?: number;
-  /** How many requests may go out back-to-back before the gap applies. */
-  burst?: number;
   timeoutMs?: number;
   retries?: number;
-  robotsTtlMs?: number;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   /** Name resolution for the `publicOnly` check. Injected by tests; DNS otherwise. */
@@ -191,43 +188,6 @@ export function redact(message: string): string {
 }
 
 // ---------------------------------------------------------------------------------------
-// Rate limiting
-// ---------------------------------------------------------------------------------------
-
-/**
- * Per-host token bucket. `burst` tokens refill at one per `gapMs`; `reserve` hands back how
- * long the caller must wait and books the slot synchronously, so two concurrent callers
- * cannot be handed the same one.
- */
-export class TokenBucket {
-  gapMs: number;
-
-  private readonly burst: number;
-  private tokens: number;
-  private last: number;
-
-  constructor(gapMs: number, burst: number, now: number) {
-    this.gapMs = gapMs;
-    this.burst = burst;
-    this.tokens = burst;
-    this.last = now;
-  }
-
-  reserve(now: number): number {
-    this.tokens = Math.min(this.burst, this.tokens + (now - this.last) / this.gapMs);
-    this.last = now;
-    if (this.tokens >= 1) {
-      this.tokens -= 1;
-      return 0;
-    }
-    const wait = Math.ceil((1 - this.tokens) * this.gapMs);
-    this.tokens = 0;
-    this.last = now + wait;
-    return wait;
-  }
-}
-
-// ---------------------------------------------------------------------------------------
 // robots.txt
 // ---------------------------------------------------------------------------------------
 
@@ -331,11 +291,10 @@ export function parseRobots(text: string, uaToken: string = UA_TOKEN): RobotsRul
 
 const DEFAULTS = {
   minGapMs: 500,
-  burst: 1,
   timeoutMs: 20_000,
   retries: 3,
-  robotsTtlMs: 24 * 60 * 60 * 1000,
 } as const;
+const ROBOTS_TTL_MS = 24 * 60 * 60 * 1000;
 
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -347,32 +306,26 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
   const minGapMs = options.minGapMs ?? DEFAULTS.minGapMs;
-  const burst = options.burst ?? DEFAULTS.burst;
-  const robotsTtlMs = options.robotsTtlMs ?? DEFAULTS.robotsTtlMs;
   const defaultTimeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
   const defaultRetries = options.retries ?? DEFAULTS.retries;
   const resolveHost =
     options.resolveHost ??
     (async (host: string) => (await lookup(host, { all: true })).map((entry) => entry.address));
 
-  const buckets = new Map<string, TokenBucket>();
+  const gaps = new Map<string, number>();
+  const lastAt = new Map<string, number>();
   const robotsCache = new Map<string, { rules: Promise<RobotsRules>; expiresAt: number }>();
 
-  function bucketFor(host: string, gapMs: number): TokenBucket {
-    const existing = buckets.get(host);
-    if (existing) {
-      // A host that publishes a Crawl-delay only slows us down, never speeds us up.
-      existing.gapMs = Math.max(existing.gapMs, gapMs);
-      return existing;
-    }
-    const bucket = new TokenBucket(gapMs, burst, now());
-    buckets.set(host, bucket);
-    return bucket;
-  }
-
+  /** Books the host's next slot before awaiting, so concurrent callers never share one. */
   async function throttle(host: string, gapMs: number): Promise<void> {
-    const wait = bucketFor(host, gapMs).reserve(now());
-    if (wait > 0) await sleep(wait);
+    // A host that publishes a Crawl-delay only slows us down, never speeds us up.
+    const gap = Math.max(gaps.get(host) ?? 0, gapMs);
+    gaps.set(host, gap);
+    const t = now();
+    const prev = lastAt.get(host);
+    const at = prev === undefined ? t : Math.max(t, prev + gap);
+    lastAt.set(host, at);
+    if (at > t) await sleep(at - t);
   }
 
   /**
@@ -405,7 +358,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     const cached = robotsCache.get(key);
     if (cached && cached.expiresAt > now()) return cached.rules;
     const rules = loadRobots(origin, guarded);
-    robotsCache.set(key, { rules, expiresAt: now() + robotsTtlMs });
+    robotsCache.set(key, { rules, expiresAt: now() + ROBOTS_TTL_MS });
     return rules;
   }
 
@@ -415,13 +368,12 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     timeoutMs: number,
     label: string = safeUrl(url),
   ): Promise<{ response: Response; text: string }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
       const response = await fetchImpl(url, {
         ...init,
         headers: { 'User-Agent': USER_AGENT, Accept: '*/*', ...init.headers },
-        signal: controller.signal,
+        signal,
       });
       // Headers alone do not finish the request: a stalled body used to outlive the timeout.
       const text = await response.text();
@@ -429,12 +381,10 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(
-        controller.signal.aborted
+        signal.aborted
           ? `timeout after ${timeoutMs}ms for ${label}`
           : `${redact(reason)} for ${label}`,
       );
-    } finally {
-      clearTimeout(timer);
     }
   }
 

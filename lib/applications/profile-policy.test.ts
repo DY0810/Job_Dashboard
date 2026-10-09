@@ -6,9 +6,9 @@ import { eq, sql } from 'drizzle-orm';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
 import { documents, profileHeads, profileVersions, policyVersions, policyHeads, user, workerPairings, workers } from '../private-db/schema.ts';
 import { createEmptyProfile, EducationSchema, EmploymentSchema, AuthorizationSchema, DisclosureSchema,
-  PreciseDateSchema, ProfileSchema, ProfileSections, effectiveProfile, profileEnablementIssues, type Profile } from './profile.ts';
+  PreciseDateSchema, ProfileSchema, ProfileSections, profileEnablementIssues, type Profile } from './profile.ts';
 import { createEmptyPolicy, PolicySchema } from './policy.ts';
-import { getProfile, saveProfile, getPolicy, mutatePolicy, requireActivePolicy } from './stores.ts';
+import { getProfile, saveProfile, getPolicy, mutatePolicy } from './stores.ts';
 import { getDraftKey, readDraftKeyConfig } from './draft-key.ts';
 
 vi.mock('server-only', () => ({}));
@@ -92,7 +92,6 @@ describe('typed profile semantics', () => {
       provenance: { source: 'document', sourceId: requestId(), sourceVersion: 1, excerpt: 'Imported' },
     };
     expect(ProfileSchema.parse(p).identity.preferredName.state).toBe('candidate');
-    expect(effectiveProfile(p).identity.preferredName).toMatchObject({ state: 'unknown', value: null });
     expect(p.identity.preferredName.state).toBe('candidate');
     p.identity.preferredName.confirmedAt = at;
     expect(ProfileSchema.safeParse(p).success).toBe(false);
@@ -293,14 +292,13 @@ describe('explicit, version-bound policy commands', () => {
     const command = { expectedRevision: 1, requestId: requestId(), action: 'enable' as const, acceptedPolicyHash: saved.policyHash! };
     const enabled = await mutatePolicy(db, 'one', command);
     expect(enabled).toMatchObject({ revision: 2, policyVersion: 1, enabled: true, runnerAvailable: false });
-    expect(await requireActivePolicy(db, 'one', 1, saved.policyHash!)).toEqual(saved.policy);
+    expect(await getPolicy(db, 'one')).toMatchObject({ enabled: true, policyVersion: 1, policyHash: saved.policyHash, policy: saved.policy });
     expect((await getPolicy(db, 'two')).enabled).toBe(false);
     const expanded = await mutatePolicy(db, 'one', { expectedRevision: 2, requestId: requestId(),
       policy: { ...saved.policy, dailyApplicationCap: 20 } });
     expect(expanded).toMatchObject({ revision: 3, policyVersion: 2, enabled: false, acceptedAt: null });
     expect(await mutatePolicy(db, 'one', command)).toEqual(enabled);
     expect((await getPolicy(db, 'one')).enabled).toBe(false);
-    await expect(requireActivePolicy(db, 'one', 1, saved.policyHash!)).rejects.toMatchObject({ status: 403 });
     await expect(db.update(policyVersions).set({ hash: 'forged' })).rejects.toThrow();
     await expect(db.run(sql`update private_policy_command set revision = 99`)).rejects.toThrow();
   });
@@ -312,7 +310,7 @@ describe('explicit, version-bound policy commands', () => {
     expect((await mutatePolicy(db, 'one', { expectedRevision: 1, requestId: requestId(), action: 'enable', acceptedPolicyHash: saved.policyHash! })).enabled).toBe(true);
     const disabled = await mutatePolicy(db, 'one', { expectedRevision: 2, requestId: requestId(), action: 'disable' });
     expect(disabled).toMatchObject({ revision: 3, enabled: false, acceptedPolicyHash: null });
-    await expect(requireActivePolicy(db, 'one', 1, saved.policyHash!)).rejects.toMatchObject({ status: 403 });
+    expect((await getPolicy(db, 'one')).enabled).toBe(false);
   });
   it('rejects expired policies and fails closed on stale/corrupt acceptance metadata', async () => {
     await saveProfile(db, 'one', { expectedRevision: 0, requestId: requestId(), profile: applicant() });

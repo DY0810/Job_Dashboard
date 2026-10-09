@@ -111,12 +111,12 @@ export default function ProfileEditor() {
         const account = applicantSchema.parse(await privateJson('/api/auth/applicant', { signal }));
         if (!alive || signal.aborted) return;
         if (current.current && current.current.ownerId !== account.ownerId) dispose();
-        const response = responseSchema.parse(await privateJson('/api/profile', { signal }, account.ownerId));
+        const response = responseSchema.parse(await privateJson('/api/profile', { signal, owner: account.ownerId }));
         if (response.ownerId !== account.ownerId) { dispose(); throw new Error('Account changed. Unlock again.'); }
         let key: z.infer<typeof keySchema> | null = null;
         let cryptoKey: CryptoKey | null = null;
         try {
-          key = keySchema.parse(await privateJson('/api/profile/draft-key', { signal }, account.ownerId));
+          key = keySchema.parse(await privateJson('/api/profile/draft-key', { signal, owner: account.ownerId }));
           if (key.ownerId !== account.ownerId) { dispose(); throw new ProfileSaveError('Account changed. Unlock again.', 401); }
           cryptoKey = await unlockDraftKey(key.key);
         } catch (e) {
@@ -157,7 +157,7 @@ export default function ProfileEditor() {
           const requestSignal = init.signal ? AbortSignal.any([abort.signal, init.signal]) : abort.signal;
           try {
             await assertOwner(requestSignal);
-            const result = await privateJson(path, { ...init, signal: requestSignal }, item.ownerId);
+            const result = await privateJson(path, { ...init, signal: requestSignal, owner: item.ownerId });
             await assertOwner(requestSignal);
             return result;
           } catch (e) {

@@ -5,14 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import * as authModule from '../lib/auth.ts';
 import * as dbModule from '../lib/private-db/index.ts';
-import { handleAuthRequest } from '../lib/auth-http.ts';
-import type { AuthMail } from '../lib/auth-mail.ts';
-import { applicationEvents, applicationRuns, applications, user, workers, workerPairings } from '../lib/private-db/schema.ts';
+import { applicationEvents, applicationRuns, applications, workers, workerPairings } from '../lib/private-db/schema.ts';
 import { createEmptyProfile } from '../lib/applications/profile.ts';
 import { createEmptyPolicy, type PolicyResponse } from '../lib/applications/policy.ts';
-import { enqueueApplication } from '../lib/applications/runs.ts';
+import { enqueueApplication } from '../lib/applications/test-enqueue.ts';
 import * as p from '../lib/applications/worker-protocol.ts';
 import { PATCH as saveProfileRoute } from '../app/api/profile/route.ts';
 import { PATCH as savePolicyRoute, POST as enablePolicyRoute } from '../app/api/auto-apply/policies/route.ts';
@@ -30,12 +27,13 @@ import { pairWorker, WorkerCredentialSchema } from '../worker/pairing.ts';
 import { privateStore } from '../worker/storage.ts';
 import { workerTransport } from '../worker/transport.ts';
 import { runWorker } from '../worker/runtime.ts';
+import { householdApplicant, stubHousehold } from '../lib/test-household.ts';
 
 vi.mock('server-only', () => ({}));
 type Applicant = { id: string; cookie: string; email: string };
 type Exchange = { path: string; body: string; status: number; response: unknown };
-let dir: string, origin: string, server: Server, db: dbModule.PrivateDb, auth: authModule.ApplicantAuth;
-let alice: Applicant, bob: Applicant, mail: AuthMail[], scheduled: (() => Promise<void>)[];
+let dir: string, origin: string, server: Server, db: dbModule.PrivateDb;
+let alice: Applicant, bob: Applicant;
 let exchanges: Exchange[], drops: Map<string, number>, serverErrors: unknown[], controllers: AbortController[];
 const nativeFetch = globalThis.fetch;
 const fresh = (expectedRevision = 0) => ({ requestId: randomUUID(), expectedRevision });
@@ -61,17 +59,8 @@ async function http(path: string, body?: unknown, owner?: Applicant, method = bo
     }, body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
-async function enroll(email: string): Promise<Applicant> {
-  const password = 'synthetic-integration-password-123';
-  expect((await http('/api/auth/sign-up/email', { email, password, name: 'Synthetic applicant' })).status).toBe(200);
-  while (scheduled.length) await scheduled.shift()!();
-  const link = mail.findLast(entry => entry.kind === 'verification' && entry.to === email)!.url;
-  expect((await fetch(link, { redirect: 'manual' })).status).toBe(302);
-  const response = await http('/api/auth/sign-in/email', { email, password });
-  expect(response.status).toBe(200);
-  const cookie = response.headers.getSetCookie().find(entry => entry.startsWith('workie.session_token='))!.split(';')[0];
-  const [owner] = await db.select().from(user).where(eq(user.email, email));
-  return { id: owner.id, cookie, email };
+async function enroll(profile: 'dy' | 'may', email: string): Promise<Applicant> {
+  return { ...await householdApplicant(db, profile), email };
 }
 async function workerFor(owner: Applicant) {
   const response = await http('/api/workers/pairings', { ...fresh(), label: 'Synthetic integration host' }, owner);
@@ -129,7 +118,7 @@ beforeEach(async () => {
   vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
   db = dbModule.openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   await dbModule.migratePrivateDb(db);
-  mail = []; scheduled = []; exchanges = []; drops = new Map(); serverErrors = []; controllers = [];
+  exchanges = []; drops = new Map(); serverErrors = []; controllers = [];
   server = createServer(async (req, res) => {
     try {
       const chunks: Buffer[] = [];
@@ -146,8 +135,7 @@ beforeEach(async () => {
       const event = path.match(/^\/api\/worker\/applications\/([^/]+)\/events$/);
       const revoke = path.match(/^\/api\/workers\/([^/]+)$/);
       let response: Response;
-      if (path.startsWith('/api/auth/')) response = await handleAuthRequest(request, () => auth);
-      else if (event && req.method === 'POST') response = await eventRoute(request, { params: Promise.resolve({ id: event[1] }) });
+      if (event && req.method === 'POST') response = await eventRoute(request, { params: Promise.resolve({ id: event[1] }) });
       else if (revoke && req.method === 'DELETE') response = await revokeRoute(request, { params: Promise.resolve({ id: revoke[1] }) });
       else response = await routes[`${req.method} ${path}`]?.(request) ?? new Response(null, { status: 404 });
       const bytes = Buffer.from(await response.arrayBuffer());
@@ -175,14 +163,10 @@ beforeEach(async () => {
     if (new URL(url instanceof Request ? url.url : url).origin !== origin) throw new Error('External network forbidden.');
     return nativeFetch(url, init);
   });
-  auth = authModule.createAuth({
-    baseURL: origin, secret: randomBytes(32).toString('hex'),
-    mailFrom: 'auth@example.test', allowedEmails: ['alice@example.test', 'bob@example.test'],
-  }, db, { sendMail: async message => { mail.push(message); }, scheduleMail: task => { scheduled.push(task); } });
-  vi.spyOn(authModule, 'getAuth').mockReturnValue(auth);
+  stubHousehold(origin);
   vi.spyOn(dbModule, 'getPrivateDb').mockReturnValue(db);
-  alice = await enroll('alice@example.test');
-  bob = await enroll('bob@example.test');
+  alice = await enroll('dy', 'alice@example.test');
+  bob = await enroll('may', 'bob@example.test');
 });
 afterEach(async () => {
   for (const value of controllers ?? []) value.abort();

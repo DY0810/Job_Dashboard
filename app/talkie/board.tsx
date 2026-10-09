@@ -3,8 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { Comment, NoteWithComments } from '@/lib/notes';
-import { Close } from '../icons';
-import { SEEN_KEY } from '../talkie-badge';
+import { X } from 'lucide-react';
 import {
   clearEditDraft,
   clearNewNoteDraft,
@@ -91,8 +90,6 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
     setMounted(true);
     setAuthor(readTalkieAuthor());
     if (canWrite) replacePending(readNewNoteDraft(week));
-    // Opening the board is what "viewed" means. The badge on the other tabs counts from here.
-    try { localStorage.setItem(SEEN_KEY, String(Date.now())); } catch {}
     return () => { if (createTimer.current) clearTimeout(createTimer.current); };
   }, [canWrite, week]);
 
@@ -132,7 +129,6 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
 
   const patch = (id: number, fn: (n: NoteWithComments) => NoteWithComments) =>
     setNotes((all) => all.map((n) => (n.id === id ? fn(n) : n)));
-  const touch = () => { try { localStorage.setItem(SEEN_KEY, String(Date.now())); } catch {} };
   const write = async <T,>(url: string, init: RequestInit, fallback: string): Promise<T> => {
     try {
       return await call<T>(url, init, sessionToken ?? readTalkieToken(), fallback);
@@ -209,7 +205,6 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
           setPendingError(null);
           setStorageWarning(null);
         }
-        touch();
       } finally {
         if (createInFlight.current?.clientKey === pendingDraft.clientKey) createInFlight.current = null;
         if (retry) scheduleSave(retry);
@@ -272,7 +267,6 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
       method: 'POST', body: JSON.stringify({ body, author: author || undefined }),
     }, 'could not reply');
     patch(id, (n) => ({ ...n, comments: [...n.comments, { ...comment, createdAt: new Date(comment.createdAt) }] }));
-    touch();
   };
   const unreply = async (id: number, cid: number) => {
     await write(`/api/notes/${id}/comments/${cid}`, { method: 'DELETE' }, 'could not delete');
@@ -660,7 +654,7 @@ function NoteCard({
                 <When at={comment.createdAt} mounted={mounted} />
                 {canWrite ? (
                   <button type="button" className="comment-close" onClick={() => { void removeReply(comment.id); }} aria-label="Delete reply">
-                    <Close />
+                    <X size={12} strokeWidth={1.25} absoluteStrokeWidth />
                   </button>
                 ) : null}
               </span>

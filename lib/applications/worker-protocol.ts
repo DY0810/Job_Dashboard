@@ -8,12 +8,14 @@ export const HEARTBEAT_MS = 20_000;
 export const POLL_TIMEOUT_MS = 30_000;
 export const PAIRING_TTL_MS = 600_000;
 export const WORKER_CAPABILITIES = ['control-v1'] as const;
-const uuid = z.uuid();
-const revision = z.number().int().positive().safe();
-const timestamp = z.number().int().nonnegative().safe();
+export const uuid = z.uuid();
+export const revision = z.number().int().positive().safe();
+export const timestamp = z.number().int().nonnegative().safe();
+export const count = z.number().int().nonnegative().safe();
+export const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const secret = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const name = z.string().trim().min(1).max(80);
-const identity = z.string().min(1).max(256).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+export const identity = z.string().min(1).max(256).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const capabilities = z.tuple([z.literal('control-v1')]);
 const protocol = { protocolVersion: z.literal(WORKER_PROTOCOL_VERSION) };
 const command = { requestId: uuid, expectedRevision: revision };
@@ -84,14 +86,12 @@ export const RunListSchema = z.strictObject({
   ownerId: z.string(), runs: z.array(RunSchema), applications: z.array(ApplicationSummarySchema),
 });
 export const ApplicationIdentitySchema = z.strictObject({ ats: identity, tenant: identity, requisition: identity });
-export const SubmitIntentSchema = z.strictObject({ ...protocol, eventId: uuid, fence: revision, expectedRevision: revision });
-const artifactHash = z.string().regex(/^[a-f0-9]{64}$/);
 const role = z.string().trim().min(1).max(300);
 const company = z.string().trim().min(1).max(200);
 const receiptEvidence = z.strictObject({ source: z.enum(['confirmation_page', 'authorized_api']), pageUrl: z.url({ protocol: /^https?$/ }), observedText: z.string().trim().min(1).max(2000) });
 export const SubmissionIntentSchema = z.strictObject({
   ...protocol, intentId: uuid, fence: revision, expectedRevision: revision, identity: ApplicationIdentitySchema,
-  company, role, manifestHash: artifactHash, artifactHashes: z.array(artifactHash).min(1).max(16),
+  company, role, manifestHash: hash, artifactHashes: z.array(hash).min(1).max(16),
 });
 export const SubmissionIntentResponseSchema = z.strictObject({
   applicationId: uuid, intentId: uuid, state: z.literal('submitting'), revision, fence: revision, replayed: z.boolean(),
@@ -156,7 +156,6 @@ export type ApplicationCommand = z.infer<typeof ApplicationCommandSchema>;
 export type Run = z.infer<typeof RunSchema>;
 export type ApplicationSummary = z.infer<typeof ApplicationSummarySchema>;
 export type RunList = z.infer<typeof RunListSchema>;
-export type SubmitIntent = z.infer<typeof SubmitIntentSchema>;
 export type SubmissionIntent = z.infer<typeof SubmissionIntentSchema>;
 export type SubmissionIntentResponse = z.infer<typeof SubmissionIntentResponseSchema>;
 export type ReceiptCommand = z.infer<typeof ReceiptCommandSchema>;

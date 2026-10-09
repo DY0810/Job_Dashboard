@@ -1,5 +1,6 @@
 import 'server-only';
 import { createClient, type Client } from '@libsql/client';
+import { sql } from 'drizzle-orm';
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 import { closeSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -46,6 +47,21 @@ export function getPrivateDb(): PrivateDb {
   const db = openPrivateDb(config);
   cache.__workiePrivateDb = { config, db };
   return db;
+}
+
+/** Fixed-window request counter: returns this window's count, including this request. */
+export async function countRequest(db: PrivateDb, key: string, windowMs = 60_000, now = Date.now()): Promise<number> {
+  const window = Math.floor(now / windowMs) * windowMs;
+  const { rateLimit } = schema;
+  const [row] = await db.insert(rateLimit).values({ id: crypto.randomUUID(), key, count: 1, lastRequest: window })
+    .onConflictDoUpdate({
+      target: rateLimit.key,
+      set: {
+        count: sql`case when ${rateLimit.lastRequest} < ${window} then 1 else ${rateLimit.count} + 1 end`,
+        lastRequest: sql`case when ${rateLimit.lastRequest} < ${window} then ${window} else ${rateLimit.lastRequest} end`,
+      },
+    }).returning({ count: rateLimit.count });
+  return row.count;
 }
 
 /** Explicit operator action only; never called by getPrivateDb or public requests. */

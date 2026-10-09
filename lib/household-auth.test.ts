@@ -99,11 +99,11 @@ describe('household access', () => {
 
   it('binds workers to the verified household credential and rotates with the PIN', async () => {
     await unlockHousehold(request(), '2468', 'dy', db, config);
-    const first = await workerTransaction(db, (tx) => credentialBinding(tx, 'household-dy-v1', {}));
+    const first = await workerTransaction(db, (tx) => credentialBinding(tx, 'household-dy-v1'));
     expect(first).toMatch(/^[a-f0-9]{64}$/);
     vi.stubEnv('WORKIE_HOUSEHOLD_PASSCODE', '1357');
-    const rotated = await workerTransaction(db, (tx) => credentialBinding(tx, 'household-dy-v1', {}));
+    const rotated = await workerTransaction(db, (tx) => credentialBinding(tx, 'household-dy-v1'));
     expect(rotated).not.toBe(first);
-    expect(await workerTransaction(db, (tx) => credentialBinding(tx, 'forged-owner', {}))).toBeNull();
+    expect(await workerTransaction(db, (tx) => credentialBinding(tx, 'forged-owner'))).toBeNull();
   });
 });

@@ -32,14 +32,11 @@
     "claim:refresh": "node --env-file-if-exists=.env.local scripts/claim-refresh.ts"
   },
   "dependencies": {
-    "@better-auth/drizzle-adapter": "1.7.5",
     "@libsql/client": "^0.17.4",
     "@napi-rs/keyring": "2.1.0",
     "@vercel/blob": "2.8.0",
-    "better-auth": "1.7.5",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
-    "fflate": "0.8.2",
     "lucide-react": "1.47.0",
     "next": "15.5.25",
     "nodemailer": "^9.1.1",
@@ -65,6 +62,7 @@
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "15.5.25",
+    "fflate": "0.8.2",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"

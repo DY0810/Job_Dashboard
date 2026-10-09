@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition.ts';
+import { privateJson, PrivateRequestError } from '../profile/api';
 import { PolicySchema } from '../../lib/applications/policy.ts';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from '../../lib/applications/state.ts';
 import {
@@ -70,28 +70,20 @@ class RequestError extends Error {
 }
 
 async function request(path: string, signal: AbortSignal, owner?: string, command?: Command): Promise<unknown> {
-  const headers = new Headers();
-  if (owner) headers.set(EXPECTED_APPLICANT_HEADER, owner);
-  if (command) headers.set('Content-Type', 'application/json');
-  const response = await fetch(path, {
-    method: command?.method ?? 'GET', headers, body: command ? JSON.stringify(command.body) : undefined,
-    credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-    signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
-  });
-  const body = await response.json().catch(() => null);
-  signal.throwIfAborted();
-  if (!response.ok) {
-    const code = path === '/api/auth/applicant' && response.status === 403 ? 'AUTH_FORBIDDEN' :
-      typeof body?.code === 'string' ? body.code : '';
+  try {
+    return await privateJson(path, { method: command?.method ?? 'GET', body: command ? JSON.stringify(command.body) : undefined,
+      signal, owner, timeout: 15_000 });
+  } catch (error) {
+    if (!(error instanceof PrivateRequestError)) throw error;
+    const code = path === '/api/auth/applicant' && error.status === 403 ? 'AUTH_FORBIDDEN' : error.code;
     // Older private endpoints return an untagged 403 for a principal mismatch.
-    if (owner && response.status === 403 && code !== 'PRINCIPAL_CHANGED') {
+    if (owner && error.status === 403 && code !== 'PRINCIPAL_CHANGED') {
       const account = ApplicantSchema.parse(await request('/api/auth/applicant', signal));
       if (account.ownerId !== owner) throw new RequestError(403, 'PRINCIPAL_CHANGED');
     }
     // Never render arbitrary server errors: a malformed response may echo secrets.
-    throw new RequestError(response.status, code);
+    throw new RequestError(error.status, code);
   }
-  return body;
 }
 
 /** One tab's transient command state. Durable truth is always fetched from the server. */

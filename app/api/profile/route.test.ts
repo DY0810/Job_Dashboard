@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { PDFDocument } from 'pdf-lib';
-import * as authModule from '@/lib/auth';
-import { createAuth } from '@/lib/auth';
+import { householdSessionCookie, readHouseholdConfig } from '@/lib/household-auth';
+import { householdApplicant, stubHousehold } from '@/lib/test-household';
 import * as dbModule from '@/lib/private-db';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '@/lib/private-db';
-import { user, session, rateLimit, profileHeads, profileVersions, policyHeads, policyVersions, policyCommands } from '@/lib/private-db/schema';
+import { rateLimit, profileHeads, profileVersions, policyHeads, policyVersions, policyCommands } from '@/lib/private-db/schema';
 import { documents, documentUploadGrants } from '@/lib/private-db/document-schema';
 import { createEmptyProfile } from '@/lib/applications/profile';
 import { createEmptyPolicy } from '@/lib/applications/policy';
@@ -27,7 +27,6 @@ import { z } from 'zod';
 vi.mock('server-only', () => ({}));
 let dir: string;
 let db: PrivateDb;
-let auth: ReturnType<typeof createAuth>;
 let a: { cookie: string; ownerId: string };
 let b: { cookie: string; ownerId: string };
 const origin = 'https://workie.example.test';
@@ -49,29 +48,21 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Network forbidden.'); }));
   db = openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   await migratePrivateDb(db);
-  auth = createAuth({ baseURL: origin, secret: randomBytes(32).toString('hex'),
-    allowedEmails: ['a@example.test', 'b@example.test'], mailFrom: 'auth@example.test' }, db,
-  { sendMail: async () => { throw new Error('No SMTP in tests.'); }, scheduleMail: () => {} });
-  vi.spyOn(authModule, 'getAuth').mockReturnValue(auth);
+  stubHousehold(origin, 'a@example.test', 'b@example.test');
   vi.spyOn(dbModule, 'getPrivateDb').mockReturnValue(db);
-  async function enroll(email: string) {
-    const password = 'synthetic-password-123456';
-    const response = await auth.handler(request('POST', { email, password, name: 'Synthetic' }, '', '/api/auth/sign-up/email'));
-    expect(response.status).toBe(200);
-    // Fixture verification only; production verification path is covered in auth.test.ts.
-    await db.update(user).set({ emailVerified: true }).where(eq(user.email, email));
-    const login = await auth.handler(request('POST', { email, password }, '', '/api/auth/sign-in/email'));
-    expect(login.status).toBe(200);
-    const [row] = await db.select().from(user).where(eq(user.email, email));
-    return { cookie: login.headers.getSetCookie().find((s) => s.startsWith('__Secure-workie.session_token='))!.split(';')[0], ownerId: row.id };
-  }
-  a = await enroll('a@example.test'); b = await enroll('b@example.test');
+  const enroll = async (profile: 'dy' | 'may') => {
+    const { id, cookie } = await householdApplicant(db, profile);
+    return { cookie, ownerId: id };
+  };
+  a = await enroll('dy'); b = await enroll('may');
 });
 afterEach(() => {
   db?.$client.close();
   if (dir) rmSync(dir, { recursive: true, force: true });
   vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals();
 });
+/** The same principal's cookie, re-issued later (as a fresh unlock would). */
+const renewedCookie = (at = Date.now() + 5_000) => householdSessionCookie(readHouseholdConfig(), 'dy', at).split(';')[0];
 function privateHeaders(response: Response) {
   expect(response.headers.get('cache-control')).toBe('private, no-store');
   expect(response.headers.get('cdn-cache-control')).toBe('no-store');
@@ -139,22 +130,18 @@ it('rejects A drafts with B cookies at equal head revisions before any profile o
 });
 it('allows same-principal renewed tokens and rejects mismatched private reads before releasing data', async () => {
   const originalKey = await (await draftKey(request())).json();
-  const login = await auth.handler(request('POST', {
-    email: 'a@example.test', password: 'synthetic-password-123456',
-  }, '', '/api/auth/sign-in/email'));
-  expect(login.status).toBe(200);
-  const renewedCookie = login.headers.getSetCookie().find((s) => s.startsWith('__Secure-workie.session_token='))!.split(';')[0];
-  expect(renewedCookie).not.toBe(a.cookie);
+  const renewed = renewedCookie();
+  expect(renewed).not.toBe(a.cookie);
   expect((await PATCH(request('PATCH', {
     expectedRevision: 0, requestId: crypto.randomUUID(), profile: createEmptyProfile(),
-  }, renewedCookie, '/api/profile', a.ownerId))).status).toBe(200);
+  }, renewed, '/api/profile', a.ownerId))).status).toBe(200);
   expect((await policyPatch(request('PATCH', {
     expectedRevision: 0, requestId: crypto.randomUUID(), policy: createEmptyPolicy(),
-  }, renewedCookie, '/api/auto-apply/policies', a.ownerId))).status).toBe(200);
+  }, renewed, '/api/auto-apply/policies', a.ownerId))).status).toBe(200);
   expect((await policyPost(request('POST', {
     expectedRevision: 1, requestId: crypto.randomUUID(), action: 'disable',
-  }, renewedCookie, '/api/auto-apply/policies', a.ownerId))).status).toBe(200);
-  expect(await (await draftKey(request('GET', undefined, renewedCookie, '/api/profile/draft-key', a.ownerId))).json()).toEqual(originalKey);
+  }, renewed, '/api/auto-apply/policies', a.ownerId))).status).toBe(200);
+  expect(await (await draftKey(request('GET', undefined, renewed, '/api/profile/draft-key', a.ownerId))).json()).toEqual(originalKey);
   for (const handler of [GET, policyGet, draftKey]) {
     const denied = await handler(request('GET', undefined, b.cookie, '/api/profile', a.ownerId));
     expect(denied.status).toBe(403); privateHeaders(denied);
@@ -166,11 +153,7 @@ it('allows same-principal renewed tokens and rejects mismatched private reads be
 it('binds actual document routes to real sessions and accepts same-user renewed cookies', async () => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'workie-principal-doc-')));
   try {
-    const login = await auth.handler(request('POST', {
-      email: 'a@example.test', password: 'synthetic-password-123456',
-    }, '', '/api/auth/sign-in/email'));
-    expect(login.status).toBe(200);
-    const renewed = login.headers.getSetCookie().find((s) => s.startsWith('__Secure-workie.session_token='))!.split(';')[0];
+    const renewed = renewedCookie();
     expect(renewed).not.toBe(a.cookie);
     const pdf = await PDFDocument.create(); pdf.addPage();
     const bytes = await pdf.save();
@@ -239,7 +222,7 @@ it('binds actual document routes to real sessions and accepts same-user renewed 
     expect(fetch).not.toHaveBeenCalled();
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
-it('fails closed for absent/revoked sessions, cross-origin requests, and missing encryption configuration', async () => {
+it('fails closed for absent/expired sessions, cross-origin requests, and missing encryption configuration', async () => {
   const anonymous = await GET(request('GET', undefined, ''));
   expect(anonymous.status).toBe(401); privateHeaders(anonymous);
   expect((await GET(request('GET', undefined, '', '/api/profile', a.ownerId))).status).toBe(401);
@@ -251,22 +234,8 @@ it('fails closed for absent/revoked sessions, cross-origin requests, and missing
   const unavailable = await PATCH(request('PATCH', {}));
   expect(unavailable.status).toBe(503); privateHeaders(unavailable);
   expect((await draftKey(request())).status).toBe(503);
-  await db.delete(session).where(eq(session.userId, a.ownerId));
-  expect((await GET(request())).status).toBe(401);
-});
-it('preserves authoritative auth Set-Cookie on success and validation errors', async () => {
-  const handle = auth.handler.bind(auth);
-  vi.spyOn(auth, 'handler').mockImplementation(async (req) => {
-    const response = await handle(req);
-    const headers = new Headers(response.headers);
-    headers.append('set-cookie', 'synthetic_refresh=1; HttpOnly; Secure; SameSite=Lax');
-    return new Response(response.body, { status: response.status, headers });
-  });
-  for (const response of [await GET(request()), await PATCH(request('PATCH', {})),
-    await PATCH(request('PATCH', {}, b.cookie, '/api/profile', a.ownerId))]) {
-    privateHeaders(response);
-    expect(response.headers.getSetCookie()).toContain('synthetic_refresh=1; HttpOnly; Secure; SameSite=Lax');
-  }
+  const expired = renewedCookie(Date.now() - 31 * 24 * 60 * 60_000);
+  expect((await GET(request('GET', undefined, expired, '/api/profile', a.ownerId))).status).toBe(401);
 });
 it('returns memory-only owner draft keys and disabled policy intent through actual handlers', async () => {
   const keyA = await draftKey(request());
@@ -301,7 +270,7 @@ it('applies a durable per-principal limit without rate-limiting the other applic
   expect(response.status).toBe(429); privateHeaders(response);
   expect((await GET(request('GET', undefined, b.cookie))).status).toBe(200);
 });
-it('times out all profile/policy writes without changing persisted revisions or losing private cookies', async () => {
+it('times out all profile/policy writes without changing persisted revisions', async () => {
   const profile = createEmptyProfile();
   const policy = createEmptyPolicy();
   expect((await PATCH(request('PATCH', { expectedRevision: 0, requestId: crypto.randomUUID(), profile }))).status).toBe(200);
@@ -312,13 +281,6 @@ it('times out all profile/policy writes without changing persisted revisions or 
     commands: await db.select().from(policyCommands),
   });
   const before = await snapshot();
-  const handle = auth.handler.bind(auth);
-  vi.spyOn(auth, 'handler').mockImplementation(async (req) => {
-    const response = await handle(req);
-    const headers = new Headers(response.headers);
-    headers.append('set-cookie', 'synthetic_refresh=1; HttpOnly; Secure; SameSite=Lax');
-    return new Response(response.body, { status: response.status, headers });
-  });
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
     for (const [handler, method, input] of [
@@ -344,7 +306,6 @@ it('times out all profile/policy writes without changing persisted revisions or 
       expect(response?.status).toBe(408);
       await pending;
       privateHeaders(response!);
-      expect(response!.headers.getSetCookie()).toContain('synthetic_refresh=1; HttpOnly; Secure; SameSite=Lax');
       expect(await response!.json()).toEqual({ error: 'Request body timed out.' });
       expect(body.locked).toBe(false);
       expect(vi.getTimerCount()).toBe(0);

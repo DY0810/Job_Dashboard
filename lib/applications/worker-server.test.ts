@@ -5,17 +5,19 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
-import { account, applications, applicationReceipts, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
+import { applications, applicationReceipts, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
 import { createEmptyPolicy } from './policy.ts';
 import { hashValue } from './stores.ts';
 import { APPLICATION_STATES, SAFE_STAGES, canTransition, type ApplicationState } from './state.ts';
 import * as p from './worker-protocol.ts';
 import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing } from './pairing.ts';
-import { createRun, enqueueApplication, listRuns, commandRun, commandApplication } from './runs.ts';
+import { createRun, listRuns, commandRun, commandApplication } from './runs.ts';
+import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
-import { recordWorkerEvent, submitIntent } from './events.ts';
+import { recordWorkerEvent } from './events.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { type WorkerOptions } from './worker-store.ts';
+import { stubHousehold } from '../test-household.ts';
 
 vi.mock('server-only', () => ({}));
 let db: PrivateDb, other: PrivateDb, dir: string, now: number, options: WorkerOptions;
@@ -52,13 +54,13 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'phase3-server-'));
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('External network forbidden.'); }));
   now = 1_800_000_000_000;
-  options = { now: () => now, isAllowedApplicant: (email) => ['alice@example.test', 'bob@example.test'].includes(email) };
+  options = { now: () => now };
+  stubHousehold();
   db = openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   await migratePrivateDb(db);
   other = openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   for (const id of ['alice', 'bob']) {
     await db.insert(user).values({ id, name: 'Synthetic', email: `${id}@example.test`, emailVerified: true });
-    await db.insert(account).values({ id: `${id}-credential`, userId: id, accountId: id, providerId: 'credential', password: secret() });
     const policy = createEmptyPolicy(), hash = hashValue(policy);
     await db.insert(policyVersions).values({ ownerId: id, version: 1, hash, policy, createdAt: now });
     await db.insert(policyHeads).values({ ownerId: id, revision: 1, policyVersion: 1, enabled: true,
@@ -68,7 +70,7 @@ beforeEach(async () => {
 afterEach(() => {
   other?.$client.close(); db?.$client.close();
   if (dir) rmSync(dir, { recursive: true, force: true });
-  vi.unstubAllGlobals(); vi.restoreAllMocks();
+  vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();
 });
 
 describe('Phase 3 pure protocol and transition guards', () => {
@@ -174,7 +176,7 @@ describe('hashed owner-approved pairings', () => {
   it.each(['pair', 'list'] as const)('persists stale pending-grant revocation on %s after a credential change', async (operation) => {
     const grant = await createPairing(db, 'alice', { requestId: randomUUID(), expectedRevision: 0, label: 'Pending' }, options);
     const bob = await createPairing(db, 'bob', { requestId: randomUUID(), expectedRevision: 0, label: 'Other owner' }, options);
-    await db.update(account).set({ password: secret() }).where(eq(account.userId, 'alice'));
+    vi.stubEnv('WORKIE_HOUSEHOLD_PASSCODE', '1357');
     if (operation === 'pair') {
       await expect(pairWorker(db, { protocolVersion: 1, requestId: randomUUID(), workerId: randomUUID(),
         workerToken: secret(), grant: grant.grant, workerVersion: '0.1', capabilities: ['control-v1'] }, options))
@@ -216,16 +218,17 @@ describe('hashed owner-approved pairings', () => {
     await expect(pairWorker(db, { ...input, grant: expiring.grant }, options)).rejects.toMatchObject({ status: 401 });
     await expect(revokePairing(db, 'bob', grant.pairingId, revision(2), options)).rejects.toMatchObject({ status: 404 });
   });
-  it('rechecks allowlist, verified owner and credential binding, but does not bind browser sessions', async () => {
+  it('rechecks household email, verified owner and credential binding, but does not bind browser sessions', async () => {
     const { worker, run } = await prepared();
     const lease = await claim(worker.token);
-    await db.update(account).set({ password: secret() }).where(eq(account.userId, 'alice'));
+    vi.stubEnv('WORKIE_HOUSEHOLD_PASSCODE', '1357');
     await expect(heartbeatWorker(db, worker.token, { protocolVersion: 1, lease: ref(lease) }, options)).rejects.toMatchObject({ status: 401 });
     expect((await db.select().from(workers))[0].revokedAt).toBe(now);
     expect((await db.select().from(applicationRuns).where(eq(applicationRuns.id, run.id)))[0].state).toBe('paused');
     expect((await db.select().from(applications))[0].leaseUntil).toBeNull();
     const next = await paired();
-    await expect(pollWorker(db, next.token, { protocolVersion: 1 }, { ...options, isAllowedApplicant: () => false }))
+    await db.update(user).set({ email: 'not-household@example.test' }).where(eq(user.id, 'alice'));
+    await expect(pollWorker(db, next.token, { protocolVersion: 1 }, options))
       .rejects.toMatchObject({ status: 401 });
     const third = await paired('bob');
     await db.update(user).set({ emailVerified: false }).where(eq(user.id, 'bob'));
@@ -325,9 +328,6 @@ describe('async leases, checkpoints and stable identity', () => {
       .rejects.toMatchObject({ code: 'LEASE_LOST' });
     await expect(recordWorkerEvent(db, worker.token, app.id,
       { ...event(unknown), checkpoint: { stage: 'ready', sequence: 2 } }, options))
-      .rejects.toMatchObject({ code: 'LEASE_LOST' });
-    await expect(submitIntent(db, worker.token, app.id,
-      { protocolVersion: 1, eventId: randomUUID(), fence: unknown.fence, expectedRevision: unknown.revision }, options))
       .rejects.toMatchObject({ code: 'LEASE_LOST' });
     for (const action of ['retry-safe', 'cancel', 'skip'] as const) {
       await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(deferred.revision), action }, options))
@@ -470,7 +470,6 @@ describe('async leases, checkpoints and stable identity', () => {
     expect(unknown).toMatchObject({ state: 'submission_unknown', mode: 'reconcile' });
     await expect(recordWorkerEvent(db, worker.token, app.id, event(lease), options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
     await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(unknown.revision), action: 'retry-safe' }, options)).rejects.toMatchObject({ status: 409 });
-    await expect(submitIntent(db, worker.token, app.id, { protocolVersion: 1, eventId: randomUUID(), fence: unknown.fence, expectedRevision: unknown.revision }, options)).rejects.toMatchObject({ code: 'EXECUTION_DISABLED' });
     await expect(db.update(applications).set({ state: 'queued' }).where(eq(applications.id, app.id))).rejects.toThrow();
   });
   it('unknown reconciliation after stop and policy disable cannot checkpoint any state or emit a receipt', async () => {
@@ -489,8 +488,6 @@ describe('async leases, checkpoints and stable identity', () => {
         ...event(lease, state), checkpoint: { stage: 'ready', sequence: 1 },
       }, options)).rejects.toMatchObject({ code: 'EXECUTION_DISABLED' });
     }
-    await expect(submitIntent(db, worker.token, app.id, { protocolVersion: 1, eventId: randomUUID(),
-      fence: lease.fence, expectedRevision: lease.revision }, options)).rejects.toMatchObject({ code: 'EXECUTION_DISABLED' });
     expect(await db.select().from(applicationEvents)).toHaveLength(0);
     expect((await db.select().from(applications).where(eq(applications.id, app.id)))[0])
       .toMatchObject({ state: 'submission_unknown', revision: lease.revision, fence: lease.fence });

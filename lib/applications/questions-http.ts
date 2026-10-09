@@ -1,6 +1,5 @@
 import 'server-only';
 import { z } from 'zod';
-import { getAuth } from '../auth.ts';
 import { privateJson } from '../applicant-access.ts';
 import { getPrivateDb } from '../private-db/index.ts';
 import { privateEndpoint, readPrivateJson, PrivateInputError } from './private-http.ts';
@@ -31,7 +30,7 @@ export function questionsEndpoint(request: Request, action: BrowserAction, id?: 
   return privateEndpoint(request, async ownerId => {
     try {
       const query = checkPath(request, id, action === 'inbox' && request.method === 'GET');
-      const db = getPrivateDb(), options = { isAllowedApplicant: getAuth().isAllowedApplicant };
+      const db = getPrivateDb(), options = {};
       switch (action) {
         case 'inbox': {
           const input = p.InboxQuerySchema.safeParse(Object.fromEntries(query));
@@ -60,7 +59,7 @@ export async function workerQuestionsEndpoint(request: Request, action: 'batch' 
   try {
     const token = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
     if (!token) throw new PrivateInputError(401, 'Worker authorization required.', 'WORKER_UNAUTHORIZED');
-    const db = getPrivateDb(), options = { isAllowedApplicant: getAuth().isAllowedApplicant };
+    const db = getPrivateDb(), options = {};
     // No session-cookie authority and no attacker-created per-token rate buckets.
     const workerId = await withWorker(db, token, options, async (_tx, worker) => worker.id);
     await limitWorkerRequests(`private-worker:${workerId}`, 120);

@@ -3,11 +3,9 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type Database from 'better-sqlite3';
-import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import * as authModule from '../auth.ts';
 import * as privateDb from '../private-db/index.ts';
-import { user, policyHeads, policyVersions, discoveryManifests, manualApplicationMarks } from '../private-db/schema.ts';
+import { policyHeads, policyVersions, discoveryManifests, manualApplicationMarks } from '../private-db/schema.ts';
 import { openDb, type Db } from '../db/index.ts';
 import { postings } from '../db/schema.ts';
 import * as corpusModule from './discovery-corpus.ts';
@@ -21,30 +19,19 @@ import { POST as confirmRoute } from '../../app/api/applications/import/confirm/
 import { GET as statusRoute, POST as abandonRoute } from '../../app/api/application-runs/[id]/discovery/route.ts';
 import { POST as reapplyRoute } from '../../app/api/application-runs/[id]/reapply/route.ts';
 import { POST as pollRoute } from '../../app/api/worker/poll/route.ts';
+import { householdApplicant, stubHousehold } from '../test-household.ts';
 
 vi.mock('server-only', () => ({}));
 const origin = 'http://127.0.0.1:3101';
-let db: privateDb.PrivateDb, corpus: Db, dir: string, auth: authModule.ApplicantAuth;
+let db: privateDb.PrivateDb, corpus: Db, dir: string;
 let alice: { id: string; cookie: string }, bob: { id: string; cookie: string };
 const fresh = () => ({ requestId: randomUUID() });
-const password = 'synthetic-discovery-password-only-123';
 function req(path: string, input?: unknown, owner = alice, headers: Record<string, string> = {}) {
   return new Request(`${origin}${path}`, {
     method: input === undefined ? 'GET' : 'POST',
     headers: { origin, 'content-type': 'application/json', cookie: owner.cookie, 'x-workie-applicant': owner.id, ...headers },
     body: input === undefined ? undefined : JSON.stringify(input),
   });
-}
-async function enroll(email: string) {
-  const response = await auth.handler(new Request(`${origin}/api/auth/sign-up/email`, { method: 'POST',
-    headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ email, name: 'Synthetic', password }) }));
-  expect(response.status).toBe(200);
-  await db.update(user).set({ emailVerified: true }).where(eq(user.email, email));
-  const signed = await auth.handler(new Request(`${origin}/api/auth/sign-in/email`, { method: 'POST',
-    headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) }));
-  expect(signed.status).toBe(200);
-  const cookie = signed.headers.getSetCookie().find((entry) => entry.startsWith('workie.session_token='))!.split(';')[0];
-  return { id: (await db.select().from(user).where(eq(user.email, email)))[0].id, cookie };
 }
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'phase4-http-'));
@@ -62,11 +49,9 @@ beforeEach(async () => {
     titleNorm: 'engineer', locationKey: 'US', country: 'US', track: 'engineering', paid: true,
     description: 'Official fixture job description for a paid engineering role.',
   }).run();
-  auth = authModule.createAuth({ baseURL: origin, secret: randomBytes(32).toString('hex'), mailFrom: 'auth@example.test',
-    allowedEmails: ['alice@example.test', 'bob@example.test'] }, db, { sendMail: async () => {}, scheduleMail: () => {} });
-  vi.spyOn(authModule, 'getAuth').mockReturnValue(auth);
+  stubHousehold(origin);
   vi.spyOn(privateDb, 'getPrivateDb').mockReturnValue(db);
-  alice = await enroll('alice@example.test'); bob = await enroll('bob@example.test');
+  alice = await householdApplicant(db, 'dy'); bob = await householdApplicant(db, 'may');
 });
 afterEach(() => {
   (corpus as Db & { $client: Database.Database })?.$client.close();
@@ -131,7 +116,7 @@ it('uses the authenticated existing worker poll for discovery, validates tenant 
   await db.insert(policyVersions).values({ ownerId: alice.id, version: 1, policy: { ...policy, actions: ['read_jobs'] }, hash, createdAt: now });
   await db.insert(policyHeads).values({ ownerId: alice.id, revision: 1, policyVersion: 1, enabled: true,
     acceptedPolicyVersion: 1, acceptedPolicyHash: hash, acceptedAt: now });
-  const options = { isAllowedApplicant: auth.isAllowedApplicant };
+  const options = {};
   const grant = await createPairing(db, alice.id, { ...fresh(), expectedRevision: 0, label: 'Synthetic' }, options);
   const token = randomBytes(32).toString('base64url');
   const worker = await pairWorker(db, { ...fresh(), protocolVersion: 1, workerId: randomUUID(), grant: grant.grant,

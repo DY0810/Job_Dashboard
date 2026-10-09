@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
 import type { HostedRefreshStatus, Phase } from '@/lib/refresh-status';
+import { readTalkieAuthor } from './talkie/storage';
 
 type Status = { hosted: boolean; running: boolean; phase: Phase };
 
@@ -69,9 +70,7 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
    */
   const askRunner = async () => {
     setWaiting(true);
-    const by = (() => {
-      try { return localStorage.getItem('talkie-author'); } catch { return null; }
-    })();
+    const by = readTalkieAuthor();
     const res = await fetch(`/api/refresh${by ? `?by=${encodeURIComponent(by)}` : ''}`, {
       method: 'POST',
     }).catch(() => null);

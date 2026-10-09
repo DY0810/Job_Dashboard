@@ -9,7 +9,7 @@ import { openDb, type Db } from '../db/index.ts';
 import { postings } from '../db/schema.ts';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
 import {
-  account, applications, applicationRuns, applicationEvents, policyHeads, policyVersions, user,
+  applications, applicationRuns, applicationEvents, policyHeads, policyVersions, user,
   discoveryManifests, discoveryTargets, manualApplicationMarks, legacyImportPreviews,
 } from '../private-db/schema.ts';
 import { createEmptyPolicy, type Policy } from './policy.ts';
@@ -29,6 +29,7 @@ import { getDiscoveryCorpus } from './discovery-corpus.ts';
 import type { WorkerOptions } from './worker-store.ts';
 import type { Lease } from './worker-protocol.ts';
 
+import { stubHousehold } from '../test-household.ts';
 vi.mock('server-only', () => ({}));
 let db: PrivateDb, other: PrivateDb, corpus: Db, dir: string, now: number, options: WorkerOptions;
 const DAY = 86_400_000;
@@ -88,7 +89,8 @@ const confirmInput = (p: Awaited<ReturnType<typeof preview>>, ids = p.rows.map((
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'phase4-backend-'));
   now = Date.UTC(2026, 8, 21, 12);
-  options = { now: () => now, isAllowedApplicant: (email) => ['alice@example.test', 'bob@example.test'].includes(email) };
+  options = { now: () => now };
+  stubHousehold();
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('External network forbidden'); }));
   db = openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   await migratePrivateDb(db);
@@ -96,7 +98,6 @@ beforeEach(async () => {
   corpus = openDb(join(dir, 'synthetic-corpus.db'), { migrate: true });
   for (const id of ['alice', 'bob']) {
     await db.insert(user).values({ id, name: 'Synthetic', email: `${id}@example.test`, emailVerified: true });
-    await db.insert(account).values({ id: `${id}-credential`, userId: id, accountId: id, providerId: 'credential', password: secret() });
   }
 });
 afterEach(() => {

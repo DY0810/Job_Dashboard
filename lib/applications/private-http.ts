@@ -1,9 +1,7 @@
 import 'server-only';
 import { z } from 'zod';
-import { sql } from 'drizzle-orm';
 import { lookupApplicant, privateJson } from '../applicant-access.ts';
-import { getPrivateDb } from '../private-db/index.ts';
-import { rateLimit } from '../private-db/schema.ts';
+import { countRequest, getPrivateDb } from '../private-db/index.ts';
 import { readDraftKeyConfig } from './draft-key.ts';
 import { ApplicantPreconditionError, assertExpectedApplicant } from './applicant-precondition.ts';
 import { readCapped } from '../read-capped.ts';
@@ -49,18 +47,7 @@ export async function privateEndpoint(
     headers = result.response.headers;
     assertExpectedApplicant(request, result.applicant.ownerId);
     if (!['GET', 'HEAD'].includes(request.method)) readDraftKeyConfig();
-    const window = Math.floor(Date.now() / 60_000) * 60_000;
-    const key = `private-applicant:${result.applicant.ownerId}`;
-    const [limit] = await getPrivateDb().insert(rateLimit).values({
-      id: crypto.randomUUID(), key, count: 1, lastRequest: window,
-    }).onConflictDoUpdate({
-      target: rateLimit.key,
-      set: {
-        count: sql`case when ${rateLimit.lastRequest} < ${window} then 1 else ${rateLimit.count} + 1 end`,
-        lastRequest: sql`case when ${rateLimit.lastRequest} < ${window} then ${window} else ${rateLimit.lastRequest} end`,
-      },
-    }).returning({ count: rateLimit.count });
-    if (limit.count > 60) throw new PrivateInputError(429, 'Too many private requests. Retry next minute.');
+    if (await countRequest(getPrivateDb(), `private-applicant:${result.applicant.ownerId}`) > 60) throw new PrivateInputError(429, 'Too many private requests. Retry next minute.');
     return privateJson(await action(result.applicant.ownerId), { headers });
   } catch (error) {
     if (error instanceof PrivateInputError || error instanceof ApplicantPreconditionError) {

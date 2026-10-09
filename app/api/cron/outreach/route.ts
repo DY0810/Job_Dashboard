@@ -2,7 +2,6 @@ import { getPrivateDb } from '@/lib/private-db';
 import { sendDueOutreach } from '@/lib/applications/outreach';
 import { cronGate } from '@/lib/write-gate';
 
-export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 

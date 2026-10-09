@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
-import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
+import { privateJson, PrivateRequestError } from '../profile/api';
 import { PolicySchema } from '../../lib/applications/policy';
 import { WorkerListSchema } from '../../lib/applications/worker-protocol';
 import styles from '../workers/workers.module.css';
@@ -16,13 +16,13 @@ const PolicyResponseSchema = z.strictObject({
   acceptedAt: z.string().nullable(), runnerAvailable: z.boolean(),
 });
 
-async function request(path: string, ownerId?: string) {
-  const headers = new Headers();
-  if (ownerId) headers.set(EXPECTED_APPLICANT_HEADER, ownerId);
-  const response = await fetch(path, { headers, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(15_000) });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(response.status === 401 ? 'Unlock Workie to view private settings.' : 'Private settings are unavailable.');
-  return body;
+async function request(path: string, owner?: string) {
+  try {
+    return await privateJson(path, { owner, timeout: 15_000 });
+  } catch (error) {
+    if (!(error instanceof PrivateRequestError)) throw error;
+    throw new Error(error.status === 401 ? 'Unlock Workie to view private settings.' : 'Private settings are unavailable.');
+  }
 }
 
 const display = (value: string) => value.replaceAll('_', ' ');

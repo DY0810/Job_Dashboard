@@ -78,7 +78,7 @@ async function workerAvailable(tx: WorkerTx, app: ApplicationRow, ctx: Context) 
     eq(workerPairings.ownerId, ctx.ownerId), eq(workerPairings.id, worker.pairingId),
   ));
   if (!pairing || pairing.revokedAt !== null) return false;
-  const binding = await credentialBinding(tx, ctx.ownerId, ctx.options);
+  const binding = await credentialBinding(tx, ctx.ownerId);
   return binding !== null && worker.credentialBinding === binding && pairing.credentialBinding === binding;
 }
 async function eligible(tx: WorkerTx, app: ApplicationRow, ctx: Context) {

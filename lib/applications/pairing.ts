@@ -17,7 +17,7 @@ import {
 export async function createPairing(db: PrivateDb, ownerId: string, input: PairingCreate, options: WorkerOptions = {}): Promise<PairingGrant> {
   const command = PairingCreateSchema.parse(input);
   return workerTransaction(db, async (tx) => {
-    const binding = await credentialBinding(tx, ownerId, options);
+    const binding = await credentialBinding(tx, ownerId);
     if (!binding) fail(403, 'FORBIDDEN', 'Verified applicant credential required.');
     const [previous] = await tx.select().from(workerPairings).where(and(
       eq(workerPairings.ownerId, ownerId), eq(workerPairings.requestId, command.requestId),
@@ -43,7 +43,7 @@ export async function pairWorker(db: PrivateDb, input: PairRequest, options: Wor
     if (command.expectedOwnerId !== undefined && command.expectedOwnerId !== pairing.ownerId) {
       fail(409, 'OWNER_MISMATCH', 'This pairing grant was created for a different applicant.');
     }
-    const binding = await credentialBinding(tx, pairing.ownerId, options);
+    const binding = await credentialBinding(tx, pairing.ownerId);
     const [existing] = await tx.select().from(workers).where(eq(workers.pairingId, pairing.id));
     if (!binding || pairing.credentialBinding !== binding) {
       if (existing) await invalidateWorker(tx, existing, now);
@@ -80,7 +80,7 @@ export async function listWorkers(db: PrivateDb, ownerId: string, options: Worke
     for (const worker of await tx.select().from(workers).where(eq(workers.ownerId, ownerId))) {
       if (worker.revokedAt === null) await currentWorker(tx, worker, options);
     }
-    const binding = await credentialBinding(tx, ownerId, options);
+    const binding = await credentialBinding(tx, ownerId);
     for (const pairing of await tx.select().from(workerPairings).where(and(
       eq(workerPairings.ownerId, ownerId), isNull(workerPairings.consumedAt), isNull(workerPairings.revokedAt),
     ))) {

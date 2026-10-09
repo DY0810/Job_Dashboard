@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 import { TURSO_ENV, getDb, needsTurso } from '@/lib/db';
 import { listNotes, listWeeks, weekKey, weekLabel, weekRange } from '@/lib/notes';
-import { Calendar } from '../icons';
+import { Calendar } from 'lucide-react';
 import { Board } from './board';
 import { NotificationBell } from '../notification-bell';
 import { AppNav } from '../app-nav';
@@ -43,7 +43,7 @@ export default async function Talkie({
         <AppNav current="/talkie" />
         <details className="relative ml-auto">
           <summary className="chip flex cursor-pointer list-none items-center gap-1.5" aria-label="Pick a week">
-            <Calendar />
+            <Calendar size={12} strokeWidth={1.25} absoluteStrokeWidth />
             <span className="tabular-nums">{weekLabel(week)}</span>
             {week === current ? <span className="text-fg-dim">· this week</span> : null}
           </summary>

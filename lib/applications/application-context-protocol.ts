@@ -1,13 +1,10 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { ApplicationIdentitySchema, WORKER_PROTOCOL_VERSION } from './worker-protocol.ts';
+import { ApplicationIdentitySchema, WORKER_PROTOCOL_VERSION, hash, timestamp, uuid } from './worker-protocol.ts';
 
 export const disclosureAnswerKey = (question: string) =>
   `disclosure_${createHash('sha256').update(question).digest('hex').slice(0, 32)}`;
 
-const uuid = z.uuid();
-const hash = z.string().regex(/^[a-f0-9]{64}$/);
-const timestamp = z.number().int().nonnegative().safe();
 // A list is a multi-select form question's chosen options.
 const value = z.union([z.string().trim().max(4000), z.boolean(), z.array(z.string().trim().min(1).max(300)).min(1).max(100)]);
 

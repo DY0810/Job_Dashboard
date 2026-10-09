@@ -7,13 +7,14 @@ import { pathToFileURL } from 'node:url';
 import { eq, sql } from 'drizzle-orm';
 import { PDFDocument } from 'pdf-lib';
 import { migratePrivateDb, openPrivateDb, type PrivateDb } from '../private-db';
-import { account, applicationArtifacts, applicationRuns, applications, policyHeads, policyVersions, user, workerPairings, workers } from '../private-db/schema';
+import { applicationArtifacts, applicationRuns, applications, policyHeads, policyVersions, user, workerPairings, workers } from '../private-db/schema';
 import { createEmptyPolicy } from './policy';
 import { createDocumentGrant, receiveLocalDocument } from './documents';
 import { artifactManifestHash } from './artifact-protocol';
 import { createArtifactIntent, uploadArtifact } from './artifacts';
 import { hashValue } from './stores';
-import { secretHash } from './worker-store';
+import { credentialBinding, secretHash, workerTransaction } from './worker-store';
+import { stubHousehold } from '../test-household';
 
 vi.mock('server-only', () => ({}));
 
@@ -36,15 +37,14 @@ async function fixture() {
   await migratePrivateDb(db);
   vi.stubEnv('WORKIE_DOCUMENT_STORAGE', 'local');
   vi.stubEnv('WORKIE_DOCUMENT_DIRECTORY', join(dir, 'objects'));
+  stubHousehold('https://workie.example.test', 'one@example.test', 'two@example.test');
   await db.insert(user).values({ id: ownerId, name: ownerId, email: 'one@example.test', emailVerified: true });
-  const accountId = randomUUID(), password = 'synthetic-account-password';
-  await db.insert(account).values({ id: accountId, accountId: 'credential', providerId: 'credential', userId: ownerId, password });
   const savedPolicy = policy(), policyHash = hashValue(savedPolicy);
   await db.insert(policyVersions).values({ ownerId, version: 1, hash: policyHash, policy: savedPolicy, createdAt: now });
   await db.insert(policyHeads).values({ ownerId, revision: 1, policyVersion: 1, enabled: true,
     acceptedPolicyVersion: 1, acceptedPolicyHash: policyHash, acceptedAt: now });
   const pairingId = randomUUID(), workerId = randomUUID(), runId = randomUUID(), applicationId = randomUUID();
-  const binding = hashValue([accountId, password]);
+  const binding = (await workerTransaction(db, (tx) => credentialBinding(tx, ownerId)))!;
   await db.insert(workerPairings).values({ id: pairingId, ownerId, grantHash: 'g'.repeat(64), credentialBinding: binding,
     label: 'synthetic', requestId: randomUUID(), expiresAt: now + 86_400_000, consumedAt: now });
   await db.insert(workers).values({ id: workerId, ownerId, pairingId, tokenHash: secretHash(token), credentialBinding: binding,
@@ -80,7 +80,7 @@ function manifest(applicationId: string, source: { id: string; version: number; 
   };
 }
 
-const options = { now: () => now, isAllowedApplicant: () => true };
+const options = { now: () => now };
 const intentInput = (applicationId: string, source: { id: string; version: number; sha256: string }, bytes: Uint8Array) => ({
   protocolVersion: 1 as const, requestId: randomUUID(), fence: 1, expectedRevision: 1,
   manifest: manifest(applicationId, source, bytes),

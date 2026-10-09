@@ -97,7 +97,7 @@ baseline; re-find named symbols if implementation has moved them.
 | R7 | [refresh-queue.ts:37](/Users/dyl/Workie/lib/refresh-queue.ts:37), lines 37-94: conflict/read/CAS patterns. [refresh-queue.test.ts:111](/Users/dyl/Workie/lib/refresh-queue.test.ts:111): stale completion. [notes.ts:136](/Users/dyl/Workie/lib/notes.ts:136), lines 136-162: retry-safe inserts, not private ownership. |
 | R8 | [runtime.ts:345](/Users/dyl/Workie/lib/runtime.ts:345), lines 345-524: robots, redirects, retries, public-destination checks. [runtime.test.ts:312](/Users/dyl/Workie/lib/runtime.test.ts:312): relevant safety cases. [dedupe.ts:1](/Users/dyl/Workie/lib/dedupe.ts:1): `publisherIdOf` and normalization. [ingest.ts:457](/Users/dyl/Workie/scripts/ingest.ts:457), lines 457-547: publisher matching. |
 | R9 | [next.config.ts:18](/Users/dyl/Workie/next.config.ts:18), lines 18-23: public cache rules. [layout.tsx:24](/Users/dyl/Workie/app/layout.tsx:24): layout. [page.tsx:362](/Users/dyl/Workie/app/page.tsx:362), [talkie/page.tsx:37](/Users/dyl/Workie/app/talkie/page.tsx:37): separate headers. [drawer.tsx:125](/Users/dyl/Workie/app/drawer.tsx:125), lines 125-141 and 238-327: dialog/manual actions/labeled forms. |
-| R10 | [.impeccable.md:53](/Users/dyl/Workie/.impeccable.md:53), including amendments near line 144. [globals.css:167](/Users/dyl/Workie/app/globals.css:167), [icons.tsx:1](/Users/dyl/Workie/app/icons.tsx:1), [layout.test.ts:21](/Users/dyl/Workie/lib/layout.test.ts:21), [outreach-forms.test.ts:4](/Users/dyl/Workie/app/outreach-forms.test.ts:4): visual conventions and current verification limits. |
+| R10 | [.impeccable.md:53](/Users/dyl/Workie/.impeccable.md:53), including amendments near line 144. [globals.css:167](/Users/dyl/Workie/app/globals.css:167), [layout.test.ts:21](/Users/dyl/Workie/lib/layout.test.ts:21), [outreach-forms.test.ts:4](/Users/dyl/Workie/app/outreach-forms.test.ts:4): visual conventions and current verification limits. |
 | R11 | [verify.yml:15](/Users/dyl/Workie/.github/workflows/verify.yml:15), lines 15-23: actual CI commands. [vitest.config.ts:1](/Users/dyl/Workie/vitest.config.ts:1). [auto-apply.ts:60](/Users/dyl/Workie/lib/auto-apply.ts:60), [auto-apply.test.ts:31](/Users/dyl/Workie/lib/auto-apply.test.ts:31): accessible filter behavior to preserve. |
 | R12 | [tailoring skill:34](/Users/dyl/.agents/skills/tailor-resume/SKILL.md:34), [baseline-tailoring.md:123](/Users/dyl/.agents/skills/tailor-resume/references/baseline-tailoring.md:123). [fixed_editor_v2.py:171](/Users/dyl/Internships/_system/zero-day-2026-09-18/fixed_editor_v2.py:171), lines 171-345: bounded edits, output, pixel/text/font checks. [fixed_editor_v3.py:47](/Users/dyl/Internships/_system/zero-day-2026-09-18/fixed_editor_v3.py:47), lines 47-160: font/map checks. [verify_pdf.py:20](/Users/dyl/.agents/skills/tailor-resume/scripts/verify_pdf.py:20), [compare_to_master.py:31](/Users/dyl/.agents/skills/tailor-resume/scripts/compare_to_master.py:31): diagnostic defects, not production validators. |
 
@@ -265,7 +265,7 @@ These routes are new Workie contracts to build, not methods asserted to exist:
 | Settings/runs | `/api/providers`, `/api/auto-apply/policies`, `/api/application-runs`, `/api/application-runs/[id]/actions`; strict versioned command schemas and idempotency keys. |
 | Applications/inbox | `/api/applications`, `/api/applications/[id]`, `/api/inbox`, `/api/questions/[id]/answer`; private, paginated, no-store. Mark-read is a distinct mutation. |
 | Pairing | `/api/workers/pairings` requires browser auth; `/api/worker/pair` consumes only its high-entropy, expiring one-time grant. |
-| Execution | `/api/worker/poll`, `/api/worker/heartbeat`, `/api/worker/applications/[id]/events`, `/api/worker/applications/[id]/submit-intent`; worker capability, owner, active assignment, fence and event-key validation. |
+| Execution | `/api/worker/poll`, `/api/worker/heartbeat`, `/api/worker/applications/[id]/events`, `/api/worker/applications/[id]/submission-intent`; worker capability, owner, active assignment, fence and event-key validation. |
 
 Private routes use `Cache-Control: private, no-store`, no CDN shared caching,
 strict same-origin protection for cookie-authenticated mutations, bounded body
@@ -750,7 +750,7 @@ the Lever/Jobvite entries in the authorization matrix.
 - [ ] Unsupported tenant versions are visibly blocked and absent from supported counts.
 
 **Anti-pattern guards:** no API-key scraping, fabricated dates, broad selector
-fallback reported as tested support, or bypass of the submit-intent fence.
+fallback reported as tested support, or bypass of the submission-intent fence.
 
 ## Phase 10: Workday, Oracle Candidate Experience And iCIMS
 

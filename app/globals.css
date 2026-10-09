@@ -155,20 +155,6 @@
   .skip-link { transition: none; }
 }
 
-/* ─────────────────────────────────────────────────────────────────────── widths ──
- * Archivo's `wdth` axis, used for a functional reason rather than a decorative one:
- * narrow buys column width in the table, wide separates the tab labels from data.
- */
-.w-narrow {
-  font-stretch: 85%;
-}
-
-.w-wide {
-  font-stretch: 115%;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-}
-
 .nums {
   font-variant-numeric: tabular-nums;
 }
@@ -465,7 +451,7 @@
   cursor: pointer;
 }
 
-/* The caret is `Chevron` turned a quarter: one glyph, two directions, no second component. */
+/* The caret is lucide's `ChevronRight` turned a quarter: one glyph, two directions, no second component. */
 .select-box svg {
   position: absolute;
   right: 4px;
@@ -1061,14 +1047,6 @@ dialog.drawer .chip { min-height: 30px; }
   font-size: 10px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
 }
 .draft-small .draft-size { color: var(--fg-dim); }
-.badge {
-  display: inline-flex; justify-content: center; align-items: center;
-  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
-  /* Not the accent. This pill sits in the top nav and was the loudest object on the
-     page, competing directly with the band the contract says nothing may compete with. */
-  background: var(--surface); border: 1px solid var(--fg-dim); color: var(--fg);
-  font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums;
-}
 .weeks {
   position: absolute; top: 100%; right: 0; z-index: 10;
   margin-top: 4px; min-width: 180px;

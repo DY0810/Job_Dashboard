@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { Chevron } from './icons';
+import { ChevronRight } from 'lucide-react';
 
 const KEY = 'workie-theme';
 
@@ -51,7 +51,7 @@ export function ThemeToggle() {
         <option value="light">light</option>
         <option value="dark">dark</option>
       </select>
-      <Chevron />
+      <ChevronRight size={12} strokeWidth={1.25} absoluteStrokeWidth />
     </span>
   );
 }

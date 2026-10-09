@@ -1,12 +1,8 @@
 import { z } from 'zod';
 import { FactScopeSchema, PreciseDateSchema, ProvenanceSchema } from './profile.ts';
-import { CheckpointSchema } from './worker-protocol.ts';
+import { CheckpointSchema, count, hash, identity, revision, uuid } from './worker-protocol.ts';
 
-export const QUESTION_PROTOCOL_VERSION = 1;
-const uuid = z.uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
-const revision = z.number().int().positive().safe(), count = z.number().int().nonnegative().safe();
 const label = z.string().min(1).max(300), prose = z.string().min(1).max(4000);
-const identity = z.string().min(1).max(256).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const base = { allowBlank: z.boolean(), declineValue: label.nullable() };
 const unitless = { units: z.null(), precision: z.null() };
 const text = { ...base, ...unitless, minLength: count.max(4000), maxLength: revision.max(4000), format: z.enum(['plain', 'email', 'url']) };

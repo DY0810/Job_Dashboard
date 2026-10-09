@@ -1,6 +1,6 @@
 import { FILTERS, hasFilters, href, parseParams, type Params } from '../lib/params';
+import { del, get, localStore, set, type Store } from './local-store';
 
-type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 const DEFAULTS_KEY = 'workie-default-filters';
 export const APPLIED_EVENT = 'workie-applied-change';
 /** Signed in, a check belongs to the applicant who made it; signed out it stays in this browser only. */
@@ -19,56 +19,27 @@ export const activeOwner = () => ownerRequest ??= fetch('/api/auth/applicant',
   })
   .catch((error: unknown) => { ownerRequest = undefined; throw error; });
 
-function localStore(): Store | null {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
 export function readApplied(id: number, owner: string | null, store: Store | null = localStore()): boolean {
-  try {
-    return store?.getItem(appliedKey(id, owner)) === '1';
-  } catch {
-    return false;
-  }
+  return get(appliedKey(id, owner), store) === '1';
 }
 
 export function saveApplied(id: number, applied: boolean, owner: string | null, store: Store | null = localStore()): boolean {
-  try {
-    if (!store) return false;
-    if (applied) store.setItem(appliedKey(id, owner), '1');
-    else store.removeItem(appliedKey(id, owner));
-    return true;
-  } catch {
-    return false;
-  }
+  return applied ? set(appliedKey(id, owner), '1', store) : del(appliedKey(id, owner), store);
 }
 
 export function readDefaultFilters(store: Store | null = localStore()): string | null {
-  try {
-    const value = store?.getItem(DEFAULTS_KEY);
-    return value !== undefined && value !== null && value.length <= 2000 ? value : null;
-  } catch {
-    return null;
-  }
+  const value = get(DEFAULTS_KEY, store);
+  return value !== null && value.length <= 2000 ? value : null;
 }
 
 export function saveDefaultFilters(p: Params, store: Store | null = localStore()): boolean {
-  try {
-    if (!store) return false;
-    const query = new URLSearchParams(href(p).split('?')[1]);
-    const defaults = new URLSearchParams();
-    for (const key of [...FILTERS, 'badge']) {
-      const value = query.get(key);
-      if (value) defaults.set(key, value);
-    }
-    store.setItem(DEFAULTS_KEY, defaults.toString());
-    return true;
-  } catch {
-    return false;
+  const query = new URLSearchParams(href(p).split('?')[1]);
+  const defaults = new URLSearchParams();
+  for (const key of [...FILTERS, 'badge']) {
+    const value = query.get(key);
+    if (value) defaults.set(key, value);
   }
+  return set(DEFAULTS_KEY, defaults.toString(), store);
 }
 
 /** Defaults only fill a bare landing URL; an explicit filter set always wins. */

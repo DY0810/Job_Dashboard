@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hash } from './worker-protocol.ts';
 
 export const PROVIDER_PROTOCOL_VERSION = 1;
 export const LOCAL_OLLAMA_PROVIDER_ID = 'local:ollama';
@@ -6,7 +7,6 @@ export const OMNIROUTE_PROVIDER_ID = 'omniroute:compatible';
 export const BYOK_PROVIDER_ID = 'byok:compatible';
 export const LOCAL_OLLAMA_ENDPOINT = 'http://127.0.0.1:11434/api/chat';
 const revision = z.number().int().nonnegative().safe();
-const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const provider = z.string().trim().min(1).max(100);
 const providerKind = z.enum(['none', 'local_ollama', 'omniroute', 'byok']);
 const providerProtocol = z.enum(['ollama_native', 'openai_compatible']);

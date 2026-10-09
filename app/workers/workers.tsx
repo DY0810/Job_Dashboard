@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Close } from '../icons';
+import { X } from 'lucide-react';
 import { HEARTBEAT_MS } from '../../lib/applications/worker-protocol';
 import { WorkerControl, applicationActions, initialView, pairingStatus, workerStatus, type WorkerView } from './control';
 import DiscoveryStatus from './discovery-status';
@@ -102,7 +102,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
         <div className={styles.row}>
           <button type="button" className={styles.button} onClick={() => void control.copySecret()}>Copy grant</button>
           <button type="button" className={`${styles.button} ${styles.icon}`} aria-label="Dismiss secret" title="Dismiss secret"
-            onClick={() => control.clearSecret()}><Close /></button>
+            onClick={() => control.clearSecret()}><X size={12} strokeWidth={1.25} absoluteStrokeWidth /></button>
         </div>
       </div>}
       {!view.workers?.pairings.length ? <p className={styles.muted}>No pairing grants.</p> :

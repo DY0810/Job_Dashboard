@@ -85,7 +85,6 @@ export function createEmptyPolicy(): Policy {
     expiresAt: null,
   };
 }
-export const emptyPolicy = createEmptyPolicy();
 const command = {
   expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1),
   requestId: z.uuid(),

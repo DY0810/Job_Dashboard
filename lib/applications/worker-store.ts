@@ -1,14 +1,13 @@
 import 'server-only';
 import { and, eq, sql } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
-import { getAuth } from '../auth.ts';
-import { householdAuthConfigured, readHouseholdConfig } from '../household-auth.ts';
+import { readHouseholdConfig } from '../household-auth.ts';
 import type { PrivateDb } from '../private-db/index.ts';
-import { account, applications, applicationRuns, discoveryManifests, manualApplicationMarks, user, workers, workerCommands, workerPairings } from '../private-db/schema.ts';
-import { hashValue, getPolicy } from './stores.ts';
+import { applications, applicationRuns, discoveryManifests, manualApplicationMarks, user, workers, workerCommands, workerPairings } from '../private-db/schema.ts';
+import { hashValue, getPolicy, transaction } from './stores.ts';
 import { HEARTBEAT_MS, LEASE_MS, WORKER_PROTOCOL_VERSION, type Lease } from './worker-protocol.ts';
 
-export type WorkerOptions = { now?: () => number; isAllowedApplicant?: (email: string) => boolean };
+export type WorkerOptions = { now?: () => number };
 export type WorkerTx = Parameters<Parameters<PrivateDb['transaction']>[0]>[0];
 export type WorkerRow = typeof workers.$inferSelect;
 export type ApplicationRow = typeof applications.$inferSelect;
@@ -24,33 +23,14 @@ export function one<T>(rows: T[]): T {
   if (rows.length !== 1) fail();
   return rows[0];
 }
-export async function workerTransaction<T>(db: PrivateDb, action: (tx: WorkerTx) => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      if (db.$client.protocol === 'file') await db.run(sql`pragma journal_mode = WAL`);
-      return await db.transaction(action);
-    } catch (error) {
-      let cause: unknown = error;
-      while (cause && typeof cause === 'object' && !('code' in cause) && 'cause' in cause) cause = cause.cause;
-      if (attempt >= 3 || !cause || typeof cause !== 'object' || !('code' in cause) || cause.code !== 'SQLITE_BUSY') throw error;
-      await new Promise((resolve) => setTimeout(resolve, 10 * 3 ** attempt));
-    }
-  }
-}
-export async function credentialBinding(tx: WorkerTx, ownerId: string, options: WorkerOptions): Promise<string | null> {
-  if (householdAuthConfigured()) {
-    const [row] = await tx.select({ email: user.email, verified: user.emailVerified }).from(user).where(eq(user.id, ownerId));
-    const config = readHouseholdConfig();
-    const profile = Object.values(config.profiles).find((candidate) => candidate.email === row?.email);
-    return row?.verified && profile ? hashValue(['household-v1', ownerId, profile.email, config.secret, config.passcode]) : null;
-  }
-  const rows = await tx.select({
-    email: user.email, verified: user.emailVerified, accountId: account.id, password: account.password,
-  }).from(user).innerJoin(account, and(eq(account.userId, user.id), eq(account.providerId, 'credential')))
-    .where(eq(user.id, ownerId));
-  if (rows.length !== 1 || !rows[0].verified || !rows[0].password ||
-      !(options.isAllowedApplicant ?? getAuth().isAllowedApplicant)(rows[0].email)) return null;
-  return hashValue([rows[0].accountId, rows[0].password]);
+export const workerTransaction = transaction;
+// Missing household config throws (503) rather than returning null: null reads as a credential
+// change, and currentWorker would durably revoke the worker.
+export async function credentialBinding(tx: WorkerTx, ownerId: string): Promise<string | null> {
+  const config = readHouseholdConfig();
+  const [row] = await tx.select({ email: user.email, verified: user.emailVerified }).from(user).where(eq(user.id, ownerId));
+  const profile = Object.values(config.profiles).find((candidate) => candidate.email === row?.email);
+  return row?.verified && profile ? hashValue(['household-v1', ownerId, profile.email, config.secret, config.passcode]) : null;
 }
 export const appScope = (ownerId: string, id: string) => and(eq(applications.ownerId, ownerId), eq(applications.id, id));
 export async function releaseApplication(tx: WorkerTx, row: ApplicationRow, reasonCode: string) {
@@ -86,7 +66,7 @@ export async function invalidateWorker(tx: WorkerTx, row: WorkerRow, now: number
   for (const app of active) await releaseApplication(tx, app, 'worker_revoked');
 }
 export async function currentWorker(tx: WorkerTx, row: WorkerRow, options: WorkerOptions): Promise<boolean> {
-  const binding = await credentialBinding(tx, row.ownerId, options);
+  const binding = await credentialBinding(tx, row.ownerId);
   const [pairing] = await tx.select().from(workerPairings).where(and(
     eq(workerPairings.id, row.pairingId), eq(workerPairings.ownerId, row.ownerId),
   ));

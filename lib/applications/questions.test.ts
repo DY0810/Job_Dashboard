@@ -7,7 +7,7 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migratePrivateDb, openPrivateDb, type PrivateDb } from '../private-db/index.ts';
 import {
-  account, applications, applicationEvents, documents, legacyImportPreviews, manualApplicationMarks,
+  applications, applicationEvents, documents, legacyImportPreviews, manualApplicationMarks,
   policyHeads, policyVersions, profileHeads, profileVersions, user,
   questions, questionAnswers, questionReviews, questionInterventions, inboxReads,
 } from '../private-db/schema.ts';
@@ -15,7 +15,8 @@ import { createEmptyProfile, type Profile } from './profile.ts';
 import { createEmptyPolicy, PolicySchema, type Policy } from './policy.ts';
 import { hashValue, saveProfile } from './stores.ts';
 import { createPairing, pairWorker, revokeWorker } from './pairing.ts';
-import { createRun, enqueueApplication, commandRun } from './runs.ts';
+import { createRun, commandRun } from './runs.ts';
+import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
 import { type WorkerOptions } from './worker-store.ts';
@@ -32,6 +33,7 @@ import {
   pollQuestionInterventions, ackQuestionIntervention,
 } from './questions.ts';
 
+import { stubHousehold } from '../test-household.ts';
 vi.mock('server-only', () => ({}));
 const nativeFetch = globalThis.fetch;
 let db: PrivateDb, other: PrivateDb, dir: string, now: number, options: WorkerOptions, profile: Profile;
@@ -115,13 +117,13 @@ async function setPolicy(changes: Partial<Policy>) {
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'phase5-dal-'));
   now = Date.UTC(2026, 8, 21, 12);
-  options = { now: () => now, isAllowedApplicant: email => ['alice@example.test', 'bob@example.test'].includes(email) };
+  options = { now: () => now };
+  stubHousehold();
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('External network forbidden'); }));
   db = openPrivateDb({ url: `file:${join(dir, 'private.db')}` }); await migratePrivateDb(db);
   other = openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   for (const id of ['alice', 'bob']) {
     await db.insert(user).values({ id, name: 'Synthetic', email: `${id}@example.test`, emailVerified: true });
-    await db.insert(account).values({ id: `${id}-credential`, userId: id, accountId: id, providerId: 'credential', password: secret() });
     const policy: Policy = { ...createEmptyPolicy(), actions: ['read_jobs', 'fill_forms'], documentKinds: ['resume', 'transcript'] };
     const hash = hashValue(policy);
     await db.insert(policyVersions).values({ ownerId: id, version: 1, hash, policy, createdAt: now });
@@ -247,7 +249,7 @@ describe('question DAL atomic answers and scoped reuse', () => {
       if (cause === 'stop' || cause === 'pause') await commandRun(db, 'alice', a.run.id,
         { ...request(), expectedRevision: 1, action: cause }, options);
       if (cause === 'revoke') await revokeWorker(db, 'alice', a.worker.workerId, { ...request(), expectedRevision: 1 }, options);
-      if (cause === 'credential') await db.update(account).set({ password: secret() }).where(eq(account.userId, 'alice'));
+      if (cause === 'credential') vi.stubEnv('WORKIE_HOUSEHOLD_PASSCODE', '1357');
       if (cause === 'manual') {
         const previewId = randomUUID(), evidence = { postingId: 1, company: 'Synthetic', title: 'Engineer', url: null,
           identity: { ats: 'fixture', tenant: a.app.tenant, requisition: a.app.requisition }, resolution: 'resolved' as const, reason: null };

@@ -1,8 +1,7 @@
 /**
  * The ghost pass (plan Phase 10, finding C) — decide which postings have quietly died.
  *
- * `lib/dedupe.ts` holds the rule (`nextAbsenceCount`, `isGhost`); this runs it against the
- * database once per ingest. It owns `posting_sources.absence_count` outright — nothing else
+ * The SQL below is the rule; this runs it against the database once per ingest. It owns `posting_sources.absence_count` outright — nothing else
  * writes that column — so the whole delisting rule is readable in one file.
  *
  * THE PROPERTY THAT MATTERS. A posting is aged toward delisting only by a source that
@@ -64,12 +63,12 @@ export function runGhostPass(db: Db, options: GhostOptions): GhostStats {
     stats.polled = tally?.polled ?? 0;
     stats.absent = tally?.absent ?? 0;
 
-    // `nextAbsenceCount` as one statement: seen resets to 0, absent increments. Restricted to
+    // One statement: seen resets to 0, absent increments. Restricted to
     // sources eligible this run — the load-bearing clause in this file.
     tx.update(postingSources)
       .set({
         // Clamped at the threshold. The ONLY consumer is `min(absence_count) >= threshold`
-        // (below, and `isGhost` in lib/dedupe.ts), so counting past it changes no decision —
+        // (below), so counting past it changes no decision —
         // but it did change the ROW, which made 6,142 already-delisted sources a guaranteed
         // remote write every cycle, forever. Counts had reached 129. A reappearance still
         // resets to 0, so restore behaviour is untouched.
@@ -79,10 +78,9 @@ export function runGhostPass(db: Db, options: GhostOptions): GhostStats {
       .run();
 
     /**
-     * `isGhost` from `lib/dedupe.ts`, as SQL, so the whole corpus is one statement rather than
-     * 5,000 round trips. `MIN(absence_count) >= threshold` is `sources.every(...)`, and
-     * `GROUP BY` only yields a row for a posting that HAS sources, which is `length > 0`.
-     * `ghost.test.ts` asserts the two spellings answer the same thing.
+     * A ghost is a posting whose EVERY source has gone quiet, as one statement for the whole
+     * corpus rather than 5,000 round trips. `MIN(absence_count) >= threshold` is "every source",
+     * and `GROUP BY` only yields a row for a posting that HAS sources.
      *
      * ponytail: `min()` spans every source row, including sources whose connector no longer
      * runs at all — an expired key, a host that started refusing robots, a connector dropped

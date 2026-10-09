@@ -1,12 +1,9 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
-import { sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { getAuth } from '../auth.ts';
 import { lookupApplicant, privateJson, privateResponse } from '../applicant-access.ts';
-import { getPrivateDb } from '../private-db/index.ts';
+import { countRequest, getPrivateDb } from '../private-db/index.ts';
 import { getDiscoveryCorpus } from './discovery-corpus.ts';
-import { rateLimit } from '../private-db/schema.ts';
 import { assertExpectedApplicant, ApplicantPreconditionError } from './applicant-precondition.ts';
 import { readPrivateJson, PrivateInputError } from './private-http.ts';
 import { WorkerError, withWorker, type WorkerOptions } from './worker-store.ts';
@@ -14,7 +11,7 @@ import * as p from './worker-protocol.ts';
 import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing } from './pairing.ts';
 import { createRun, listRuns, commandRun, commandApplication } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
-import { recordWorkerEvent, submitIntent } from './events.ts';
+import { recordWorkerEvent } from './events.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { applicationContext, applicationDocumentOwner } from './application-context.ts';
 import { createArtifactIntent, uploadArtifact } from './artifacts.ts';
@@ -30,17 +27,7 @@ import {
 import { ArtifactIntentSchema, ArtifactIntentResponseSchema, ArtifactUploadResponseSchema } from './artifact-protocol.ts';
 
 async function limit(key: string, max: number) {
-  const window = Math.floor(Date.now() / 60_000) * 60_000;
-  const [row] = await getPrivateDb().insert(rateLimit).values({
-    id: crypto.randomUUID(), key, count: 1, lastRequest: window,
-  }).onConflictDoUpdate({
-    target: rateLimit.key,
-    set: {
-      count: sql`case when ${rateLimit.lastRequest} < ${window} then 1 else ${rateLimit.count} + 1 end`,
-      lastRequest: sql`case when ${rateLimit.lastRequest} < ${window} then ${window} else ${rateLimit.lastRequest} end`,
-    },
-  }).returning({ count: rateLimit.count });
-  if (row.count > max) throw new WorkerError(429, 'RATE_LIMITED', 'Too many requests. Retry next minute.');
+  if (await countRequest(getPrivateDb(), key) > max) throw new WorkerError(429, 'RATE_LIMITED', 'Too many requests. Retry next minute.');
 }
 export { limit as limitWorkerRequests };
 function errorResponse(error: unknown, headers?: HeadersInit) {
@@ -126,7 +113,7 @@ export async function browserWorkerEndpoint(request: Request, action: BrowserAct
     const ownerId = result.applicant.ownerId;
     assertExpectedApplicant(request, ownerId);
     await limit(`private-worker-browser:${ownerId}`, 60);
-    const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
+    const db = getPrivateDb(), options: WorkerOptions = {};
     let body: unknown;
     switch (action) {
       case 'list-workers': body = p.WorkerListSchema.parse(await listWorkers(db, ownerId, options)); break;
@@ -144,10 +131,10 @@ export async function browserWorkerEndpoint(request: Request, action: BrowserAct
     return privateJson(body, { headers });
   } catch (error) { return errorResponse(error, headers); }
 }
-export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submit-intent' | 'submission-intent' | 'receipt' | 'provider-config' | 'context' | 'artifact-intent' | 'outreach' | 'letter', id?: string) {
+export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submission-intent' | 'receipt' | 'provider-config' | 'context' | 'artifact-intent' | 'outreach' | 'letter', id?: string) {
   try {
     checkPath(request, id ? [id] : []);
-    const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
+    const db = getPrivateDb(), options: WorkerOptions = {};
     const token = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1] ?? '';
     let workerOwnerId: string | undefined;
     if (action === 'pair') await limit('private-worker-pair', 30);
@@ -168,7 +155,6 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       case 'poll': body = p.PollResponseSchema.parse(await pollWorker(db, token, p.PollRequestSchema.parse(raw), { ...options, corpus: getDiscoveryCorpus })); break;
       case 'heartbeat': body = p.PollResponseSchema.parse(await heartbeatWorker(db, token, p.HeartbeatRequestSchema.parse(raw), options)); break;
       case 'event': body = p.EventResponseSchema.parse(await recordWorkerEvent(db, token, id!, p.EventRequestSchema.parse(raw), options)); break;
-      case 'submit-intent': body = await submitIntent(db, token, id!, p.SubmitIntentSchema.parse(raw), options); break;
       case 'submission-intent': body = p.SubmissionIntentResponseSchema.parse(await beginSubmission(db, token, id!, p.SubmissionIntentSchema.parse(raw), options)); break;
       case 'receipt': body = p.ReceiptResponseSchema.parse(await recordReceipt(db, token, id!, p.ReceiptCommandSchema.parse(raw), options)); break;
       case 'context': body = ApplicationContextSchema.parse(await applicationContext(db, token, id!, ApplicationContextRequestSchema.parse(raw), options)); break;
@@ -189,7 +175,7 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
 export async function workerArtifactUploadEndpoint(request: Request, applicationId: string, artifactId: string) {
   try {
     checkPath(request, [applicationId, artifactId]);
-    const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
+    const db = getPrivateDb(), options: WorkerOptions = {};
     const token = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1] ?? '';
     const worker = await withWorker(db, token, options, async (_tx, row) => ({ id: row.id }));
     await limit(`private-worker:${worker.id}`, 120);
@@ -201,7 +187,7 @@ export async function workerDocumentEndpoint(request: Request, applicationId: st
   try {
     if (request.method !== 'GET' || new URL(request.url).search) throw new WorkerError(400, 'INVALID_INPUT', 'Invalid document request.');
     const token = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1] ?? '';
-    const db = getPrivateDb(), options: WorkerOptions = { isAllowedApplicant: getAuth().isAllowedApplicant };
+    const db = getPrivateDb(), options: WorkerOptions = {};
     const worker = await withWorker(db, token, options, async (_tx, row) => ({ id: row.id }));
     await limit(`private-worker:${worker.id}`, 120);
     const document = await applicationDocumentOwner(db, token, applicationId, documentId, options);

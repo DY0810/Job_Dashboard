@@ -3,7 +3,6 @@ import { privateJson } from '@/lib/applicant-access';
 import { PrivateInputError, readPrivateJson } from '@/lib/applications/private-http';
 import { z } from 'zod';
 
-export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export const GET = (request: Request) => listApplicantSessions(request);

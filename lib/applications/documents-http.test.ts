@@ -9,9 +9,10 @@ import { getPayloadFromClientToken } from '@vercel/blob/client';
 import { get } from '@vercel/blob';
 import { createDocumentGrant, listDocuments, retryDocumentValidation } from './documents';
 import { handleDocumentRequest, handleDocumentBlobRequest } from './documents-http';
+import * as privateDb from '../private-db';
 import { migratePrivateDb, openPrivateDb, type PrivateDb } from '../private-db';
 import { user } from '../private-db/schema';
-import type { ApplicantAuth } from '../auth';
+import { householdApplicant, stubHousehold } from '../test-household';
 import { documentStorageConfig, type DocumentStorage } from './documents-storage';
 import { eq } from 'drizzle-orm';
 import { documentUploadGrants } from '../private-db/document-schema';
@@ -21,20 +22,12 @@ vi.mock('@vercel/blob', async (original) => {
   const actual = await original<typeof import('@vercel/blob')>();
   return { ...actual, get: vi.fn() };
 });
-let dir: string, db: PrivateDb, bytes: Uint8Array;
+let dir: string, db: PrivateDb, bytes: Uint8Array, cookies: Record<string, string>;
 const origin = 'https://app.example.test';
 const token = 'vercel_blob_rw_synthetic_abcdefghijklmnopqrstuvwxyz123456';
 const storage: DocumentStorage = { mode: 'blob', token, origin: 'https://synthetic.private.blob.vercel-storage.com', callbackUrl: `${origin}/api/documents/upload` };
-const auth = {
-  origin, isAllowedApplicant: () => true,
-  handler: async (request: Request) => {
-    const id = request.headers.get('cookie');
-    return Response.json(id ? { user: { id, email: `${id}@example.test`, name: id, emailVerified: true }, session: { userId: id } } : null,
-      { headers: { 'Set-Cookie': 'session=synthetic; HttpOnly' } });
-  },
-} as unknown as ApplicantAuth;
 const req = (body: unknown, owner = 'one', headers = {}) => new Request(`${origin}/api/documents/upload`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: owner,
+  method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: cookies[owner] ?? '',
     ...(owner ? { 'x-workie-applicant': owner } : {}), ...headers }, body: JSON.stringify(body),
 });
 beforeEach(async () => {
@@ -44,6 +37,9 @@ beforeEach(async () => {
   db = openPrivateDb({ url: pathToFileURL(join(dir, 'private.db')).href });
   await migratePrivateDb(db);
   for (const id of ['one', 'two']) await db.insert(user).values({ id, name: id, email: `${id}@example.test` });
+  stubHousehold(origin, 'one@example.test', 'two@example.test');
+  vi.spyOn(privateDb, 'getPrivateDb').mockReturnValue(db);
+  cookies = { one: (await householdApplicant(db, 'dy')).cookie, two: (await householdApplicant(db, 'may')).cookie };
   const pdf = await PDFDocument.create(); pdf.addPage(); bytes = await pdf.save();
   vi.mocked(get).mockImplementation(async () => ({
     statusCode: 200, stream: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
@@ -52,27 +48,26 @@ beforeEach(async () => {
       contentType: 'application/pdf', pathname: '', size: bytes.length, uploadedAt: new Date(), etag: 'untrusted' },
   }));
 });
-afterEach(() => { vi.unstubAllGlobals(); db?.$client.close(); rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); db?.$client.close(); rmSync(dir, { recursive: true, force: true }); });
 const grant = () => createDocumentGrant(db, 'one', {
   requestId: randomUUID(), kind: 'resume_master', name: 'synthetic.pdf', mime: 'application/pdf', size: bytes.length,
 }, storage);
 it('requires owner session and origin on list, grant creation and download', async () => {
   const item = await grant();
-  const options = { db, storage, auth };
+  const options = { db, storage };
   const unauth = await handleDocumentRequest(new Request(`${origin}/api/documents`), 'list', undefined, options);
   expect(unauth.status).toBe(401);
-  const listing = await handleDocumentRequest(new Request(`${origin}/api/documents`, { headers: { cookie: 'two' } }), 'list', undefined, options);
+  const listing = await handleDocumentRequest(new Request(`${origin}/api/documents`, { headers: { cookie: cookies.two } }), 'list', undefined, options);
   expect(await listing.json()).toEqual({ documents: [], storage: 'blob' });
   expect(listing.headers.get('Cache-Control')).toBe('private, no-store');
-  expect(listing.headers.get('Set-Cookie')).toContain('synthetic');
-  const download = await handleDocumentRequest(new Request(`${origin}/api/documents/${item.document.id}/download`, { headers: { cookie: 'two' } }), 'download', item.document.id, options);
+  const download = await handleDocumentRequest(new Request(`${origin}/api/documents/${item.document.id}/download`, { headers: { cookie: cookies.two } }), 'download', item.document.id, options);
   expect(download.status).toBe(404);
   const denied = await handleDocumentRequest(req({}, 'one', { Origin: 'https://evil.example.test' }), 'create', undefined, options);
   expect(denied.status).toBe(403);
 });
 it('rejects switched or missing applicants before grant, raw upload, validation or SDK-token writes', async () => {
   const item = await grant();
-  const options = { db, storage, auth };
+  const options = { db, storage };
   const create = { requestId: randomUUID(), kind: 'resume_master', name: 'private-a.pdf', mime: 'application/pdf', size: bytes.length };
   const tokenBody = { type: 'blob.generate-client-token', payload: {
     pathname: item.pathname, clientPayload: JSON.stringify({ grantId: item.grantId }), multipart: false,
@@ -87,7 +82,6 @@ it('rejects switched or missing applicants before grant, raw upload, validation 
       expect(response.status).toBe(403);
       expect(await response.json()).toEqual({ error: 'Applicant session changed. Unlock the current account.' });
       expect(response.headers.get('cache-control')).toBe('private, no-store');
-      expect(response.headers.get('set-cookie')).toContain('synthetic');
       expect(switched.bodyUsed).toBe(false);
       expect(await db.select().from(documentUploadGrants)).toEqual(before);
       expect(await listDocuments(db, 'two')).toEqual([]);
@@ -103,7 +97,7 @@ it('rejects switched or missing applicants before grant, raw upload, validation 
 it('real SDK creates a single-object constrained token, never a whole-store token', async () => {
   const item = await grant();
   const body = { type: 'blob.generate-client-token', payload: { pathname: item.pathname, clientPayload: JSON.stringify({ grantId: item.grantId }), multipart: false } };
-  const result = await handleDocumentBlobRequest(req(body), { db, storage, auth });
+  const result = await handleDocumentBlobRequest(req(body), { db, storage });
   expect(result.status).toBe(200);
   const data = await result.json();
   expect(data.clientToken).not.toBe(token);
@@ -115,50 +109,50 @@ it('real SDK creates a single-object constrained token, never a whole-store toke
   });
   expect(payload.validUntil).toBeGreaterThan(Date.now());
   expect(payload.validUntil).toBeLessThanOrEqual(Date.now() + 15 * 60_000);
-  expect((await handleDocumentBlobRequest(req(body, 'two'), { db, storage, auth })).status).toBe(404);
-  expect((await handleDocumentBlobRequest(req({ ...body, payload: { ...body.payload, pathname: `documents/${randomUUID()}` } }), { db, storage, auth })).status).toBe(409);
-  expect((await handleDocumentBlobRequest(req(body, ''), { db, storage, auth })).status).toBe(401);
-  expect((await handleDocumentBlobRequest(req(body, 'one', { Origin: 'https://evil.example.test' }), { db, storage, auth })).status).toBe(403);
-  expect((await handleDocumentBlobRequest(req({ ...body, payload: { ...body.payload, multipart: true } }), { db, storage, auth })).status).toBe(400);
+  expect((await handleDocumentBlobRequest(req(body, 'two'), { db, storage })).status).toBe(404);
+  expect((await handleDocumentBlobRequest(req({ ...body, payload: { ...body.payload, pathname: `documents/${randomUUID()}` } }), { db, storage })).status).toBe(409);
+  expect((await handleDocumentBlobRequest(req(body, ''), { db, storage })).status).toBe(401);
+  expect((await handleDocumentBlobRequest(req(body, 'one', { Origin: 'https://evil.example.test' }), { db, storage })).status).toBe(403);
+  expect((await handleDocumentBlobRequest(req({ ...body, payload: { ...body.payload, multipart: true } }), { db, storage })).status).toBe(400);
 });
 it('real SDK validates synthetic HMAC over unchanged parsed body, idempotent callbacks and conflicting callback rejection', async () => {
   const item = await grant();
   await handleDocumentBlobRequest(req({ type: 'blob.generate-client-token', payload: {
     pathname: item.pathname, multipart: false, clientPayload: JSON.stringify({ grantId: item.grantId }),
-  } }), { db, storage, auth });
+  } }), { db, storage });
   const body = { extraSignedField: 'preserve-order', type: 'blob.upload-completed', payload: {
     tokenPayload: JSON.stringify({ grantId: item.grantId }),
     blob: { url: `${storage.origin}/${item.pathname}`, pathname: item.pathname, contentType: 'application/pdf', contentDisposition: 'attachment', downloadUrl: 'not-trusted' },
   } };
   const signed = (value: unknown) => req(value, '', { 'x-vercel-signature': createHmac('sha256', token).update(JSON.stringify(value)).digest('hex') });
   // Unsigned requests now authenticate before reading a browser-controlled body.
-  expect((await handleDocumentBlobRequest(req(body, ''), { db, storage, auth })).status).toBe(401);
-  expect((await handleDocumentBlobRequest(req(body, '', { 'x-vercel-signature': '0'.repeat(64) }), { db, storage, auth })).status).toBe(403);
+  expect((await handleDocumentBlobRequest(req(body, ''), { db, storage })).status).toBe(401);
+  expect((await handleDocumentBlobRequest(req(body, '', { 'x-vercel-signature': '0'.repeat(64) }), { db, storage })).status).toBe(403);
   const other = await createDocumentGrant(db, 'two', {
     requestId: randomUUID(), kind: 'resume_master', name: 'synthetic-b.pdf', mime: 'application/pdf', size: bytes.length,
   }, storage);
   expect((await handleDocumentBlobRequest(req({ type: 'blob.generate-client-token', payload: {
     pathname: other.pathname, multipart: false, clientPayload: JSON.stringify({ grantId: other.grantId }),
-  } }, 'two'), { db, storage, auth })).status).toBe(200);
+  } }, 'two'), { db, storage })).status).toBe(200);
   const beforeMismatch = await listDocuments(db, 'two');
   expect((await handleDocumentBlobRequest(signed({ ...body, payload: {
     ...body.payload, tokenPayload: JSON.stringify({ grantId: other.grantId }),
-  } }), { db, storage, auth })).status).toBe(409);
+  } }), { db, storage })).status).toBe(409);
   expect(await listDocuments(db, 'two')).toEqual(beforeMismatch);
   expect((await listDocuments(db, 'one'))[0].state).toBe('pending');
   expect(get).not.toHaveBeenCalled();
-  const first = await handleDocumentBlobRequest(signed(body), { db, storage, auth });
+  const first = await handleDocumentBlobRequest(signed(body), { db, storage });
   expect(first.status).toBe(200);
   expect((await listDocuments(db, 'one'))[0]).toMatchObject({ state: 'available', safetyCheck: 'passed' });
   const before = vi.mocked(get).mock.calls.length;
-  expect((await handleDocumentBlobRequest(signed(body), { db, storage, auth })).status).toBe(200);
+  expect((await handleDocumentBlobRequest(signed(body), { db, storage })).status).toBe(200);
   expect(get).toHaveBeenCalledTimes(before);
   const conflict = { ...body, payload: { ...body.payload, blob: { ...body.payload.blob, url: 'https://evil.example.test/object' } } };
-  expect((await handleDocumentBlobRequest(signed(conflict), { db, storage, auth })).status).toBe(409);
+  expect((await handleDocumentBlobRequest(signed(conflict), { db, storage })).status).toBe(409);
   expect((await listDocuments(db, 'one'))[0].size).toBe(bytes.length);
   const downloaded = await handleDocumentRequest(new Request(`${origin}/api/documents/${item.document.id}/download`, {
-    headers: { cookie: 'one' },
-  }), 'download', item.document.id, { db, storage, auth });
+    headers: { cookie: cookies.one },
+  }), 'download', item.document.id, { db, storage });
   expect(downloaded.status).toBe(200);
   expect(downloaded.headers.get('content-disposition')).toContain('attachment;');
   expect(downloaded.headers.get('cache-control')).toBe('private, no-store');
@@ -169,21 +163,21 @@ it('keeps unavailable provider bytes quarantined, retries validation and rejects
   const item = await grant();
   await handleDocumentBlobRequest(req({ type: 'blob.generate-client-token', payload: {
     pathname: item.pathname, multipart: false, clientPayload: JSON.stringify({ grantId: item.grantId }),
-  } }), { db, storage, auth });
+  } }), { db, storage });
   const body = { type: 'blob.upload-completed', payload: {
     tokenPayload: JSON.stringify({ grantId: item.grantId }),
     blob: { url: `${storage.origin}/${item.pathname}`, pathname: item.pathname, contentType: 'application/pdf' },
   } };
   const signed = () => req(body, '', { 'x-vercel-signature': createHmac('sha256', token).update(JSON.stringify(body)).digest('hex') });
   vi.mocked(get).mockRejectedValueOnce(new Error('synthetic provider unavailable'));
-  expect((await handleDocumentBlobRequest(signed(), { db, storage, auth })).status).toBe(200);
+  expect((await handleDocumentBlobRequest(signed(), { db, storage })).status).toBe(200);
   expect((await listDocuments(db, 'one'))[0]).toMatchObject({ state: 'quarantined', safetyCheck: 'deferred', downloadUrl: null });
   expect((await retryDocumentValidation(db, 'one', item.document.id, storage)).state).toBe('available');
   const expired = await grant();
   await db.update(documentUploadGrants).set({ tokenIssued: true, expiresAt: Date.now() - 1 }).where(eq(documentUploadGrants.id, expired.grantId));
   body.payload.tokenPayload = JSON.stringify({ grantId: expired.grantId });
   body.payload.blob = { url: `${storage.origin}/${expired.pathname}`, pathname: expired.pathname, contentType: 'application/pdf' };
-  expect((await handleDocumentBlobRequest(signed(), { db, storage, auth })).status).toBe(409);
+  expect((await handleDocumentBlobRequest(signed(), { db, storage })).status).toBe(409);
   expect((await listDocuments(db, 'one')).find((d) => d.id === expired.document.id)?.state).toBe('pending');
 });
 it('fails closed on local/cloud configuration mismatches without reaching a provider', () => {

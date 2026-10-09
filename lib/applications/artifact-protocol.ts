@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { hash, revision, uuid } from './worker-protocol.ts';
 
-const uuid = z.uuid();
-const revision = z.number().int().positive().safe();
-const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const mime = z.enum(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
 
 export const ApplicationArtifactManifestSchema = z.strictObject({

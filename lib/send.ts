@@ -17,9 +17,9 @@
  * it wants sent.
  */
 
-import { timingSafeEqual } from 'node:crypto';
-
 import nodemailer from 'nodemailer';
+
+import { safeEqual } from './write-gate.ts';
 
 export type Outgoing = { to: string; subject: string; body: string };
 
@@ -74,17 +74,6 @@ export function sendConfigured(): boolean {
   return accounts().length > 0 && Boolean(process.env.WORKIE_SEND_TOKEN?.trim());
 }
 
-/**
- * Constant-time in the token's bytes; length is compared first and leaks, which is fine —
- * a token's length is not the secret. Mirrors `lib/write-gate.ts` deliberately: two guards
- * that differ only in which capability they open should not differ in how they compare.
- */
-function sameToken(got: string, expected: string): boolean {
-  const a = Buffer.from(got);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 export function sendGate(request: Request): Response | null {
   const expected = process.env.WORKIE_SEND_TOKEN?.trim();
   if (!expected) {
@@ -92,7 +81,7 @@ export function sendGate(request: Request): Response | null {
     return Response.json({ error: 'sending is not configured' }, { status: 503 });
   }
   const got = request.headers.get('x-workie-send-token');
-  return got && sameToken(got, expected)
+  return got && safeEqual(got, expected)
     ? null
     : Response.json({ error: 'not authorized to send' }, { status: 401 });
 }

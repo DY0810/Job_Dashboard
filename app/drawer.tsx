@@ -6,7 +6,7 @@ import type { PostingDetail } from '@/lib/query';
 import { type OutreachKind, type Sender } from '@/lib/outreach';
 import { OutreachPanel } from './outreach-panel';
 import { readSenderDraft, readSenderProfile, saveSenderProfile, validSender } from './outreach-storage';
-import { Close, ExternalLink } from './icons';
+import { ExternalLink, X } from 'lucide-react';
 import { AppliedCheckbox } from './applied-checkbox';
 
 type State =
@@ -162,7 +162,7 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
                     rel="noreferrer noopener"
                   >
                     Source: Remotive
-                    <ExternalLink />
+                    <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
                   </a>
                 ) : null}
               </>
@@ -179,7 +179,7 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
             autoFocus
           >
             close
-            <Close />
+            <X size={12} strokeWidth={1.25} absoluteStrokeWidth />
           </button>
         </div>
 
@@ -244,7 +244,7 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
               rel="noreferrer noopener"
             >
               apply
-              <ExternalLink />
+              <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
             </a>
             <Outreach kind="coffee" onPick={pickKind} />
             <Outreach kind="referral" onPick={pickKind} />

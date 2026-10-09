@@ -32,7 +32,6 @@ import { isVoiceRole, VOICE_BADGE } from './voice.ts';
 
 export type Track = 'design' | 'engineering';
 export type Seniority = 'entry' | 'junior' | 'mid' | 'senior+';
-export type VisibleSeniority = Exclude<Seniority, 'senior+'>;
 export type EmploymentType = 'full-time' | 'part-time' | 'contract' | 'freelance' | 'internship';
 export type WorkMode = 'remote' | 'hybrid' | 'onsite';
 export type Season = 'summer' | 'fall' | 'winter' | 'spring';
@@ -1007,9 +1006,4 @@ export function toStored(
     summary: track === 'engineering' ? extraction.summary : null,
     badges: [...new Set(badges)],
   };
-}
-
-/** One posting through the whole pass: extract, then apply the drop gate. */
-export function extractStored(input: ExtractInput): StoredExtraction | null {
-  return toStored(extract(input), input.description);
 }

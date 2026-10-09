@@ -1,10 +1,6 @@
 import { z } from 'zod';
-import { ApplicationIdentitySchema, ApplicationSummarySchema } from './worker-protocol.ts';
+import { ApplicationIdentitySchema, count, hash, timestamp, uuid } from './worker-protocol.ts';
 
-const uuid = z.uuid();
-const timestamp = z.number().int().nonnegative().safe();
-const count = z.number().int().nonnegative().safe();
-const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const postingIds = z.array(z.number().int().positive().safe()).min(1).max(1000)
   .refine((ids) => new Set(ids).size === ids.length, 'Posting IDs must be unique.');
 export const IMPORT_PREVIEW_TTL_MS = 30 * 60_000;
@@ -42,7 +38,6 @@ export const DiscoveryErrorSchema = z.strictObject({ error: z.string(), code: z.
 export const ReapplyRequestSchema = z.strictObject({
   requestId: uuid, previousApplicationId: uuid, expectedRevision: z.number().int().positive().safe(),
 });
-export const ReapplyResponseSchema = ApplicationSummarySchema;
 export type ImportPreviewRequest = z.infer<typeof ImportPreviewRequestSchema>;
 export type ImportPreviewRow = z.infer<typeof ImportPreviewRowSchema>;
 export type ImportPreview = z.infer<typeof ImportPreviewSchema>;

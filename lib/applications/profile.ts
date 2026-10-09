@@ -291,7 +291,6 @@ export function createEmptyProfile(): Profile {
     ...Object.fromEntries(Object.keys(ProfileSections).map((key) => [key, {}])),
   });
 }
-export const emptyProfile = createEmptyProfile();
 function idsWereSupplied(input: unknown, parsed: unknown): boolean {
   if (Array.isArray(parsed)) return Array.isArray(input) && parsed.every((value, i) => idsWereSupplied(input[i], value));
   if (!parsed || typeof parsed !== 'object') return true;
@@ -319,23 +318,6 @@ export type ProfileResponse = { revision: number; profile: Profile; ownerId: str
 
 export type ProfileFact = Profile['identity']['legalFirstName'] |
   Profile['identity']['ageEligible'] | Profile['identity']['currentAddress'];
-
-/** Preserve typed sections while excluding candidates from execution. */
-export function effectiveProfile(profile: Profile): Profile {
-  const copy = structuredClone(ProfileSchema.parse(profile));
-  function visit(value: unknown) {
-    if (Array.isArray(value)) { value.forEach(visit); return; }
-    if (!value || typeof value !== 'object') return;
-    const obj = value as Record<string, unknown>;
-    if ('state' in obj) {
-      if (obj.state === 'candidate') { obj.state = 'unknown'; obj.value = null; obj.confirmedAt = null; }
-      return;
-    }
-    Object.values(obj).forEach(visit);
-  }
-  visit(copy);
-  return copy;
-}
 
 /** Only identity/contact essentials; optional EEO and imported candidates never gate enablement. */
 export function profileEnablementIssues(profile: Profile): string[] {

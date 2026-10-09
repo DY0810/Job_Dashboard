@@ -10,7 +10,7 @@
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 
-import { GHOST_ABSENCE_THRESHOLD, isGhost } from '../lib/dedupe.ts';
+import { GHOST_ABSENCE_THRESHOLD } from '../lib/dedupe.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { connectorRuns, postings, postingSources } from '../lib/db/schema.ts';
 import { createRuntime, type Connector, type ConnectorPosting } from '../lib/runtime.ts';
@@ -156,7 +156,6 @@ describe('ghost detection, positive', () => {
     const watched = test.sources().filter((row) => row.sourceUrl !== 'https://boards.test/jobs/anchor');
     const counts = Object.fromEntries(watched.map((row) => [row.source, row.absenceCount]));
     expect(counts).toEqual({ board: GHOST_ABSENCE_THRESHOLD, agg: 0 });
-    expect(isGhost(watched)).toBe(false);
     expect(test.delistedAt(URL_A)).toBeNull();
   });
 });
@@ -335,9 +334,8 @@ describe('ghost detection, negative — the ones that matter', () => {
   });
 });
 
-describe('the SQL and lib/dedupe.ts agree on what a ghost is', () => {
-  // `isGhost` is `sources.every(count >= 2)`; `ghost.ts` says `MIN(absence_count) >= 2` in
-  // SQL. Two spellings of one rule drift, so this asserts they answer the same thing. The
+describe('the delist SQL treats a posting as a ghost only when every source is quiet', () => {
+  // `ghost.ts` says `MIN(absence_count) >= 2` in SQL; the table holds the expected answer. The
   // `okConnectors` list names a connector with no source rows on purpose: the absence UPDATE
   // then touches nothing and the seeded counts are what the delist SQL is judged on.
   it.each([
@@ -373,7 +371,6 @@ describe('the SQL and lib/dedupe.ts agree on what a ghost is', () => {
     });
 
     expect(test.sources().map((row) => row.absenceCount).sort()).toEqual([...counts].sort());
-    expect(isGhost(test.sources())).toBe(ghost);
     expect(test.delistedAt() !== null).toBe(ghost);
   });
 });

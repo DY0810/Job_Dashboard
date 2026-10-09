@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { lookupApplicant, privateJson, privateResponse } from '../applicant-access';
 import { getPrivateDb, type PrivateDb } from '../private-db';
-import type { ApplicantAuth } from '../auth';
 import {
   authorizeBlobGrant, completeBlobDocument, createDocumentGrant, downloadDocument,
   listDocuments, receiveLocalDocument, retryDocumentValidation,
@@ -11,7 +10,7 @@ import {
 import { boundedDocumentBytes, DocumentError, documentStorageConfig, type DocumentStorage } from './documents-storage';
 import { ApplicantPreconditionError, assertExpectedApplicant } from './applicant-precondition';
 
-type Dependencies = { db?: PrivateDb; storage?: DocumentStorage; auth?: ApplicantAuth };
+type Dependencies = { db?: PrivateDb; storage?: DocumentStorage };
 type Action = 'list' | 'create' | 'local-upload' | 'download' | 'validate';
 const grantPayload = z.strictObject({ grantId: z.uuid() });
 const tokenRequest = z.strictObject({
@@ -41,7 +40,7 @@ function validationResponse(document: Awaited<ReturnType<typeof retryDocumentVal
 export async function handleDocumentRequest(request: Request, action: Action, id?: string, dependencies: Dependencies = {}) {
   let headers: Headers | undefined;
   try {
-    const access = await lookupApplicant(request, dependencies.auth);
+    const access = await lookupApplicant(request);
     if (access instanceof Response) return access;
     headers = access.response.headers;
     const ownerId = access.applicant.ownerId;
@@ -69,7 +68,7 @@ export async function handleDocumentBlobRequest(request: Request, dependencies: 
     let ownerId: string | undefined;
     const callback = request.headers.has('x-vercel-signature');
     if (!callback) {
-      const access = await lookupApplicant(request, dependencies.auth);
+      const access = await lookupApplicant(request);
       if (access instanceof Response) return access;
       headers = access.response.headers;
       ownerId = access.applicant.ownerId;

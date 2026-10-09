@@ -10,7 +10,6 @@ import {
   RobotsDisallowedError,
   safeUrl,
   toEpochMs,
-  TokenBucket,
   USER_AGENT,
 } from './runtime.ts';
 
@@ -46,21 +45,6 @@ describe('safeUrl / redact', () => {
   it('does not impersonate a named crawler and carries a contact address', () => {
     expect(USER_AGENT).toMatch(/mailto:/);
     expect(USER_AGENT).not.toMatch(/claudebot|gptbot|googlebot/i);
-  });
-});
-
-describe('TokenBucket', () => {
-  it('spends its burst immediately, then enforces the gap', () => {
-    const bucket = new TokenBucket(100, 2, 0);
-    expect(bucket.reserve(0)).toBe(0);
-    expect(bucket.reserve(0)).toBe(0);
-    expect(bucket.reserve(0)).toBe(100);
-  });
-
-  it('refills over time', () => {
-    const bucket = new TokenBucket(100, 1, 0);
-    bucket.reserve(0);
-    expect(bucket.reserve(100)).toBe(0);
   });
 });
 

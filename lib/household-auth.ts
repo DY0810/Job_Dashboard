@@ -1,11 +1,13 @@
 import 'server-only';
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { inArray, sql } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { getPrivateDb, type PrivateDb } from '@/lib/private-db';
-import { rateLimit, user } from '@/lib/private-db/schema';
+import { safeEqual } from '@/lib/write-gate';
+
+import { countRequest, getPrivateDb, type PrivateDb } from '@/lib/private-db';
+import { user } from '@/lib/private-db/schema';
 
 const profileId = z.enum(['dy', 'may']);
 export type HouseholdProfileId = z.infer<typeof profileId>;
@@ -92,9 +94,7 @@ export function readHouseholdSession(request: Request | Headers, config = readHo
   if (!parsedProfile.success || extra !== undefined || !Number.isSafeInteger(expiry) || expiry <= Math.floor(now / 1000)) return null;
   const value = `${parsedProfile.data}.${expiry}`;
   const expected = signature(config, value);
-  const actual = Buffer.from(rawSignature ?? '');
-  const wanted = Buffer.from(expected);
-  return actual.length === wanted.length && timingSafeEqual(actual, wanted) ? parsedProfile.data : null;
+  return safeEqual(rawSignature ?? '', expected) ? parsedProfile.data : null;
 }
 
 export function householdSessionCookie(config: HouseholdConfig, profile: HouseholdProfileId, now = Date.now()) {
@@ -150,20 +150,9 @@ export async function switchHouseholdApplicant(request: Request, ownerId: string
 async function failedAttempt(request: Request, db: PrivateDb, config: HouseholdConfig, now = Date.now()) {
   const forwarded = process.env.VERCEL ? request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim() : 'local';
   const client = createHmac('sha256', config.secret).update(forwarded || 'unknown').digest('hex');
-  async function increment(key: string, windowMs: number, maximum: number) {
-    const window = Math.floor(now / windowMs) * windowMs;
-    const [row] = await db.insert(rateLimit).values({ id: crypto.randomUUID(), key, count: 1, lastRequest: window })
-      .onConflictDoUpdate({
-        target: rateLimit.key,
-        set: {
-          count: sql`case when ${rateLimit.lastRequest} < ${window} then 1 else ${rateLimit.count} + 1 end`,
-          lastRequest: sql`case when ${rateLimit.lastRequest} < ${window} then ${window} else ${rateLimit.lastRequest} end`,
-        },
-      }).returning({ count: rateLimit.count });
-    return row.count <= maximum;
-  }
-  const local = await increment(`household-pin:ip:${client}`, 15 * 60_000, 5);
-  const global = await increment('household-pin:global', 24 * 60 * 60_000, 25);
+  // Count both before deciding, so a blocked IP still counts toward the household-wide cap.
+  const local = await countRequest(db, `household-pin:ip:${client}`, 15 * 60_000, now) <= 5;
+  const global = await countRequest(db, 'household-pin:global', 24 * 60 * 60_000, now) <= 25;
   return local && global;
 }
 

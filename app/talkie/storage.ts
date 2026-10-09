@@ -1,4 +1,4 @@
-type LocalStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+import { del, get, localStore, set, type Store as LocalStore } from '../local-store';
 
 const DRAFTS_KEY = 'talkie-drafts-v1';
 const TOKEN_KEY = 'talkie-token';
@@ -15,14 +15,6 @@ export type NewNoteDraft = {
 };
 
 type DraftState = { newNote: NewNoteDraft | null; edits: Record<string, string> };
-
-function localStore(): LocalStore | null {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage;
-  } catch {
-    return null;
-  }
-}
 
 function validNewDraft(value: unknown): NewNoteDraft | null {
   if (!value || typeof value !== 'object') return null;
@@ -50,7 +42,7 @@ function validNewDraft(value: unknown): NewNoteDraft | null {
 
 function readState(store: LocalStore | null = localStore()): DraftState {
   try {
-    const raw: unknown = JSON.parse(store?.getItem(DRAFTS_KEY) ?? '{}');
+    const raw: unknown = JSON.parse(get(DRAFTS_KEY, store) ?? '{}');
     if (!raw || typeof raw !== 'object') return { newNote: null, edits: {} };
     const value = raw as Record<string, unknown>;
     const edits: Record<string, string> = {};
@@ -66,12 +58,7 @@ function readState(store: LocalStore | null = localStore()): DraftState {
 }
 
 function writeState(state: DraftState, store: LocalStore | null = localStore()): boolean {
-  try {
-    store?.setItem(DRAFTS_KEY, JSON.stringify(state));
-    return Boolean(store);
-  } catch {
-    return false;
-  }
+  return set(DRAFTS_KEY, JSON.stringify(state), store);
 }
 
 export function readNewNoteDraft(week: string, store?: LocalStore | null): NewNoteDraft | null {
@@ -109,43 +96,22 @@ export function clearEditDraft(noteId: number, store?: LocalStore | null): void 
 }
 
 export function readTalkieToken(store: LocalStore | null = localStore()): string | null {
-  try {
-    return store?.getItem(TOKEN_KEY)?.trim() || null;
-  } catch {
-    return null;
-  }
+  return get(TOKEN_KEY, store)?.trim() || null;
 }
 
 export function saveTalkieToken(token: string, store: LocalStore | null = localStore()): boolean {
-  try {
-    store?.setItem(TOKEN_KEY, token);
-    return Boolean(store);
-  } catch {
-    return false;
-  }
+  return set(TOKEN_KEY, token, store);
 }
 
+/** Storage restrictions should not prevent an in-memory token from being used. */
 export function clearTalkieToken(store: LocalStore | null = localStore()): void {
-  try {
-    store?.removeItem(TOKEN_KEY);
-  } catch {
-    // Storage restrictions should not prevent an in-memory token from being used.
-  }
+  del(TOKEN_KEY, store);
 }
 
 export function readTalkieAuthor(store: LocalStore | null = localStore()): string {
-  try {
-    return store?.getItem(AUTHOR_KEY) ?? '';
-  } catch {
-    return '';
-  }
+  return get(AUTHOR_KEY, store) ?? '';
 }
 
 export function saveTalkieAuthor(author: string, store: LocalStore | null = localStore()): boolean {
-  try {
-    store?.setItem(AUTHOR_KEY, author);
-    return Boolean(store);
-  } catch {
-    return false;
-  }
+  return set(AUTHOR_KEY, author, store);
 }

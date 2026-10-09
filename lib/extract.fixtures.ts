@@ -480,38 +480,3 @@ export const SENIOR_FIXTURES: readonly Omit<ClassifyFixture, 'expected' | 'voice
       'You have 6+ years designing consumer products and a portfolio of shipped work to show for it.',
   },
 ];
-
-/**
- * ONE posting, in the three shapes the Tier-1 ATS families return it in, plus the same
- * Greenhouse body after trivial whitespace and re-escaping churn. All four must collapse to a
- * single `enrichment_cache` row (finding B) — raw-body hashing misses on every one of them.
- */
-export const ATS_SHAPES: readonly { source: string; title: string; company: string; description: string }[] = [
-  {
-    source: 'greenhouse',
-    title: 'Product Designer',
-    company: 'Harborline',
-    description:
-      '&lt;p&gt;We are looking for a Product Designer.&lt;/p&gt;&lt;h3&gt;Responsibilities&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Ship design systems&lt;/li&gt;&lt;/ul&gt;',
-  },
-  {
-    source: 'lever',
-    title: 'Product Designer',
-    company: 'Harborline',
-    // descriptionPlain, then the `lists[]` array flattened by the connector.
-    description: 'We are looking for a Product Designer.\n\nResponsibilities\n\n- Ship design systems',
-  },
-  {
-    source: 'ashby',
-    title: 'Product Designer',
-    company: 'Harborline',
-    description: 'We are looking for a Product Designer.\n\n### Responsibilities\n\n- Ship design systems',
-  },
-  {
-    source: 'greenhouse-reformatted',
-    title: 'Product Designer',
-    company: 'Harborline',
-    description:
-      '&lt;p&gt;We are looking for a Product Designer.&lt;/p&gt;\n\n  &lt;h3&gt;Responsibilities&lt;/h3&gt;\n  &lt;ul&gt;\n    &lt;li&gt;Ship design systems&lt;/li&gt;\n  &lt;/ul&gt;\n',
-  },
-];

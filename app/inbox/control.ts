@@ -1,12 +1,11 @@
 import { z } from 'zod';
 import { DraftVault, unlockDraftKey } from '../../lib/profile-drafts';
-import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
 import {
   AnswerCommandSchema, AnswerResultSchema, FocusCommandSchema, FocusResultSchema,
   InboxPageSchema, QuestionDetailSchema, ReviewCommandSchema,
   type AnswerCommand, type QuestionDetail,
 } from '../../lib/applications/question-protocol';
-import type { PrivateApi } from '../profile/api';
+import { privateJson, PrivateRequestError, type PrivateApi } from '../profile/api';
 
 const accountSchema = z.object({ ownerId: z.string().min(1) });
 const keySchema = z.object({ ownerId: z.string(), keyVersion: z.string(), key: z.string() });
@@ -93,19 +92,13 @@ export class InboxControl {
     this.update(initialView());
   }
   private async request(path: string, signal: AbortSignal, owner?: string, init: RequestInit = {}) {
-    const headers = new Headers(init.headers);
-    if (owner) headers.set(EXPECTED_APPLICANT_HEADER, owner);
-    if (typeof init.body === 'string') headers.set('Content-Type', 'application/json');
-    const response = await fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-      signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) });
-    const body: unknown = await response.json().catch(() => null);
-    signal.throwIfAborted();
-    if (!response.ok) {
-      const code = body && typeof body === 'object' && 'code' in body && typeof body.code === 'string' ? body.code : '';
-      if (owner && response.status === 403 && code !== 'PRINCIPAL_CHANGED') await this.assertOwner(owner, signal);
-      throw new RequestError(response.status, code);
+    try {
+      return await privateJson(path, { ...init, signal, owner, timeout: 15_000 });
+    } catch (error) {
+      if (!(error instanceof PrivateRequestError)) throw error;
+      if (owner && error.status === 403 && error.code !== 'PRINCIPAL_CHANGED') await this.assertOwner(owner, signal);
+      throw new RequestError(error.status, error.code);
     }
-    return body;
   }
   private async assertOwner(owner: string, signal: AbortSignal) {
     const account = accountSchema.parse(await this.request('/api/auth/applicant', signal));

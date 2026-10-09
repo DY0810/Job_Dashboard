@@ -1,7 +1,6 @@
 import { cronGate } from '@/lib/write-gate';
 import { POST } from '../../refresh/route';
 
-export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 

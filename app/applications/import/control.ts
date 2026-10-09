@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EXPECTED_APPLICANT_HEADER } from '../../../lib/applications/applicant-precondition';
+import { privateJson, PrivateRequestError } from '../../profile/api';
 import {
   DiscoveryErrorSchema, DiscoveryStatusSchema, ImportAcknowledgementSchema, ImportConfirmRequestSchema,
   ImportPreviewRequestSchema, ImportPreviewSchema, type DiscoveryStatus, type ImportAcknowledgement,
@@ -59,21 +59,14 @@ class RequestError extends Error {
 }
 
 async function request(path: string, signal: AbortSignal, owner?: string, body?: Pending['body']): Promise<unknown> {
-  const headers = new Headers();
-  if (owner) headers.set(EXPECTED_APPLICANT_HEADER, owner);
-  if (body) headers.set('Content-Type', 'application/json');
-  const response = await fetch(path, {
-    method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined,
-    credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-    signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
-  });
-  const raw = await response.json().catch(() => null);
-  signal.throwIfAborted();
-  if (!response.ok) {
-    const parsed = DiscoveryErrorSchema.safeParse(raw);
-    throw new RequestError(response.status, parsed.success ? parsed.data.code : undefined, !!body);
+  try {
+    return await privateJson(path, { method: body ? 'POST' : 'GET', body: body ? JSON.stringify(body) : undefined,
+      signal, owner, timeout: 15_000 });
+  } catch (error) {
+    if (!(error instanceof PrivateRequestError)) throw error;
+    const parsed = DiscoveryErrorSchema.safeParse(error.body);
+    throw new RequestError(error.status, parsed.success ? parsed.data.code : undefined, !!body);
   }
-  return raw;
 }
 
 const sameIds = (a: number[], b: number[]) => a.length === b.length && new Set(a).size === a.length &&

@@ -4,11 +4,8 @@ import {
   cutoffTimestamp,
   dedupeKey,
   dedupePostings,
-  isGhost,
-  isWithinCutoff,
   locationKey,
   NEAR_DUPE_THRESHOLD,
-  nextAbsenceCount,
   POSTING_MAX_AGE_DAYS,
   publisherIdOf,
   SOURCE_PRIORITY,
@@ -380,7 +377,7 @@ describe('posted_at merge', () => {
       fallbackPostedAt: now,
     });
     expect(merged.postedAt).toBe(now);
-    expect(isWithinCutoff(merged.postedAt, now)).toBe(true);
+    expect(merged.postedAt >= cutoffTimestamp(now)).toBe(true);
   });
 
   it('ignores an unparseable date when another source has a good one', () => {
@@ -591,62 +588,22 @@ describe('remote-vs-city merge pass', () => {
   });
 });
 
-// FINDING C — an absence only counts when that source's connector run succeeded.
-describe('ghost detection', () => {
-  it('counts an absence only on a successful poll', () => {
-    expect(nextAbsenceCount(0, { seen: false, runStatus: 'ok' })).toBe(1);
-    expect(nextAbsenceCount(1, { seen: false, runStatus: 'ok' })).toBe(2);
-  });
-
-  it('resets on reappearance', () => {
-    expect(nextAbsenceCount(2, { seen: true, runStatus: 'ok' })).toBe(0);
-  });
-
-  it('does not count an absence when the connector run errored', () => {
-    expect(nextAbsenceCount(1, { seen: false, runStatus: 'error' })).toBe(1);
-    expect(nextAbsenceCount(0, { seen: false, runStatus: 'error' })).toBe(0);
-  });
-
-  it('delists after two consecutive absences from every source', () => {
-    let count = 0;
-    count = nextAbsenceCount(count, { seen: false, runStatus: 'ok' });
-    expect(isGhost([{ absenceCount: count }])).toBe(false);
-    count = nextAbsenceCount(count, { seen: false, runStatus: 'ok' });
-    expect(isGhost([{ absenceCount: count }])).toBe(true);
-  });
-
-  it('NEGATIVE: a source that errors on both polls delists nothing', () => {
-    let count = 0;
-    for (let poll = 0; poll < 2; poll += 1) {
-      count = nextAbsenceCount(count, { seen: false, runStatus: 'error' });
-    }
-    expect(count).toBe(0);
-    expect(isGhost([{ absenceCount: count }])).toBe(false);
-  });
-
-  it('stays live while any source still lists it', () => {
-    expect(isGhost([{ absenceCount: 2 }, { absenceCount: 0 }])).toBe(false);
-    expect(isGhost([{ absenceCount: 2 }, { absenceCount: 3 }])).toBe(true);
-    expect(isGhost([])).toBe(false);
-  });
-});
-
 describe('60-day cutoff', () => {
   const now = at('2026-08-17T00:00:00Z');
   const daysAgo = (n: number) => now - n * 24 * 60 * 60 * 1000;
 
   it('is a filter boundary, inclusive at exactly 60 days', () => {
     expect(POSTING_MAX_AGE_DAYS).toBe(60);
-    expect(isWithinCutoff(daysAgo(59), now)).toBe(true);
-    expect(isWithinCutoff(daysAgo(60), now)).toBe(true);
-    expect(isWithinCutoff(daysAgo(61), now)).toBe(false);
+    expect(daysAgo(59) >= cutoffTimestamp(now)).toBe(true);
+    expect(daysAgo(60) >= cutoffTimestamp(now)).toBe(true);
+    expect(daysAgo(61) >= cutoffTimestamp(now)).toBe(false);
     expect(cutoffTimestamp(now)).toBe(daysAgo(60));
   });
 
   it('does not remove old postings from a dedupe run — the cutoff is query-level only', () => {
     const merged = dedupePostings([posting({ postedAt: daysAgo(400) })]);
     expect(merged).toHaveLength(1);
-    expect(isWithinCutoff(merged[0].postedAt, now)).toBe(false);
+    expect(merged[0].postedAt >= cutoffTimestamp(now)).toBe(false);
   });
 });
 

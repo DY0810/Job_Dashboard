@@ -10,20 +10,24 @@ import { PrivateInputError } from './private-http.ts';
 import { HEARTBEAT_MS } from './worker-protocol.ts';
 
 type Db = Pick<PrivateDb, 'select' | 'insert' | 'update'>;
-async function transaction<T>(db: PrivateDb, run: Parameters<PrivateDb['transaction']>[0]): Promise<T> {
+type Tx = Parameters<Parameters<PrivateDb['transaction']>[0]>[0];
+export async function transaction<T>(
+  db: PrivateDb, run: (tx: Tx) => Promise<T>, retries = 3, backoff = (attempt: number) => 10 * 3 ** attempt,
+): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       // Native WAL avoids read/commit lock contention across local async connections.
       // Hosted libSQL manages its own journal; no hosted PRAGMA is issued.
       if (db.$client.protocol === 'file') await db.run(sql`pragma journal_mode = WAL`);
-      return await db.transaction(run) as T;
+      return await db.transaction(run);
     }
     catch (error) {
       let cause: unknown = error;
       while (cause && typeof cause === 'object' && !('code' in cause) && 'cause' in cause) cause = cause.cause;
-      if (attempt >= 3 || !cause || typeof cause !== 'object' || !('code' in cause) || cause.code !== 'SQLITE_BUSY') throw error;
-      // Retry the rolled-back transaction, not individual writes or ambiguous network failures.
-      await new Promise((resolve) => setTimeout(resolve, 10 * 3 ** attempt));
+      if (attempt >= retries || !cause || typeof cause !== 'object' || !('code' in cause) || cause.code !== 'SQLITE_BUSY') throw error;
+      // The pinned Drizzle driver rolls back failed transactions, including BUSY commits: retry
+      // the rolled-back transaction, never individual writes or an ambiguous transport/commit error.
+      await new Promise((resolve) => setTimeout(resolve, backoff(attempt)));
     }
   }
 }
@@ -227,13 +231,4 @@ export async function mutatePolicy(
     await tx.insert(policyCommands).values({ ownerId, requestId: command.requestId, requestHash, revision, acknowledgement, createdAt: now });
     return acknowledgement;
   });
-}
-
-/** Execution must re-read the live head; an old acknowledgement is not authorization. */
-export async function requireActivePolicy(db: PrivateDb, ownerId: string, version: number, hash: string) {
-  const current = await getPolicy(db, ownerId);
-  if (!current.enabled || current.policyVersion !== version || current.policyHash !== hash) {
-    throw new PrivateInputError(403, 'Policy is disabled, expired or no longer accepted.');
-  }
-  return current.policy;
 }

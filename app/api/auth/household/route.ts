@@ -10,7 +10,6 @@ import {
 } from '@/lib/household-auth';
 import { PrivateInputError, readPrivateJson } from '@/lib/applications/private-http';
 
-export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const unlock = z.strictObject({ passcode: z.string().min(1).max(64), profile: z.enum(['dy', 'may']) });

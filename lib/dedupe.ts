@@ -1,4 +1,4 @@
-import { sha256 } from './hash.ts';
+import { hash } from 'node:crypto';
 import {
   normalizeCompany,
   normalizeLocation,
@@ -73,15 +73,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** ASCII unit separator — cannot survive normalization, so it cannot appear in a component. */
 const KEY_SEPARATOR = '\u001f';
 
-export type ConnectorRunStatus = 'ok' | 'error';
-
-export interface SourcePoll {
-  /** Did this source report the posting in this run? */
-  seen: boolean;
-  /** `connector_runs.status` for that source in that run. */
-  runStatus: ConnectorRunStatus;
-}
-
 export interface DedupeOptions {
   /**
    * `posted_at` for a posting where NO source reported a parseable date. Defaults to now:
@@ -120,7 +111,7 @@ function keyOf(
   locKey: string,
   publisherIdentity?: string,
 ): string {
-  return sha256(
+  return hash('sha256',
     [companyNorm, titleNorm, locKey, ...(publisherIdentity ? [publisherIdentity] : [])].join(
       KEY_SEPARATOR,
     ),
@@ -482,32 +473,7 @@ function collapseSourceUrls(sources: PostingSource[]): PostingSource[] {
   return [...byUrl.values()];
 }
 
-/**
- * Ghost detection, one poll at a time (finding C).
- *
- * An absence counts ONLY when that source's `connector_runs` row for the poll is `ok`. Read
- * literally, "absent for 2 consecutive polls" would let a source that 500s twice delist
- * every posting it ever provided — one bad afternoon, mass false delisting.
- */
-export function nextAbsenceCount(previous: number, poll: SourcePoll): number {
-  if (poll.runStatus !== 'ok') return previous;
-  return poll.seen ? 0 : previous + 1;
-}
-
-/** Delisted only once EVERY source has gone quiet — one live source keeps the posting live. */
-export function isGhost(sources: { absenceCount: number }[]): boolean {
-  return (
-    sources.length > 0 &&
-    sources.every((source) => source.absenceCount >= GHOST_ABSENCE_THRESHOLD)
-  );
-}
-
 /** The 60-day cutoff is a query filter, never a delete: `posted_at >= cutoffTimestamp()`. */
 export function cutoffTimestamp(now: number = Date.now()): number {
   return now - POSTING_MAX_AGE_DAYS * DAY_MS;
-}
-
-/** Inclusive at the boundary: exactly 60 days old is still visible, 61 is not. */
-export function isWithinCutoff(postedAt: number, now: number = Date.now()): boolean {
-  return postedAt >= cutoffTimestamp(now);
 }

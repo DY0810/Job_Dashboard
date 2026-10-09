@@ -1,22 +1,10 @@
-import type { Metadata } from 'next';
-import { ThemeToggle } from '../../theme-toggle';
-import { AppNav } from '../../app-nav';
 import ImportMarks from './import-marks';
-import { NotificationBell } from '../../notification-bell';
 import styles from '../../workers/workers.module.css';
+import { PrivateShell, privateMetadata } from '../../private-shell';
 
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = {
-  title: 'Import browser marks | Workie', robots: { index: false, follow: false }, referrer: 'no-referrer',
-};
+export const metadata = privateMetadata('Import browser marks');
 
 export default function ImportPage() {
-  return <main id="main-content" className={styles.page}>
-    <header className={`${styles.header} app-header`}>
-      <AppNav current="/applications" />
-      <ThemeToggle />
-      <NotificationBell />
-    </header>
-    <ImportMarks />
-  </main>;
+  return <PrivateShell current="/applications" styles={styles} switcher={false}><ImportMarks /></PrivateShell>;
 }

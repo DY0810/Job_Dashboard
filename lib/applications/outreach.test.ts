@@ -5,11 +5,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
-import { account, applicationArtifacts, applications, documents, policyHeads, policyVersions, user } from '../private-db/schema.ts';
+import { applicationArtifacts, applications, documents, policyHeads, policyVersions, user } from '../private-db/schema.ts';
 import { createEmptyPolicy, PolicySchema, type Policy } from './policy.ts';
 import { hashValue } from './stores.ts';
 import { createPairing, pairWorker } from './pairing.ts';
-import { createRun, enqueueApplication } from './runs.ts';
+import { createRun } from './runs.ts';
+import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker } from './leases.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { getInbox } from './questions.ts';
@@ -18,6 +19,7 @@ import { listMaterials, recordSubmittedLetter } from './materials.ts';
 import { boardKey } from './company-domains.ts';
 import { resolveApplicationIdentity } from './application-identity.ts';
 
+import { stubHousehold } from '../test-household.ts';
 vi.mock('server-only', () => ({}));
 const DAY = 86_400_000;
 let db: PrivateDb, dir: string, now: number, options: OutreachOptions;
@@ -53,14 +55,14 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('External network forbidden.'); }));
   now = 1_800_000_000_000;
   sent = [];
-  options = { now: () => now, isAllowedApplicant: (email) => ['alice@example.test', 'bob@example.test'].includes(email),
+  stubHousehold();
+  options = { now: () => now,
     sender: (from) => async (message) => { sent.push({ from, ...message }); },
     resolveMx: async () => [{ exchange: 'mx.employer.test', priority: 10 }] };
   db = openPrivateDb({ url: `file:${join(dir, 'private.db')}` });
   await migratePrivateDb(db);
   for (const id of ['alice', 'bob']) {
     await db.insert(user).values({ id, name: 'Synthetic', email: `${id}@example.test`, emailVerified: true });
-    await db.insert(account).values({ id: `${id}-credential`, userId: id, accountId: id, providerId: 'credential', password: secret() });
     const policy: Policy = { ...createEmptyPolicy(), actions: id === 'alice' ? ['email_recruiters'] : [] }, hash = hashValue(policy);
     await db.insert(policyVersions).values({ ownerId: id, version: 1, hash, policy, createdAt: now });
     await db.insert(policyHeads).values({ ownerId: id, revision: 1, policyVersion: 1, enabled: true,

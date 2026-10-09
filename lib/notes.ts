@@ -10,7 +10,7 @@
  * laptop does not; computing in UTC is what makes "this week" mean the same thing on both.
  */
 
-import { and, count, eq, gt, gte, inArray, lt } from 'drizzle-orm';
+import { and, eq, gte, inArray, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { driver, type ReadDb } from './db/index.ts';
@@ -202,20 +202,10 @@ export async function deleteNote(db: ReadDb, id: number, now: number = Date.now(
     .all();
   if (rows.length === 0) return false;
   // Explicit, not ON DELETE CASCADE: SQLite only enforces foreign keys when the connection
-  // turns the pragma on, and neither driver here promises that. Orphans would still count
-  // as unread activity, so the thread follows immediately.
+  // turns the pragma on, and neither driver here promises that. A note id can be reused after
+  // the highest one is deleted, so orphaned replies would surface under a new note.
   await driver(db).delete(noteComments).where(eq(noteComments.noteId, id)).run();
   return true;
-}
-
-/** The unread bubble: notes AND replies created strictly after the viewer's cursor. */
-export async function countActivitySince(db: ReadDb, sinceMs: number): Promise<number> {
-  const since = new Date(sinceMs);
-  const [n, c] = await Promise.all([
-    driver(db).select({ n: count() }).from(notes).where(gt(notes.createdAt, since)).all(),
-    driver(db).select({ n: count() }).from(noteComments).where(gt(noteComments.createdAt, since)).all(),
-  ]);
-  return (n[0]?.n ?? 0) + (c[0]?.n ?? 0);
 }
 
 // ---------------------------------------------------------------------------------------

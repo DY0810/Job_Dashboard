@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createClient } from '@libsql/client';
 import { eq, getTableName, sql } from 'drizzle-orm';
-import { getAuthTables } from 'better-auth/db';
 import { getPrivateDb, migratePrivateDb, openPrivateDb, PrivateConfigurationError, type PrivateDb } from './index.ts';
 import * as schema from './schema.ts';
 
@@ -227,12 +226,19 @@ describe('private migrations, adapter schema, and real async libSQL', () => {
     expect(await db.select().from(schema.user)).toEqual([]);
   }, 35_000);
 
-  it('matches pinned Better Auth fields and preserves millisecond dates and numeric rate limits', async () => {
+  it('keeps the Better Auth 1.7.5 core fields and preserves millisecond dates and numeric rate limits', async () => {
     const db = open();
     await migratePrivateDb(db);
-    const tables = getAuthTables({ rateLimit: { storage: 'database' } });
-    for (const name of ['user', 'session', 'account', 'verification', 'rateLimit'] as const) {
-      for (const field of Object.keys(tables[name].fields)) expect(schema[name]).toHaveProperty(field);
+    const fields = {
+      user: ['name', 'email', 'emailVerified', 'image', 'createdAt', 'updatedAt'],
+      session: ['expiresAt', 'token', 'createdAt', 'updatedAt', 'ipAddress', 'userAgent', 'userId'],
+      account: ['accountId', 'providerId', 'userId', 'accessToken', 'refreshToken', 'idToken', 'accessTokenExpiresAt',
+        'refreshTokenExpiresAt', 'scope', 'password', 'createdAt', 'updatedAt'],
+      verification: ['identifier', 'value', 'expiresAt', 'createdAt', 'updatedAt'],
+      rateLimit: ['key', 'count', 'lastRequest'],
+    } as const;
+    for (const [name, names] of Object.entries(fields) as [keyof typeof fields, readonly string[]][]) {
+      for (const field of names) expect(schema[name]).toHaveProperty(field);
     }
     await db.insert(schema.user).values(person('one'));
     await db.insert(schema.session).values({

@@ -7,6 +7,7 @@ import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-prec
 import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState } from '../../lib/applications/state';
+import { privateJson, PrivateRequestError } from '../profile/api';
 import styles from '../workers/workers.module.css';
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -33,17 +34,14 @@ type View = {
 type Material = z.infer<typeof MaterialsSchema>['materials'][number];
 const initialView: View = { account: null, workers: null, runs: null, policy: null, outreach: [], materials: [], loading: true, locked: true, error: '' };
 
-async function request(path: string, ownerId?: string) {
-  const headers = new Headers();
-  if (ownerId) headers.set(EXPECTED_APPLICANT_HEADER, ownerId);
-  const response = await fetch(path, {
-    headers, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-    signal: AbortSignal.timeout(15_000),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(response.status === 401 ? 'Unlock Workie to view private applications.' :
-    response.status === 403 ? 'Applicant access denied.' : 'Private application status is unavailable.');
-  return body;
+async function request(path: string, owner?: string) {
+  try {
+    return await privateJson(path, { owner, timeout: 15_000 });
+  } catch (error) {
+    if (!(error instanceof PrivateRequestError)) throw error;
+    throw new Error(error.status === 401 ? 'Unlock Workie to view private applications.' :
+      error.status === 403 ? 'Applicant access denied.' : 'Private application status is unavailable.');
+  }
 }
 
 /** The tailored resume (and the lines it changed) and the cover letter for this application, before or after it is submitted. */
@@ -89,14 +87,15 @@ function ApprovePanel({ app, ownerId, onChange }: { app: { id: string; runId: st
     if (!window.confirm('Submit this application to the employer now? This cannot be undone.')) return;
     setBusy(true); setError('');
     try {
-      const response = await fetch(`/api/application-runs/${app.runId}/applications/${app.id}/actions`, {
-        method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000),
-        headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
+      await privateJson(`/api/application-runs/${app.runId}/applications/${app.id}/actions`, {
+        method: 'POST', owner: ownerId, timeout: 30_000,
         body: JSON.stringify({ action: 'approve-submit', requestId: crypto.randomUUID(), expectedRevision: app.revision }),
       });
-      if (!response.ok) throw new Error(response.status === 403 ? 'Turn on Submit in the Auto Apply policy first.' : 'Could not approve. Refresh and try again.');
       onChange();
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not approve.'); }
+    } catch (e) {
+      setError(e instanceof PrivateRequestError ? (e.status === 403 ? 'Turn on Submit in the Auto Apply policy first.' : 'Could not approve. Refresh and try again.')
+        : e instanceof Error ? e.message : 'Could not approve.');
+    }
     finally { setBusy(false); }
   };
   return <div className={styles.row}>
@@ -155,12 +154,11 @@ function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: s
   const send = async (now: boolean) => {
     setBusy(now ? 'now' : 'queue'); setError('');
     try {
-      const response = await fetch(`/api/outreach/${item.applicationId}`, {
-        method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(60_000),
-        headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
+      // 60s matches the route's maxDuration: a shorter client abort would hide a send that went out.
+      await privateJson(`/api/outreach/${item.applicationId}`, {
+        method: 'POST', owner: ownerId, timeout: 60_000,
         body: JSON.stringify({ to: to.trim(), name: to.trim() === item.to ? item.name : null, now }),
       });
-      if (!response.ok) throw new Error();
       onChange();
     } catch { setError(`Could not ${now ? 'send' : 'queue'}. Check the address and try again.`); }
     finally { setBusy(null); }
