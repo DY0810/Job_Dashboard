@@ -13,7 +13,8 @@ import { fillField, locateField, undergraduateTranscript, verifyField } from './
 import { createJevActionSelector } from './jev.ts';
 import { createConfiguredJevActionSelector } from './main.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
-import { AtsObservationSchema } from './ats/protocol.ts';
+import { AtsIdentitySchema, AtsObservationSchema } from './ats/protocol.ts';
+import { resolveApplicationIdentity } from '../lib/applications/application-identity.ts';
 import { privateStore } from './storage.ts';
 import { formQuestions } from './screening.ts';
 
@@ -42,6 +43,16 @@ test('a hosted upload marked required only by its label asterisk is required', {
 test('the applicant transcript fits an undergraduate or plain transcript upload, never a graduate one', () => {
   for (const label of ['Undergraduate Transcript', 'Transcript', 'Unofficial Transcript']) assert.equal(undergraduateTranscript(label), true, label);
   for (const label of ['Graduate Transcript', 'Resume/CV', 'Cover Letter']) assert.equal(undergraduateTranscript(label), false, label);
+});
+test('every identity the server derives parses on the worker, including hostname tenants', () => {
+  for (const url of ['https://acme.wd5.myworkdayjobs.com/en-US/External/job/Software-Intern_R12345',
+    'https://abc.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/12345',
+    'https://careers-acme.icims.com/jobs/1234/job', 'https://jobs.eu.lever.co/acme/0b2c3d4e-1111-4222-8333-944455566677',
+    'https://job-boards.greenhouse.io/figma/jobs/6143238004']) {
+    const { identity } = resolveApplicationIdentity(url, []);
+    assert.ok(identity, url);
+    assert.deepEqual(AtsIdentitySchema.parse(identity), identity, url);
+  }
 });
 test('a role title with a double space matches the page title the browser collapses', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });

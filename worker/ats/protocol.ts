@@ -2,10 +2,13 @@ import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import type { Page } from 'playwright';
 import type { BrowserRuntime } from '../browser.ts';
+import { ApplicationIdentitySchema } from '../../lib/applications/worker-protocol.ts';
 
+// Tenant and requisition take the server's rule: a narrower one rejected Workday, Oracle and iCIMS
+// tenants (their hostname) and Lever EU's "jobs.eu.lever.co:<tenant>", and that ZodError stopped the worker.
 export const AtsIdentitySchema = z.strictObject({
-  ats: z.enum(['greenhouse', 'ashby', 'lever', 'jobvite', 'workday', 'oracle', 'icims']), tenant: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
-  requisition: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
+  ats: z.enum(['greenhouse', 'ashby', 'lever', 'jobvite', 'workday', 'oracle', 'icims']),
+  tenant: ApplicationIdentitySchema.shape.tenant, requisition: ApplicationIdentitySchema.shape.requisition,
 });
 export type AtsIdentity = z.infer<typeof AtsIdentitySchema>;
 // Greenhouse names a multi-select question's input "question_123[]"; the suffix is the only punctuation a key may carry.
