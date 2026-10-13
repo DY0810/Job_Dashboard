@@ -237,8 +237,6 @@ test('all nine sections render native fields with responsive labels and keyboard
   for (const label of Object.values(PROFILE_SECTION_LABELS)) await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
   await page.getByLabel('Legal first name', { exact: true }).focus();
   await expect(page.getByLabel('Legal first name', { exact: true })).toHaveCSS('outline-width', '2px');
-  await page.keyboard.press('Tab');
-  await expect(page.getByLabel('Legal first name answer state')).toBeFocused();
   await page.getByRole('button', { name: 'Add schools entry', exact: true }).click();
   await page.getByLabel('School', { exact: true }).fill('Synthetic School');
   await page.getByLabel('Expected graduation precision').selectOption('month');
@@ -263,7 +261,6 @@ test('all nine sections render native fields with responsive labels and keyboard
   await page.locator('#disclosures').getByLabel('Employer', { exact: true }).fill('Synthetic Employer');
   await page.getByLabel('Exact Question', { exact: true }).fill('Are you currently bound by a non-compete with this employer?');
   await page.getByLabel('Timeframe', { exact: true }).selectOption('current');
-  await page.getByLabel('Gender answer state').selectOption('declined');
   await page.getByLabel('Pay Floor: Amount', { exact: true }).fill('25');
   await page.getByLabel('Pay Floor: Currency', { exact: true }).fill('USD');
   await page.getByLabel('Pay Floor: Period', { exact: true }).selectOption('hour');
@@ -276,27 +273,21 @@ test('all nine sections render native fields with responsive labels and keyboard
   expect(ProfileSchema.safeParse(data).success).toBe(true);
   expect(data.education.schools[0].expectedGraduation.value).toEqual({ precision: 'month', value: '2028-06' });
   expect(data.authorization.countries[0].citizenship.value).toBe(false);
-  expect(data.voluntary.gender.state).toBe('declined');
   expect(data.preferences.payFloor.value).toEqual({ amount: 25, currency: 'USD', period: 'hour' });
   await screenshot(page, info, 'nine-sections');
 });
 
-test('optional states and candidates remain distinct; invalid values are editable', async ({ page }) => {
+test('typing an answer confirms a candidate; invalid values are editable', async ({ page }) => {
   const fixture = fixtures.get(page)!;
   fixture.profile.voluntary.pronouns = { ...fixture.profile.voluntary.pronouns, state: 'candidate', value: 'synthetic candidate' };
   await ready(page);
-  await expect(page.getByLabel('Pronouns answer state')).toHaveValue('candidate');
   expect(fixture.writes).toHaveLength(0);
-  await page.getByLabel('Pronouns answer state').selectOption('confirmed');
-  await page.getByLabel('Disability answer state').selectOption('declined');
-  await page.getByLabel('Veteran answer state').selectOption('not_applicable');
+  await page.getByLabel('Pronouns', { exact: true }).fill('synthetic confirmed');
   await page.getByLabel('Personal email', { exact: true }).fill('bad-email');
   await expect(page.getByText('Correct the marked fields before saving.')).toBeVisible();
   await page.getByLabel('Personal email', { exact: true }).fill('changed@example.test');
   await saved(page);
   expect(fixture.profile.voluntary.pronouns.state).toBe('confirmed');
-  expect(fixture.profile.voluntary.disability.state).toBe('declined');
-  expect(fixture.profile.voluntary.veteran.state).toBe('not_applicable');
   expect(fixture.profile.voluntary.raceEthnicity.state).toBe('unknown');
 });
 

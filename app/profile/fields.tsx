@@ -143,7 +143,8 @@ function FactField({ fact, meta, path, name, onChange, issues, documents }: {
   const issue = Object.entries(issues).find(([key]) => key === path || key.startsWith(`${path}.`))?.[1];
   const valueSchema = meta.properties!.value;
   function changeValue(value: unknown) {
-    const state = value === null ? 'unknown' : fact.state === 'candidate' ? 'candidate' : 'confirmed';
+    // Typing an answer confirms it; clearing it un-answers it. There is no separate state picker.
+    const state = value === null ? 'unknown' : 'confirmed';
     onChange({ ...fact, value, state, confirmedAt: state === 'confirmed' ? new Date().toISOString() : null,
       provenance: { source: 'user', sourceId: null, sourceVersion: null, excerpt: null } });
   }
@@ -153,15 +154,6 @@ function FactField({ fact, meta, path, name, onChange, issues, documents }: {
     <div className={styles.state}>
       <NativeValue meta={valueSchema} value={fact.value} onChange={changeValue} id={id} label={label}
         documents={documents} control={meta.control} invalid={!!issue} describedBy={issue ? `${id}-error` : undefined} />
-      <select aria-label={`${label} answer state`} value={fact.state} onChange={(e) => {
-        const state = e.target.value as Fact['state'];
-        onChange({ ...fact, state, value: ['confirmed', 'candidate'].includes(state) ? fact.value : null,
-          confirmedAt: state === 'confirmed' ? new Date().toISOString() : null });
-      }}>
-        <option value="unknown">Not answered</option><option value="declined">Decline</option>
-        <option value="not_applicable">Not applicable</option><option value="candidate">Candidate</option>
-        <option value="confirmed">Confirmed</option>
-      </select>
     </div>
     {issue && <p id={`${id}-error`} className={styles.error} role="alert">{issue}</p>}
     <details className={styles.meta}>
