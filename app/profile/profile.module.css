@@ -28,7 +28,7 @@ details.section > p { margin: 0; }
 .field :focus-visible, .control:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .field select option { background: var(--canvas); }
 .field input[type="checkbox"], .field input[type="radio"] { width: 16px; height: 16px; accent-color: var(--fg); }
-.state { display: grid; grid-template-columns: minmax(0, 1fr) 126px; align-items: start; gap: 10px; }
+.state { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 10px; }
 .state > select { font-size: 11px; color: var(--fg-dim); }
 .compound { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; min-width: 0; }
 .wide { grid-column: 1 / -1; min-width: 0; }
