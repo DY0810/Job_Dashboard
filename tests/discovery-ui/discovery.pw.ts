@@ -21,7 +21,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
   await context.route('**/*', async (route) => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin === baseURL && request.method() === 'GET' &&
-        (['/applications/import', '/workers'].includes(url.pathname) || url.pathname.startsWith('/_next/static/'))) return route.continue();
+        (['/applications/import', '/applications'].includes(url.pathname) || url.pathname.startsWith('/_next/static/'))) return route.continue();
     if (url.origin !== baseURL || !url.pathname.startsWith('/api/')) return route.abort();
     const discovery = url.pathname.includes('/import/') || url.pathname.endsWith('/discovery') ||
       url.pathname === '/api/auth/applicant' || url.pathname === '/api/auth/applicants';
@@ -130,7 +130,7 @@ test('over 1000 flags visibly blocks import without silently previewing a subset
 });
 
 test('selected-run refresh shows complete backlog, current staging and truthful failed scan and fetch', async ({ page }) => {
-  await page.goto('/workers');
+  await page.goto('/applications?settings=1');
   const runs = workers.get(page)!.runs;
   await expect(page.getByRole('link', { name: 'Import browser marks' })).toBeVisible();
   await page.getByRole('combobox', { name: 'Discovery run', exact: true }).selectOption(runs[0].id);
@@ -160,7 +160,7 @@ test('import keyboard controls and dense layout fit the configured viewport', as
 });
 
 test('discovery layout fits the configured viewport', async ({ page }, testInfo) => {
-  await page.goto('/workers');
+  await page.goto('/applications?settings=1');
   await page.getByRole('combobox', { name: 'Discovery run', exact: true }).selectOption(workers.get(page)!.runs[0].id);
   await page.getByRole('button', { name: 'Refresh discovery' }).click();
   await expect(page.getByText('691 retained targets', { exact: true })).toBeVisible();

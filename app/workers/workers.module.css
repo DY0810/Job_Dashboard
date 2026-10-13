@@ -48,6 +48,8 @@
 .changes ins { display: block; text-decoration: none; }
 /* Settings drawer: the Workers and Settings panels reuse `.page` for their form styles, not its page height. */
 dialog .page { min-height: 0; padding-bottom: 0; }
+/* A drawer or modal is narrow at every viewport: lists take the narrow layout there too. */
+dialog .list > li { grid-template-columns: minmax(0, 1fr) 112px; gap: 8px 12px; }
 .section h3 { font-size: 15px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 8px; }
 .row > h3 { margin: 0; }
 .section h4 { font-size: 13px; font-weight: 600; margin: 0 0 8px; }

@@ -178,15 +178,24 @@ test.beforeEach(async ({ context, page, baseURL }) => {
 test.afterEach(async ({ page }) => {
   expect(fixtures.get(page)!.errors).toEqual([]);
 });
-async function ready(page: Page) {
+// The editor shows one pane at a time; the sidebar (and the URL hash) picks it.
+const PANES = { ...PROFILE_SECTION_LABELS, 'auto-apply-policy': 'Auto Apply policy' } as const;
+type Pane = keyof typeof PANES;
+async function show(page: Page, pane: Pane) {
+  await page.getByRole('navigation', { name: 'Profile sections' }).getByRole('link', { name: new RegExp(`^${PANES[pane]}`) }).click();
+  await expect(page.locator(`#${pane}`)).toBeVisible();
+}
+async function ready(page: Page, pane: Pane = 'identity') {
   await page.goto('/profile');
   await expect(page.getByLabel('Legal first name', { exact: true })).toBeVisible();
   await expect(page.getByText('Checking applicant session...', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Save policy', exact: true })).toBeVisible();
-  await expect(page.getByText('No documents.', { exact: true })).toBeVisible();
+  // Policy and documents load behind their (hidden) panes.
+  await expect(page.getByRole('button', { name: 'Save policy', exact: true, includeHidden: true })).toHaveCount(1);
+  await expect(page.getByText('No documents.', { exact: true })).toHaveCount(1);
+  if (pane !== 'identity') await show(page, pane);
 }
 async function saved(page: Page) {
-  await expect(page.getByRole('status').filter({ hasText: /^Saved \/ revision/ })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: /^Saved/ })).toBeVisible();
   await expect.poll(async () => page.evaluate(() => Object.values(localStorage).every((v) => !v.includes('Synthetic') && !v.includes('synthetic@example.test')))).toBe(true);
 }
 async function sectionScreenshot(page: Page, info: TestInfo, section: Locator, name: string) {
@@ -234,40 +243,52 @@ async function screenshot(page: Page, info: TestInfo, name: string) {
 
 test('all nine sections render native fields with responsive labels and keyboard focus', async ({ page }, info) => {
   await ready(page);
-  for (const label of Object.values(PROFILE_SECTION_LABELS)) await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
+  for (const [pane, label] of Object.entries(PROFILE_SECTION_LABELS)) {
+    await show(page, pane as Pane);
+    await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
+  }
+  await show(page, 'identity');
   await page.getByLabel('Legal first name', { exact: true }).focus();
   await expect(page.getByLabel('Legal first name', { exact: true })).toHaveCSS('outline-width', '2px');
   await page.keyboard.press('Tab');
-  await expect(page.getByLabel('Legal first name answer state')).toBeFocused();
+  await expect(page.getByLabel('Legal middle name', { exact: true })).toBeFocused();
+  await show(page, 'education');
   await page.getByRole('button', { name: 'Add schools entry', exact: true }).click();
   await page.getByLabel('School', { exact: true }).fill('Synthetic School');
   await page.getByLabel('Expected graduation precision').selectOption('month');
   await page.getByLabel('Expected graduation', { exact: true }).fill('2028-06');
   await page.getByLabel('GPA and scale: Value', { exact: true }).fill('3.5');
   await page.getByLabel('GPA and scale: Scale', { exact: true }).fill('4');
+  await show(page, 'work');
   await page.getByRole('button', { name: 'Add employment entry', exact: true }).click();
   await page.locator('#work').getByLabel('Employer', { exact: true }).fill('Synthetic Employer');
+  await show(page, 'authorization');
   await page.locator('#authorization').getByRole('button', { name: 'Add countries entry', exact: true }).click();
   await page.locator('#authorization').getByLabel('Country (2-letter code)', { exact: true }).fill('US');
+  // Scope appears once validation asks for it, and stays while it is set.
+  await expect(page.getByLabel('Citizen of this country scope: Kind', { exact: true })).toHaveCount(0);
   await page.getByLabel('Citizen of this country: No', { exact: true }).check();
-  const citizenship = page.locator('[data-fact-path="authorization.countries.0.citizenship"]');
-  await citizenship.locator('summary').click();
   await page.getByLabel('Citizen of this country scope: Kind', { exact: true }).selectOption('country');
   await page.getByLabel('Citizen of this country scope: Country (2-letter code)', { exact: true }).fill('US');
+  await expect(page.getByLabel('Citizen of this country scope: Kind', { exact: true })).toHaveValue('country');
   await page.getByLabel('Residence status', { exact: true }).fill('Permanent resident');
-  await page.locator('[data-fact-path="authorization.countries.0.residenceStatus"] summary').click();
   await page.getByLabel('Residence status scope: Kind', { exact: true }).selectOption('country');
   await page.getByLabel('Residence status scope: Country (2-letter code)', { exact: true }).fill('US');
+  await show(page, 'availability');
   await page.getByLabel('Hours During Classes', { exact: true }).fill('20');
+  await show(page, 'disclosures');
   await page.getByRole('button', { name: 'Add employer disclosures entry', exact: true }).click();
   await page.locator('#disclosures').getByLabel('Employer', { exact: true }).fill('Synthetic Employer');
   await page.getByLabel('Exact Question', { exact: true }).fill('Are you currently bound by a non-compete with this employer?');
   await page.getByLabel('Timeframe', { exact: true }).selectOption('current');
-  await page.getByLabel('Gender answer state').selectOption('declined');
+  await show(page, 'voluntary');
+  await page.getByLabel('Gender', { exact: true }).fill('Synthetic');
+  await show(page, 'preferences');
   await page.getByLabel('Pay Floor: Amount', { exact: true }).fill('25');
   await page.getByLabel('Pay Floor: Currency', { exact: true }).fill('USD');
   await page.getByLabel('Pay Floor: Period', { exact: true }).selectOption('hour');
   await page.getByLabel('Undisclosed Pay', { exact: true }).selectOption('ask');
+  await show(page, 'documentsProvider');
   await page.getByLabel('Format Policy', { exact: true }).selectOption('preserve_exact');
   await page.getByLabel('Provider', { exact: true }).selectOption('local');
   await page.getByLabel('Privacy', { exact: true }).selectOption('local_inference_only');
@@ -276,20 +297,26 @@ test('all nine sections render native fields with responsive labels and keyboard
   expect(ProfileSchema.safeParse(data).success).toBe(true);
   expect(data.education.schools[0].expectedGraduation.value).toEqual({ precision: 'month', value: '2028-06' });
   expect(data.authorization.countries[0].citizenship.value).toBe(false);
-  expect(data.voluntary.gender.state).toBe('declined');
+  expect(data.voluntary.gender).toMatchObject({ state: 'confirmed', value: 'Synthetic' });
   expect(data.preferences.payFloor.value).toEqual({ amount: 25, currency: 'USD', period: 'hour' });
   await screenshot(page, info, 'nine-sections');
 });
 
 test('optional states and candidates remain distinct; invalid values are editable', async ({ page }) => {
   const fixture = fixtures.get(page)!;
-  fixture.profile.voluntary.pronouns = { ...fixture.profile.voluntary.pronouns, state: 'candidate', value: 'synthetic candidate' };
-  await ready(page);
-  await expect(page.getByLabel('Pronouns answer state')).toHaveValue('candidate');
+  const { voluntary } = fixture.profile;
+  voluntary.pronouns = { ...voluntary.pronouns, state: 'candidate', value: 'synthetic candidate' };
+  voluntary.disability = { ...voluntary.disability, state: 'declined' };
+  voluntary.veteran = { ...voluntary.veteran, state: 'not_applicable' };
+  await ready(page, 'voluntary');
+  const fact = (path: string) => page.locator(`[data-fact-path="voluntary.${path}"]`);
+  await expect(fact('pronouns').getByText('candidate', { exact: true })).toBeVisible();
+  await expect(fact('disability').getByText('Declined', { exact: true })).toBeVisible();
+  await expect(fact('veteran').getByText('Not applicable', { exact: true })).toBeVisible();
   expect(fixture.writes).toHaveLength(0);
-  await page.getByLabel('Pronouns answer state').selectOption('confirmed');
-  await page.getByLabel('Disability answer state').selectOption('declined');
-  await page.getByLabel('Veteran answer state').selectOption('not_applicable');
+  await page.getByRole('button', { name: 'Confirm Pronouns', exact: true }).click();
+  await expect(fact('pronouns').getByText('candidate', { exact: true })).toHaveCount(0);
+  await show(page, 'identity');
   await page.getByLabel('Personal email', { exact: true }).fill('bad-email');
   await expect(page.getByText('Correct the marked fields before saving.')).toBeVisible();
   await page.getByLabel('Personal email', { exact: true }).fill('changed@example.test');
@@ -316,6 +343,7 @@ test('encrypted reload recovery retains failed request ID and newest input', asy
   const original = fixture.writes[0];
   page.on('dialog', (dialog) => dialog.accept());
   await page.reload();
+  await page.getByRole('button', { name: 'Drafts', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Recover draft 1' })).toBeVisible();
   fixture.mode = 'ok';
   await page.getByRole('button', { name: 'Recover draft 1' }).click();
@@ -361,7 +389,7 @@ test('an original retry acknowledgement never replaces a newer server revision',
   await page.getByRole('button', { name: 'Retry save', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Profile conflict' })).toContainText('Newer server profile');
   await expect(page.getByLabel('Preferred Name', { exact: true })).toHaveValue('Old committed request');
-  await expect(page.getByRole('status').filter({ hasText: /^Saved \/ revision/ })).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: /^Saved/ })).toHaveCount(0);
 });
 
 test('a switch after the client owner check locks the pane before the draft can be written', async ({ page }) => {
@@ -415,7 +443,7 @@ test('an account change during key unlock never reveals the prior profile', asyn
 });
 
 test('saving policy stays disabled; enable accepts its saved version exactly once', async ({ page }) => {
-  await ready(page);
+  await ready(page, 'auto-apply-policy');
   const fixture = fixtures.get(page)!;
   await expect(page.getByLabel('Policy: Account Policy')).toHaveValue('skip_new_accounts');
   await expect(page.getByLabel('Policy: Privacy')).toHaveValue('local_inference_only');
@@ -438,7 +466,7 @@ test('saving policy stays disabled; enable accepts its saved version exactly onc
 });
 
 test('private uploads retain input after error and quarantine is not availability', async ({ page }, info) => {
-  await ready(page);
+  await ready(page, 'documentsProvider');
   const fixture = fixtures.get(page)!;
   await page.getByLabel('Upload file (up to 10 MB)').setInputFiles({ name: 'synthetic-resume.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7\nUI FIXTURE ONLY\n%%EOF') });
   await page.getByLabel('Target role', { exact: true }).fill('Synthetic engineer');
@@ -458,7 +486,7 @@ test('private uploads retain input after error and quarantine is not availabilit
 });
 
 test('portfolio artwork accepts PNG and requests a portfolio upload grant', async ({ page }) => {
-  await ready(page);
+  await ready(page, 'documentsProvider');
   const fixture = fixtures.get(page)!;
   await page.getByLabel('Document kind', { exact: true }).selectOption('portfolio');
   await expect(page.getByLabel('Upload file (up to 10 MB)')).toHaveAttribute('accept', 'application/pdf,image/png,image/jpeg');
@@ -474,7 +502,7 @@ test('portfolio artwork accepts PNG and requests a portfolio upload grant', asyn
 
 test('unconfigured storage is actionable and does not clear the selected file', async ({ page }) => {
   fixtures.get(page)!.storage = 'unconfigured';
-  await ready(page);
+  await ready(page, 'documentsProvider');
   await page.getByLabel('Upload file (up to 10 MB)').setInputFiles({ name: 'synthetic.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF synthetic') });
   await expect(page.getByText('Document storage is not configured. Configure private local storage or Vercel Blob before uploading.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Upload document', exact: true })).toBeDisabled();
@@ -484,7 +512,7 @@ test('unconfigured storage is actionable and does not clear the selected file', 
 test('historical policy enable acknowledgement cannot override a newer disabled head', async ({ page }, info) => {
   const fixture = fixtures.get(page)!;
   fixture.policy = savedPolicy();
-  await ready(page);
+  await ready(page, 'auto-apply-policy');
   fixture.policyMode = 'lost';
   await page.getByLabel('Accept policy version 1').check();
   await page.getByRole('button', { name: 'Enable Auto Apply', exact: true }).click();
@@ -506,7 +534,7 @@ for (const action of ['enable', 'disable'] as const) {
   test(`retried policy ${action} acknowledgement preserves a newer editable draft`, async ({ page }) => {
     const fixture = fixtures.get(page)!;
     fixture.policy = savedPolicy(action === 'disable');
-    await ready(page);
+    await ready(page, 'auto-apply-policy');
     fixture.policyMode = 'lost';
     if (action === 'enable') await page.getByLabel('Accept policy version 1').check();
     await page.getByRole('button', { name: action === 'enable' ? 'Enable Auto Apply' : 'Disable Auto Apply', exact: true }).click();
@@ -529,7 +557,7 @@ for (const pending of ['enable', 'save'] as const) {
   test(`explicit disable cancels uncertain ${pending} intent without replaying it`, async ({ page }) => {
     const fixture = fixtures.get(page)!;
     fixture.policy = savedPolicy(pending === 'save');
-    await ready(page);
+    await ready(page, 'auto-apply-policy');
     fixture.policyMode = 'lost';
     if (pending === 'enable') {
       await page.getByLabel('Accept policy version 1').check();
@@ -562,7 +590,7 @@ for (const timing of ['before commit', 'after commit'] as const) {
     const hook = timing === 'before commit' ? 'beforePolicyWrite' : 'afterPolicyWrite';
     fixture[hook] = async () => { fixture[hook] = undefined; await gate; };
     try {
-      await ready(page);
+      await ready(page, 'auto-apply-policy');
       await page.getByLabel('Accept policy version 1').check();
       await page.getByRole('button', { name: 'Enable Auto Apply', exact: true }).click();
       await expect.poll(() => fixture.policyWrites.length).toBe(1);
@@ -589,7 +617,7 @@ for (const timing of ['before commit', 'after commit'] as const) {
 test('disable retries only its CAS when an older enable commits between head read and disable', async ({ page }) => {
   const fixture = fixtures.get(page)!;
   fixture.policy = savedPolicy();
-  await ready(page);
+  await ready(page, 'auto-apply-policy');
   fixture.beforePolicyWrite = async () => {
     fixture.beforePolicyWrite = undefined;
     fixture.policy = savedPolicy(true);
@@ -606,7 +634,7 @@ for (const missing of ['actions', 'destinations', 'countries'] as const) {
     const fixture = fixtures.get(page)!;
     fixture.policy = savedPolicy();
     fixture.policy.policy[missing] = [];
-    await ready(page);
+    await ready(page, 'auto-apply-policy');
     await page.getByLabel('Accept policy version 1').check();
     await page.getByRole('button', { name: 'Enable Auto Apply', exact: true }).click();
     await expect(page.getByText('A newer version exists. Review before saving.', { exact: true })).toBeVisible();
@@ -634,7 +662,7 @@ test('clearing optional address line 2 saves an empty string while nullable fact
 test('nullable policy pay floor has a typed clear control and saves null', async ({ page }, info) => {
   const fixture = fixtures.get(page)!;
   fixture.policy = savedPolicy();
-  await ready(page);
+  await ready(page, 'auto-apply-policy');
   await page.getByLabel('Policy: Pay Floor: Amount', { exact: true }).fill('28');
   await page.getByLabel('Policy: Pay Floor: Currency', { exact: true }).fill('USD');
   await page.getByLabel('Policy: Pay Floor: Period', { exact: true }).selectOption('hour');
@@ -650,7 +678,7 @@ test('nullable policy pay floor has a typed clear control and saves null', async
 
 test('reversed employment dates show the exact entry error with focus links until corrected', async ({ page }, info) => {
   const fixture = fixtures.get(page)!;
-  await ready(page);
+  await ready(page, 'work');
   await page.getByRole('button', { name: 'Add employment entry', exact: true }).click();
   const work = page.locator('#work');
   await work.getByLabel('Start', { exact: true }).fill('2026-06');
@@ -669,7 +697,7 @@ test('reversed employment dates show the exact entry error with focus links unti
 
 test('weekly onsite and remote days show the exact section error with keyboard focus links', async ({ page }, info) => {
   const fixture = fixtures.get(page)!;
-  await ready(page);
+  await ready(page, 'availability');
   await page.getByLabel('Onsite Days', { exact: true }).fill('5');
   await page.getByLabel('Remote Days', { exact: true }).fill('4');
   const alert = page.locator('#availability').getByRole('alert').filter({ hasText: 'Weekly onsite and remote days cannot exceed seven.' });
@@ -695,7 +723,7 @@ const selectedFiles = (page: Page) => page.getByLabel('Upload file (up to 10 MB)
 for (const retry of ['Retry upload', 'Refresh documents'] as const) {
   test(`successful PUT and failed list refresh reconcile through ${retry} without reusing a consumed grant`, async ({ page }, info) => {
     const fixture = fixtures.get(page)!;
-    await ready(page);
+    await ready(page, 'documentsProvider');
     fixture.failListAfterUpload = true;
     await chooseDocument(page);
     await page.getByRole('button', { name: 'Upload document', exact: true }).click();
@@ -715,7 +743,7 @@ for (const retry of ['Retry upload', 'Refresh documents'] as const) {
 test('lost PUT acknowledgement reconciles the known document without resending bytes', async ({ page }) => {
   const fixture = fixtures.get(page)!;
   fixture.uploadMode = 'lost';
-  await ready(page);
+  await ready(page, 'documentsProvider');
   await chooseDocument(page);
   await page.getByRole('button', { name: 'Upload document', exact: true }).click();
   await expect(page.getByRole('cell', { name: /Quarantined/ })).toBeVisible();
@@ -727,7 +755,7 @@ test('lost PUT acknowledgement reconciles the known document without resending b
 test('unknown upload outcome retains the file and waits for its own status before a fresh expired grant', async ({ page }) => {
   const fixture = fixtures.get(page)!;
   fixture.uploadMode = 'unknown';
-  await ready(page);
+  await ready(page, 'documentsProvider');
   await chooseDocument(page);
   await page.getByRole('button', { name: 'Upload document', exact: true }).click();
   await expect(page.getByText('Upload outcome is unknown. Your selection is retained; refresh status before retrying.')).toBeVisible();
@@ -751,7 +779,7 @@ test('unknown upload outcome retains the file and waits for its own status befor
 test('lost grant response retries the same idempotent request before uploading once', async ({ page }) => {
   const fixture = fixtures.get(page)!;
   fixture.grantResponseLost = true;
-  await ready(page);
+  await ready(page, 'documentsProvider');
   await chooseDocument(page);
   await page.getByRole('button', { name: 'Upload document', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Retry upload', exact: true })).toBeEnabled();
@@ -768,7 +796,7 @@ test('lost grant response retries the same idempotent request before uploading o
 test('consumed rejected upload retires pending intent but retains the selected file', async ({ page }) => {
   const fixture = fixtures.get(page)!;
   fixture.uploadMode = 'rejected';
-  await ready(page);
+  await ready(page, 'documentsProvider');
   await chooseDocument(page);
   await page.getByRole('button', { name: 'Upload document', exact: true }).click();
   await expect(page.getByText('Document rejected. Choose a new file.', { exact: true })).toBeVisible();

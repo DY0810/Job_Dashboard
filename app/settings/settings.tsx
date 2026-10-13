@@ -103,7 +103,8 @@ export default function Settings({ children }: { children: ReactNode }) {
       setData({ account, policy, workers, runs });
     } catch (cause) {
       setData(null);
-      setError(cause instanceof Error ? cause.message : 'Private settings are unavailable.');
+      setError(cause instanceof z.ZodError ? 'Private settings returned an incompatible response.'
+        : cause instanceof Error ? cause.message : 'Private settings are unavailable.');
     } finally { setLoading(false); }
   }, []);
   useEffect(() => {
