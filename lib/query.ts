@@ -95,27 +95,21 @@ export const geoTierSql: SQL<number> = sql<number>`(case
 const outsideTargets: SQL = sql`${geoTierSql} = ${GEO_TIER.elsewhere}`;
 
 /**
- * Onsite in another country — the rows nobody reading this can take. Remote abroad is fine and
- * stays: a remote job posted from Warsaw is a job you can do from here, which is why this asks
- * for `not remote` rather than leaning on the geo tier. It cannot be a tier for the same
- * reason: `remote` is decided before country upstream in `geoTier`, so a foreign remote row is
- * already tier `remote`, and a foreign onsite row lands in `elsewhere` next to Austin.
+ * Any role in another country, remote included: a remote job posted from Warsaw is usually
+ * hired there. The board hides these and Auto Apply never queues them.
  *
  * `country is not null` carries weight: an unparsed location is a missing-data problem, not
  * evidence of being abroad, and `<>` against NULL would answer NULL and hide the row anyway.
  */
-const foreignOnsite: SQL = sql`(${postings.country} is not null
-  and ${postings.country} <> ${GEO_TIER.usCode}
-  and not ${isRemoteSql})`;
+export const foreign: SQL = sql`(${postings.country} is not null and ${postings.country} <> ${GEO_TIER.usCode})`;
 
 /**
  * Every row the location rules hide, per track, in one expression — `visible()` negates it and
  * `outsideTargetLocations` asserts it, so the table and the number explaining an empty table
- * cannot disagree. Design hides all of `elsewhere`, which already contains every foreign onsite
- * row; every other track hides only the foreign onsite ones, because `elsewhere` is also where
+ * cannot disagree. Every track hides `foreign`; Design also hides the rest of `elsewhere`, because `elsewhere` is also where
  * Austin and Chicago live and Engineering is not a targeted-metro tab.
  */
-const hiddenByLocation: SQL = sql`(${foreignOnsite}
+const hiddenByLocation: SQL = sql`(${foreign}
   or (${postings.track} is 'design' and ${outsideTargets}))`;
 
 /**

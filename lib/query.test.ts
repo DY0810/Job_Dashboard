@@ -165,17 +165,13 @@ describe('design shows the target locations, engineering shows every location', 
     expect(await order(params('engineering'))).not.toContain('e-berlin-3d');
   });
 
-  /**
-   * The other half of that rule, and the reason it is not simply "no foreign rows": a remote
-   * job posted from Berlin is a job you can do from here. Onsite is what makes abroad
-   * disqualifying, so the same row flips to visible on both tabs the moment it is remote.
-   */
-  it('keeps the same Berlin posting once it is remote, on both tabs', async () => {
+  /** Remote does not rescue a role abroad: it is usually hired in that country. */
+  it('hides the same Berlin posting when it is remote, on both tabs', async () => {
     db.update(postings).set({ ...BERLIN_REMOTE, workMode: null }).where(eq(postings.id, idOf('e-berlin-3d'))).run();
     db.update(postings).set({ ...BERLIN_REMOTE, workMode: null }).where(eq(postings.id, idOf('d-berlin-3d'))).run();
 
-    expect(await order(params('engineering'))).toContain('e-berlin-3d');
-    expect(await order(params('design'))).toContain('d-berlin-3d');
+    expect(await order(params('engineering'))).not.toContain('e-berlin-3d');
+    expect(await order(params('design'))).not.toContain('d-berlin-3d');
   });
 
   it('hides it even when it would otherwise lead the table', async () => {
@@ -203,9 +199,8 @@ describe('design shows the target locations, engineering shows every location', 
     expect(list).toContain('d-sf-office'); // "San Francisco Office"
   });
 
-  it('keeps a role whose only remote signal is work_mode', async () => {
-    // Location says London, is_remote is 0, the body says remote. Remote is a target tier.
-    expect(await order(params('design'))).toContain('d-london-remote');
+  it('hides a remote role based in London', async () => {
+    expect(await order(params('design'))).not.toContain('d-london-remote');
   });
 
   it('does not treat explicit onsite or hybrid work abroad as remotely eligible', async () => {
@@ -261,16 +256,16 @@ describe('design shows the target locations, engineering shows every location', 
   });
 
   it('counts what geography hides, so an empty table can say so', async () => {
-    // d-berlin-3d, d-berlin-2h, d-austin. Not d-old-berlin, which is elsewhere too but 62
+    // d-berlin-3d, d-berlin-2h, d-austin, d-london-remote. Not d-old-berlin, which is elsewhere too but 62
     // days old — a row the tab would not show anyway must not inflate the count.
-    expect(await outsideTargetLocations(db, params('design'), NOW)).toBe(3);
+    expect(await outsideTargetLocations(db, params('design'), NOW)).toBe(4);
   });
 
   /** The count sits under "no postings match these filters", so it has to be an answer to
    *  that question rather than a fact about the whole tab. */
   it('counts under the same filters it is explaining', async () => {
     expect(await outsideTargetLocations(db, params('design', { mode: ['onsite'] }), NOW)).toBe(1);
-    expect(await outsideTargetLocations(db, params('design', { mode: ['remote'] }), NOW)).toBe(0);
+    expect(await outsideTargetLocations(db, params('design', { mode: ['remote'] }), NOW)).toBe(1);
   });
 });
 
