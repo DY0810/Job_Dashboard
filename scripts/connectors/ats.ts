@@ -1,6 +1,6 @@
 /**
  * Tier-1 ATS connectors (plan Phase 3) — greenhouse · lever · ashby ·
- * workable · recruitee. `source_priority = 1`: when the same job also arrives from an
+ * workable. `source_priority = 1`: when the same job also arrives from an
  * aggregator, these URLs win the `canonical_url`.
  *
  * Endpoint shapes come from `scripts/ats-probe.js`, which is what confirmed every token in
@@ -478,50 +478,6 @@ export const workable = atsConnector('workable', async (entry, context) => {
     );
 });
 
-interface RecruiteeOffer {
-  id?: string | number;
-  title?: string;
-  department?: string;
-  employment_type_code?: string;
-  remote?: boolean;
-  hybrid?: boolean;
-  on_site?: boolean;
-  careers_url?: string;
-  careers_apply_url?: string;
-  published_at?: string;
-  created_at?: string;
-  description?: string;
-  requirements?: string;
-  location?: string;
-  city?: string;
-  country?: string;
-}
-
-export const recruitee = atsConnector('recruitee', async (entry, context) => {
-  const body = await context.runtime.fetchJson<{ offers?: RecruiteeOffer[] }>(
-    endpoint('recruitee', entry.token),
-  );
-  return sourceList(body.offers, 'offers')
-    .filter((offer) => offer.careers_url ?? offer.careers_apply_url)
-    .map((offer) =>
-      row('recruitee', entry, {
-        publisherId: offer.id,
-        title: offer.title,
-        location: offer.location ?? [offer.city, offer.country].filter(Boolean).join(', '),
-        url: (offer.careers_url ?? offer.careers_apply_url)!,
-        postedAt: toEpochMs(offer.published_at ?? offer.created_at),
-        description: `${offer.description ?? ''}\n${offer.requirements ?? ''}`,
-        structured: {
-          employmentType: employmentTypeFrom(offer.employment_type_code),
-          workMode: offer.hybrid ? 'hybrid' : offer.remote ? 'remote' : offer.on_site ? 'onsite' : undefined,
-          location: locationFrom(offer.city, offer.location, offer.country),
-          department: text(offer.department),
-          sections: parseSections(`${offer.description ?? ''}\n${offer.requirements ?? ''}`),
-        },
-      }),
-    );
-});
-
 
 // ---------------------------------------------------------------------------------------
 // Workday
@@ -693,97 +649,10 @@ export const workday = {
 };
 
 
-// ---------------------------------------------------------------------------------------
-// Teamtailor
-// ---------------------------------------------------------------------------------------
-
-/**
- * Teamtailor publishes JSON Feed 1.1, not a jobs array — the postings are under `items`, which
- * is why a reader looking for `data` or `jobs` sees an empty board on a board with 28 openings.
- *
- * Each item carries `_jobposting`, a schema.org JobPosting, and that is the reason this
- * connector is worth writing rather than treating Teamtailor as unreachable: it gives a real
- * `addressLocality` (Koto's board resolves to Los Angeles, New York, London, Berlin, Sydney)
- * where the feed's own fields would give none at all. On the Design tab, which shows target
- * locations only, a posting with no parseable city is a posting that never appears.
- */
-interface TeamtailorItem {
-  id?: string;
-  title?: string;
-  url?: string;
-  date_published?: string;
-  content_html?: string;
-  _jobposting?: {
-    datePosted?: string;
-    employmentType?: string;
-    jobLocation?: TeamtailorLocation | TeamtailorLocation[];
-  };
-}
-
-interface TeamtailorLocation {
-  address?: {
-    addressLocality?: string;
-    addressRegion?: string;
-    addressCountry?: string;
-  };
-}
-
-/**
- * First location wins: a multi-city posting is one row, and `normalizeLocation` reads one place.
- *
- * A TWO-LETTER ISO COUNTRY CODE IS NEVER PASSED THROUGH, because `normalizeLocation` reads a
- * trailing two-letter code as a US STATE — deliberately, so that `ca` means California rather
- * than Canada. Handing it `addressCountry` verbatim stored Koto's Berlin internship as
- * "Berlin, Delaware, USA", and a Toronto posting would have become California, which the Design
- * tab's location rule SHOWS. So the country is only appended when it is the US (where the region
- * beside it really is a state) or when it is spelled out and cannot collide.
- */
-function teamtailorLocation(item: TeamtailorItem): string | undefined {
-  const raw = item._jobposting?.jobLocation;
-  const address = (Array.isArray(raw) ? raw[0] : raw)?.address;
-  const country = (address?.addressCountry ?? '').trim();
-
-  if (/^(?:us|usa|united states(?: of america)?)$/i.test(country)) {
-    return locationFrom(address?.addressLocality, address?.addressRegion, country);
-  }
-  // Longer than two characters is a name, not a code, so it cannot be read as a state.
-  return country.length > 2
-    ? locationFrom(address?.addressLocality, country)
-    : locationFrom(address?.addressLocality);
-}
-
-export const teamtailor = atsConnector('teamtailor', async (entry, context) => {
-  const feed = await context.runtime.fetchJson<{ items?: TeamtailorItem[] }>(
-    endpoint('teamtailor', entry.token),
-  );
-  return (feed.items ?? [])
-    .filter((item) => item.url && item.title)
-    .map((item) => {
-      const location = teamtailorLocation(item);
-      return row('teamtailor', entry, {
-        title: item.title,
-        location,
-        url: item.url!,
-        postedAt: toEpochMs(item._jobposting?.datePosted ?? item.date_published),
-        description: item.content_html ?? '',
-        structured: {
-          // `employmentType` is present in the schema but null on every posting observed, so
-          // it is mapped rather than assumed — an unrecognized value returns undefined and the
-          // prose heuristics get their turn.
-          employmentType: employmentTypeFrom(item._jobposting?.employmentType),
-          location,
-          sections: parseSections(item.content_html),
-        },
-      });
-    });
-});
-
 export const atsConnectors: Connector[] = [
   greenhouse,
   lever,
   ashby,
   workable,
-  recruitee,
   workday,
-  teamtailor,
 ];

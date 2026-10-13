@@ -269,60 +269,10 @@ export const jobspresso = rssConnector('jobspresso', 'https://jobspresso.co/jobs
   };
 });
 
-/**
- * DesignJobs.careers — a design-only board, and the only genuinely new one with a keyless feed.
- *
- * Fixed 50-item firehose: `?limit=`, `?page=`, `?category=` and `?level=` are all ACCEPTED and
- * all IGNORED — page 2 returns a byte-identical body to page 1 — so there is exactly one URL
- * worth asking for. robots.txt is `Allow: /` with `Crawl-delay: 5` and does not mention /rss.
- *
- * Nothing is structured except `<category>`. Location and level are bolded labels inside the
- * CDATA description:
- *
- *   <p><strong>Location:</strong> Seattle, United States of America</p>
- *   <p><strong>Level:</strong> Entry Level</p>
- *
- * Per-label regexes rather than one positional match, because presence is NOT uniform — Level
- * appears on 43 of 50 items, Salary on 18, and there are six different label orders. A single
- * ordered pattern missed 32 of 50.
- *
- * Worth having despite a thin US slice (~10 of 50, and the sampled entry-level rows were all
- * outside the US): every item is design, the window is only ~7 hours wide, and a connector
- * polling hourly accumulates what one fetch cannot show.
- */
-const DJ_LABEL = (label: string) =>
-  new RegExp(`<strong>\\s*${label}\\s*:\\s*</strong>\\s*([^<]+)`, 'i');
-const DJ_LOCATION = DJ_LABEL('Location');
-const DJ_TYPE = DJ_LABEL('Type');
-
-const DJ_TYPE_MAP: Record<string, EmploymentType> = {
-  'full-time': 'full-time',
-  'part-time': 'part-time',
-  contract: 'contract',
-  freelance: 'freelance',
-  internship: 'internship',
-};
-
-export const designjobsCareers = rssConnector(
-  'designjobs-careers',
-  'https://designjobs.careers/rss',
-  (item) => {
-    const body = item.content ?? '';
-    return {
-      // `dc:creator` is the employer; the title is the role alone, already separated.
-      company: (item.creator ?? '').trim(),
-      title: (item.title ?? '').trim(),
-      location: DJ_LOCATION.exec(body)?.[1]?.trim() || null,
-      employmentType: DJ_TYPE_MAP[(DJ_TYPE.exec(body)?.[1] ?? '').trim().toLowerCase()],
-    };
-  },
-);
-
 export const rssConnectors: Connector[] = [
   remotive,
   weworkremotely,
   weworkremotelyDesign,
   dribbble,
   jobspresso,
-  designjobsCareers,
 ];
