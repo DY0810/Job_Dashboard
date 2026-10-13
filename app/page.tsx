@@ -21,7 +21,7 @@ import { rowChips } from "@/lib/chips";
 import { countPostings, listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } from "@/lib/query";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
-import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AppliedCheckbox } from "./applied-checkbox";
 import { AppliedSync } from "./applied-sync";
 import { AppHeader } from "./app-header";
@@ -164,28 +164,27 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
       <td data-field="location" className={`text-fg-dim ${width(p.tab, "location") ?? ""}`} title={row.location ?? undefined}>
         {row.location ?? <Nothing />}
       </td>
-      {/* The drawer trigger. One per row, so the tab order through the table stays short. */}
+      {/* The drawer trigger. One per row, so the tab order through the table stays short. A
+          plain anchor: the drawer opens it through native history (see `Drawer`). */}
       <td data-field="company">
-        <Link
+        <a
           href={withJob(p, row.id)}
-          scroll={false}
+          data-job
           title={row.company}
-          className="inline-flex max-w-full items-center gap-1 hover:text-fg-dim"
+          className="icon-chevron inline-flex max-w-full items-center gap-1 hover:text-fg-dim"
         >
           <span>{row.company}</span>
-          <ChevronRight size={12} strokeWidth={1.25} absoluteStrokeWidth />
-        </Link>
+        </a>
       </td>
       <td data-field="apply">
         <a
-          className="chip"
+          className="chip icon-external"
           data-posting-id={row.id}
           href={row.canonicalUrl}
           target="_blank"
           rel="noreferrer noopener"
         >
           {row.canonicalUrl.startsWith("https://remotive.com/") ? "apply via Remotive" : "apply"}
-          <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
         </a>
       </td>
       <td data-field="applied">
@@ -455,7 +454,7 @@ export default async function Page({
       ) : null}
       </div>
 
-      <Drawer jobId={p.job} closeHref={withJob(p, null)} />
+      <Drawer closeHref={withJob(p, null)} />
       <AppliedSync />
     </main>
   );

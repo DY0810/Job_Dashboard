@@ -1,6 +1,7 @@
 'use client';
 
 import { Archive } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
@@ -16,11 +17,13 @@ import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from '../../lib/applications/state';
 import { Modal } from '../modal';
 import { privateJson, PrivateRequestError, type PrivateApi } from '../profile/api';
-import DocumentsPane from '../profile/documents-pane';
 import { SettingsButton, setSettingsOpen } from '../settings-drawer';
 import { CountBadge, StatusBadge } from '../status-badge';
 import { ApplicationQuestions, useQuestions } from './questions';
 import styles from '../workers/workers.module.css';
+
+// Only the upload dialog shows it, so it loads when that opens.
+const DocumentsPane = dynamic(() => import('../profile/documents-pane'));
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
 const PolicyResponseSchema = z.strictObject({

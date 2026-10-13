@@ -783,6 +783,13 @@ describe('search params are validated, not trusted', () => {
     expect(p.badge).toBeNull();
   });
 
+  it('reads `job` and `page` as safe whole numbers in range, or not at all', async () => {
+    for (const job of ['0', '1.5', 'abc', '9007199254740993', 'Infinity']) expect(parseParams({ job }).job).toBeNull();
+    expect(parseParams({ job: ' 7 ' }).job).toBe(7);
+    for (const page of ['0', '10001', '2.5', 'x', '']) expect(parseParams({ page }).page).toBe(1);
+    expect(parseParams({ page: '10000' }).page).toBe(10_000);
+  });
+
   /**
    * A comma list used to yield ONE value, because one was all a dropdown could show and a
    * control that misreports its filter is worse than a narrower filter. Checkboxes can show a

@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
+import { parseParams } from '@/lib/params';
 import type { PostingDetail } from '@/lib/query';
 import { type OutreachKind, type Sender } from '@/lib/outreach';
 import { OutreachPanel } from './outreach-panel';
@@ -21,10 +22,14 @@ type State =
  *
  * The body is fetched rather than shipped with the table: full descriptions across ~2k
  * postings would be megabytes of payload the table cannot use.
+ *
+ * `?job=` moves through native history, which Next syncs into `useSearchParams` without a
+ * server round trip: a router navigation re-rendered the whole 200-row table on the server
+ * to open the drawer, and again to close it.
  */
-export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: string }) {
+export function Drawer({ closeHref }: { closeHref: string }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const router = useRouter();
+  const jobId = parseParams({ job: useSearchParams().get('job') ?? undefined }).job;
   const [state, setState] = useState<State>({ status: 'loading' });
   const [drafting, setDrafting] = useState<OutreachKind | null>(null);
   const [sender, setSender] = useState<Sender | null>(null);
@@ -69,6 +74,19 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
     if (pendingKind) setDrafting(pendingKind);
     setPendingKind(null);
   };
+
+  // Rows open the drawer with plain `<a data-job>` links, one listener for all of them. A
+  // modified or middle click falls through to the browser and opens the deep link in a tab.
+  useEffect(() => {
+    const open = (event: MouseEvent) => {
+      const link = (event.target as Element | null)?.closest?.('a[data-job]');
+      if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+      event.preventDefault();
+      window.history.pushState(null, '', link.getAttribute('href'));
+    };
+    document.addEventListener('click', open);
+    return () => document.removeEventListener('click', open);
+  }, []);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -119,8 +137,8 @@ export function Drawer({ jobId, closeHref }: { jobId: number | null; closeHref: 
     setPendingKind(null);
     setSenderError(null);
     ref.current?.close();
-    if (jobId !== null) router.replace(closeHref, { scroll: false });
-  }, [jobId, closeHref, router]);
+    if (jobId !== null) window.history.replaceState(null, '', closeHref);
+  }, [jobId, closeHref]);
 
   return (
     <dialog

@@ -1,12 +1,15 @@
 'use client';
 
 import { RefreshCw, Settings as SettingsIcon } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { useRef } from 'react';
 import { Modal } from './modal';
-import Settings from './settings/settings';
-import Workers from './workers/workers';
 import styles from './workers/workers.module.css';
+
+// Every page wears the header: a static import shipped this body, and full zod with it, to pages that never open it.
+const Settings = dynamic(() => import('./settings/settings'));
+const Workers = dynamic(() => import('./workers/workers'));
 
 /**
  * `?settings=1` on the current path. Native history: Next syncs useSearchParams without a server round trip.

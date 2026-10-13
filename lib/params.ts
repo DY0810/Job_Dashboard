@@ -2,14 +2,13 @@
  * The URL *is* the state. Tab, every filter, and the open drawer are search params, so the
  * back button, bookmarking and "send me that filter set" all work without a client store.
  *
- * Search params are a trust boundary even on localhost — everything here is Zod-validated,
- * and anything that does not validate is dropped rather than thrown, because a hand-mangled
- * URL should show the unfiltered table, not an error page.
+ * Search params are a trust boundary even on localhost — everything here is validated, and
+ * anything that does not validate is dropped rather than thrown, because a hand-mangled URL
+ * should show the unfiltered table, not an error page.
+ *
+ * Plain checks, not Zod: this module runs in the browser on every board load, and even
+ * `zod/mini` ships all of Zod's core schema constructors (~17 kB gzipped) for these eleven fields.
  */
-
-// `zod/mini`: this module runs in the browser on every board load, and classic Zod's
-// eager initialisation cost about as much main-thread time as React DOM itself.
-import * as z from 'zod/mini';
 
 export const TABS = ['design', 'engineering'] as const;
 export type Tab = (typeof TABS)[number];
@@ -153,27 +152,20 @@ export interface Params {
   unfiltered?: true;
 }
 
-const value = z.catch(z.optional(z.string().check(z.maxLength(200))), undefined);
+/** A free-text value up to 200 characters; anything else reads as absent. */
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length <= 200 ? value : undefined;
+}
 
-const Raw = z.object({
-  tab: z.catch(z.enum(TABS), DEFAULT_TAB),
-  basis: z.catch(z.optional(z.enum(BASES)), undefined),
-  posted: value,
-  type: value,
-  pay: value,
-  mode: value,
-  season: value,
-  level: value,
-  badge: z.catch(z.optional(z.string().check(z.regex(/^[a-z0-9-]{1,32}$/))), undefined),
-  job: z.catch(
-    z.pipe(
-      z.transform((v: unknown) => (v === undefined || v === '' ? undefined : v)),
-      z.optional(z.pipe(z.coerce.number(), z.int().check(z.positive()))),
-    ),
-    undefined,
-  ),
-  page: z.catch(z.pipe(z.coerce.number(), z.int().check(z.gte(1), z.lte(10_000))), 1),
-});
+function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+  return allowed.includes(value as T) ? (value as T) : undefined;
+}
+
+/** `Number()` coercion, then a safe integer in range, or nothing. */
+function whole(value: unknown, min: number, max: number): number | undefined {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= min && n <= max ? n : undefined;
+}
 
 /** Next hands repeated params through as arrays; for a single-valued param the first wins. */
 function first(value: string | string[] | undefined): string | undefined {
@@ -210,19 +202,21 @@ function pickAll(raw: string | undefined, allowed: readonly string[]): string[] 
 export type RawSearchParams = Record<string, string | string[] | undefined>;
 
 export function parseParams(input: RawSearchParams): Params {
-  const raw = Raw.parse({
-    tab: first(input.tab),
-    basis: first(input.basis),
-    posted: first(input.posted),
-    type: collect(input.type),
-    pay: collect(input.pay),
-    mode: collect(input.mode),
-    season: collect(input.season),
-    level: collect(input.level),
-    badge: first(input.badge),
-    job: first(input.job),
-    page: first(input.page),
-  });
+  const badge = first(input.badge);
+  const job = first(input.job);
+  const raw = {
+    tab: oneOf(first(input.tab), TABS) ?? DEFAULT_TAB,
+    basis: oneOf(first(input.basis), BASES),
+    posted: text(first(input.posted)),
+    type: text(collect(input.type)),
+    pay: text(collect(input.pay)),
+    mode: text(collect(input.mode)),
+    season: text(collect(input.season)),
+    level: text(collect(input.level)),
+    badge: typeof badge === 'string' && /^[a-z0-9-]{1,32}$/.test(badge) ? badge : undefined,
+    job: job === undefined || job === '' ? undefined : whole(job, 1, Number.MAX_SAFE_INTEGER),
+    page: whole(first(input.page), 1, 10_000) ?? 1,
+  };
   // Resolved before the filters, because Design's `type` vocabulary depends on it. A `basis`
   // on an Engineering URL is dropped rather than honoured: the split is a Design control, and
   // carrying it silently would let `?tab=engineering&basis=freelance` filter a tab that shows

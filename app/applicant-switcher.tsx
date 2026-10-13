@@ -1,21 +1,28 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import * as z from 'zod/mini';
 import { ChevronDown } from 'lucide-react';
 
-const responseSchema = z.object({ applicants: z.array(z.object({
-  ownerId: z.string(), email: z.email(), name: z.string(), active: z.boolean(),
-})) });
+type Applicant = { ownerId: string; email: string; name: string; active: boolean };
+
+/** A shape check, not Zod: this is in the header on every page, and zod/mini alone was ~17 kB gzipped there. */
+function applicantsOf(body: unknown): Applicant[] {
+  const list = (body as { applicants?: unknown } | null)?.applicants;
+  if (!Array.isArray(list) || !list.every((item: Partial<Applicant> | null) => typeof item?.ownerId === 'string'
+    && typeof item.email === 'string' && typeof item.name === 'string' && typeof item.active === 'boolean')) {
+    throw new Error('Unexpected applicants response');
+  }
+  return list;
+}
 
 export function ApplicantSwitcher() {
-  const [applicants, setApplicants] = useState<z.infer<typeof responseSchema>['applicants']>([]);
+  const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     const controller = new AbortController();
     fetch('/api/auth/applicants', { cache: 'no-store', signal: controller.signal })
-      .then(async (response) => response.ok ? responseSchema.parse(await response.json()).applicants : [])
+      .then(async (response) => response.ok ? applicantsOf(await response.json()) : [])
       .then((value) => { if (!controller.signal.aborted) setApplicants(value); })
       .catch(() => { if (!controller.signal.aborted) setError('Could not load applicant profiles.'); });
     return () => controller.abort();
