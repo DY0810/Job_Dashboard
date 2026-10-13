@@ -198,7 +198,7 @@ function StartPanel({ workerId, policyEnabled, ownerId, onChange }: { workerId: 
 }
 
 /** A document hold the applicant has fixed resumes here, in its own run or, after a policy change, in the newest running run. */
-function RetryPanel({ app, runs, ownerId, onChange }: { app: { id: string; runId: string; revision: number; reasonCode: string | null }; runs: Run[]; ownerId: string; onChange: () => void }) {
+function RetryPanel({ app, runs, ownerId, onChange, children }: { app: { id: string; runId: string; revision: number; reasonCode: string | null }; runs: Run[]; ownerId: string; onChange: () => void; children: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const api = useCallback<PrivateApi>((path, init) => privateJson(path, { ...init, owner: ownerId }), [ownerId]);
@@ -232,6 +232,7 @@ function RetryPanel({ app, runs, ownerId, onChange }: { app: { id: string; runId
       idPrefix={`auto-apply-${app.id}`} initialKind={kind} />}
     <div className={styles.row}>
       <button className={styles.button} type="button" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying...' : 'Retry'}</button>
+      {children}
       {error && <span role="alert" className={styles.reason}>{error}</span>}
     </div>
   </div>;
@@ -350,6 +351,7 @@ export default function Applications() {
               const approve = isAwaitingSubmitApproval(app.state, app.reasonCode);
               const answer = app.state === 'needs_answer' || (app.state === 'needs_policy_decision' && !approve);
               const caps = view.policy?.policy;
+              const manage = view.account && <ManagePanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} retryShown={retry} onChange={() => void load(true)} />;
               return <li key={app.id}>
                 <div className={styles.row}><strong>{app.company ?? app.tenant}</strong><span className={styles.muted}>{label(app.state)}</span></div>
                 <div className={styles.row}><span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>{app.ats}</span>
@@ -358,16 +360,16 @@ export default function Applications() {
                 {app.reasonCode && !retry && !approve && !answer && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
                 {app.state === 'queued' && caps && <span className={styles.muted}>
                   Waiting its turn. It starts on its own, up to {caps.perEmployerCap} per employer and {caps.dailyApplicationCap} a day.</span>}
-                {answer && <div className={styles.row}>
-                  <span>The employer&apos;s form asks something your profile does not answer.</span>
-                  <button className={styles.button} type="button" onClick={() => window.dispatchEvent(new CustomEvent('workie:answer', { detail: app.id }))}>Answer</button>
-                </div>}
+                {answer && <span>The employer&apos;s form asks something your profile does not answer.</span>}
                 {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
-                {retry && view.account &&
-                  <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
                 {approve && view.account &&
                   <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
-                {view.account && <ManagePanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} retryShown={retry} onChange={() => void load(true)} />}
+                {view.account && (retry
+                  ? <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)}>{manage}</RetryPanel>
+                  : <div className={styles.row}>
+                    {answer && <button className={styles.button} type="button" onClick={() => window.dispatchEvent(new CustomEvent('workie:answer', { detail: app.id }))}>Answer</button>}
+                    {manage}
+                  </div>)}
                 {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}
                   item={outreach.get(app.id)!} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
               </li>;
