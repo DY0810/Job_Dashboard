@@ -5,7 +5,6 @@ const destinations = [
   ['Auto Apply', '/applications'],
   ['Profile', '/profile'],
   ['Notes', '/talkie'],
-  ['Settings', '/settings'],
 ] as const;
 
 export function AppNav({ current }: { current: string }) {

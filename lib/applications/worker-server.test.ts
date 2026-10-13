@@ -10,7 +10,7 @@ import { createEmptyPolicy } from './policy.ts';
 import { hashValue } from './stores.ts';
 import { APPLICATION_STATES, SAFE_STAGES, canTransition, type ApplicationState } from './state.ts';
 import * as p from './worker-protocol.ts';
-import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing } from './pairing.ts';
+import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing, scheduleWorker } from './pairing.ts';
 import { createRun, listRuns, commandRun, commandApplication, returnedPostingUrls } from './runs.ts';
 import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
@@ -613,6 +613,17 @@ describe('zero-row writes cannot acknowledge authority', () => {
     });
 });
 describe('durable owner controls', () => {
+  it('lists the rows bucket() shows, so long-archived rows never take the 100-row limit', async () => {
+    const { app } = await prepared();
+    const DAY = 86_400_000;
+    const row = async (state: ApplicationState, ageDays: number) => (await db.insert(applications).values({ id: randomUUID(), ownerId: 'alice',
+      runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state,
+      availableAt: 0, createdAt: now - ageDays * DAY }).returning())[0].id;
+    const [expired, archived, submitted, unknown] = [await row('failed', 44), await row('failed', 43), await row('submitted', 400), await row('submission_unknown', 400)];
+    const ids = (await listRuns(db, 'alice', options)).applications.map((item) => item.id);
+    expect(ids).not.toContain(expired);
+    expect(ids).toEqual(expect.arrayContaining([archived, submitted, unknown]));
+  });
   it('sends a role that stops again after a retry back to the Jobs board', async () => {
     const { app } = await prepared();
     await db.update(applications).set({ state: 'needs_document', reasonCode: 'document_tailoring_unavailable' }).where(eq(applications.id, app.id));
@@ -650,5 +661,60 @@ describe('durable owner controls', () => {
     expect(outcomes.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect((await listRuns(db, 'alice')).applications[0].state).toBe('submission_unknown');
     expect((await claim(worker.token)).mode).toBe('reconcile');
+  });
+});
+describe('daily start schedule', () => {
+  it('starts exactly one run per day after the start time, only with an enabled policy, and validates the schedule', async () => {
+    const worker = await paired();
+    const runsOf = async () => (await db.select().from(applicationRuns).where(eq(applicationRuns.workerId, worker.workerId)));
+    const schedule = { ...revision(1), dailyStart: '09:00', timeZone: 'America/New_York' };
+    await expect(scheduleWorker(db, 'alice', worker.workerId, { ...schedule, timeZone: 'Mars/Olympus' }, options)).rejects.toThrow();
+    await expect(scheduleWorker(db, 'alice', worker.workerId, { ...schedule, dailyStart: '24:00' }, options)).rejects.toThrow();
+    await expect(scheduleWorker(db, 'bob', worker.workerId, schedule, options)).rejects.toMatchObject({ status: 404 });
+    await expect(scheduleWorker(db, 'alice', worker.workerId, { ...schedule, expectedRevision: 2 }, options)).rejects.toMatchObject({ status: 409 });
+    const ack = await scheduleWorker(db, 'alice', worker.workerId, schedule, options);
+    expect(ack).toEqual({ id: worker.workerId, revision: 2, dailyStartMinute: 540, timeZone: 'America/New_York' });
+    expect(await scheduleWorker(other, 'alice', worker.workerId, schedule, options)).toEqual(ack);
+    expect((await listWorkers(db, 'alice', options)).workers[0]).toMatchObject({ dailyStartMinute: 540, timeZone: 'America/New_York' });
+    await expect(db.update(workers).set({ dailyStartMinute: 1440 }).where(eq(workers.id, worker.workerId))).rejects.toThrow();
+    // now is 03:00 in New York; 09:00 is 14:00Z.
+    await pollWorker(db, worker.token, { protocolVersion: 1 }, options);
+    expect(await runsOf()).toHaveLength(0);
+    now += 6 * 3_600_000;
+    await Promise.all([pollWorker(db, worker.token, { protocolVersion: 1 }, options), pollWorker(other, worker.token, { protocolVersion: 1 }, options)]);
+    const [first] = await runsOf();
+    expect(await runsOf()).toHaveLength(1);
+    expect(first).toMatchObject({ state: 'running', createdAt: now });
+    // Stopped later that day: no restart until tomorrow's start.
+    await commandRun(db, 'alice', first.id, { ...revision(1), action: 'stop' }, options);
+    now += 3_600_000;
+    await pollWorker(db, worker.token, { protocolVersion: 1 }, options);
+    expect(await runsOf()).toHaveLength(1);
+    now += 24 * 3_600_000;
+    const [head] = await db.select().from(policyHeads).where(eq(policyHeads.ownerId, 'alice'));
+    await db.update(policyHeads).set({ enabled: false, acceptedPolicyHash: null, acceptedPolicyVersion: null, acceptedAt: null }).where(eq(policyHeads.ownerId, 'alice'));
+    await pollWorker(db, worker.token, { protocolVersion: 1 }, options);
+    expect(await runsOf()).toHaveLength(1);
+    await db.update(policyHeads).set(head).where(eq(policyHeads.ownerId, 'alice'));
+    await pollWorker(db, worker.token, { protocolVersion: 1 }, options);
+    expect(await runsOf()).toHaveLength(2);
+    // Clearing stops the schedule; a revoked worker cannot be scheduled.
+    const cleared = await scheduleWorker(db, 'alice', worker.workerId, { ...revision(2), dailyStart: null, timeZone: 'UTC' }, options);
+    expect(cleared).toMatchObject({ dailyStartMinute: null, timeZone: null });
+    await revokeWorker(db, 'alice', worker.workerId, revision(cleared.revision), options);
+    await expect(scheduleWorker(db, 'alice', worker.workerId, { ...schedule, ...revision(cleared.revision + 1) }, options))
+      .rejects.toMatchObject({ status: 403 });
+  });
+  it('does not start a run for a start time that passed before the schedule was saved', async () => {
+    const worker = await paired();
+    const poll = () => pollWorker(db, worker.token, { protocolVersion: 1 }, options);
+    // 15:00 in New York: today's 09:00 already passed, so the first run is tomorrow's.
+    now += 12 * 3_600_000;
+    await scheduleWorker(db, 'alice', worker.workerId, { ...revision(1), dailyStart: '09:00', timeZone: 'America/New_York' }, options);
+    await poll();
+    expect(await db.select().from(applicationRuns)).toHaveLength(0);
+    now += 18 * 3_600_000;
+    await poll();
+    expect(await db.select().from(applicationRuns)).toHaveLength(1);
   });
 });

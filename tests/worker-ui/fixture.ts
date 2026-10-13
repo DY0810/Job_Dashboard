@@ -4,9 +4,9 @@ import { createEmptyPolicy, PolicySchema } from '../../lib/applications/policy';
 import { InboxPageSchema } from '../../lib/applications/question-protocol';
 import { isTerminalState } from '../../lib/applications/state';
 import {
-  ApplicationCommandSchema, ApplicationSummarySchema, PairingCreateSchema, PairingGrantSchema,
+  ApplicationCommandSchema, ApplicationSummarySchema, MaterialsSchema, OutreachListSchema, PairingCreateSchema, PairingGrantSchema,
   PAIRING_TTL_MS, RevisionCommandSchema, RevocationSchema, RunCommandSchema, RunCreateSchema,
-  RunListSchema, RunSchema, WorkerListSchema, WorkerSummarySchema,
+  RunListSchema, RunSchema, WorkerListSchema, WorkerScheduleAckSchema, WorkerScheduleSchema, WorkerSummarySchema,
   type ApplicationSummary, type PairingSummary, type Run, type WorkerSummary,
 } from '../../lib/applications/worker-protocol';
 
@@ -23,7 +23,7 @@ export class WorkerFixture {
   now = Date.now();
   workers: WorkerSummary[] = [WorkerSummarySchema.parse({
     id: workerId, label: 'Synthetic laptop', revision: 1, workerVersion: '0.1.0', capabilities: ['control-v1'],
-    createdAt: this.now - 60_000, lastSeenAt: this.now, revokedAt: null, online: true,
+    createdAt: this.now - 60_000, lastSeenAt: this.now, revokedAt: null, online: true, dailyStartMinute: null, timeZone: null,
   })];
   pairings: PairingSummary[] = [];
   runs: Run[] = [];
@@ -51,7 +51,7 @@ export class WorkerFixture {
   addApplication(state: ApplicationSummary['state'], reasonCode: string | null = null, applicationRunId = runId) {
     const app = ApplicationSummarySchema.parse({ id: crypto.randomUUID(), runId: applicationRunId, workerId, ats: 'synthetic',
       tenant: 'fixture-employer', requisition: `role-${this.applications.length + 1}`, revision: 1, state, reasonCode,
-      checkpoint: { stage: 'screening', sequence: 1 } });
+      checkpoint: { stage: 'screening', sequence: 1 }, createdAt: this.now, hiddenAt: null });
     this.applications.push(app);
     return app;
   }
@@ -90,12 +90,15 @@ export class WorkerFixture {
           runs: [{ ...this.runs[0], state: 'future-unknown-state' }], applications: this.applications } } : result;
       }
       if (path === '/api/auto-apply/policies') return { status: 200, json: structuredClone(this.policy) };
+      // The Auto Apply page under the settings drawer reads these too.
+      if (path === '/api/outreach') return reply(OutreachListSchema, { ownerId: this.owner, outreach: [] });
+      if (path === '/api/applications/materials') return reply(MaterialsSchema, { ownerId: this.owner, materials: [] });
       throw new Error(`Unexpected synthetic GET: ${path}`);
     }
     assert.equal(headers.get('content-type'), 'application/json');
     assert.ok(body);
     const schema = path === '/api/workers/pairings' ? PairingCreateSchema :
-      method === 'DELETE' ? RevisionCommandSchema : path === '/api/application-runs' ? RunCreateSchema :
+      method === 'DELETE' ? RevisionCommandSchema : method === 'PATCH' ? WorkerScheduleSchema : path === '/api/application-runs' ? RunCreateSchema :
         path.includes('/applications/') ? ApplicationCommandSchema : RunCommandSchema;
     schema.parse(body);
     const input = JSON.stringify([this.owner, path, method, body]);
@@ -120,6 +123,16 @@ export class WorkerFixture {
         for (const run of this.runs.filter((run) => run.workerId === row.id && run.state === 'running')) { run.state = 'paused'; run.revision++; }
       }
       result = reply(RevocationSchema, { id: row.id, revision: row.revision, revokedAt: row.revokedAt });
+    } else if (method === 'PATCH') {
+      const worker = this.workers.find((row) => path === `/api/workers/${row.id}`);
+      if (!worker) return error(404, 'NOT_FOUND');
+      if (worker.revision !== body.expectedRevision) return error(409, 'CONFLICT');
+      if (worker.revokedAt !== null) return error(403, 'FORBIDDEN');
+      const [hours, minutes] = typeof body.dailyStart === 'string' ? body.dailyStart.split(':').map(Number) : [];
+      worker.dailyStartMinute = body.dailyStart === null ? null : hours * 60 + minutes;
+      worker.timeZone = body.dailyStart === null ? null : String(body.timeZone);
+      worker.revision++;
+      result = reply(WorkerScheduleAckSchema, { id: worker.id, revision: worker.revision, dailyStartMinute: worker.dailyStartMinute, timeZone: worker.timeZone });
     } else if (path === '/api/application-runs') {
       if (!this.policy.enabled) return error(403, 'FORBIDDEN');
       const worker = this.workers.find((row) => row.id === body.workerId && row.revokedAt === null);

@@ -263,7 +263,8 @@ for (const mode of ['sign-in', 'sign-up', 'forgot', 'verify', 'reset']) {
       : mode === 'reset' ? ['New password', 'Confirm password']
         : mode === 'sign-in' ? ['Email', 'Password'] : ['Email'];
     await expect(page.getByLabel(labels[0], { exact: true })).toBeVisible();
-    await page.getByRole('link', { name: 'Jobs', exact: true }).focus();
+    // Start from the shared header's last control; the next Tab enters the form.
+    await page.locator('.app-header button').last().focus();
     for (const label of labels) {
       await page.keyboard.press('Tab');
       const input = page.getByLabel(label, { exact: true });

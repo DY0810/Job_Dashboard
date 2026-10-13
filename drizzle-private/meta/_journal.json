@@ -78,6 +78,13 @@
       "when": 1791871060785,
       "tag": "0010_application_hidden",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1791885635224,
+      "tag": "0011_worker_daily_start",
+      "breakpoints": true
     }
   ]
 }

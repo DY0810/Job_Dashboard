@@ -1,7 +1,9 @@
 import 'server-only';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, or, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
-import { applications, workers } from '../private-db/schema.ts';
+import { applicationRuns, applications, workers } from '../private-db/schema.ts';
+import { insertRun } from './runs.ts';
+import { dailyStartInstant } from './schedule.ts';
 import { isTerminalState, isWaitingState } from './state.ts';
 import { discoverWorkerRuns, discoveryClaimAllowed, type CorpusProvider } from './discovery.ts';
 import {
@@ -46,6 +48,16 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
     one(await tx.update(workers).set({ lastSeenAt: now }).where(and(
       eq(workers.id, worker.id), eq(workers.ownerId, worker.ownerId), eq(workers.revision, worker.revision),
     )).returning());
+    // The daily start: once today's start has passed, start one run unless one is going or already started since then.
+    // A start that passed before the schedule was saved waits for tomorrow. Inside the poll's write transaction,
+    // so concurrent polls serialize and cannot both insert.
+    if (worker.dailyStartMinute !== null && worker.timeZone !== null) {
+      const start = dailyStartInstant(now, worker.dailyStartMinute, worker.timeZone);
+      if (start <= now && start >= (worker.dailyStartUpdatedAt ?? 0) && !(await tx.select({ id: applicationRuns.id }).from(applicationRuns).where(and(
+        eq(applicationRuns.ownerId, worker.ownerId), eq(applicationRuns.workerId, worker.id),
+        or(eq(applicationRuns.state, 'running'), gte(applicationRuns.createdAt, start)),
+      )).limit(1)).length) await insertRun(tx, worker.ownerId, worker.id, now);
+    }
     // Resume safe assignments first, then oldest availability so deferred checks cannot starve ready work.
     let cursor: ApplicationRow | undefined;
     while (true) {

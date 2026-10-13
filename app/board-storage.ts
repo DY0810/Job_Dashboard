@@ -32,14 +32,52 @@ export function readDefaultFilters(store: Store | null = localStore()): string |
   return value !== null && value.length <= 2000 ? value : null;
 }
 
-export function saveDefaultFilters(p: Params, store: Store | null = localStore()): boolean {
+/** Just the filters of `p`, canonical, so two selections compare as strings. Tab, split, drawer and page are not part of it. */
+export function filterQuery(p: Params): string {
   const query = new URLSearchParams(href(p).split('?')[1]);
-  const defaults = new URLSearchParams();
+  const filters = new URLSearchParams();
   for (const key of [...FILTERS, 'badge']) {
     const value = query.get(key);
-    if (value) defaults.set(key, value);
+    if (value) filters.set(key, value);
   }
-  return set(DEFAULTS_KEY, defaults.toString(), store);
+  return filters.toString();
+}
+
+export function saveDefaultFilters(p: Params, store: Store | null = localStore()): boolean {
+  return set(DEFAULTS_KEY, filterQuery(p), store);
+}
+
+/** The saved filter as it applies on `p`'s tab and split: values that side does not offer drop out. */
+export function savedFilterQuery(p: Params, saved: string | null): string {
+  if (saved === null) return '';
+  const raw = Object.fromEntries(new URLSearchParams(saved));
+  return filterQuery(parseParams({ ...raw, tab: p.tab, basis: p.basis ?? undefined }));
+}
+
+export interface MyFilter {
+  label: 'my filter' | 'save filter';
+  /** Only a toggle once there is something saved to toggle. */
+  pressed?: boolean;
+  action: 'setup' | 'save' | 'apply' | 'clear' | 'none';
+}
+
+/**
+ * The one filter button. `saved` and `live` are `filterQuery` strings ('' = no filters): `live` is
+ * what the form shows, which runs ahead of the URL until the debounce submits. `setup` means
+ * "my filter" was clicked with nothing saved yet. `engaged` means the saved filter was on and has
+ * not been turned off since, which is what separates "you changed my filter" (offer to save)
+ * from "some other filter is on" (offer to apply).
+ */
+export function myFilter({ saved, live, engaged, setup }: { saved: string; live: string; engaged: boolean; setup: boolean }): MyFilter {
+  if (!saved) return setup ? { label: 'save filter', action: live ? 'save' : 'none' } : { label: 'my filter', action: 'setup' };
+  if (live === saved) return { label: 'my filter', pressed: true, action: 'clear' };
+  if (engaged && live) return { label: 'save filter', action: 'save' };
+  return { label: 'my filter', pressed: false, action: 'apply' };
+}
+
+/** Engaged once the saved filter is showing; disengaged once nothing is selected. */
+export function stillEngaged(engaged: boolean, saved: string, live: string): boolean {
+  return saved !== '' && live !== '' && (engaged || live === saved);
 }
 
 /** Defaults only fill a bare landing URL; an explicit filter set always wins. */

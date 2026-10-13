@@ -4,10 +4,13 @@ import {
   activeOwner,
   appliedKey,
   defaultFiltersHref,
+  myFilter,
   readApplied,
   readDefaultFilters,
   saveApplied,
   saveDefaultFilters,
+  savedFilterQuery,
+  stillEngaged,
 } from './board-storage';
 
 function store() {
@@ -94,5 +97,37 @@ describe('personal board state', () => {
     const storage = store();
     expect(saveDefaultFilters(parseParams({}), storage)).toBe(true);
     expect(readDefaultFilters(storage)).toBe('');
+  });
+
+  it('runs the one filter button: setup, save, toggle off, toggle on, change, save', () => {
+    const paid = 'pay=paid';
+    const both = 'pay=paid&level=entry';
+    // Nothing saved: one click to start, a second to save what is chosen, and nothing to save is inert.
+    expect(myFilter({ saved: '', live: '', engaged: false, setup: false })).toEqual({ label: 'my filter', action: 'setup' });
+    expect(myFilter({ saved: '', live: '', engaged: false, setup: true })).toEqual({ label: 'save filter', action: 'none' });
+    expect(myFilter({ saved: '', live: paid, engaged: false, setup: true })).toEqual({ label: 'save filter', action: 'save' });
+    // Saved and showing: pressed, and a click turns it off.
+    expect(myFilter({ saved: paid, live: paid, engaged: true, setup: false })).toEqual({ label: 'my filter', pressed: true, action: 'clear' });
+    // Off, or another filter that never came from it: a click applies it.
+    expect(myFilter({ saved: paid, live: '', engaged: false, setup: false })).toEqual({ label: 'my filter', pressed: false, action: 'apply' });
+    expect(myFilter({ saved: paid, live: both, engaged: false, setup: false }).action).toBe('apply');
+    // Changed while on: offer to save the change.
+    expect(myFilter({ saved: paid, live: both, engaged: true, setup: false })).toEqual({ label: 'save filter', action: 'save' });
+
+    expect(stillEngaged(false, paid, paid)).toBe(true);
+    expect(stillEngaged(true, paid, both)).toBe(true);
+    expect(stillEngaged(false, paid, both)).toBe(false);
+    expect(stillEngaged(true, paid, '')).toBe(false);
+    expect(stillEngaged(true, '', both)).toBe(false);
+  });
+
+  it('compares the saved filter as it applies on the current tab', () => {
+    const storage = store();
+    saveDefaultFilters(parseParams({ tab: 'engineering', level: 'junior,entry', season: 'summer', job: '4', page: '2' }), storage);
+    const saved = readDefaultFilters(storage);
+    expect(savedFilterQuery(parseParams({ tab: 'engineering' }), saved)).toBe('season=summer&level=entry%2Cjunior');
+    // Design has no season vocabulary, so only the level survives there.
+    expect(savedFilterQuery(parseParams({}), saved)).toBe('level=entry%2Cjunior');
+    expect(savedFilterQuery(parseParams({}), null)).toBe('');
   });
 });

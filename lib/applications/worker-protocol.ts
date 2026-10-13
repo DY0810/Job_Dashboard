@@ -37,7 +37,13 @@ export const RevocationSchema = z.strictObject({ id: uuid, revision, revokedAt: 
 export const WorkerSummarySchema = z.strictObject({
   id: uuid, label: name, revision, workerVersion: z.string(), capabilities,
   createdAt: timestamp, lastSeenAt: timestamp.nullable(), revokedAt: timestamp.nullable(), online: z.boolean(),
+  dailyStartMinute: z.number().int().min(0).max(1439).nullable(), timeZone: z.string().nullable(),
 });
+const timeZone = z.string().min(1).max(64).refine((value) => {
+  try { new Intl.DateTimeFormat(undefined, { timeZone: value }); return true; } catch { return false; }
+});
+export const WorkerScheduleSchema = z.strictObject({ ...command, dailyStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable(), timeZone });
+export const WorkerScheduleAckSchema = z.strictObject({ id: uuid, revision, dailyStartMinute: z.number().int().min(0).max(1439).nullable(), timeZone: z.string().nullable() });
 export const PairingSummarySchema = z.strictObject({
   id: uuid, label: name, revision, expiresAt: timestamp, consumedAt: timestamp.nullable(), revokedAt: timestamp.nullable(),
 });
@@ -81,6 +87,7 @@ export const ApplicationSummarySchema = z.strictObject({
   company: z.string().trim().min(1).max(200).nullable().optional(), role: z.string().trim().min(1).max(300).nullable().optional(),
   receiptId: z.string().regex(/^[A-Za-z0-9_-]{1,120}$/).nullable().optional(), submittedAt: timestamp.nullable().optional(),
   provider: z.string().trim().min(1).max(100).nullable().optional(), costUsd: z.number().finite().nonnegative().nullable().optional(),
+  createdAt: timestamp, hiddenAt: timestamp.nullable(),
 });
 export const RunListSchema = z.strictObject({
   ownerId: z.string(), runs: z.array(RunSchema), applications: z.array(ApplicationSummarySchema),
@@ -139,6 +146,8 @@ export type PairRequest = z.infer<typeof PairRequestSchema>;
 export type PairResponse = z.infer<typeof PairResponseSchema>;
 export type RevisionCommand = z.infer<typeof RevisionCommandSchema>;
 export type Revocation = z.infer<typeof RevocationSchema>;
+export type WorkerSchedule = z.infer<typeof WorkerScheduleSchema>;
+export type WorkerScheduleAck = z.infer<typeof WorkerScheduleAckSchema>;
 export type WorkerSummary = z.infer<typeof WorkerSummarySchema>;
 export type PairingSummary = z.infer<typeof PairingSummarySchema>;
 export type WorkerList = z.infer<typeof WorkerListSchema>;

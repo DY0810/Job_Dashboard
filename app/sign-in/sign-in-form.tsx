@@ -65,7 +65,7 @@ export function SignInForm() {
           <div className="flex flex-wrap gap-3">
             <Link href="/" className="chip">Jobs</Link>
             <Link href="/profile" prefetch={false} className="chip">Profile</Link>
-            <Link href="/settings" prefetch={false} className="chip">Settings</Link>
+            <Link href="/applications?settings=1" prefetch={false} className="chip">Settings</Link>
             <button className="chip" type="button" disabled={busy} onClick={lock}>Lock</button>
           </div>
         </div>

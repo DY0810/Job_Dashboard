@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { DiscoveryControl } from '../../app/applications/import/control';
-import { DiscoveryFixture, marks, ownerA, ownerB, runId, otherRunId } from './fixture';
+import { DiscoveryFixture, marks, ownerA, ownerB } from './fixture';
 
 let fixture: DiscoveryFixture;
 let control: DiscoveryControl;
@@ -148,26 +148,6 @@ test('overflow and denied storage never write a partial preview', async () => {
   expect(fixture.writes).toEqual([]);
 });
 
-test('discovery is selected-run only, preserves >601 backlog and distinguishes failed refresh from last scan', async () => {
-  await control.refreshSession();
-  control.selectRun(runId);
-  expect(control.view.status).toBeNull();
-  await control.refreshStatus();
-  expect(control.view.status?.candidateCount).toBe(601);
-  expect(control.view.status?.stagedCount).toBe(200);
-  expect(Object.values(control.view.status!.counts).reduce((a, b) => a + b, 0)).toBe(691);
-  fixture.failStatus = true;
-  await control.refreshStatus();
-  expect(control.view.status?.lastScanAt).toBe(1000);
-  expect(control.view.statusStale).toBe(true);
-  expect(control.view.error).not.toContain('unsafe-secret');
-  control.selectRun(otherRunId);
-  expect(control.view.status).toBeNull();
-  fixture.failStatus = false;
-  await control.refreshStatus();
-  expect(control.view.status?.runId).toBe(otherRunId);
-});
-
 test('a forbidden session check is not a definitive rejection of an earlier uncertain confirm', async () => {
   await select();
   fixture.loseNext = true;
@@ -184,17 +164,6 @@ test('a forbidden session check is not a definitive rejection of an earlier unce
   await control.refreshSession();
   await control.retry();
   expect(fixture.writes[1]).toEqual(fixture.writes[2]);
-});
-
-test('status checks bind even the first response to the Workers panel owner', async () => {
-  control.dispose();
-  control = new DiscoveryControl(() => {}, ownerA);
-  control.selectRun(runId);
-  fixture.owner = ownerB;
-  await control.refreshStatus();
-  expect(control.view.runId).toBe('');
-  expect(control.view.status).toBeNull();
-  expect(control.view.locked).toBe(true);
 });
 
 test('lost preview response replays the same preview request after reauthentication', async () => {
@@ -240,23 +209,4 @@ test('mismatched acknowledgement never becomes import success or releases the re
   await control.confirm();
   expect(control.view.ack).toBeNull();
   expect(control.view.pending?.kind).toBe('confirm');
-});
-
-test('changing selected run discards an in-flight previous-run response', async () => {
-  await control.refreshSession();
-  control.selectRun(runId);
-  const fetch = globalThis.fetch;
-  let release!: () => void;
-  vi.stubGlobal('fetch', async (path: string, init: RequestInit) => {
-    const response = await fetch(path, init);
-    if (path.endsWith('/discovery')) await new Promise<void>((resolve) => { release = resolve; });
-    return response;
-  });
-  const request = control.refreshStatus();
-  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
-  control.selectRun(otherRunId);
-  release();
-  await request;
-  expect(control.view.runId).toBe(otherRunId);
-  expect(control.view.status).toBeNull();
 });

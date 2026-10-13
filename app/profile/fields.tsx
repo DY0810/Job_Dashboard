@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { X } from 'lucide-react';
 import { ProfileSections, type ProfileSection } from '@/lib/applications/profile';
+import { StatusBadge } from '../status-badge';
 import styles from './profile.module.css';
 
 export type FieldMeta = {
@@ -142,30 +143,30 @@ function FactField({ fact, meta, path, name, onChange, issues, documents }: {
   const label = labelFor(name);
   const issue = Object.entries(issues).find(([key]) => key === path || key.startsWith(`${path}.`))?.[1];
   const valueSchema = meta.properties!.value;
+  // Scope stays out of sight until validation needs it (authorization country, disclosure employer) or it is set,
+  // so it stays put mid-edit. Unset is the default scope: applicant kind, current timeframe, nothing else.
+  const scoped = Object.keys(issues).some((key) => key.startsWith(`${path}.scope`)) || Object.entries(fact.scope).some(([key, value]) =>
+    key === 'kind' ? value !== 'applicant' : key === 'timeframe' ? value !== 'current' : value !== null && value !== false);
   function changeValue(value: unknown) {
-    // Typing an answer confirms it; clearing it un-answers it. There is no separate state picker.
-    const state = value === null ? 'unknown' : 'confirmed';
-    onChange({ ...fact, value, state, confirmedAt: state === 'confirmed' ? new Date().toISOString() : null,
+    // Entering an answer confirms it; clearing it leaves the fact unanswered.
+    const state = value === null || (Array.isArray(value) && !value.length) ? 'unknown' : 'confirmed';
+    onChange({ ...fact, value: state === 'unknown' ? null : value, state, confirmedAt: state === 'confirmed' ? new Date().toISOString() : null,
       provenance: { source: 'user', sourceId: null, sourceVersion: null, excerpt: null } });
   }
   const compound = ['address', 'metric', 'gpa', 'money'].includes(meta.control ?? '');
   return <fieldset className={`${styles.field} ${compound ? styles.wide : ''}`} data-fact-path={path}>
     <legend>{label}{fact.units && <span className={styles.muted}> ({labelFor(fact.units).toLowerCase()})</span>}</legend>
-    <div className={styles.state}>
-      <NativeValue meta={valueSchema} value={fact.value} onChange={changeValue} id={id} label={label}
-        documents={documents} control={meta.control} invalid={!!issue} describedBy={issue ? `${id}-error` : undefined} />
-    </div>
+    <NativeValue meta={valueSchema} value={fact.value} onChange={changeValue} id={id} label={label}
+      documents={documents} control={meta.control} invalid={!!issue} describedBy={issue ? `${id}-error` : undefined} />
+    {fact.state === 'candidate' && <div className={styles.row}>
+      <StatusBadge tone="queued" label="candidate" />
+      <button className={styles.button} type="button" aria-label={`Confirm ${label}`}
+        onClick={() => onChange({ ...fact, state: 'confirmed', confirmedAt: new Date().toISOString() })}>Confirm</button>
+    </div>}
+    {(fact.state === 'declined' || fact.state === 'not_applicable') && <span className={styles.muted}>{labelFor(fact.state)}</span>}
     {issue && <p id={`${id}-error`} className={styles.error} role="alert">{issue}</p>}
-    <details className={styles.meta}>
-      <summary>Details</summary>
-      <p>Source: {fact.provenance.source} / v{fact.version}</p>
-      <p>Fact ID: {fact.id}</p>
-      {fact.confirmedAt && <p>Confirmed: <time dateTime={fact.confirmedAt}>{new Date(fact.confirmedAt).toLocaleString()}</time></p>}
-      {fact.provenance.sourceId && <p>Source: {fact.provenance.sourceId} / v{fact.provenance.sourceVersion}</p>}
-      {fact.provenance.excerpt && <p>{fact.provenance.excerpt}</p>}
-      <NativeValue meta={meta.properties!.scope} value={fact.scope} id={`${id}-scope`} label={`${label} scope`}
-        onChange={(scope) => onChange({ ...fact, scope })} />
-    </details>
+    {scoped && <NativeValue meta={meta.properties!.scope} value={fact.scope} id={`${id}-scope`} label={`${label} scope`}
+      onChange={(scope) => onChange({ ...fact, scope })} />}
   </fieldset>;
 }
 

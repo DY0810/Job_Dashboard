@@ -53,7 +53,7 @@ export function ApplicationQuestions({ applicationId, view, control }: { applica
   const selected = view.selected && items.some((item) => item.question!.id === view.selected!.id) ? view.selected : null;
   if (selected && view.snapshot.drafts[selected.id]) return <div>
     <QuestionForm key={selected.id} question={selected} control={control} view={view} />
-    <button type="button" className={styles.button} onClick={() => control.back()}>Close question</button>
+    {items.length > 1 && <button type="button" className={styles.button} onClick={() => control.back()}>All questions</button>}
   </div>;
   return <ul className={styles.list} aria-label="Questions">
     {items.map((item) => <li className={styles.item} key={item.eventId}>

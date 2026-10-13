@@ -2,56 +2,36 @@
 
 import { useEffect, useState } from 'react';
 
-import { ChevronRight } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
 
 const KEY = 'workie-theme';
 
 /**
- * The manual override. Both themes are tuned equally and the tool is used at all hours, so
- * neither is "the real one" — the default follows the system and this only overrules it.
+ * One click flips light and dark. Both themes are tuned equally; until it is pressed the
+ * system decides (the boot script in layout.tsx applies a stored choice before paint).
  *
- * A native <select> because the platform already handles the keyboard, the label and the
- * popup. First render is always `system` on both sides, and the effect corrects it, so the
- * stored choice cannot cause a hydration mismatch (the boot script in layout.tsx has
- * already applied it to the document by then).
+ * First render is always the light icon on both sides and the effect corrects it, so the
+ * stored choice cannot cause a hydration mismatch.
  */
 export function ThemeToggle() {
-  const [theme, setTheme] = useState('system');
+  const [dark, setDark] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(KEY);
-    if (stored === 'light' || stored === 'dark') setTheme(stored);
+    setDark(stored === 'dark' || stored === 'light' ? stored === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches);
   }, []);
 
-  function apply(next: string) {
-    setTheme(next);
-    if (next === 'system') {
-      delete document.documentElement.dataset.theme;
-      localStorage.removeItem(KEY);
-    } else {
-      document.documentElement.dataset.theme = next;
-      localStorage.setItem(KEY, next);
-    }
+  function flip() {
+    const next = dark ? 'light' : 'dark';
+    setDark(!dark);
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem(KEY, next);
   }
 
+  const label = dark ? 'Switch to light theme' : 'Switch to dark theme';
   return (
-    /* Wrapped exactly like the filter selects. globals.css writes the two select treatments
-       once "because two controls that mean the same thing should not be able to drift apart
-       visually" — and this third select had drifted: no border, no chevron, and 11px under a
-       coarse pointer, which is the iOS Safari zoom trap the other two are explicitly fixed
-       for. */
-    <span className="select-box">
-      <select
-        aria-label="Theme"
-        className="select cursor-pointer"
-        value={theme}
-        onChange={(event) => apply(event.target.value)}
-      >
-        <option value="system">system</option>
-        <option value="light">light</option>
-        <option value="dark">dark</option>
-      </select>
-      <ChevronRight size={12} strokeWidth={1.25} absoluteStrokeWidth />
-    </span>
+    <button type="button" className="chip app-icon-button" onClick={flip} aria-label={label} title={label}>
+      {dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
+    </button>
   );
 }

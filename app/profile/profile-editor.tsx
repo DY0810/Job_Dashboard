@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { History, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { PROFILE_FIELD_METADATA, PROFILE_SCHEMA_VERSION, PROFILE_SECTION_LABELS, ProfileSchema, type Profile, type ProfileResponse, type ProfileSection } from '@/lib/applications/profile';
@@ -9,7 +10,8 @@ import { completion, labelFor, SectionFields, type DocumentOption, type FieldIss
 import { privateJson, type PrivateApi } from './api';
 import DocumentsPane from './documents-pane';
 import PolicyPane from './policy-pane';
-import { importResumeCandidates } from '@/lib/applications/resume-import';
+import { Modal } from '../modal';
+import { CountBadge } from '../status-badge';
 import styles from './profile.module.css';
 
 const applicantSchema = z.object({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -17,6 +19,12 @@ const responseSchema = z.object({ ownerId: z.string().min(1), revision: z.number
 const keySchema = z.object({ ownerId: z.string().min(1), keyVersion: z.string().regex(/^[1-9]\d*$/), key: z.string() });
 const sections = Object.keys(PROFILE_SECTION_LABELS) as ProfileSection[];
 const metadata = PROFILE_FIELD_METADATA as FieldMeta;
+const POLICY = 'auto-apply-policy';
+/** `#identity`, `#auto-apply-policy`: the hash picks the one visible pane. */
+function paneFor(hash: string): string | null {
+  const key = decodeURIComponent(hash.slice(1));
+  return key === POLICY || sections.includes(key as ProfileSection) ? key : null;
+}
 type Session = {
   ownerId: string; keyVersion: string; abort: AbortController; api: PrivateApi;
   writer: RevisionWriter<Profile>; vault: DraftVault | null;
@@ -76,9 +84,37 @@ export default function ProfileEditor() {
   const [draftError, setDraftError] = useState('');
   const [recoveries, setRecoveries] = useState<Recovery[]>([]);
   const [documents, setDocuments] = useState<DocumentOption[]>([]);
-  const [resumeJson, setResumeJson] = useState('');
-  const [resumeReview, setResumeReview] = useState<{ base: string; imported: Profile } | null>(null);
-  const [resumeError, setResumeError] = useState('');
+  const [pane, setPane] = useState<string>(sections[0]);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  // Locking closes the modals, so unlocking does not bring them back.
+  if (locked && (draftsOpen || uploadOpen)) { setDraftsOpen(false); setUploadOpen(false); }
+  // Remounts the Documents section's list after an upload made from the modal.
+  const [uploads, setUploads] = useState(0);
+  const layout = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const sync = () => setPane(paneFor(location.hash) ?? sections[0]);
+    // A Next <Link> to /profile#... (Settings drawer) moves the URL with pushState, which fires neither event below.
+    const click = (event: MouseEvent) => {
+      const link = event.target instanceof Element ? event.target.closest('a') : null;
+      const key = link && !event.metaKey && !event.ctrlKey && link.pathname === '/profile' ? paneFor(link.hash) : null;
+      if (key) setPane(key);
+    };
+    sync();
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    document.addEventListener('click', click);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+      document.removeEventListener('click', click);
+    };
+  }, []);
+  useEffect(() => {
+    // Switching panes from a long one scrolled past its top would land mid-page.
+    if (layout.current && layout.current.getBoundingClientRect().top < 0) layout.current.scrollIntoView();
+  }, [pane]);
 
   useEffect(() => {
     let alive = true;
@@ -297,12 +333,36 @@ export default function ProfileEditor() {
   return <>
     <div className={styles.toolbar}><h1 className={styles.title}>Applicant profile</h1>
       {!locked && writer && <p role="status" aria-live="polite" className={styles.muted}>
-        {writer.status === 'saved' ? `Saved / revision ${snapshot?.revision}` : writer.status === 'saving' ? 'Saving...' :
-          writer.status === 'conflict' ? 'Conflict / review required' : writer.status === 'paused' ? 'Saving paused' : 'Changes pending'}
-        {session?.vault?.pending ? ' / Encrypting draft...' : ''}
+        {writer.status === 'saved' ? 'Saved' : writer.status === 'saving' ? 'Saving...' :
+          writer.status === 'conflict' ? 'Conflict, review required' : writer.status === 'paused' ? 'Saving paused' : 'Changes pending'}
+        {session?.vault?.pending ? ', encrypting draft...' : ''}
       </p>}
       {!locked && writer?.status !== 'saved' && <button className={styles.button} type="button" onClick={retry} disabled={!!Object.keys(issues).length || writer?.status === 'conflict'}>Retry save</button>}
+      {!locked && session && <div className={styles.tools}>
+        <button type="button" className={`chip ${styles.tool}`} aria-haspopup="dialog" onClick={() => setUploadOpen(true)}>
+          <Upload size={16} aria-hidden="true" />Upload new resume
+        </button>
+        <button type="button" className={`chip app-icon-button ${recoveries.length ? styles.tool : ''}`} aria-haspopup="dialog"
+          aria-label="Drafts" title="Drafts" onClick={() => setDraftsOpen(true)}>
+          <History size={16} aria-hidden="true" />{recoveries.length > 0 && <CountBadge count={recoveries.length} />}
+        </button>
+      </div>}
     </div>
+    {session && <>
+      <Modal open={draftsOpen} onClose={() => setDraftsOpen(false)} title="Drafts">
+        <p className={styles.muted}>Saved revision {snapshot?.revision}</p>
+        {recoveries.length ? recoveries.map((recovery, i) => <div className={styles.entry} key={recovery.slot}><div className={styles.row}>
+          <span>Draft {i + 1}</span><span className={styles.muted}>base revision {recovery.snapshot.revision}</span>
+          <button className={styles.button} type="button" aria-label={`Recover draft ${i + 1}`} onClick={() => {
+            void recover(recovery).catch(() => setDraftError('Could not recover draft. Unlock and retry.')).finally(() => setDraftsOpen(false));
+          }}>Recover</button>
+        </div></div>) : <p className={styles.muted}>No unsaved drafts</p>}
+      </Modal>
+      <Modal open={uploadOpen} onClose={() => { setUploadOpen(false); setUploads((n) => n + 1); }} title="Upload new resume">
+        {uploadOpen && <DocumentsPane api={session.api} ownerId={session.ownerId} signal={session.abort.signal} onDocuments={setDocuments}
+          idPrefix="resume-upload" initialKind="resume_master" />}
+      </Modal>
+    </>}
     {locked && <section className={styles.alert}>
       <p role={checking ? 'status' : 'alert'}>{checking ? 'Checking applicant session...' : error || 'Profile locked.'}</p>
       <div className={styles.row}><Link href="/sign-in" prefetch={false} target="_blank" rel="noopener noreferrer">Sign in</Link>
@@ -311,13 +371,6 @@ export default function ProfileEditor() {
     {session && profile && <div hidden={locked} key={session.ownerId}>
       {draftError && <p className={styles.alert} role="alert">{draftError}</p>}
       {writer?.error && !conflict && <p className={styles.alert} role="alert">{writer.error.message}</p>}
-      {recoveries.length > 0 && <section className={styles.alert} aria-label="Encrypted draft recovery">
-        <h2 className={styles.title}>Unsaved drafts</h2>
-        {recoveries.map((recovery, i) => <div className={styles.row} key={recovery.slot}>
-          <span>Draft {i + 1} / base revision {recovery.snapshot.revision}</span>
-          <button className={styles.button} onClick={() => { void recover(recovery).catch(() => setDraftError('Could not recover draft. Unlock and retry.')); }}>Recover draft {i + 1}</button>
-        </div>)}
-      </section>}
       {conflict && <section className={styles.alert} aria-label="Profile conflict">
         <h2 className={styles.title}>Review revision {conflict.revision}</h2>
         <p>Your draft is still editable below.</p>
@@ -330,45 +383,24 @@ export default function ProfileEditor() {
           <button className={styles.button} onClick={() => writer?.reconcile(conflict, false)}>Use server profile</button>
         </div>
       </section>}
-      <details className={styles.section} aria-label="Review resume import">
-        <summary className={styles.muted}>Import from a resume extraction</summary>
-        <p className={styles.muted}>Paste a local resume extraction in JSON. Preview every change before adding it as an unconfirmed candidate. Existing answers stay intact.</p>
-        <div className={styles.field}>
-          <label htmlFor="resume-import-json">Resume extraction JSON</label>
-          <textarea id="resume-import-json" value={resumeJson} rows={4} onChange={event => {
-            setResumeJson(event.target.value); setResumeReview(null); setResumeError('');
-          }} />
-        </div>
-        <div className={styles.row}><button className={styles.button} type="button" onClick={() => {
-          try {
-            const imported = importResumeCandidates(ProfileSchema.parse(profile), JSON.parse(resumeJson));
-            setResumeReview({ base: JSON.stringify(profile), imported }); setResumeError('');
-          } catch { setResumeError('Check the extraction JSON and its linked resume document.'); }
-        }}>Preview candidates</button></div>
-        {resumeError && <p role="alert" className={styles.alert}>{resumeError}</p>}
-        {resumeReview && <>
-          <dl>{differences(profile, resumeReview.imported).map(change => <div key={change.path}>
-            <dt>{change.path}</dt><dd>{change.server}</dd>
-          </div>)}</dl>
-          <button className={styles.button} type="button" disabled={locked || writer?.status === 'conflict' || resumeReview.base !== JSON.stringify(profile)}
-            onClick={() => { writer?.setDesired(resumeReview.imported); setResumeReview(null); setResumeJson(''); }}>
-            Add reviewed candidates
-          </button>
-        </>}
-      </details>
-      <div className={styles.layout}>
+      <div className={styles.layout} ref={layout}>
         <nav className={styles.navigation} aria-label="Profile sections">
           {sections.map((key) => {
             const count = completion(profile[key]);
-            return <a key={key} href={`#${key}`}>{PROFILE_SECTION_LABELS[key]}<span className={styles.muted}>{count.answered}/{count.total}</span></a>;
+            const flagged = Object.keys(issues).filter((path) => path === key || path.startsWith(`${key}.`)).length;
+            return <a key={key} href={`#${key}`} aria-current={pane === key || undefined}>
+              <span>{PROFILE_SECTION_LABELS[key]}</span>
+              <span className={styles.muted}>{flagged > 0 && <span className={styles.error}>{flagged} to fix </span>}{count.answered}/{count.total}</span>
+            </a>;
           })}
-          <a href="#auto-apply-policy">Auto Apply policy</a>
+          <a href={`#${POLICY}`} aria-current={pane === POLICY || undefined}>Auto Apply policy</a>
         </nav>
         <div>
-          {sections.map((key) => <section className={styles.section} id={key} key={key} aria-labelledby={`${key}-heading`}>
+          {sections.map((key) => <section className={styles.section} id={key} key={key} hidden={pane !== key} aria-labelledby={`${key}-heading`}>
             <h2 id={`${key}-heading`}>{PROFILE_SECTION_LABELS[key]}</h2>
             {key === 'documentsProvider' && <>
-              <DocumentsPane api={session.api} ownerId={session.ownerId} signal={session.abort.signal} onDocuments={setDocuments} />
+              {/* Stays mounted while hidden: document fields in other sections read its list. */}
+              <DocumentsPane key={uploads} api={session.api} ownerId={session.ownerId} signal={session.abort.signal} onDocuments={setDocuments} />
               <p className={styles.muted}>Provider connection is checked by the paired worker. Keys stay in its OS keychain.</p>
             </>}
             <SectionFields meta={metadata.properties![key]} value={profile[key]} path={[key]} issues={issues} documents={documents}
@@ -377,7 +409,7 @@ export default function ProfileEditor() {
                 if (writer?.error?.status === 400 && ProfileSchema.safeParse({ ...profile, [key]: value }).success) writer.retry();
               }} />
           </section>)}
-          <PolicyPane api={session.api} profileSaved={writer?.status === 'saved'} />
+          <div hidden={pane !== POLICY}><PolicyPane api={session.api} profileSaved={writer?.status === 'saved'} /></div>
         </div>
       </div>
     </div>}

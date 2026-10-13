@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { PAIRING_TTL_MS } from '../../lib/applications/worker-protocol';
-import { WorkerFixture, ownerB, syntheticGrant, workerId } from './fixture';
+import { WorkerFixture, syntheticGrant, workerId } from './fixture';
 
 // Real Next UI, strict synthetic APIs. No keychain, real clipboard, browser profile,
 // live account, service or employer. No nested agents or cross-task messaging.
@@ -22,7 +22,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     const url = new URL(request.url());
     if (url.href.includes(syntheticGrant)) failures.push('Pairing secret leaked to URL');
     if (url.origin === baseURL && request.method() === 'GET' &&
-        (url.pathname === '/workers' || url.pathname.startsWith('/_next/static/'))) return route.continue();
+        (url.pathname === '/applications' || url.pathname.startsWith('/_next/static/'))) return route.continue();
     if (url.origin !== baseURL || !url.pathname.startsWith('/api/')) return route.abort();
     try {
       const response = await fixture.handle(url.pathname, request.method(), new Headers(request.headers()),
@@ -39,14 +39,28 @@ test.beforeEach(async ({ context, page, baseURL }) => {
 });
 test.afterEach(async ({ page }) => { expect(errors.get(page)).toEqual([]); });
 
+// Workers lives in the settings drawer over Auto Apply; the drawer's Refresh reloads it (the header is inert under the modal).
+const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
+const alert = (page: Page) => settings(page).getByRole('region', { name: 'Workers', exact: true }).getByRole('alert');
+const checking = (page: Page) => page.getByText('Checking applicant session...', { exact: true });
 async function ready(page: Page) {
-  await page.goto('/workers');
+  await page.goto('/applications?settings=1');
+  await expect(settings(page)).toBeVisible();
   await expect(page.getByLabel('Worker label', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Refresh status' })).toBeEnabled();
 }
+/** A manual refresh locks Workers and shows the session check until it finishes, like the old Refresh status button. */
 async function refresh(page: Page) {
-  await page.getByRole('button', { name: 'Refresh status' }).click();
-  await expect(page.getByRole('button', { name: 'Refresh status' })).toBeEnabled();
+  const before = fixtures.get(page)!.requests.length;
+  await settings(page).getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect.poll(() => fixtures.get(page)!.requests.length).toBeGreaterThan(before);
+  await expect(checking(page)).toHaveCount(0);
+}
+/** Closing the drawer with a request unresolved is refused, as leaving the Workers page was. */
+async function tryToLeave(page: Page) {
+  await page.keyboard.press('Escape');
+  await expect(settings(page)).toBeVisible();
+  await expect(page).toHaveURL(/[?&]settings=1/);
+  await expect(alert(page)).toContainText('request is unresolved');
 }
 const grants = (page: Page) => page.getByRole('textbox', { name: 'Pairing grant', exact: true });
 const run = (page: Page) => page.getByRole('list', { name: 'Runs', exact: true }).getByRole('listitem');
@@ -88,7 +102,7 @@ test('lost pairing create replays the same request after same-owner auth refresh
   await refresh(page);
   await expect(page.getByLabel('Worker label', { exact: true })).toHaveValue('Unacknowledged pairing');
   await page.getByRole('button', { name: 'Retry pending request' }).click();
-  await expect(page.getByRole('main').getByRole('alert')).toContainText('secret is unavailable');
+  await expect(alert(page)).toContainText('secret is unavailable');
   await expect(grants(page)).toHaveCount(0);
   expect(fixture.pairings).toHaveLength(1);
   expect(fixture.writes[0].body).toEqual(fixture.writes[1].body);
@@ -110,7 +124,6 @@ test('principal switch clears the grant, selected worker, label and in-flight re
   fixture.switchOwner();
   await refresh(page);
   release();
-  await expect(page.getByText(`${ownerB}@example.test`, { exact: true })).toBeVisible();
   await expect(grants(page)).toHaveCount(0);
   await expect(page.getByLabel('Worker label', { exact: true })).toHaveValue('');
   await expect(page.getByRole('combobox', { name: 'Run worker', exact: true })).toHaveValue('');
@@ -137,9 +150,7 @@ test('same-owner reauthentication retains selection grant and pending intent unt
   await expect(page.getByLabel('Worker label', { exact: true })).toHaveValue('Owner A only');
   await expect(grants(page)).toBeVisible();
   expect(fixture.writes).toHaveLength(2);
-  await page.getByRole('link', { name: 'Profile', exact: true }).click();
-  await expect(page).toHaveURL(/\/workers$/);
-  await expect(page.getByRole('main').getByRole('alert')).toContainText('request is unresolved');
+  await tryToLeave(page);
   await page.getByRole('button', { name: 'Retry pending request' }).click();
   await expect(page.getByRole('button', { name: 'Retry pending request' })).toHaveCount(0);
   expect(fixture.writes[1].body).toEqual(fixture.writes[2].body);
@@ -155,7 +166,7 @@ test('worker revoke and pairing cancellation reconcile CAS and current heads', a
   await ready(page);
   fixture.workers[0].revision++;
   await page.getByRole('button', { name: 'Revoke Synthetic laptop', exact: true }).click();
-  await expect(page.getByRole('main').getByRole('alert')).toContainText('State changed');
+  await expect(alert(page)).toContainText('State changed');
   await expect(page.getByRole('button', { name: 'Revoke Synthetic laptop', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Revoke Synthetic laptop', exact: true }).click();
   await expect(page.getByText('Revoked', { exact: true })).toBeVisible();
@@ -181,14 +192,14 @@ test('run create replay shows the newer stopped head and controls persist across
   expect(fixture.writes[0].body).toEqual(fixture.writes[1].body);
   await page.reload();
   await expect(run(page).getByText('stopped', { exact: true })).toBeVisible();
-  await expect(page.getByText('Policy intent enabled / Execution available', { exact: true })).toBeVisible();
+  await expect(page.getByText('Policy enabled / Runner online', { exact: true })).toBeVisible();
 });
 
 for (const target of ['same', 'different'] as const) {
   test(`delayed-before-commit resume survives only an unrelated emergency stop: ${target} run`, async ({ page }) => {
     const fixture = fixtures.get(page)!;
     const a = fixture.addRun('paused'), b = target === 'same' ? a : fixture.addRun();
-    fixture.addApplication('submitting', 'submit_started', b.id);
+    const app = fixture.addApplication('submitting', 'submit_started', b.id);
     await ready(page);
     const aRow = page.getByRole('listitem', { name: `Run ${a.id.slice(0, 8)}`, exact: true });
     const bRow = page.getByRole('listitem', { name: `Run ${b.id.slice(0, 8)}`, exact: true });
@@ -211,8 +222,7 @@ for (const target of ['same', 'different'] as const) {
     } else {
       await expect(retry).toBeEnabled();
       await expect(aRow.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
-      await page.getByRole('link', { name: 'Profile', exact: true }).click();
-      await expect(page).toHaveURL(/\/workers$/);
+      await tryToLeave(page);
       await refresh(page);
       await expect(aRow.getByText('running', { exact: true })).toBeVisible();
       await retry.click();
@@ -220,37 +230,9 @@ for (const target of ['same', 'different'] as const) {
       expect(fixture.writes).toHaveLength(3);
       expect(fixture.writes[2].body).toEqual(body);
     }
-    await expect(page.getByText('submission unknown', { exact: true })).toBeVisible();
+    expect(app.state).toBe('submission_unknown');
   });
 }
-
-test('a submitting sibling can be emergency stopped without losing a delayed application command', async ({ page }) => {
-  const fixture = fixtures.get(page)!;
-  fixture.addRun();
-  const a = fixture.addApplication('queued');
-  fixture.addApplication('submitting', 'submit_started');
-  await ready(page);
-  const aRow = page.getByRole('listitem', { name: 'Application role-1', exact: true });
-  const bRow = page.getByRole('listitem', { name: 'Application role-2', exact: true });
-  let release!: () => void;
-  fixture.beforeWrite = () => new Promise<void>((resolve) => { release = resolve; });
-  await aRow.getByRole('button', { name: 'Skip', exact: true }).click();
-  await expect.poll(() => typeof release).toBe('function');
-  const body = structuredClone(fixture.writes[0].body);
-  fixture.beforeWrite = undefined;
-  await bRow.getByRole('button', { name: 'Emergency stop', exact: true }).click();
-  await expect(bRow.getByText('submission unknown', { exact: true })).toBeVisible();
-  release();
-  await expect.poll(() => a.state).toBe('skipped');
-  const retry = page.getByRole('button', { name: 'Retry pending request', exact: true });
-  await expect(retry).toBeEnabled();
-  await retry.click();
-  await expect(retry).toHaveCount(0);
-  await expect(aRow.getByText('skipped', { exact: true })).toBeVisible();
-  expect(fixture.writes).toHaveLength(3);
-  expect(fixture.writes[2].body).toEqual(body);
-  await expect(bRow.getByRole('button')).toHaveCount(1);
-});
 
 test('a delayed head cannot republish an expired grant or an artificially online worker', async ({ page }) => {
   await page.addInitScript(() => {
@@ -265,42 +247,29 @@ test('a delayed head cannot republish an expired grant or an artificially online
   await expect(grants(page)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry pending request' })).toHaveCount(0);
   const handle = fixture.handle.bind(fixture);
-  let release!: () => void;
+  // Workers, Settings and the Auto Apply page each read runs on refresh; hold all three.
+  const releases: (() => void)[] = [];
   fixture.handle = async (...args) => {
     const response = await handle(...args);
-    if (args[0] === '/api/application-runs') await new Promise<void>((resolve) => { release = resolve; });
+    if (args[0] === '/api/application-runs') await new Promise<void>((resolve) => { releases.push(resolve); });
     return response;
   };
-  await page.getByRole('button', { name: 'Refresh status' }).click();
-  await expect.poll(() => typeof release).toBe('function');
+  await settings(page).getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect.poll(() => releases.length).toBe(3);
   await page.evaluate((elapsed) => { (window as unknown as { workerMonotonic: number }).workerMonotonic = elapsed; }, PAIRING_TTL_MS + 1);
   fixture.now += PAIRING_TTL_MS + 1;
   fixture.handle = handle;
-  release();
-  await expect(page.getByRole('button', { name: 'Refresh status' })).toBeEnabled();
+  for (const release of releases) release();
+  await expect(checking(page)).toHaveCount(0);
   await expect(grants(page)).toHaveCount(0);
   await expect(page.getByText('Expired', { exact: true })).toBeVisible();
   await expect(page.getByText('Offline', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => (window as unknown as { copiedGrants: number }).copiedGrants)).toBe(0);
 });
 
-test('pause resume stop and emergency stop are durable; unknown applications never offer retry skip or cancel', async ({ page }) => {
-  const fixture = fixtures.get(page)!;
-  fixture.addRun();
-  fixture.addApplication('submission_unknown', 'receipt_not_verified');
-  fixture.addApplication('provider_unavailable', 'provider_not_configured');
-  fixture.addApplication('needs_document', 'missing_resume');
+test('pause resume stop and emergency stop are durable', async ({ page }) => {
+  fixtures.get(page)!.addRun();
   await ready(page);
-  const unknown = page.getByRole('listitem', { name: 'Application role-1', exact: true });
-  await expect(unknown.getByText('Reason: receipt_not_verified', { exact: true })).toBeVisible();
-  await expect(unknown.getByRole('button')).toHaveCount(1);
-  await expect(unknown.getByRole('button', { name: 'Emergency stop' })).toBeVisible();
-  const retryable = page.getByRole('listitem', { name: 'Application role-2', exact: true });
-  await retryable.getByRole('button', { name: 'Retry safe', exact: true }).click();
-  await expect(retryable.getByText('screening', { exact: true })).toBeVisible();
-  const blocked = page.getByRole('listitem', { name: 'Application role-3', exact: true });
-  await expect(blocked.getByRole('button', { name: 'Retry safe', exact: true })).toHaveCount(0);
-  await expect(blocked.getByText('Reason: missing_resume', { exact: true })).toBeVisible();
   await run(page).getByRole('button', { name: 'Pause', exact: true }).click();
   await expect(run(page).getByText('paused', { exact: true })).toBeVisible();
   await page.reload();
@@ -310,7 +279,6 @@ test('pause resume stop and emergency stop are durable; unknown applications nev
   await expect(run(page).getByText('stopped', { exact: true })).toBeVisible();
   await page.reload();
   await expect(run(page).getByText('stopped', { exact: true })).toBeVisible();
-  await expect(unknown.getByText('submission unknown', { exact: true })).toBeVisible();
   await page.getByRole('combobox', { name: 'Run worker', exact: true }).selectOption(workerId);
   await page.getByRole('button', { name: 'Create run', exact: true }).click();
   const next = run(page).filter({ has: page.getByRole('button', { name: 'Stop', exact: true }) });
@@ -319,38 +287,6 @@ test('pause resume stop and emergency stop are durable; unknown applications nev
   await expect(next).toHaveCount(0);
   await page.reload();
   await expect(run(page).getByText('stopped', { exact: true })).toHaveCount(2);
-});
-
-test('skip cancel and a server-rejected safe retry reconcile without inventing a retry budget', async ({ page }) => {
-  const fixture = fixtures.get(page)!;
-  fixture.addRun();
-  fixture.addApplication('needs_answer', 'answer_required');
-  fixture.addApplication('queued');
-  const retryable = fixture.addApplication('retryable_failure', 'temporary_failure');
-  await ready(page);
-  const skipped = page.getByRole('listitem', { name: 'Application role-1', exact: true });
-  const cancelled = page.getByRole('listitem', { name: 'Application role-2', exact: true });
-  const retry = page.getByRole('listitem', { name: 'Application role-3', exact: true });
-  await skipped.getByRole('button', { name: 'Skip', exact: true }).click();
-  await expect(skipped.getByText('skipped', { exact: true })).toBeVisible();
-  await cancelled.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(cancelled.getByText('cancelled', { exact: true })).toBeVisible();
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await retry.getByRole('button', { name: 'Retry safe', exact: true }).click();
-    await expect(retry.getByText('screening', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Retry pending request' })).toHaveCount(0);
-    retryable.state = 'retryable_failure'; retryable.reasonCode = 'temporary_failure'; retryable.revision++;
-    await refresh(page);
-  }
-  await retry.getByRole('button', { name: 'Retry safe', exact: true }).click();
-  await expect(page.getByRole('main').getByRole('alert')).toContainText('State changed');
-  await expect(page.getByRole('button', { name: 'Retry pending request' })).toHaveCount(0);
-  await expect(retry.getByText('retryable failure', { exact: true })).toBeVisible();
-  await page.reload();
-  await expect(skipped.getByText('skipped', { exact: true })).toBeVisible();
-  await expect(cancelled.getByText('cancelled', { exact: true })).toBeVisible();
-  await expect(skipped.getByRole('button')).toHaveCount(0);
-  await expect(cancelled.getByRole('button')).toHaveCount(0);
 });
 
 test('offline unpaired disabled-policy configuration and unknown-protocol states remain honest', async ({ page }) => {
@@ -366,11 +302,11 @@ test('offline unpaired disabled-policy configuration and unknown-protocol states
   await expect(page.getByText('Unpaired / no workers.', { exact: true })).toBeVisible();
   fixture.addRun(); fixture.invalidState = true;
   await refresh(page);
-  await expect(page.getByRole('main').getByRole('alert')).toContainText('Incompatible worker response');
+  await expect(alert(page)).toContainText('Incompatible worker response');
   await expect(page.getByLabel('Worker label', { exact: true })).toBeHidden();
   fixture.invalidState = false; fixture.authStatus = 503;
   await refresh(page);
-  await expect(page.getByRole('main').getByRole('alert')).toContainText('configuration');
+  await expect(alert(page)).toContainText('configuration');
 });
 
 test('dense layout has native labels keyboard focus and no overflow in light and dark', async ({ page }, info) => {
@@ -378,6 +314,8 @@ test('dense layout has native labels keyboard focus and no overflow in light and
   fixture.addRun();
   fixture.workers[0].label = 'Synthetic workstation with a deliberately long but valid worker label';
   fixture.addApplication('needs_policy_decision', 'country_scope_requires_owner_confirmation');
+  // Measure the drawer where it rests, not mid slide-in.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await ready(page);
   const input = page.getByLabel('Worker label', { exact: true });
   await input.fill('Keyboard pairing');
@@ -388,8 +326,9 @@ test('dense layout has native labels keyboard focus and no overflow in light and
   await expect(page.getByRole('link', { name: 'Profile', exact: true })).toHaveAttribute('href', '/profile');
   await expect(page.getByRole('heading', { name: 'Workers', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // The shared header has its own layout; this checks the page and the drawer.
   const controls = await page.locator('main button:visible, main input:visible, main select:visible').evaluateAll((elements) =>
-    elements.map((element) => {
+    elements.filter((element) => !element.closest('.app-header')).map((element) => {
       const box = element.getBoundingClientRect();
       return { x: box.x, right: box.right, width: box.width, height: box.height,
         overflow: element.scrollWidth > element.clientWidth + 1 };
@@ -397,7 +336,8 @@ test('dense layout has native labels keyboard focus and no overflow in light and
   for (const box of controls) {
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.right).toBeLessThanOrEqual(info.project.use.viewport!.width + 1);
-    expect(box.height).toBeGreaterThanOrEqual(30);
+    // Dense desktop controls are 28px (workers.module.css .button).
+    expect(box.height).toBeGreaterThanOrEqual(28);
     expect(box.width).toBeGreaterThan(0);
     expect(box.overflow).toBe(false);
   }

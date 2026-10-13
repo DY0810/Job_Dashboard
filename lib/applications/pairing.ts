@@ -5,9 +5,9 @@ import type { PrivateDb } from '../private-db/index.ts';
 import { workerPairings, workers } from '../private-db/schema.ts';
 import { hashValue } from './stores.ts';
 import {
-  PairingCreateSchema, PairRequestSchema, RevisionCommandSchema, PAIRING_TTL_MS, HEARTBEAT_MS,
+  PairingCreateSchema, PairRequestSchema, RevisionCommandSchema, WorkerScheduleSchema, PAIRING_TTL_MS, HEARTBEAT_MS,
   type PairingCreate, type PairingGrant, type PairRequest, type PairResponse, type RevisionCommand,
-  type WorkerList, type Revocation,
+  type WorkerList, type Revocation, type WorkerSchedule, type WorkerScheduleAck,
 } from './worker-protocol.ts';
 import {
   workerTransaction, credentialBinding, currentWorker, invalidateWorker, invalidatePairing, nowAt, secretHash, one, fail,
@@ -94,6 +94,7 @@ export async function listWorkers(db: PrivateDb, ownerId: string, options: Worke
         id: w.id, label: w.label, revision: w.revision, workerVersion: w.workerVersion, capabilities: w.capabilities,
         createdAt: w.createdAt, lastSeenAt: w.lastSeenAt, revokedAt: w.revokedAt,
         online: w.revokedAt === null && w.lastSeenAt !== null && now >= w.lastSeenAt && now - w.lastSeenAt < HEARTBEAT_MS * 3,
+        dailyStartMinute: w.dailyStartMinute, timeZone: w.timeZone,
       })),
       pairings: pairings.map(({ id, label, revision, expiresAt, consumedAt, revokedAt }) =>
         ({ id, label, revision, expiresAt, consumedAt, revokedAt })),
@@ -114,6 +115,29 @@ export async function revokeWorker(db: PrivateDb, ownerId: string, id: string, i
     await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
     return acknowledgement;
   });
+}
+/** Sets or clears the worker's daily start; its next poll after that time starts a run (see pollWorker). */
+export async function scheduleWorker(db: PrivateDb, ownerId: string, id: string, input: WorkerSchedule, options: WorkerOptions = {}): Promise<WorkerScheduleAck> {
+  const command = WorkerScheduleSchema.parse(input), scope = `worker-schedule:${id}`;
+  const result = await workerTransaction(db, async (tx) => {
+    const replay = await replayCommand<WorkerScheduleAck>(tx, ownerId, scope, command);
+    if (replay) return replay;
+    const [row] = await tx.select().from(workers).where(and(eq(workers.ownerId, ownerId), eq(workers.id, id)));
+    if (!row) fail(404, 'NOT_FOUND', 'Worker not found.');
+    if (row.revision !== command.expectedRevision) fail();
+    if (!await currentWorker(tx, row, options)) return new WorkerError(403, 'FORBIDDEN', 'Worker is revoked.');
+    const [hours, minutes] = command.dailyStart?.split(':').map(Number) ?? [];
+    const dailyStartMinute = command.dailyStart === null ? null : hours * 60 + minutes;
+    const now = nowAt(options);
+    const updated = one(await tx.update(workers).set({
+      dailyStartMinute, timeZone: dailyStartMinute === null ? null : command.timeZone, dailyStartUpdatedAt: now, revision: row.revision + 1,
+    }).where(and(eq(workers.id, id), eq(workers.ownerId, ownerId), eq(workers.revision, row.revision))).returning());
+    const acknowledgement = { id, revision: updated.revision, dailyStartMinute: updated.dailyStartMinute, timeZone: updated.timeZone };
+    await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
+    return acknowledgement;
+  });
+  if (result instanceof WorkerError) throw result;
+  return result;
 }
 export async function revokePairing(db: PrivateDb, ownerId: string, id: string, input: RevisionCommand, options: WorkerOptions = {}): Promise<Revocation> {
   const command = RevisionCommandSchema.parse(input), scope = `pairing:${id}`;

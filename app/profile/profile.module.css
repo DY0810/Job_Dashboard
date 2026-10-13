@@ -1,7 +1,5 @@
 .page { min-height: 100dvh; padding-bottom: 56px; letter-spacing: 0; }
-.header, .toolbar, .row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-.header { border-bottom: 1px solid var(--rule); padding: 10px 0; }
-.header nav { display: flex; gap: 18px; font-size: 12px; }
+.toolbar, .row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .title { font-size: 26px; font-weight: 600; letter-spacing: -.04em; margin: 0; }
 .toolbar { padding: 16px 0; min-height: 64px; }
 .toolbar p { margin: 0; }
@@ -9,11 +7,12 @@
 .layout { display: grid; grid-template-columns: 205px minmax(0, 1fr); gap: 28px; max-width: 1400px; margin: auto; }
 .navigation { position: sticky; top: 12px; align-self: start; display: grid; gap: 2px; }
 .navigation a { display: flex; justify-content: space-between; gap: 8px; padding: 9px 6px; border-bottom: 1px solid var(--rule); line-height: 1.4; }
-.navigation a:hover { background: var(--surface); }
+.navigation a:hover { background: color-mix(in oklch, var(--surface) 55%, transparent); }
+.navigation a[aria-current="true"] { background: var(--surface); font-weight: 600; }
+.navigation a > span:last-child { white-space: nowrap; }
+.tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.toolbar button.tool { width: auto; min-height: 28px; padding: 0 8px; gap: 6px; }
 .section { padding: 16px 0 24px; border-top: 1px solid var(--rule); min-width: 0; scroll-margin-top: 12px; }
-.section > summary { cursor: pointer; }
-details.section { display: grid; gap: 8px; }
-details.section > p { margin: 0; }
 .section h2 { font-size: 18px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 16px; }
 .section h3 { font-size: 14px; font-weight: 500; margin: 0; }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; min-width: 0; }
@@ -28,8 +27,6 @@ details.section > p { margin: 0; }
 .field :focus-visible, .control:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .field select option { background: var(--canvas); }
 .field input[type="checkbox"], .field input[type="radio"] { width: 16px; height: 16px; accent-color: var(--fg); }
-.state { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 10px; }
-.state > select { font-size: 11px; color: var(--fg-dim); }
 .compound { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; min-width: 0; }
 .wide { grid-column: 1 / -1; min-width: 0; }
 .collection { grid-column: 1 / -1; min-width: 0; border: 0; padding: 12px 0; }
@@ -40,10 +37,7 @@ details.section > p { margin: 0; }
 .icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; flex-shrink: 0; }
 .button:disabled { color: var(--fg-dim); opacity: 0.65; cursor: not-allowed; }
 .button:hover:not(:disabled) { background: var(--surface); }
-.meta { font-size: 11px; line-height: 1.5; color: var(--fg-dim); min-width: 0; }
-.meta summary { cursor: pointer; padding: 4px 0; }
-.meta[open] { grid-column: 1 / -1; }
-.meta p, .alert p { overflow-wrap: anywhere; }
+.alert p { overflow-wrap: anywhere; }
 .alert { padding: 8px 0; margin: 8px 0 16px; line-height: 1.5; }
 .error { font-size: 12px; line-height: 1.5; margin: 0; text-decoration: underline; text-decoration-style: dotted; }
 .table { width: 100%; border-collapse: collapse; margin: 12px 0; table-layout: fixed; }
@@ -63,7 +57,5 @@ details.section > p { margin: 0; }
 }
 @media (pointer: coarse) {
   .field input:not([type="checkbox"]):not([type="radio"]), .field select, .field textarea, .control { font-size: 16px; min-height: 32px; }
-  .state { grid-template-columns: minmax(0, 1fr); }
-  .state > select { font-size: 14px; }
   .button { min-height: 32px; }
 }

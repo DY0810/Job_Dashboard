@@ -1,4 +1,6 @@
 import { redirect } from 'next/navigation';
 
-// Pairing and runs live in Settings now.
-export default function WorkersPage() { redirect('/settings'); }
+/** Workers lives in the settings drawer now; old links land on it. */
+export default function WorkersPage() {
+  redirect('/applications?settings=1');
+}

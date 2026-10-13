@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { SignInForm } from './sign-in-form';
-import { AppNav } from '../app-nav';
+import { AppHeader } from '../app-header';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
@@ -12,9 +12,8 @@ export const metadata: Metadata = {
 export default function SignInPage() {
   return (
     <main id="main-content" className="mx-auto min-h-dvh w-full max-w-[1720px] px-4 pb-16 md:px-6">
-      <header className="app-header">
-        <AppNav current="/sign-in" />
-      </header>
+      {/* The form has its own switcher: it mounts after unlock, so it sees the new session. */}
+      <AppHeader current="/sign-in" switcher={false} />
       <section className="mx-auto w-full max-w-md py-10">
         <SignInForm />
       </section>

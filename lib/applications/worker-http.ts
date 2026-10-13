@@ -8,7 +8,7 @@ import { assertExpectedApplicant, ApplicantPreconditionError } from './applicant
 import { readPrivateJson, PrivateInputError } from './private-http.ts';
 import { WorkerError, withWorker, type WorkerOptions } from './worker-store.ts';
 import * as p from './worker-protocol.ts';
-import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing } from './pairing.ts';
+import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing, scheduleWorker } from './pairing.ts';
 import { createRun, listRuns, commandRun, commandApplication } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
@@ -45,7 +45,7 @@ function checkPath(request: Request, ids: string[]) {
     throw new WorkerError(400, 'INVALID_INPUT', 'Invalid request path.');
   }
 }
-type BrowserAction = 'list-workers' | 'create-pairing' | 'revoke-pairing' | 'revoke-worker' |
+type BrowserAction = 'list-workers' | 'create-pairing' | 'revoke-pairing' | 'revoke-worker' | 'schedule-worker' |
   'list-runs' | 'create-run' | 'command-run' | 'command-application' | 'list-outreach' | 'send-outreach' | 'list-materials';
 
 const confirmed = <T>(fact: { state: string; value: T | null }) => fact.state === 'confirmed' ? fact.value : null;
@@ -119,6 +119,7 @@ export async function browserWorkerEndpoint(request: Request, action: BrowserAct
       case 'list-workers': body = p.WorkerListSchema.parse(await listWorkers(db, ownerId, options)); break;
       case 'create-pairing': body = p.PairingGrantSchema.parse(await createPairing(db, ownerId, await readPrivateJson(request, p.PairingCreateSchema), options)); break;
       case 'revoke-worker': body = p.RevocationSchema.parse(await revokeWorker(db, ownerId, ids[0], await readPrivateJson(request, p.RevisionCommandSchema), options)); break;
+      case 'schedule-worker': body = p.WorkerScheduleAckSchema.parse(await scheduleWorker(db, ownerId, ids[0], await readPrivateJson(request, p.WorkerScheduleSchema), options)); break;
       case 'revoke-pairing': body = p.RevocationSchema.parse(await revokePairing(db, ownerId, ids[0], await readPrivateJson(request, p.RevisionCommandSchema), options)); break;
       case 'list-runs': body = p.RunListSchema.parse(await listRuns(db, ownerId)); break;
       case 'create-run': body = p.RunSchema.parse(await createRun(db, ownerId, await readPrivateJson(request, p.RunCreateSchema), options)); break;

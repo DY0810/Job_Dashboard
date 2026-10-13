@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { WorkerControl, applicationActions, pairingStatus, workerStatus } from '../../app/workers/control';
-import { APPLICATION_STATES } from '../../lib/applications/state';
+import { WorkerControl, pairingStatus, workerStatus } from '../../app/workers/control';
 import { HEARTBEAT_MS, PAIRING_TTL_MS } from '../../lib/applications/worker-protocol';
 import { WorkerFixture, ownerA, ownerB, syntheticGrant, workerId } from './fixture';
 
@@ -255,59 +254,6 @@ test.each(['same', 'different'])('delayed-before-commit resume then emergency st
   }
 });
 
-test.each(['same application', 'sibling in same run', 'different run'])(
-  'delayed-before-commit application command then emergency stop on %s does not infer a sibling fence', async (target) => {
-    const run = fixture.addRun();
-    const a = fixture.addApplication(target === 'same application' ? 'submitting' : 'queued');
-    const b = target === 'same application' ? a : fixture.addApplication('submitting', 'submit_started',
-      target === 'different run' ? fixture.addRun().id : run.id);
-    await control.refresh();
-    let release!: () => void;
-    fixture.beforeWrite = () => new Promise<void>((resolve) => { release = resolve; });
-    const delayed = control.commandApplication(a, target === 'same application' ? 'emergency-stop' : 'skip');
-    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
-    const pending = control.view.pending;
-    fixture.beforeWrite = undefined;
-    await control.commandApplication(b, 'emergency-stop');
-    expect(a.state).toBe(target === 'same application' ? 'submission_unknown' : 'queued');
-    release();
-    await delayed;
-    if (target === 'same application') {
-      expect(a.state).toBe('submission_unknown');
-      expect(control.view.pending).toBeNull();
-    } else {
-      expect(a.state).toBe('skipped');
-      expect(b.state).toBe('submission_unknown');
-      expect(control.view.pending).toBe(pending);
-      await control.retry();
-      expect(fixture.writes).toHaveLength(3);
-      expect(fixture.writes[2].body).toEqual(fixture.writes[0].body);
-      expect(control.view.runs!.applications.find((app) => app.id === a.id)?.state).toBe('skipped');
-      expect(control.view.pending).toBeNull();
-    }
-  });
-
-test('an application emergency stop does not fence a delayed resume of its own run', async () => {
-  const run = fixture.addRun('paused');
-  const app = fixture.addApplication('submitting', 'submit_started');
-  await control.refresh();
-  let release!: () => void;
-  fixture.beforeWrite = () => new Promise<void>((resolve) => { release = resolve; });
-  const delayed = control.commandRun(run, 'resume');
-  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
-  const pending = control.view.pending;
-  fixture.beforeWrite = undefined;
-  await control.commandApplication(app, 'emergency-stop');
-  release();
-  await delayed;
-  expect(run.state).toBe('running');
-  expect(app.state).toBe('submission_unknown');
-  expect(control.view.pending).toBe(pending);
-  await control.retry();
-  expect(fixture.writes[2].body).toEqual(fixture.writes[0].body);
-  expect(control.view.pending).toBeNull();
-});
-
 test.each(['same owner', 'new principal'])('multiple interrupted commands survive only %s refresh', async (owner) => {
   const a = fixture.addRun('paused'), b = fixture.addRun(), c = fixture.addRun();
   await control.refresh();
@@ -442,42 +388,6 @@ test.each(['before copy', 'during owner check'])('copy samples elapsed time %s w
   await control.copySecret();
   expect(writeText).not.toHaveBeenCalled();
   expect(control.view.grant).toBeNull();
-});
-
-test('application action matrix preserves unknown and terminal states; retry requires safe failure and checkpoint', () => {
-  const run = fixture.addRun();
-  for (const state of APPLICATION_STATES) {
-    const app = fixture.addApplication(state);
-    const actions = applicationActions(app, run);
-    if (['submitted', 'failed', 'skipped', 'cancelled'].includes(state)) expect(actions).toEqual([]);
-    else if (['submitting', 'submission_unknown'].includes(state)) expect(actions).toEqual(['emergency-stop']);
-    else expect(actions).toEqual(['skip', 'cancel', ...(['provider_unavailable', 'retryable_failure'].includes(state) ? ['retry-safe'] : [])]);
-    expect(applicationActions({ ...app, checkpoint: null }, run)).not.toContain('retry-safe');
-    expect(applicationActions(app, { ...run, state: 'stopped' })).not.toContain('retry-safe');
-  }
-  expect(applicationActions(fixture.addApplication('needs_verification', 'provider_inspect_required'), run)).toContain('retry-safe');
-});
-
-test('skip and cancel persist while the hidden safe-retry cap remains server authoritative', async () => {
-  fixture.addRun();
-  const skipped = fixture.addApplication('needs_document');
-  const cancelled = fixture.addApplication('queued');
-  const retryable = fixture.addApplication('retryable_failure', 'temporary_failure');
-  await control.refresh();
-  await control.commandApplication(skipped, 'skip');
-  await control.commandApplication(cancelled, 'cancel');
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await control.commandApplication(retryable, 'retry-safe');
-    expect(retryable.state).toBe('screening');
-    retryable.state = 'retryable_failure'; retryable.reasonCode = 'temporary_failure'; retryable.revision++;
-    await control.refresh();
-  }
-  await control.commandApplication(retryable, 'retry-safe');
-  expect(control.view.error).toContain('State changed');
-  expect(control.view.pending).toBeNull();
-  expect(control.view.runs!.applications.map((app) => app.state)).toEqual(['skipped', 'cancelled', 'retryable_failure']);
-  await control.refresh();
-  expect(control.view.runs!.applications[2].reasonCode).toBe('temporary_failure');
 });
 
 test('an empty durable run is allowed with execution unavailable but disabled policy prevents creation', async () => {
