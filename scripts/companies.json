@@ -19,6 +19,16 @@
     "verified_at": "2026-08-18T04:01:18.998Z"
   },
   {
+    "name": "A Thinking Ape",
+    "ats": "greenhouse",
+    "token": "athinkingape",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:52.966Z",
+    "postings_at_probe": 1
+  },
+  {
     "name": "Abridge",
     "ats": "ashby",
     "token": "abridge",
@@ -47,6 +57,26 @@
     ],
     "verified_at": "2026-08-20T07:50:32.971Z",
     "postings_at_probe": 201
+  },
+  {
+    "name": "Air Apps",
+    "ats": "ashby",
+    "token": "airapps",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:47.230Z",
+    "postings_at_probe": 498
+  },
+  {
+    "name": "Airalo",
+    "ats": "lever",
+    "token": "airalo",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:51.785Z",
+    "postings_at_probe": 23
   },
   {
     "name": "Airbnb",
@@ -226,6 +256,16 @@
     "verified_at": "2026-08-18T04:01:19.386Z"
   },
   {
+    "name": "Assist World",
+    "ats": "lever",
+    "token": "assist-world",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:55.870Z",
+    "postings_at_probe": 128
+  },
+  {
     "name": "Assort Health",
     "ats": "ashby",
     "token": "assorthealth",
@@ -293,6 +333,16 @@
     "verified_at": "2026-08-18T04:01:21.295Z"
   },
   {
+    "name": "Beale Infrastructure",
+    "ats": "greenhouse",
+    "token": "bealeinfrastructure",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.406Z",
+    "postings_at_probe": 9
+  },
+  {
     "name": "Betterment",
     "ats": "greenhouse",
     "token": "betterment",
@@ -303,6 +353,26 @@
     "postings_at_probe": 32
   },
   {
+    "name": "BeyondTrust",
+    "ats": "greenhouse",
+    "token": "beyondtrust",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.810Z",
+    "postings_at_probe": 50
+  },
+  {
+    "name": "Bitwarden",
+    "ats": "greenhouse",
+    "token": "bitwarden",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.957Z",
+    "postings_at_probe": 37
+  },
+  {
     "name": "Bland",
     "ats": "ashby",
     "token": "bland",
@@ -310,6 +380,26 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:21.910Z"
+  },
+  {
+    "name": "Boldin",
+    "ats": "greenhouse",
+    "token": "boldin",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:46.894Z",
+    "postings_at_probe": 5
+  },
+  {
+    "name": "Boosta",
+    "ats": "greenhouse",
+    "token": "boosta",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:41.024Z",
+    "postings_at_probe": 54
   },
   {
     "name": "Brex",
@@ -372,6 +462,16 @@
     "postings_at_probe": 100
   },
   {
+    "name": "CaptivateIQ",
+    "ats": "lever",
+    "token": "captivateiq",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:40.831Z",
+    "postings_at_probe": 23
+  },
+  {
     "name": "Cardboard",
     "ats": "ashby",
     "token": "cardboard",
@@ -379,6 +479,16 @@
       "yc"
     ],
     "verified_at": "2026-08-18T04:01:22.275Z"
+  },
+  {
+    "name": "Carrot Fertility",
+    "ats": "greenhouse",
+    "token": "carrotfertility",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.836Z",
+    "postings_at_probe": 15
   },
   {
     "name": "Carta",
@@ -398,6 +508,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:22.777Z"
+  },
+  {
+    "name": "Checkr",
+    "ats": "greenhouse",
+    "token": "checkr",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:47.423Z",
+    "postings_at_probe": 45
   },
   {
     "name": "Chime",
@@ -429,6 +549,16 @@
     "postings_at_probe": 25
   },
   {
+    "name": "Clera",
+    "ats": "ashby",
+    "token": "clera",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:31.446Z",
+    "postings_at_probe": 289
+  },
+  {
     "name": "ClickUp",
     "ats": "ashby",
     "token": "clickup",
@@ -449,6 +579,16 @@
     "postings_at_probe": 304
   },
   {
+    "name": "Clover Health",
+    "ats": "greenhouse",
+    "token": "cloverhealth",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.701Z",
+    "postings_at_probe": 63
+  },
+  {
     "name": "Code and Theory",
     "ats": "greenhouse",
     "token": "codeandtheory",
@@ -457,6 +597,16 @@
     ],
     "verified_at": "2026-08-19T05:35:48.954Z",
     "postings_at_probe": 47
+  },
+  {
+    "name": "CodePath",
+    "ats": "greenhouse",
+    "token": "codepath",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.559Z",
+    "postings_at_probe": 10
   },
   {
     "name": "Cohere",
@@ -478,6 +628,16 @@
     "postings_at_probe": 168
   },
   {
+    "name": "CoinMarketCap",
+    "ats": "lever",
+    "token": "coinmarketcap",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.217Z",
+    "postings_at_probe": 7
+  },
+  {
     "name": "Collins",
     "ats": "recruitee",
     "token": "collins",
@@ -486,6 +646,16 @@
     ],
     "verified_at": "2026-08-19T05:37:07.707Z",
     "postings_at_probe": 105
+  },
+  {
+    "name": "Comfrt",
+    "ats": "greenhouse",
+    "token": "comfrt",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:32.653Z",
+    "postings_at_probe": 37
   },
   {
     "name": "Commure",
@@ -507,6 +677,16 @@
     "verified_at": "2026-08-18T04:01:23.773Z"
   },
   {
+    "name": "Consensys",
+    "ats": "greenhouse",
+    "token": "consensys",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:46.945Z",
+    "postings_at_probe": 9
+  },
+  {
     "name": "Contentful",
     "ats": "greenhouse",
     "token": "contentful",
@@ -517,6 +697,16 @@
     "postings_at_probe": 8
   },
   {
+    "name": "Counterpart Health",
+    "ats": "greenhouse",
+    "token": "counterparthealth",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.505Z",
+    "postings_at_probe": 17
+  },
+  {
     "name": "Cresta",
     "ats": "greenhouse",
     "token": "cresta",
@@ -524,6 +714,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:20.429Z"
+  },
+  {
+    "name": "Cribl",
+    "ats": "greenhouse",
+    "token": "cribl",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:53.190Z",
+    "postings_at_probe": 69
   },
   {
     "name": "Cursor",
@@ -545,6 +745,16 @@
     ],
     "verified_at": "2026-09-26T20:55:49Z",
     "postings_at_probe": 11
+  },
+  {
+    "name": "Darkroom",
+    "ats": "ashby",
+    "token": "darkroom",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:50.573Z",
+    "postings_at_probe": 33
   },
   {
     "name": "Databricks",
@@ -703,6 +913,16 @@
     "postings_at_probe": 39
   },
   {
+    "name": "DualEntry",
+    "ats": "ashby",
+    "token": "dualentry",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:37.995Z",
+    "postings_at_probe": 79
+  },
+  {
     "name": "Duolingo",
     "ats": "greenhouse",
     "token": "duolingo",
@@ -813,6 +1033,16 @@
     "postings_at_probe": 162
   },
   {
+    "name": "Fingerprint",
+    "ats": "greenhouse",
+    "token": "fingerprint",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:40.958Z",
+    "postings_at_probe": 22
+  },
+  {
     "name": "Fireworks AI",
     "ats": "ashby",
     "token": "fireworks",
@@ -902,6 +1132,26 @@
     "postings_at_probe": 7
   },
   {
+    "name": "Gemini",
+    "ats": "greenhouse",
+    "token": "gemini",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:31.171Z",
+    "postings_at_probe": 35
+  },
+  {
+    "name": "General Assembly",
+    "ats": "greenhouse",
+    "token": "generalassembly",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:29.895Z",
+    "postings_at_probe": 26
+  },
+  {
     "name": "General Legal",
     "ats": "greenhouse",
     "token": "general",
@@ -931,6 +1181,16 @@
     "postings_at_probe": 117
   },
   {
+    "name": "Globalli",
+    "ats": "greenhouse",
+    "token": "globalli",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.374Z",
+    "postings_at_probe": 13
+  },
+  {
     "name": "Glossier",
     "ats": "greenhouse",
     "token": "glossier",
@@ -941,6 +1201,16 @@
     "postings_at_probe": 21
   },
   {
+    "name": "GoFasti",
+    "ats": "greenhouse",
+    "token": "gofasti",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:29.654Z",
+    "postings_at_probe": 11
+  },
+  {
     "name": "Gong",
     "ats": "smartrecruiters",
     "token": "gong",
@@ -949,6 +1219,16 @@
     ],
     "verified_at": "2026-08-24T18:48:29.800Z",
     "postings_at_probe": 9
+  },
+  {
+    "name": "Grafana Labs",
+    "ats": "greenhouse",
+    "token": "grafanalabs",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.010Z",
+    "postings_at_probe": 104
   },
   {
     "name": "Gusto",
@@ -1008,6 +1288,16 @@
     "verified_at": "2026-08-18T04:01:28.410Z"
   },
   {
+    "name": "Heron Power",
+    "ats": "ashby",
+    "token": "heron-power",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:32.227Z",
+    "postings_at_probe": 44
+  },
+  {
     "name": "Hex",
     "ats": "ashby",
     "token": "hex",
@@ -1026,6 +1316,16 @@
     ],
     "verified_at": "2026-08-20T23:53:39.226Z",
     "postings_at_probe": 16
+  },
+  {
+    "name": "Hovercraft",
+    "ats": "greenhouse",
+    "token": "hovercraft",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:47.683Z",
+    "postings_at_probe": 7
   },
   {
     "name": "HP IQ",
@@ -1135,6 +1435,16 @@
     "postings_at_probe": 6
   },
   {
+    "name": "InMarket",
+    "ats": "greenhouse",
+    "token": "inmarket",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:31.249Z",
+    "postings_at_probe": 11
+  },
+  {
     "name": "Instacart",
     "ats": "greenhouse",
     "token": "instacart",
@@ -1175,6 +1485,26 @@
     "postings_at_probe": 122
   },
   {
+    "name": "Jellyvision",
+    "ats": "greenhouse",
+    "token": "jellyvision",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:48.067Z",
+    "postings_at_probe": 4
+  },
+  {
+    "name": "JetZero",
+    "ats": "greenhouse",
+    "token": "jetzero",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:32.423Z",
+    "postings_at_probe": 22
+  },
+  {
     "name": "Jump Trading",
     "ats": "greenhouse",
     "token": "jumptrading",
@@ -1193,6 +1523,36 @@
       "yc"
     ],
     "verified_at": "2026-08-18T04:01:22.807Z"
+  },
+  {
+    "name": "Jupe",
+    "ats": "lever",
+    "token": "jupe",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:37.722Z",
+    "postings_at_probe": 2
+  },
+  {
+    "name": "Keeper Security, Inc.",
+    "ats": "greenhouse",
+    "token": "keepersecurity",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.122Z",
+    "postings_at_probe": 99
+  },
+  {
+    "name": "Kettle",
+    "ats": "greenhouse",
+    "token": "kettle",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.737Z",
+    "postings_at_probe": 17
   },
   {
     "name": "Klaviyo",
@@ -1262,6 +1622,16 @@
     "postings_at_probe": 9
   },
   {
+    "name": "Legion Health",
+    "ats": "ashby",
+    "token": "legionhealth",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:46.696Z",
+    "postings_at_probe": 157
+  },
+  {
     "name": "Lemonade",
     "ats": "ashby",
     "token": "lemonade",
@@ -1272,6 +1642,16 @@
     "postings_at_probe": 34
   },
   {
+    "name": "Level Access",
+    "ats": "greenhouse",
+    "token": "levelaccess",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.033Z",
+    "postings_at_probe": 7
+  },
+  {
     "name": "Liberate",
     "ats": "greenhouse",
     "token": "liberate",
@@ -1279,6 +1659,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:23.368Z"
+  },
+  {
+    "name": "Life360",
+    "ats": "greenhouse",
+    "token": "life360",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:52.910Z",
+    "postings_at_probe": 14
   },
   {
     "name": "Linear",
@@ -1349,6 +1739,16 @@
     "verified_at": "2026-08-18T04:01:23.805Z"
   },
   {
+    "name": "Mark43",
+    "ats": "greenhouse",
+    "token": "mark43",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:31.767Z",
+    "postings_at_probe": 33
+  },
+  {
     "name": "Marqeta",
     "ats": "ashby",
     "token": "marqeta-inc",
@@ -1357,6 +1757,16 @@
     ],
     "verified_at": "2026-09-08T19:56:44.000Z",
     "postings_at_probe": 42
+  },
+  {
+    "name": "Mars Men",
+    "ats": "lever",
+    "token": "mars-men",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:29.788Z",
+    "postings_at_probe": 4
   },
   {
     "name": "Matera",
@@ -1377,6 +1787,16 @@
     ],
     "verified_at": "2026-08-24T18:48:42.478Z",
     "postings_at_probe": 6
+  },
+  {
+    "name": "Medium",
+    "ats": "greenhouse",
+    "token": "medium",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.613Z",
+    "postings_at_probe": 1
   },
   {
     "name": "MEMX",
@@ -1409,6 +1829,16 @@
     "postings_at_probe": 55
   },
   {
+    "name": "Merit America",
+    "ats": "greenhouse",
+    "token": "meritamerica",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.353Z",
+    "postings_at_probe": 3
+  },
+  {
     "name": "Meta",
     "ats": "recruitee",
     "token": "meta",
@@ -1426,6 +1856,16 @@
       "design-studio"
     ],
     "verified_at": "2026-08-18T04:01:24.311Z"
+  },
+  {
+    "name": "Midnite",
+    "ats": "ashby",
+    "token": "midnite",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:28.847Z",
+    "postings_at_probe": 24
   },
   {
     "name": "Miro",
@@ -1476,6 +1916,16 @@
     "postings_at_probe": 8
   },
   {
+    "name": "MoneyHero Group",
+    "ats": "greenhouse",
+    "token": "moneyherogroup",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:37.805Z",
+    "postings_at_probe": 14
+  },
+  {
     "name": "MongoDB",
     "ats": "greenhouse",
     "token": "mongodb",
@@ -1484,6 +1934,16 @@
     ],
     "verified_at": "2026-08-24T20:37:39.245Z",
     "postings_at_probe": 405
+  },
+  {
+    "name": "Moniepoint",
+    "ats": "greenhouse",
+    "token": "moniepoint",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.052Z",
+    "postings_at_probe": 148
   },
   {
     "name": "Monzo",
@@ -1505,6 +1965,36 @@
     "verified_at": "2026-08-18T04:01:32.854Z"
   },
   {
+    "name": "Muon Space",
+    "ats": "greenhouse",
+    "token": "muonspace",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:41.327Z",
+    "postings_at_probe": 139
+  },
+  {
+    "name": "Murj",
+    "ats": "greenhouse",
+    "token": "murj",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:28.962Z",
+    "postings_at_probe": 3
+  },
+  {
+    "name": "N-iX",
+    "ats": "greenhouse",
+    "token": "nix",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:47.066Z",
+    "postings_at_probe": 127
+  },
+  {
     "name": "name",
     "ats": "greenhouse",
     "token": "name",
@@ -1513,6 +2003,16 @@
     ],
     "verified_at": "2026-08-20T23:54:30.664Z",
     "postings_at_probe": 0
+  },
+  {
+    "name": "Nebius",
+    "ats": "greenhouse",
+    "token": "nebius",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:50.336Z",
+    "postings_at_probe": 382
   },
   {
     "name": "Nen Creative",
@@ -1525,6 +2025,16 @@
     "postings_at_probe": 14
   },
   {
+    "name": "NetEase Games",
+    "ats": "greenhouse",
+    "token": "neteasegames",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.769Z",
+    "postings_at_probe": 31
+  },
+  {
     "name": "Netlify",
     "ats": "greenhouse",
     "token": "netlify",
@@ -1533,6 +2043,16 @@
     ],
     "verified_at": "2026-08-20T07:50:36.417Z",
     "postings_at_probe": 2
+  },
+  {
+    "name": "New Relic",
+    "ats": "greenhouse",
+    "token": "newrelic",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:52.193Z",
+    "postings_at_probe": 54
   },
   {
     "name": "Nextdoor",
@@ -1564,6 +2084,16 @@
     ],
     "verified_at": "2026-09-26T20:55:49Z",
     "postings_at_probe": 40
+  },
+  {
+    "name": "Northbeam",
+    "ats": "greenhouse",
+    "token": "northbeam",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.460Z",
+    "postings_at_probe": 25
   },
   {
     "name": "Notion",
@@ -1638,6 +2168,16 @@
     "postings_at_probe": 35
   },
   {
+    "name": "Ondo Finance",
+    "ats": "greenhouse",
+    "token": "ondofinance",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:52.851Z",
+    "postings_at_probe": 23
+  },
+  {
     "name": "One Robot",
     "ats": "ashby",
     "token": "onerobot",
@@ -1675,6 +2215,26 @@
     "verified_at": "2026-08-18T04:01:25.818Z"
   },
   {
+    "name": "Orcrist Technologies",
+    "ats": "greenhouse",
+    "token": "orcristtechnologies",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:50.262Z",
+    "postings_at_probe": 22
+  },
+  {
+    "name": "Oscar",
+    "ats": "greenhouse",
+    "token": "oscar",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.300Z",
+    "postings_at_probe": 231
+  },
+  {
     "name": "Oura",
     "ats": "greenhouse",
     "token": "oura",
@@ -1685,6 +2245,16 @@
     "postings_at_probe": 105
   },
   {
+    "name": "Outsourced Staff",
+    "ats": "lever",
+    "token": "outsourcedstaff",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.703Z",
+    "postings_at_probe": 5
+  },
+  {
     "name": "Pacific Fusion",
     "ats": "greenhouse",
     "token": "pacificfusion",
@@ -1693,6 +2263,26 @@
     ],
     "verified_at": "2026-09-26T20:55:49Z",
     "postings_at_probe": 30
+  },
+  {
+    "name": "PadSplit",
+    "ats": "lever",
+    "token": "padsplit",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:53.418Z",
+    "postings_at_probe": 10
+  },
+  {
+    "name": "Pairs",
+    "ats": "ashby",
+    "token": "pairs",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:31.579Z",
+    "postings_at_probe": 12
   },
   {
     "name": "Palantir Technologies",
@@ -1823,6 +2413,16 @@
     "postings_at_probe": 106
   },
   {
+    "name": "PlayQ",
+    "ats": "greenhouse",
+    "token": "playq",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.511Z",
+    "postings_at_probe": 3
+  },
+  {
     "name": "Playson",
     "ats": "ashby",
     "token": "playson",
@@ -1880,6 +2480,26 @@
     "postings_at_probe": 236
   },
   {
+    "name": "Prenuvo",
+    "ats": "greenhouse",
+    "token": "prenuvo",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.178Z",
+    "postings_at_probe": 66
+  },
+  {
+    "name": "Princeton10",
+    "ats": "lever",
+    "token": "princeton10",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:29.597Z",
+    "postings_at_probe": 22
+  },
+  {
     "name": "Pylon",
     "ats": "ashby",
     "token": "pylon-labs",
@@ -1888,6 +2508,16 @@
     ],
     "verified_at": "2026-09-26T20:55:49Z",
     "postings_at_probe": 20
+  },
+  {
+    "name": "Quadric",
+    "ats": "ashby",
+    "token": "quadric",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:47.821Z",
+    "postings_at_probe": 14
   },
   {
     "name": "R/GA",
@@ -1918,6 +2548,16 @@
     ],
     "verified_at": "2026-08-20T07:50:57.059Z",
     "postings_at_probe": 0
+  },
+  {
+    "name": "Red Cell Partners",
+    "ats": "greenhouse",
+    "token": "redcellpartners",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.561Z",
+    "postings_at_probe": 21
   },
   {
     "name": "Reddit",
@@ -2017,6 +2657,16 @@
     "postings_at_probe": 224
   },
   {
+    "name": "Roofr",
+    "ats": "greenhouse",
+    "token": "roofr",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:29.948Z",
+    "postings_at_probe": 9
+  },
+  {
     "name": "Ruby Labs",
     "ats": "ashby",
     "token": "ruby-labs",
@@ -2034,6 +2684,16 @@
       "ai"
     ],
     "verified_at": "2026-08-18T04:01:37.276Z"
+  },
+  {
+    "name": "Rush Street Interactive",
+    "ats": "greenhouse",
+    "token": "rushstreetinteractive",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:47.564Z",
+    "postings_at_probe": 23
   },
   {
     "name": "Sage",
@@ -2094,6 +2754,16 @@
     "verified_at": "2026-08-18T04:01:27.900Z"
   },
   {
+    "name": "Seat Geek",
+    "ats": "greenhouse",
+    "token": "seatgeek",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:46.101Z",
+    "postings_at_probe": 34
+  },
+  {
     "name": "Sentry",
     "ats": "ashby",
     "token": "sentry",
@@ -2152,6 +2822,26 @@
     "verified_at": "2026-08-18T04:01:38.832Z"
   },
   {
+    "name": "Simplistic, LLC",
+    "ats": "greenhouse",
+    "token": "simplisticllc",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:53.243Z",
+    "postings_at_probe": 4
+  },
+  {
+    "name": "Skyward IT Solutions, LLC",
+    "ats": "lever",
+    "token": "skywarditsolutions",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:48.357Z",
+    "postings_at_probe": 8
+  },
+  {
     "name": "Slang.ai",
     "ats": "lever",
     "token": "slangai",
@@ -2159,6 +2849,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:19.384Z"
+  },
+  {
+    "name": "Sleeper",
+    "ats": "ashby",
+    "token": "sleeper",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:28.569Z",
+    "postings_at_probe": 6
   },
   {
     "name": "Smartsheet",
@@ -2197,6 +2897,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:28.593Z"
+  },
+  {
+    "name": "Splice",
+    "ats": "greenhouse",
+    "token": "splice",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.356Z",
+    "postings_at_probe": 6
   },
   {
     "name": "Spotify",
@@ -2238,6 +2948,16 @@
     ],
     "verified_at": "2026-08-19T05:36:00.434Z",
     "postings_at_probe": 23
+  },
+  {
+    "name": "SRS Acquiom",
+    "ats": "greenhouse",
+    "token": "srsacquiom",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:47.000Z",
+    "postings_at_probe": 16
   },
   {
     "name": "Stilta",
@@ -2317,6 +3037,36 @@
     "postings_at_probe": 16
   },
   {
+    "name": "Syllo",
+    "ats": "greenhouse",
+    "token": "syllo",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:39.677Z",
+    "postings_at_probe": 28
+  },
+  {
+    "name": "Synthesia",
+    "ats": "ashby",
+    "token": "synthesia",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:56.374Z",
+    "postings_at_probe": 46
+  },
+  {
+    "name": "Talkspace",
+    "ats": "greenhouse",
+    "token": "talkspace",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:52.303Z",
+    "postings_at_probe": 26
+  },
+  {
     "name": "Tanium",
     "ats": "greenhouse",
     "token": "tanium",
@@ -2325,6 +3075,16 @@
     ],
     "verified_at": "2026-09-26T20:55:49Z",
     "postings_at_probe": 60
+  },
+  {
+    "name": "TapBlaze",
+    "ats": "ashby",
+    "token": "tapblaze",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:46.386Z",
+    "postings_at_probe": 3
   },
   {
     "name": "TELUS International AI Inc",
@@ -2337,6 +3097,26 @@
     "postings_at_probe": 1
   },
   {
+    "name": "Terac",
+    "ats": "ashby",
+    "token": "terac",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.224Z",
+    "postings_at_probe": 57
+  },
+  {
+    "name": "The Athletic",
+    "ats": "lever",
+    "token": "theathletic",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:53.552Z",
+    "postings_at_probe": 13
+  },
+  {
     "name": "The Boutique COO",
     "ats": "workable",
     "token": "the-boutique-coo",
@@ -2345,6 +3125,26 @@
     ],
     "verified_at": "2026-08-21T00:00:40.805Z",
     "postings_at_probe": 15
+  },
+  {
+    "name": "ThriveCart",
+    "ats": "greenhouse",
+    "token": "thrivecart",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:29.839Z",
+    "postings_at_probe": 9
+  },
+  {
+    "name": "Timeleft",
+    "ats": "greenhouse",
+    "token": "timeleft",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.903Z",
+    "postings_at_probe": 3
   },
   {
     "name": "Together AI",
@@ -2376,6 +3176,16 @@
     "postings_at_probe": 5
   },
   {
+    "name": "Tremendous",
+    "ats": "ashby",
+    "token": "tremendous",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:57.241Z",
+    "postings_at_probe": 25
+  },
+  {
     "name": "Turtle Rock Studios",
     "ats": "greenhouse",
     "token": "turtlerockstudios",
@@ -2393,6 +3203,16 @@
       "voice-ai"
     ],
     "verified_at": "2026-08-18T04:01:29.960Z"
+  },
+  {
+    "name": "Twin Health",
+    "ats": "greenhouse",
+    "token": "twinhealth",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:50.398Z",
+    "postings_at_probe": 43
   },
   {
     "name": "Twitch",
@@ -2423,6 +3243,16 @@
     ],
     "verified_at": "2026-09-26T20:55:49Z",
     "postings_at_probe": 11
+  },
+  {
+    "name": "Upstart",
+    "ats": "greenhouse",
+    "token": "upstart",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.288Z",
+    "postings_at_probe": 87
   },
   {
     "name": "Upstatement",
@@ -2475,6 +3305,16 @@
     "postings_at_probe": 304
   },
   {
+    "name": "ViaBill",
+    "ats": "lever",
+    "token": "viabill",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.304Z",
+    "postings_at_probe": 5
+  },
+  {
     "name": "Virtu Financial",
     "ats": "greenhouse",
     "token": "virtu",
@@ -2484,6 +3324,16 @@
     ],
     "verified_at": "2026-08-28T01:16:23.233457Z",
     "postings_at_probe": 47
+  },
+  {
+    "name": "Viseven",
+    "ats": "lever",
+    "token": "viseven",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:50.205Z",
+    "postings_at_probe": 31
   },
   {
     "name": "Voleon",
@@ -2546,6 +3396,26 @@
     "postings_at_probe": 29
   },
   {
+    "name": "WhiteTech",
+    "ats": "greenhouse",
+    "token": "whitetech",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:38.118Z",
+    "postings_at_probe": 15
+  },
+  {
+    "name": "Who Gives A Crap",
+    "ats": "greenhouse",
+    "token": "whogivesacrap",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:55.935Z",
+    "postings_at_probe": 8
+  },
+  {
     "name": "Whoop",
     "ats": "ashby",
     "token": "whoop",
@@ -2578,6 +3448,26 @@
     "postings_at_probe": 20
   },
   {
+    "name": "Workleap",
+    "ats": "greenhouse",
+    "token": "workleap",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:30.233Z",
+    "postings_at_probe": 5
+  },
+  {
+    "name": "WorkWave",
+    "ats": "lever",
+    "token": "workwave",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:52.137Z",
+    "postings_at_probe": 8
+  },
+  {
     "name": "Worldly",
     "ats": "ashby",
     "token": "worldly",
@@ -2588,6 +3478,16 @@
     "postings_at_probe": 5
   },
   {
+    "name": "Wpromote",
+    "ats": "lever",
+    "token": "wpromote",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:49.753Z",
+    "postings_at_probe": 48
+  },
+  {
     "name": "xAI",
     "ats": "greenhouse",
     "token": "xai",
@@ -2596,6 +3496,16 @@
     ],
     "verified_at": "2026-09-08T08:24:44.000Z",
     "postings_at_probe": 257
+  },
+  {
+    "name": "Yuno",
+    "ats": "lever",
+    "token": "yuno",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:57.133Z",
+    "postings_at_probe": 36
   },
   {
     "name": "Zapier",
@@ -2638,5 +3548,15 @@
     ],
     "verified_at": "2026-09-26T20:55:49Z",
     "postings_at_probe": 122
+  },
+  {
+    "name": "Zwift",
+    "ats": "greenhouse",
+    "token": "zwift",
+    "tags": [
+      "design"
+    ],
+    "verified_at": "2026-10-13T06:17:31.690Z",
+    "postings_at_probe": 6
   }
 ]
