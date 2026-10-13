@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import * as z from 'zod/mini';
-import { ChevronRight } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 const responseSchema = z.object({ applicants: z.array(z.object({
   ownerId: z.string(), email: z.email(), name: z.string(), active: z.boolean(),
@@ -41,7 +41,7 @@ export function ApplicantSwitcher() {
           {applicant.name || applicant.email} ({applicant.email})
         </option>)}
       </select>
-      <ChevronRight size={12} strokeWidth={1.25} absoluteStrokeWidth />
+      <ChevronDown size={12} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />
     </span>
     {error && <span role="alert" className="text-[11px]">{error}</span>}
   </>;

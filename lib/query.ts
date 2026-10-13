@@ -224,8 +224,8 @@ function where(p: Params, now: number, returned: readonly string[]): SQL {
  * Keep each page's database payload and DOM bounded without making older matches
  * unreachable. Page links preserve filters and expose the rest of the result set.
  *
- * `listPostings` asks for one MORE than this, which is how the page knows to say so without
- * paying for a second `count(*)` round trip.
+ * `listPostings` asks for one MORE than this; the page's "of Y" comes from `countPostings`,
+ * run in parallel with it.
  */
 export const ROW_CAP = 200;
 
@@ -242,6 +242,12 @@ export async function listPostings(db: ReadDb, p: Params, now: number = Date.now
 }
 
 export type Row = Awaited<ReturnType<typeof listPostings>>[number];
+
+/** Every row `listPostings` would return across all pages, for "page X of Y". */
+export async function countPostings(db: ReadDb, p: Params, now: number = Date.now(), returned: readonly string[] = []): Promise<number> {
+  const row = await driver(db).select({ n: count() }).from(postings).where(where(p, now, returned)).get();
+  return row?.n ?? 0;
+}
 
 /** True when the tab holds no rows at all — the difference between "empty" and "no matches". */
 export async function tabIsEmpty(db: ReadDb, p: Params, now: number = Date.now(), returned: readonly string[] = []): Promise<boolean> {

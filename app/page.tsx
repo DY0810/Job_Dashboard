@@ -18,10 +18,10 @@ import {
   withTab,
 } from "@/lib/params";
 import { rowChips } from "@/lib/chips";
-import { listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } from "@/lib/query";
+import { countPostings, listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } from "@/lib/query";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
-import { ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { AppliedCheckbox } from "./applied-checkbox";
 import { AppliedSync } from "./applied-sync";
 import { AppHeader } from "./app-header";
@@ -299,6 +299,18 @@ function NoMatches({ p, outside }: { p: Params; outside: number }) {
   );
 }
 
+/** One step of the pager. At either end it stays in place, disabled, so the count never shifts. */
+function PageStep({ p, to, pages, label }: { p: Params; to: number; pages: number; label: string }) {
+  const icon = to < p.page
+    ? <ChevronLeft size={14} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />
+    : <ChevronRight size={14} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />;
+  return to >= 1 && to <= pages ? (
+    <Link className="chip app-icon-button" href={withPage(p, to)} aria-label={label} title={label}>{icon}</Link>
+  ) : (
+    <span className="chip app-icon-button" role="link" aria-disabled="true" aria-label={label}>{icon}</span>
+  );
+}
+
 export default async function Page({
   searchParams,
 }: {
@@ -333,9 +345,10 @@ export default async function Page({
   // Roles Auto Apply gave up on come back here. The board still renders when the private store is down.
   const returned = await Promise.resolve().then(() => returnedPostingUrls(getPrivateDb())).catch(() => []);
 
-  // In parallel: two independent reads, and against Turso every await is a network round trip.
-  const [fetched, lastRun] = await Promise.all([
+  // In parallel: independent reads, and against Turso every await is a network round trip.
+  const [fetched, total, lastRun] = await Promise.all([
     listPostings(db, p, now, returned),
+    countPostings(db, p, now, returned),
     driver(db)
       .select({ startedAt: connectorRuns.startedAt })
       .from(connectorRuns)
@@ -344,10 +357,10 @@ export default async function Page({
       .get(),
   ]);
 
-  // `listPostings` returns one more than it will render, so the extra row IS the "there is
-  // more" signal — no second count query, no round trip to learn a number we only display.
-  const capped = fetched.length > ROW_CAP;
-  const rows = capped ? fetched.slice(0, ROW_CAP) : fetched;
+  // `listPostings` returns one more than it will render; the count, in the same round trip,
+  // is what says how many pages there are.
+  const rows = fetched.slice(0, ROW_CAP);
+  const pages = Math.max(1, Math.ceil(total / ROW_CAP));
 
   // Recency is the first sort key, so the fresh rows are a prefix, not a partition. Asserted
   // in query.test.ts against this same constant, because nothing in SQL guarantees it now.
@@ -411,6 +424,9 @@ export default async function Page({
 
       <Filters p={p} />
 
+      {/* Filter changes navigate on the client and replace only what is in here; the filter
+          form dims it while the new rows are on their way. */}
+      <div id="board-results" className="board-results">
       {rows.length === 0 && p.page > 1 ? (
         <div className="flex items-center gap-3 py-8">
           <p>No jobs on this page.</p>
@@ -460,13 +476,14 @@ export default async function Page({
         </div>
       )}
 
-      {capped || p.page > 1 ? (
-        <nav aria-label="Job pages" className="flex shrink-0 items-center justify-end gap-3 py-3 text-[11px]">
-          {p.page > 1 ? <Link className="chip" href={withPage(p, p.page - 1)}>previous</Link> : null}
-          <span className="nums">page {p.page}</span>
-          {capped ? <Link className="chip" href={withPage(p, p.page + 1)}>next</Link> : null}
+      {pages > 1 && p.page <= pages ? (
+        <nav aria-label="Job pages" className="board-pages">
+          <PageStep p={p} to={p.page - 1} pages={pages} label="Previous page" />
+          <span className="nums">page {p.page} of {pages}</span>
+          <PageStep p={p} to={p.page + 1} pages={pages} label="Next page" />
         </nav>
       ) : null}
+      </div>
 
       <Drawer jobId={p.job} closeHref={withJob(p, null)} />
       <AppliedSync />

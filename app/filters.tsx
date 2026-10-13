@@ -1,9 +1,6 @@
 import Link from 'next/link';
 import {
   GROUPS,
-  cleared,
-  hasFilters,
-  href,
   vocab,
   toggleFilter,
   withFilter,
@@ -12,7 +9,7 @@ import {
 } from '@/lib/params';
 import { AutoApply } from './auto-apply';
 import { FilterDefaults } from './filter-defaults';
-import { ChevronRight } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 const WINDOW_LABEL: Record<string, string> = { hour: '1h', day: '24h', week: '7d', month: '30d' };
 
@@ -60,12 +57,11 @@ export function BadgeChip({ p, value }: { p: Params; value: string }) {
 }
 
 /**
- * One native <select> per filter, uncontrolled and keyed on the whole URL: the URL wins on
- * every navigation. Picking several values and then submitting works — nothing re-renders in
- * between — but a navigation *during* that (a badge, a row, a tab) resets the boxes to what
- * the table is actually showing. That is the model this app already claims: the control
- * reports the state, and the state is the URL. The alternative, a pending selection that
- * outlives the page it was made on, leaves a dropdown displaying a filter that is not applied.
+ * One native <select> per filter, uncontrolled. The URL still wins on every navigation, but
+ * `AutoApply` writes it into the controls once it lands rather than remounting them, so a tick
+ * made while the previous one's navigation is in flight is not thrown away. A navigation from
+ * elsewhere (a badge, a tab) resets the controls to what the table is actually showing: the
+ * control reports the state, and the state is the URL.
  */
 function Select({ p, filter, values }: { p: Params; filter: 'posted'; values: readonly string[] }) {
   const selected = p[filter];
@@ -84,7 +80,7 @@ function Select({ p, filter, values }: { p: Params; filter: 'posted'; values: re
             </option>
           ))}
         </select>
-        <ChevronRight size={12} strokeWidth={1.25} absoluteStrokeWidth />
+        <ChevronDown size={12} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />
       </span>
     </span>
   );
@@ -143,8 +139,9 @@ function CheckGroup({ p, group, values }: { p: Params; group: Group; values: rea
  * and the form wrapper was not.
  *
  * A native GET submit is the behaviour `next/form` was wrapping anyway: it navigates to
- * `/?tab=…&posted=…`, which the page renders directly. The cost is a full page load instead of
- * a client-side one, which for a control that replaces the entire table is not a real loss.
+ * `/?tab=…&posted=…`, which the page renders directly. With JavaScript, `AutoApply` takes the
+ * submit and pushes that same URL through the router, so only the results re-render and the
+ * header and this form stay put; without it, the native submit is a full page load.
  * Row badges stay single-click links: a filter you can see is still one action.
  */
 export function Filters({ p }: { p: Params }) {
@@ -157,7 +154,7 @@ export function Filters({ p }: { p: Params }) {
           to ride along. `job` deliberately does not: filtering closes the drawer. */}
       {/* Applies a dropdown change without waiting for the button. The button stays: it is the
           no-JavaScript path, and it is what a keyboard user can still hit deliberately. */}
-      <AutoApply />
+      <AutoApply p={p} />
 
       <input type="hidden" name="tab" value={p.tab} />
       <input type="hidden" name="filters" value="all" />
@@ -169,33 +166,25 @@ export function Filters({ p }: { p: Params }) {
       {/* `posted` is the one single-valued filter, so it stays a dropdown. Its windows nest —
           24h is inside 7d — so offering a multi-select there would offer a choice with no
           distinct outcome. */}
-      <Select key={`posted:${href(p)}`} p={p} filter="posted" values={vocab(p.tab, 'posted', p.basis)} />
+      <Select p={p} filter="posted" values={vocab(p.tab, 'posted', p.basis)} />
 
       {GROUPS.map((group) => {
         const values = vocab(p.tab, group, p.basis);
         // Design has no season vocabulary, so it gets no season control at all.
         if (values.length === 0) return null;
-        return <CheckGroup key={`${group}:${href(p)}`} p={p} group={group} values={values} />;
+        return <CheckGroup key={group} p={p} group={group} values={values} />;
       })}
 
       {/* Badges are free slugs, not a fixed vocabulary, so the active one stays a chip. */}
       {p.badge ? <BadgeChip p={p} value={p.badge} /> : null}
 
-      <span className="ml-auto flex flex-wrap items-baseline gap-1">
+      <span className="ml-auto flex flex-wrap items-center gap-1">
         <FilterDefaults p={p} />
-        <button type="submit" className="chip">
-          filter
+        {/* The path without JavaScript, and a deliberate apply for the keyboard: hidden until
+            focused, since with JavaScript every control applies itself. */}
+        <button type="submit" className="chip sr-only focus:not-sr-only">
+          apply filters
         </button>
-        {hasFilters(p) ? (
-          <Link href={cleared(p)} className="chip" scroll={false}>
-            clear
-          </Link>
-        ) : (
-          // Real disabled state: there is nothing to clear.
-          <span className="chip" aria-disabled="true">
-            clear
-          </span>
-        )}
       </span>
     </form>
   );

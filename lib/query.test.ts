@@ -19,6 +19,7 @@ import type { Db } from './db/index.ts';
 import { postings, postingSources } from './db/schema.ts';
 import { GEO_TIER, geoTier } from './geo.ts';
 import {
+  countPostings,
   geoTierSql,
   getPostingDetail,
   listPostings,
@@ -868,6 +869,19 @@ describe('row cap', () => {
     expect(second.length).toBeGreaterThan(0);
     expect(second.some((row) => firstIds.has(row.id))).toBe(false);
     expect(second[0].id).toBe(50_000 + ROW_CAP);
+  });
+
+  it('counts exactly the rows every page lists, under the same filters', async () => {
+    flood(ROW_CAP + 50);
+    for (const p of [params('engineering'), params('engineering', { level: ['mid'] }), params('design')]) {
+      const pages = [];
+      for (let page = 1; ; page++) {
+        const rows = (await listPostings(db, { ...p, page }, NOW)).slice(0, ROW_CAP);
+        if (rows.length === 0) break;
+        pages.push(...rows);
+      }
+      expect(await countPostings(db, p, NOW)).toBe(pages.length);
+    }
   });
 
   it('validates page numbers and resets pagination when filters change', () => {
