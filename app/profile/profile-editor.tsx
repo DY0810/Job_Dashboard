@@ -87,6 +87,8 @@ export default function ProfileEditor() {
   const [pane, setPane] = useState<string>(sections[0]);
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  // Locking closes the modals, so unlocking does not bring them back.
+  if (locked && (draftsOpen || uploadOpen)) { setDraftsOpen(false); setUploadOpen(false); }
   // Remounts the Documents section's list after an upload made from the modal.
   const [uploads, setUploads] = useState(0);
   const layout = useRef<HTMLDivElement>(null);
@@ -347,7 +349,7 @@ export default function ProfileEditor() {
       </div>}
     </div>
     {session && <>
-      <Modal open={draftsOpen && !locked} onClose={() => setDraftsOpen(false)} title="Drafts">
+      <Modal open={draftsOpen} onClose={() => setDraftsOpen(false)} title="Drafts">
         <p className={styles.muted}>Saved revision {snapshot?.revision}</p>
         {recoveries.length ? recoveries.map((recovery, i) => <div className={styles.entry} key={recovery.slot}><div className={styles.row}>
           <span>Draft {i + 1}</span><span className={styles.muted}>base revision {recovery.snapshot.revision}</span>
@@ -356,7 +358,7 @@ export default function ProfileEditor() {
           }}>Recover</button>
         </div></div>) : <p className={styles.muted}>No unsaved drafts</p>}
       </Modal>
-      <Modal open={uploadOpen && !locked} onClose={() => { setUploadOpen(false); setUploads((n) => n + 1); }} title="Upload new resume">
+      <Modal open={uploadOpen} onClose={() => { setUploadOpen(false); setUploads((n) => n + 1); }} title="Upload new resume">
         {uploadOpen && <DocumentsPane api={session.api} ownerId={session.ownerId} signal={session.abort.signal} onDocuments={setDocuments}
           idPrefix="resume-upload" initialKind="resume_master" />}
       </Modal>

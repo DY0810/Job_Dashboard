@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dailyStartInstant, formatDailyStart } from './schedule.ts';
+import { dailyStartInstant, formatDailyStart, scheduledWorker } from './schedule.ts';
 import { archivedAt, bucket } from './buckets.ts';
 
 const at = (iso: string) => Date.parse(iso);
@@ -31,6 +31,16 @@ describe('dailyStartInstant', () => {
   });
 });
 
+describe('scheduledWorker', () => {
+  it('picks the first online worker, else the first not revoked', () => {
+    const revoked = { id: 'r', online: true, revokedAt: 1 }, idle = { id: 'i', online: false, revokedAt: null }, live = { id: 'l', online: true, revokedAt: null };
+    expect(scheduledWorker([revoked, idle, live])).toBe(live);
+    expect(scheduledWorker([revoked, idle])).toBe(idle);
+    expect(scheduledWorker([revoked])).toBeUndefined();
+    expect(scheduledWorker()).toBeUndefined();
+  });
+});
+
 describe('bucket', () => {
   const now = at('2026-10-13T12:00:00Z');
   it('sorts rows into action, applied and archived, and drops old archives', () => {
@@ -41,6 +51,10 @@ describe('bucket', () => {
     expect(bucket({ state: 'submitted', hiddenAt: null, createdAt: now - 400 * DAY }, now)).toBe('applied');
     expect(bucket({ state: 'submitted', hiddenAt: now - DAY, createdAt: now - 2 * DAY }, now)).toBe('archived');
     expect(bucket({ state: 'queued', hiddenAt: now - 30 * DAY, createdAt: now - 31 * DAY }, now)).toBeNull();
+    // Mid-submission rows are never auto-archived, only by the applicant.
+    expect(bucket({ state: 'submitting', hiddenAt: null, createdAt: now - 400 * DAY }, now)).toBe('action');
+    expect(bucket({ state: 'submission_unknown', hiddenAt: null, createdAt: now - 400 * DAY }, now)).toBe('action');
+    expect(bucket({ state: 'submission_unknown', hiddenAt: now - DAY, createdAt: now - 400 * DAY }, now)).toBe('archived');
     expect(archivedAt({ state: 'queued', hiddenAt: null, createdAt: now })).toBe(now + 14 * DAY);
     expect(archivedAt({ state: 'queued', hiddenAt: now, createdAt: 0 })).toBe(now);
   });

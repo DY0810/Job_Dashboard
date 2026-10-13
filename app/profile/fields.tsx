@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { X } from 'lucide-react';
 import { ProfileSections, type ProfileSection } from '@/lib/applications/profile';
+import { StatusBadge } from '../status-badge';
 import styles from './profile.module.css';
 
 export type FieldMeta = {
@@ -142,8 +143,10 @@ function FactField({ fact, meta, path, name, onChange, issues, documents }: {
   const label = labelFor(name);
   const issue = Object.entries(issues).find(([key]) => key === path || key.startsWith(`${path}.`))?.[1];
   const valueSchema = meta.properties!.value;
-  // Scope stays out of sight until validation needs it (authorization country, disclosure employer).
-  const scopeIssue = Object.keys(issues).some((key) => key.startsWith(`${path}.scope`));
+  // Scope stays out of sight until validation needs it (authorization country, disclosure employer) or it is set,
+  // so it stays put mid-edit. Unset is the default scope: applicant kind, current timeframe, nothing else.
+  const scoped = Object.keys(issues).some((key) => key.startsWith(`${path}.scope`)) || Object.entries(fact.scope).some(([key, value]) =>
+    key === 'kind' ? value !== 'applicant' : key === 'timeframe' ? value !== 'current' : value !== null && value !== false);
   function changeValue(value: unknown) {
     // Entering an answer confirms it; clearing it leaves the fact unanswered.
     const state = value === null || (Array.isArray(value) && !value.length) ? 'unknown' : 'confirmed';
@@ -156,13 +159,13 @@ function FactField({ fact, meta, path, name, onChange, issues, documents }: {
     <NativeValue meta={valueSchema} value={fact.value} onChange={changeValue} id={id} label={label}
       documents={documents} control={meta.control} invalid={!!issue} describedBy={issue ? `${id}-error` : undefined} />
     {fact.state === 'candidate' && <div className={styles.row}>
-      <span className={styles.muted}>Candidate</span>
+      <StatusBadge tone="queued" label="candidate" />
       <button className={styles.button} type="button" aria-label={`Confirm ${label}`}
         onClick={() => onChange({ ...fact, state: 'confirmed', confirmedAt: new Date().toISOString() })}>Confirm</button>
     </div>}
     {(fact.state === 'declined' || fact.state === 'not_applicable') && <span className={styles.muted}>{labelFor(fact.state)}</span>}
     {issue && <p id={`${id}-error`} className={styles.error} role="alert">{issue}</p>}
-    {scopeIssue && <NativeValue meta={meta.properties!.scope} value={fact.scope} id={`${id}-scope`} label={`${label} scope`}
+    {scoped && <NativeValue meta={meta.properties!.scope} value={fact.scope} id={`${id}-scope`} label={`${label} scope`}
       onChange={(scope) => onChange({ ...fact, scope })} />}
   </fieldset>;
 }

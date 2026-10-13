@@ -613,6 +613,17 @@ describe('zero-row writes cannot acknowledge authority', () => {
     });
 });
 describe('durable owner controls', () => {
+  it('lists the rows bucket() shows, so long-archived rows never take the 100-row limit', async () => {
+    const { app } = await prepared();
+    const DAY = 86_400_000;
+    const row = async (state: ApplicationState, ageDays: number) => (await db.insert(applications).values({ id: randomUUID(), ownerId: 'alice',
+      runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state,
+      availableAt: 0, createdAt: now - ageDays * DAY }).returning())[0].id;
+    const [expired, archived, submitted, unknown] = [await row('failed', 44), await row('failed', 43), await row('submitted', 400), await row('submission_unknown', 400)];
+    const ids = (await listRuns(db, 'alice', options)).applications.map((item) => item.id);
+    expect(ids).not.toContain(expired);
+    expect(ids).toEqual(expect.arrayContaining([archived, submitted, unknown]));
+  });
   it('sends a role that stops again after a retry back to the Jobs board', async () => {
     const { app } = await prepared();
     await db.update(applications).set({ state: 'needs_document', reasonCode: 'document_tailoring_unavailable' }).where(eq(applications.id, app.id));

@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { privateJson, PrivateRequestError } from '../profile/api';
 import { PolicySchema } from '../../lib/applications/policy';
 import { RunCreateSchema, RunListSchema, WorkerListSchema, WorkerScheduleSchema, type WorkerSummary } from '../../lib/applications/worker-protocol';
-import { formatDailyStart } from '../../lib/applications/schedule';
+import { formatDailyStart, scheduledWorker } from '../../lib/applications/schedule';
 import styles from '../workers/workers.module.css';
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -116,7 +116,7 @@ export default function Settings({ children }: { children: ReactNode }) {
   const policy = data?.policy.policy;
   const running = data?.runs.runs.some((run) => run.state === 'running');
   const worker = data?.workers.workers.find((item) => item.online && item.revokedAt === null);
-  const scheduled = worker ?? data?.workers.workers.find((item) => item.revokedAt === null);
+  const scheduled = scheduledWorker(data?.workers.workers);
   return <>
     <section className={styles.section} aria-labelledby="auto-apply-heading">
       <h3 id="auto-apply-heading">Auto Apply</h3>

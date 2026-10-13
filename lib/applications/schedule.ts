@@ -19,3 +19,7 @@ export function dailyStartInstant(nowMs: number, minute: number, timeZone: strin
 
 export const formatDailyStart = (minute: number) =>
   `${Math.floor(minute / 60) % 12 || 12}:${String(minute % 60).padStart(2, '0')} ${minute < 720 ? 'AM' : 'PM'}`;
+
+/** The worker whose daily start Settings edits and Auto Apply shows: the first online one, else the first not revoked. */
+export const scheduledWorker = <T extends { online: boolean; revokedAt: number | null }>(workers: T[] = []) =>
+  workers.find((worker) => worker.online && worker.revokedAt === null) ?? workers.find((worker) => worker.revokedAt === null);

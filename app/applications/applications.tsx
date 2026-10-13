@@ -10,7 +10,7 @@ import { statusBadge, type BadgeTone } from '../../lib/applications/badges';
 import { archivedAt, bucket } from '../../lib/applications/buckets';
 import { postingUrl } from '../../lib/applications/posting-url';
 import type { QuestionDetail } from '../../lib/applications/question-protocol';
-import { formatDailyStart } from '../../lib/applications/schedule';
+import { formatDailyStart, scheduledWorker } from '../../lib/applications/schedule';
 import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type ApplicationSummary, type Outreach, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from '../../lib/applications/state';
@@ -305,7 +305,7 @@ export default function Applications() {
     const { tone, label } = statusBadge(app.state, app.reasonCode);
     counts.set(label, { tone, count: (counts.get(label)?.count ?? 0) + 1 });
   }
-  const scheduled = view.workers?.workers.find((worker) => worker.revokedAt === null && worker.dailyStartMinute !== null);
+  const scheduled = scheduledWorker(view.workers?.workers);
   const caps = view.policy?.policy;
   const outreach = new Map(view.outreach.map((item) => [item.applicationId, item]));
   const materials = new Map(view.materials.map((item) => [item.applicationId, item]));
@@ -337,7 +337,7 @@ export default function Applications() {
       </div>
     </div>
     {!view.locked && <p className={`${styles.muted} ${styles.schedule}`}>
-      {scheduled ? `Starts daily at ${formatDailyStart(scheduled.dailyStartMinute!)}${zone(scheduled.timeZone)}` : <>
+      {scheduled?.dailyStartMinute != null ? `Starts daily at ${formatDailyStart(scheduled.dailyStartMinute)}${zone(scheduled.timeZone)}` : <>
         No daily start set. <a href="?settings=1" onClick={(event) => { event.preventDefault(); setSettingsOpen(true); }}>Set one in Settings</a></>}
     </p>}
     {view.error && <p role="alert" className={styles.message}>{view.error}</p>}
@@ -360,7 +360,9 @@ export default function Applications() {
         <ul className={styles.cards} aria-label={LIST_NAMES[tab]}>
           {lists[tab].map((app) => {
             const badge = statusBadge(app.state, app.reasonCode);
-            const live = tab !== 'archived';
+            // Auto-archiving only hides: the worker can still finish the row, so it keeps its actions. The applicant's own archive is read-only.
+            const archived = tab === 'archived';
+            const live = !archived || app.hiddenAt === null;
             const questionsHere = asked.get(app.id) ?? [];
             const approval = isAwaitingSubmitApproval(app.state, app.reasonCode);
             const upload = app.state === 'needs_document' && !!uploadKind[app.reasonCode ?? ''];
@@ -381,15 +383,16 @@ export default function Applications() {
               <div className={styles.cardTitle}>
                 <h2 title={role ? `${company} / ${role}` : company}>{company}{role && <><span className={styles.slash}> / </span>{role}</>}</h2>
                 <StatusBadge {...badge} />
+                {archived && <StatusBadge tone="archived" />}
               </div>
               {tab === 'applied' && app.submittedAt && <span className={styles.muted}>Applied {day(app.submittedAt)}</span>}
-              {tab === 'archived' && <span className={styles.muted}>Archived {day(archivedAt(app))}</span>}
+              {archived && <span className={styles.muted}>Archived {day(archivedAt(app))}</span>}
               {questionsHere.length ? <div className={styles.issue}>{questionsHere.map((question) =>
                 <p key={question.id}>{question.descriptor.originalWording}</p>)}</div>
                 : detail && <p className={styles.issue}>{detail}
                   {app.reasonCode === 'cover_letter_unavailable' && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}</p>}
               <div className={styles.actions}>
-                {live && !['submitting', 'submission_unknown'].includes(app.state) && <Command label="Archive" busyLabel="Archiving..."
+                {!archived && !['submitting', 'submission_unknown'].includes(app.state) && <Command label="Archive" busyLabel="Archiving..."
                   confirm={isTerminalState(app.state) ? 'Archive this application?' : 'Archive this application? It is still live, so this also cancels it.'}
                   run={() => archive(app, ownerId)} onDone={reload} />}
                 {href && <a className={styles.button} href={href} target="_blank" rel="noopener noreferrer">Open job post</a>}

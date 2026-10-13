@@ -5,10 +5,13 @@ import { X } from "lucide-react";
 
 export type ModalProps = {
   open: boolean;
-  onClose: () => void;
+  /** Asks to close; `open` decides. Return false to decline synchronously (a parent may also accept later, e.g. via history). */
+  onClose: () => void | false;
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  /** Extra header controls, beside close. */
+  actions?: ReactNode;
 };
 
 /**
@@ -22,6 +25,7 @@ export function Modal({
   title,
   children,
   footer,
+  actions,
 }: ModalProps & { kind?: "modal" | "drawer" }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -46,6 +50,12 @@ export function Modal({
         event.preventDefault();
         onClose();
       }}
+      // Chrome may ignore preventDefault on a repeated Esc without user activation and close anyway:
+      // ask the parent, and put the dialog back if it declines.
+      onClose={() => {
+        if (!open || ref.current?.open) return;
+        if (onClose() === false) ref.current?.showModal();
+      }}
       onPointerDown={(event) => {
         pressedBackdrop.current = event.target === ref.current;
       }}
@@ -56,10 +66,13 @@ export function Modal({
       <div className="flex h-full max-h-[inherit] flex-col">
         <div className="flex items-center gap-4 border-b border-rule px-5 py-3">
           <h2 id={titleId} className="min-w-0 truncate text-[15px]">{title}</h2>
-          <button type="button" className="chip ml-auto" onClick={onClose}>
-            close
-            <X size={12} strokeWidth={1.25} absoluteStrokeWidth />
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {actions}
+            <button type="button" className="chip" onClick={onClose}>
+              close
+              <X size={12} strokeWidth={1.25} absoluteStrokeWidth />
+            </button>
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {children}

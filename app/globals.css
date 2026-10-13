@@ -683,7 +683,7 @@ dialog.drawer[open]::backdrop {
 /* ─────────────────────────────────────────────────────────────────────── modal ──
  * The drawer's native-dialog contract, centred. Opened a few times a week (settings, profile
  * edits), so it gets a 160ms fade and a 0.98 -> 1 scale; reduced motion keeps only the fade.
- * The side drawer (app/side-drawer.tsx) is not styled here: it wears `dialog.drawer` above.
+ * The side drawer (<Modal kind="drawer">) is not styled here: it wears `dialog.drawer` above.
  */
 dialog.modal {
   margin: auto;

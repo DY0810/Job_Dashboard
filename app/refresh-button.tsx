@@ -30,7 +30,7 @@ const LABEL: Record<Phase, string> = {
  * Off the board there is no ingest to run: it announces `workie:refresh` and the page's own
  * panels reload their data.
  */
-export function RefreshButton({ hosted }: { hosted: boolean }) {
+export function RefreshButton({ hosted }: { hosted?: boolean }) {
   const router = useRouter();
   const board = usePathname() === '/';
   const [phase, setPhase] = useState<Phase>('idle');
@@ -125,7 +125,10 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
   const start = async () => {
     setNote(null);
     if (!board) return void window.dispatchEvent(new Event('workie:refresh'));
-    if (hosted) return askRunner();
+    // Unknown on a client-rendered page: GET /api/refresh says whether this server is the hosted copy.
+    const onHost = hosted ?? (await fetch('/api/refresh', { cache: 'no-store' }).then((res) => res.json()).catch(() => null))?.hosted;
+    if (onHost === undefined) return setNote('could not reach the server');
+    if (onHost) return askRunner();
     const res = await fetch('/api/refresh', { method: 'POST' }).catch(() => null);
     if (!res) return setNote('could not reach the server');
     if (res.status === 409) {
