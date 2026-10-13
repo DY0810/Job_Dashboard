@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
-import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach, type Run } from '../../lib/applications/worker-protocol';
+import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunCreateSchema, RunListSchema, WorkerListSchema, type Outreach, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState } from '../../lib/applications/state';
 import { privateJson, PrivateRequestError } from '../profile/api';
@@ -165,6 +165,28 @@ function ManagePanel({ app, runs, ownerId, onChange }: { app: { id: string; runI
   </div>;
 }
 
+/** Starts a run on the first online worker, the same create-run call as Workers; the run then finds and fills roles on its own. */
+function StartPanel({ workerId, policyEnabled, ownerId, onChange }: { workerId: string | undefined; policyEnabled: boolean; ownerId: string; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const start = async () => {
+    setBusy(true); setError('');
+    try {
+      await privateJson('/api/application-runs', { method: 'POST', owner: ownerId, timeout: 30_000,
+        body: JSON.stringify(RunCreateSchema.parse({ workerId, requestId: crypto.randomUUID(), expectedRevision: 0 })) });
+      onChange();
+    } catch { setError('Could not start. Check the worker and policy on Workers, then try again.'); }
+    finally { setBusy(false); }
+  };
+  if (!policyEnabled) return <div className={styles.row}><span>Turn on the Auto Apply policy in Profile to start.</span></div>;
+  if (!workerId) return <div className={styles.row}><span>Start a worker to begin auto applying.</span><Link href="/workers" prefetch={false}>Workers</Link></div>;
+  return <div className={styles.row}>
+    <span>No run is going.</span>
+    <button className={styles.button} type="button" disabled={busy} onClick={() => void start()}>{busy ? 'Starting...' : 'Start auto apply'}</button>
+    {error && <span role="alert" className={styles.reason}>{error}</span>}
+  </div>;
+}
+
 /** A document hold the applicant has fixed resumes here, in its own run or, after a policy change, in the newest running run. */
 function RetryPanel({ app, runs, ownerId, onChange }: { app: { id: string; runId: string; revision: number; reasonCode: string | null }; runs: Run[]; ownerId: string; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -290,6 +312,9 @@ export default function Applications() {
           <span className={styles.muted}>{view.policy?.enabled ? 'Policy enabled' : 'Policy disabled'}</span>
           <Link href="/workers" prefetch={false}>Manage workers</Link>
         </div>
+        {view.account && !view.runs?.runs.some((run) => run.state === 'running') &&
+          <StartPanel workerId={onlineWorkers.find((worker) => worker.revokedAt === null)?.id} policyEnabled={!!view.policy?.enabled}
+            ownerId={view.account.ownerId} onChange={() => void load(true)} />}
         {applications.length > 0 && <div className={styles.row} aria-label="Application state counts">
           {Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([state, count]) =>
             <span key={state}>{count} <span className={styles.muted}>{label(state)}</span></span>)}
