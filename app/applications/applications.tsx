@@ -7,7 +7,8 @@ import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-prec
 import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunCreateSchema, RunListSchema, WorkerListSchema, type Outreach, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState } from '../../lib/applications/state';
-import { privateJson, PrivateRequestError } from '../profile/api';
+import { privateJson, PrivateRequestError, type PrivateApi } from '../profile/api';
+import DocumentsPane from '../profile/documents-pane';
 import styles from '../workers/workers.module.css';
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -106,11 +107,19 @@ function ApprovePanel({ app, ownerId, onChange }: { app: { id: string; runId: st
 }
 
 const documentHelp: Record<string, string> = {
-  transcript_unavailable: 'The form requires a transcript. Add it to your profile and allow transcripts in the Auto Apply policy, then retry.',
-  required_document_unavailable: 'The form requires an upload Workie has no document for (often a transcript). Add it to your profile and allow its kind in the Auto Apply policy, then retry.',
-  resume_required: 'Add a resume to your profile, then retry.',
-  cover_letter_unavailable: 'The form asks for a cover letter. Allow cover letters in the Auto Apply policy, then retry.',
+  transcript_unavailable: 'This form requires a transcript. Upload it below, then press Retry.',
+  required_document_unavailable: 'This form requires an upload Workie has no file for, usually a transcript. Upload it below, then press Retry.',
+  resume_required: 'Upload your resume below, then press Retry.',
+  cover_letter_unavailable: 'This form asks for a cover letter, and your Auto Apply policy does not allow them. Allow cover letters in Profile, then press Retry.',
+  document_tailoring_unavailable: 'Workie could not tailor your resume for this role. Press Retry to try again.',
 };
+/** The upload that clears each hold; the worker attaches a transcript to any required file field it fits. */
+const uploadKind: Record<string, 'transcript' | 'resume_master'> = {
+  transcript_unavailable: 'transcript', required_document_unavailable: 'transcript', resume_required: 'resume_master',
+};
+// ponytail: an upload outlives the row it started in, so it is never aborted.
+const uploadSignal = new AbortController().signal;
+const ignoreDocuments = () => {};
 
 const postCommand = (path: string, ownerId: string, expectedRevision: number, body: object) => fetch(path, {
   method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000),
@@ -123,8 +132,8 @@ const errorCode = async (response: Response) => (await response.clone().json().c
 function ManagePanel({ app, runs, ownerId, retryShown, onChange }: { app: { id: string; runId: string; revision: number; state: string }; runs: Run[]; ownerId: string; retryShown: boolean; onChange: () => void }) {
   const [busy, setBusy] = useState<'restart' | 'delete' | null>(null);
   const [error, setError] = useState('');
-  const restartable = !['submitted', 'submitting', 'submission_unknown'].includes(app.state);
-  // A document hold has its own Retry with the fix it needs; one Retry per row.
+  // Only a role that stopped needs a fresh attempt; a queued or waiting row resumes by itself once its hold clears.
+  const restartable = ['failed', 'skipped', 'cancelled', 'retryable_failure', 'blocked_unsupported', 'provider_unavailable', 'needs_document'].includes(app.state);
   const restart = async () => {
     setBusy('restart'); setError('');
     try {
@@ -192,6 +201,8 @@ function StartPanel({ workerId, policyEnabled, ownerId, onChange }: { workerId: 
 function RetryPanel({ app, runs, ownerId, onChange }: { app: { id: string; runId: string; revision: number; reasonCode: string | null }; runs: Run[]; ownerId: string; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const api = useCallback<PrivateApi>((path, init) => privateJson(path, { ...init, owner: ownerId }), [ownerId]);
+  const kind = uploadKind[app.reasonCode ?? ''];
   const post = (path: string, body: object) => postCommand(path, ownerId, app.revision, body);
   const retry = async () => {
     setBusy(true); setError('');
@@ -212,10 +223,17 @@ function RetryPanel({ app, runs, ownerId, onChange }: { app: { id: string; runId
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not retry.'); }
     finally { setBusy(false); }
   };
-  return <div className={styles.row}>
-    <span>{documentHelp[app.reasonCode ?? ''] ?? 'Fix the missing document, then retry.'}</span>
-    <button className={styles.button} type="button" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying...' : 'Retry'}</button>
-    {error && <span role="alert" className={styles.reason}>{error}</span>}
+  return <div>
+    <div className={styles.row}>
+      <span>{documentHelp[app.reasonCode ?? ''] ?? 'Fix the missing document, then press Retry.'}</span>
+      {app.reasonCode === 'cover_letter_unavailable' && <Link href="/profile" prefetch={false}>Open Profile</Link>}
+    </div>
+    {kind && <DocumentsPane api={api} ownerId={ownerId} signal={uploadSignal} onDocuments={ignoreDocuments}
+      idPrefix={`auto-apply-${app.id}`} initialKind={kind} />}
+    <div className={styles.row}>
+      <button className={styles.button} type="button" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying...' : 'Retry'}</button>
+      {error && <span role="alert" className={styles.reason}>{error}</span>}
+    </div>
   </div>;
 }
 
@@ -280,8 +298,10 @@ export default function Applications() {
     void load();
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(true); }, HEARTBEAT_MS * 3);
     const focus = () => { if (document.visibilityState === 'visible') void load(true); };
+    const answered = () => void load(true);
     window.addEventListener('focus', focus);
-    return () => { clearInterval(timer); window.removeEventListener('focus', focus); };
+    window.addEventListener('workie:inbox-closed', answered);
+    return () => { clearInterval(timer); window.removeEventListener('focus', focus); window.removeEventListener('workie:inbox-closed', answered); };
   }, [load]);
 
   const applications = view.runs?.applications ?? [];
@@ -294,7 +314,7 @@ export default function Applications() {
   const materials = new Map(view.materials.map((item) => [item.applicationId, item]));
   return <>
     <div className={styles.toolbar}>
-      <h1>Applications</h1>
+      <h1>Auto Apply</h1>
       {!view.locked && <span className={styles.muted}>{view.account?.email}</span>}
       <button className={styles.button} type="button" disabled={view.loading || refreshing} onClick={() => void load()}>
         {refreshing ? 'Refreshing...' : 'Refresh'}
@@ -328,12 +348,20 @@ export default function Applications() {
             {applications.map((app) => {
               const retry = app.state === 'needs_document' && !!app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3;
               const approve = isAwaitingSubmitApproval(app.state, app.reasonCode);
+              const answer = app.state === 'needs_answer' || (app.state === 'needs_policy_decision' && !approve);
+              const caps = view.policy?.policy;
               return <li key={app.id}>
                 <div className={styles.row}><strong>{app.company ?? app.tenant}</strong><span className={styles.muted}>{label(app.state)}</span></div>
                 <div className={styles.row}><span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>{app.ats}</span>
                   {app.receiptId && <span className={styles.muted}>Receipt {app.receiptId}{app.submittedAt ? `, ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
                 {/* The retry and approve panels explain their own hold, so the raw reason would repeat them. */}
-                {app.reasonCode && !retry && !approve && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
+                {app.reasonCode && !retry && !approve && !answer && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
+                {app.state === 'queued' && caps && <span className={styles.muted}>
+                  Waiting its turn. It starts on its own, up to {caps.perEmployerCap} per employer and {caps.dailyApplicationCap} a day.</span>}
+                {answer && <div className={styles.row}>
+                  <span>The employer&apos;s form asks something your profile does not answer.</span>
+                  <button className={styles.button} type="button" onClick={() => window.dispatchEvent(new CustomEvent('workie:answer', { detail: app.id }))}>Answer</button>
+                </div>}
                 {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
                 {retry && view.account &&
                   <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}

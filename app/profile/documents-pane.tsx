@@ -25,14 +25,14 @@ type DocumentSummary = z.infer<typeof summarySchema>;
 type Grant = z.infer<typeof grantSchema>;
 type PendingUpload = { requestId: string; grant?: Grant; attempted?: boolean; uploadedDoc?: DocumentSummary };
 
-export default function DocumentsPane({ api, ownerId, signal, onDocuments, idPrefix = 'document' }: {
+export default function DocumentsPane({ api, ownerId, signal, onDocuments, idPrefix = 'document', initialKind = 'resume_master' }: {
   api: PrivateApi; ownerId: string; signal: AbortSignal; onDocuments: (documents: DocumentOption[]) => void;
-  idPrefix?: string;
+  idPrefix?: string; initialKind?: (typeof kinds)[number];
 }) {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [storage, setStorage] = useState<'local' | 'blob' | 'unconfigured' | null>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [kind, setKind] = useState<(typeof kinds)[number]>('resume_master');
+  const [kind, setKind] = useState<(typeof kinds)[number]>(initialKind);
   const [role, setRole] = useState('');
   const [parentId, setParentId] = useState('');
   const [busy, setBusy] = useState(false);

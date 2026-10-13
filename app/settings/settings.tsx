@@ -90,7 +90,7 @@ export default function Settings() {
     </section>
     <section className={styles.section} aria-labelledby="support-heading">
       <h2 id="support-heading">Support and recovery</h2>
-      <div className={styles.row}><Link href="/applications" prefetch={false}>Application history</Link><Link href="/inbox" prefetch={false}>Answer inbox</Link></div>
+      <div className={styles.row}><Link href="/applications" prefetch={false}>Auto Apply</Link><Link href="/inbox" prefetch={false}>Answer inbox</Link></div>
       <p className={styles.muted}>Receipt evidence is required for a sent status. A timeout or missing confirmation remains submission unknown and is never retried blindly.</p>
     </section>
   </>;

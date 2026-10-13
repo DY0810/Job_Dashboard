@@ -44,7 +44,18 @@ export function InboxBell({ standalone = false }: { standalone?: boolean }) {
     const unload = (event: BeforeUnloadEvent) => {
       if (instance.dirty) { event.preventDefault(); event.returnValue = ''; }
     };
+    // Auto Apply's Answer button opens this panel on that application's open question.
+    const answer = async (event: Event) => {
+      const applicationId = (event as CustomEvent<string>).detail;
+      if (!dialog.current?.open) dialog.current?.showModal();
+      setOpen(true);
+      await instance.refresh();
+      // ponytail: only the newest 20 notifications are searched; an older question opens the list instead.
+      const item = instance.view.inbox?.items.find((i) => i.applicationId === applicationId && i.question && !i.question.resolved);
+      if (item?.question) await instance.select(item.question);
+    };
     void poll();
+    window.addEventListener('workie:answer', answer);
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('focus', focus);
     window.addEventListener('online', focus);
@@ -60,6 +71,7 @@ export function InboxBell({ standalone = false }: { standalone?: boolean }) {
       window.removeEventListener('online', focus);
       window.removeEventListener('offline', offline);
       window.removeEventListener('beforeunload', unload);
+      window.removeEventListener('workie:answer', answer);
     };
   }, [standalone]);
   const counts = !view.locked ? view.inbox : null;
@@ -67,6 +79,7 @@ export function InboxBell({ standalone = false }: { standalone?: boolean }) {
     view.loading ? 'checking session' : 'locked or unavailable';
   function close() {
     dialog.current?.close();
+    window.dispatchEvent(new Event('workie:inbox-closed'));
     setOpen(false);
     trigger.current?.focus();
   }
