@@ -354,7 +354,7 @@ export default function Applications() {
               const manage = view.account && <ManagePanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} retryShown={retry} onChange={() => void load(true)} />;
               return <li key={app.id}>
                 <div className={styles.row}><strong>{app.company ?? app.tenant}</strong><span className={styles.muted}>{label(app.state)}</span></div>
-                <div className={styles.row}><span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>{app.ats}</span>
+                <div className={styles.row}>{app.role && <span>{app.role}</span>}<span className={styles.muted}>{app.ats}</span>
                   {app.receiptId && <span className={styles.muted}>Receipt {app.receiptId}{app.submittedAt ? `, ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
                 {/* The retry and approve panels explain their own hold, so the raw reason would repeat them. */}
                 {app.reasonCode && !retry && !approve && !answer && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
