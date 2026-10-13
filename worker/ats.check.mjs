@@ -8,7 +8,8 @@ import { test } from 'node:test';
 import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
 import { greenhouse, hostedFields, hostedTitle } from './ats/greenhouse.ts';
-import { fillField, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
+import { lever } from './ats/lever.ts';
+import { fillField, formQuestionKey as leverQuestionKey, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
 import { AtsIdentitySchema, AtsObservationSchema } from './ats/protocol.ts';
 import { resolveApplicationIdentity } from '../lib/applications/application-identity.ts';
@@ -371,4 +372,208 @@ test('persistent browser egress rejects unapproved origins before navigation', {
     await new Promise((resolve) => fixture.server.close(resolve));
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// Ashby: the hosted form's own markup (observed on OpenAI, Ramp and Notion postings, 2026-10-12), served on loopback.
+const { ashby } = await import('./ats/ashby.ts');
+const { formQuestionKey } = await import('./ats/protocol.ts');
+const ashbyPosting = '3813977e-5940-456d-bf5a-16efcdc3a6dc';
+const ashbyEntry = (path, label, input, required = true) => `<div class="ashby-application-form-field-entry"><label class="ashby-application-form-question-title${required ? ' _required_f7cvd_91' : ''}" for="${path}">${label}</label>${input}</div>`;
+const ashbyYesNo = (path) => `<div class="ashby-application-form-input-yesno"><button type="button" aria-pressed="false">Yes</button><button type="button" aria-pressed="false">No</button><input type="checkbox" tabindex="-1" name="${path}"></div>`;
+function ashbyMarkup(title) {
+  const group = ['Product', 'Infra', 'AI'].map((option, index) => `<div class="ashby-application-form-input-checkbox-group-option"><input type="checkbox" id="g-${index}" name="${option}"><label for="g-${index}" class="ashby-application-form-input-checkbox-group-option-label">${option}</label></div>`).join('');
+  return `<!doctype html><title>${title}</title><div class="ashby-application-form-container">
+    ${ashbyEntry('_systemfield_name', 'Legal Name', '<input class="ashby-application-form-input-text" name="_systemfield_name" id="_systemfield_name">')}
+    ${ashbyEntry('_systemfield_email', 'Email', '<input class="ashby-application-form-input-text" type="email" name="_systemfield_email" id="_systemfield_email">')}
+    ${ashbyEntry('_systemfield_resume', 'Resume', '<div class="ashby-application-form-input-file"><input type="file" id="_systemfield_resume"><button>Upload File</button></div>')}
+    ${ashbyEntry('09a328e0-8d57-4f88-86ab-688de1657b17', 'What are you most proud of?', '<textarea class="ashby-application-form-input-textarea" name="09a328e0-8d57-4f88-86ab-688de1657b17"></textarea>')}
+    ${ashbyEntry('bed95633-1b6e-4cd0-9eaf-c5a9f75ac35d', 'Are you authorized to work lawfully in the United States?', ashbyYesNo('bed95633-1b6e-4cd0-9eaf-c5a9f75ac35d'))}
+    ${ashbyEntry('d33e2a8f-3742-4e5e-b91c-b7607d3cdf63', 'Are you able to work from our office three days per week?', ashbyYesNo('d33e2a8f-3742-4e5e-b91c-b7607d3cdf63'))}
+    <fieldset class="ashby-application-form-input-checkbox-group"><label class="ashby-application-form-question-title _required_f7cvd_91" for="5f7757f0-b2ee-41b2-b9d0-0212461ed5a2">What type of engineering role are you interested in?</label>${group}</fieldset>
+    <button type="button" class="ashby-application-form-submit-button">Submit Application</button></div>
+    <script>
+      document.querySelectorAll('.ashby-application-form-input-yesno button').forEach(button => button.onclick = () => {
+        for (const other of button.parentElement.querySelectorAll('button')) other.setAttribute('aria-pressed', String(other === button));
+      });
+      document.getElementById('_systemfield_resume').onchange = (event) => event.target.insertAdjacentHTML('afterend',
+        '<p class="ashby-application-form-input-file-item-name"><span>' + event.target.files[0].name + '</span></p>');
+      document.querySelector('.ashby-application-form-submit-button').onclick = () => { document.querySelector('.ashby-application-form-container').outerHTML =
+        '<div class="ashby-application-form-success-container" role="status"><h2>Success</h2><p>Your application was successfully submitted. We\\'ll contact you if there are next steps.</p></div>'; };
+    </script>`;
+}
+async function ashbyFixture(title = 'Product Designer @ Fixture Co') {
+  const server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(ashbyMarkup(title));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const input = { identity: { ats: 'ashby', tenant: 'fixture', requisition: ashbyPosting }, company: 'Fixture Co', role: 'Product Designer',
+    applicationUrl: `${origin}/fixture/${ashbyPosting}`, documents: {},
+    answers: { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', us_authorized: 'Yes' } };
+  return { server, origin, input };
+}
+
+test('the Ashby fixture is observed, answered from the profile and the inbox, filled, submitted and receipted', { skip: !browserReady }, async () => {
+  const { server, origin, input } = await ashbyFixture();
+  const directory = await mkdtemp(join(tmpdir(), 'workie-ats-ashby-'));
+  input.documents.resume = join(directory, 'resume.pdf');
+  await writeFile(input.documents.resume, '%PDF-1.4 synthetic resume', { mode: 0o600 });
+  const runtime = await createBrowserRuntime({ userDataDir: join(directory, 'browser'), approvedOrigins: [origin], allowLoopback: true });
+  try {
+    const observed = await ashby.observe(runtime, input);
+    assert.deepEqual(observed.fields.map(({ key, kind, required, options }) => ({ key, kind, required, options })), [
+      { key: observed.fields[0].key, kind: 'text', required: true, options: undefined },
+      { key: observed.fields[1].key, kind: 'email', required: true, options: undefined },
+      { key: 'resume', kind: 'file', required: true, options: undefined },
+      { key: observed.fields[3].key, kind: 'text', required: true, options: undefined },
+      { key: observed.fields[4].key, kind: 'radio', required: true, options: ['Yes', 'No'] },
+      { key: observed.fields[5].key, kind: 'radio', required: true, options: ['Yes', 'No'] },
+      { key: observed.fields[6].key, kind: 'select', required: true, options: ['Product', 'Infra', 'AI'] },
+    ]);
+    assert.match(observed.fields[3].key, /^f-[0-9a-f]{24}$/); // a bare UUID cannot be a key
+    assert.match(observed.fields[6].key, /^f-[0-9a-f]{24}\[\]$/);
+    const [name, email, , proud, authorized, office, roles] = observed.fields;
+    assert.equal(ashby.answer(input, name), 'Test Applicant');
+    assert.equal(ashby.answer(input, email), 'test@example.com');
+    assert.equal(ashby.answer(input, authorized), 'Yes');
+    // Unrecognized questions go to the inbox; their answers come back under the question's own key.
+    assert.deepEqual([proud, office, roles].map(field => ashby.answer(input, field)), [undefined, undefined, undefined]);
+    input.answers[formQuestionKey(proud)] = 'A payments redesign.';
+    input.answers[formQuestionKey(office)] = 'No';
+    input.answers[formQuestionKey(roles)] = ['Product', 'AI'];
+    const result = await runAtsApplication({ runtime, adapter: ashby, application: input, facts, requirements });
+    assert.equal(result.state, 'submitted');
+    assert.match(result.receipt.receiptId, /^ab-[0-9a-f]{32}$/);
+    assert.equal(result.receipt.identity.requisition, ashbyPosting);
+  } finally {
+    await runtime.close();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an Ashby form for another role is refused, and an unanswered required question stops the fill', { skip: !browserReady }, async () => {
+  const wrong = await ashbyFixture('Other role @ Fixture Co');
+  const directory = await mkdtemp(join(tmpdir(), 'workie-ats-ashby-negative-'));
+  try {
+    const runtime = await createBrowserRuntime({ userDataDir: join(directory, 'wrong'), approvedOrigins: [wrong.origin], allowLoopback: true });
+    try { await assert.rejects(ashby.observe(runtime, wrong.input), /ATS_IDENTITY_MISMATCH/); }
+    finally { await runtime.close(); }
+    const right = await ashbyFixture();
+    const runtime2 = await createBrowserRuntime({ userDataDir: join(directory, 'right'), approvedOrigins: [right.origin], allowLoopback: true });
+    try {
+      right.input.documents.resume = join(directory, 'resume.pdf');
+      await writeFile(right.input.documents.resume, '%PDF-1.4 synthetic resume', { mode: 0o600 });
+      const observed = await ashby.observe(runtime2, right.input);
+      await assert.rejects(ashby.fill(runtime2, right.input, observed), (error) => error.code === 'REQUIRED_ANSWER_MISSING' && error.message === observed.fields[3].key);
+    } finally {
+      await runtime2.close();
+      await new Promise((resolve) => right.server.close(resolve));
+    }
+  } finally {
+    await new Promise((resolve) => wrong.server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// Lever's live markup (Palantir, Shield AI, Ro; 2026-10-12): standard inputs by name, custom questions as "cards[<uuid>][fieldN]"
+// (a checkbox group shares one name), a location box that accepts only a picked suggestion, and a POST that redirects to /thanks.
+const leverJob = 'https://jobs.lever.co/fixture/0b2c3d4e-1111-4222-8333-944455566677';
+const leverRole = 'Software Engineer Intern';
+const leverForm = (role) => `<title>Fixture Co - ${role}</title><form id="application-form" method="POST" enctype="multipart/form-data"><ul>
+  <li class="application-question resume"><label><div class="application-label">Resume/CV <span class="required">✱</span></div><input type="file" name="resume" id="resume-upload-input"></label></li>
+  <li class="application-question"><label><div class="application-label">Full name<span class="required">✱</span></div><input type="text" name="name" required></label></li>
+  <li class="application-question"><label><div class="application-label">Email<span class="required">✱</span></div><input type="email" name="email" required></label></li>
+  <li class="application-question"><label><div class="application-label">Current location <span class="required">✱</span></div><input id="location-input" name="location" required>
+    <input id="selected-location" type="hidden" name="selectedLocation"><div class="dropdown-results"></div></label></li>
+  <li class="application-question"><label><div class="application-label">LinkedIn URL</div><input type="text" name="urls[LinkedIn]"></label></li>
+  <li class="application-question custom-question"><div class="application-label"><div class="text">Language Skill(s) (Check all that apply)<span class="required">✱</span></div></div><ul>
+    <li><label><input type="checkbox" name="cards[c1][field0]" value="English" required>English</label></li><li><label><input type="checkbox" name="cards[c1][field0]" value="Korean" required>Korean</label></li>
+    <li><label><input type="checkbox" name="cards[c1][field0]" value="French" required>French</label></li></ul></li>
+  <li class="application-question custom-question"><div class="application-label"><div class="text">Are you authorized to work in the United States?<span class="required">✱</span></div></div><ul>
+    <li><label><input type="radio" name="cards[c1][field1]" value="Yes" required>Yes</label></li><li><label><input type="radio" name="cards[c1][field1]" value="No" required>No</label></li></ul></li>
+  <li class="application-question custom-question"><div class="application-label"><div class="text">Why this team?<span class="required">✱</span></div></div><textarea name="cards[c1][field2]" required></textarea></li></ul>
+  <div class="application-question"><label><div class="application-label">Gender</div><select name="eeo[gender]"><option value="">Select ...</option><option value="Male">Male</option><option value="Female">Female</option></select></label></div>
+  <div class="application-question"><label><div class="application-label">Veteran status</div><select name="eeo[veteran]"><option value="">Select ...</option><option value="I am not a veteran">I am not a veteran</option></select></label></div>
+  <input type="hidden" name="cards[c1][baseTemplate]" value="{}"><button type="button" id="btn-submit">Submit application</button></form><script>
+  const input = document.getElementById('location-input'), results = document.querySelector('.dropdown-results');
+  input.addEventListener('input', () => { results.replaceChildren(); for (const place of ['San Francisco, CA, USA', 'San Francisco, Córdoba, ARG'].filter(p => p.toLowerCase().startsWith(input.value.toLowerCase()))) {
+    const item = document.createElement('div'); item.className = 'dropdown-location'; item.textContent = place;
+    item.addEventListener('click', () => { input.value = place; document.getElementById('selected-location').value = JSON.stringify({ name: place }); results.replaceChildren(); });
+    results.append(item); } });
+  document.getElementById('btn-submit').onclick = () => document.querySelector('form').submit();
+  </script>`;
+async function leverFixture(browser, title = leverRole) {
+  const context = await browser.newContext();
+  const posted = [];
+  await context.route(`${leverJob}/apply`, route => {
+    if (route.request().method() !== 'POST') return route.fulfill({ contentType: 'text/html; charset=utf-8', body: leverForm(title) });
+    posted.push(route.request().postData() ?? '');
+    // Lever answers with a redirect; a fulfilled redirect would leave the routed context, so the fixture navigates itself.
+    return route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<script>location.replace('${leverJob}/thanks')</script>` });
+  });
+  await context.route(`${leverJob}/thanks`, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<title>Fixture Co - ${title}</title>
+    <div class="posting-headline"><h2>${title}</h2></div><div class="confirmation-message"><h3 data-qa="msg-submit-success">Application submitted!</h3></div>` }));
+  return { posted, runtime: { context, page: () => context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } } };
+}
+const leverApplication = (answers = {}) => ({ identity: { ats: 'lever', tenant: 'fixture', requisition: '0b2c3d4e-1111-4222-8333-944455566677' },
+  company: 'Fixture Co', role: leverRole, applicationUrl: leverJob, documents: {},
+  answers: { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', current_location: 'San Francisco, CA', us_authorized: 'Yes',
+    voluntary_gender: 'Male', voluntary_veteran: 'I am not a protected veteran', ...answers } });
+
+test('a Lever form is observed, answered from the profile, filled, submitted and receipted', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  const directory = await mkdtemp(join(tmpdir(), 'workie-lever-'));
+  try {
+    const resume = join(directory, 'resume.pdf');
+    await writeFile(resume, '%PDF-1.4 synthetic resume', { mode: 0o600 });
+    const { runtime, posted } = await leverFixture(browser);
+    const input = leverApplication();
+    input.documents.resume = resume;
+    const observation = await lever.observe(runtime, input);
+    assert.deepEqual(observation.fields.map(field => [field.name, field.kind, field.required, field.options, field.key.endsWith('[]')]), [
+      ['resume', 'file', true, undefined, false], ['name', 'text', true, undefined, false], ['email', 'email', true, undefined, false],
+      ['location', 'text', true, undefined, false], ['urls[LinkedIn]', 'text', false, undefined, false],
+      ['cards[c1][field0]', 'radio', true, ['English', 'Korean', 'French'], true], ['cards[c1][field1]', 'radio', true, ['Yes', 'No'], false],
+      ['cards[c1][field2]', 'text', true, undefined, false], ['eeo[gender]', 'select', false, ['Male', 'Female'], false],
+      ['eeo[veteran]', 'select', false, ['I am not a veteran'], false]]);
+    // The veteran wording differs from the profile's, so it is left blank rather than guessed.
+    assert.deepEqual(observation.fields.map(field => lever.answer(input, field)),
+      [undefined, 'Test Applicant', 'test@example.com', 'San Francisco, CA', undefined, undefined, 'Yes', undefined, 'Male', undefined]);
+    const [languages, why] = [observation.fields[5], observation.fields[7]];
+    // An unanswered required question stops the fill so the worker can ask the applicant.
+    await assert.rejects(lever.fill(runtime, input, observation), error => error.code === 'REQUIRED_ANSWER_MISSING' && error.message === languages.key);
+    input.answers[leverQuestionKey(languages)] = ['English', 'Korean'];
+    input.answers[leverQuestionKey(why)] = 'Because of the fixture.';
+    const result = await runAtsApplication({ runtime, adapter: lever, application: input, facts, requirements });
+    assert.equal(result.state, 'submitted');
+    assert.match(result.receipt.receiptId, /^lv-[0-9a-f]{32}$/);
+    assert.deepEqual(result.receipt.identity, input.identity);
+    for (const value of ['Test Applicant', 'San Francisco, CA, USA', 'English', 'Korean', 'Because of the fixture.', 'Male', 'filename="resume.pdf"']) assert.ok(posted[0].includes(value), value);
+    assert.ok(!posted[0].includes('French') && !posted[0].includes('I am not a veteran'));
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+test('a Lever location not among the suggestions asks the applicant to pick one of them', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const { runtime } = await leverFixture(browser);
+    const input = leverApplication({ current_location: 'San Francisco, California' });
+    const observation = await lever.observe(runtime, input);
+    const location = observation.fields.find(field => field.name === 'location');
+    await assert.rejects(lever.fill(runtime, input, { ...observation, fields: [location] }),
+      error => error.code === 'ANSWER_OPTION_INVALID' && error.options.join('|') === 'San Francisco, CA, USA|San Francisco, Córdoba, ARG');
+  } finally { await browser.close(); }
+});
+test('a Lever form for another role or posting is an identity mismatch', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    await assert.rejects(lever.observe((await leverFixture(browser, 'Other Intern')).runtime, leverApplication()), /ATS_IDENTITY_MISMATCH/);
+    const { runtime } = await leverFixture(browser);
+    await assert.rejects(lever.observe(runtime, { ...leverApplication(), applicationUrl: 'https://jobs.lever.co/fixture/11111111-1111-4111-8111-111111111111/apply' }), /ATS_IDENTITY_MISMATCH/);
+    await assert.rejects(lever.observe(runtime, { ...leverApplication(), applicationUrl: 'https://jobs.eu.lever.co/fixture/0b2c3d4e-1111-4222-8333-944455566677' }), /ATS_IDENTITY_MISMATCH/);
+  } finally { await browser.close(); }
 });

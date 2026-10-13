@@ -11,6 +11,8 @@ import { readMaskedGrant, readMaskedSecret } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
 import { createBrowserRuntime } from "./browser.ts";
 import { greenhouse } from "./ats/greenhouse.ts";
+import { lever } from "./ats/lever.ts";
+import { ashby } from "./ats/ashby.ts";
 import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
 import { screenApplication, screeningQuestions, formQuestions } from "./screening.ts";
 import { AtsError } from "./ats/protocol.ts";
@@ -168,7 +170,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }
       throw error;
     }
-    const adapters = { greenhouse } as const;
+    const adapters = { greenhouse, lever, ashby } as const;
     const adapter = adapters[applicationContext.identity.ats as keyof typeof adapters];
     if (!adapter) return { state: "blocked_unsupported" as const, reasonCode: "adapter_unavailable" };
     const identity = AtsIdentitySchema.parse(applicationContext.identity);

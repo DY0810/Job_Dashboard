@@ -71,7 +71,8 @@ export type AtsAdapter = {
 // Anything ambiguous (negations, combined questions, unrecognized wording) still goes to the inbox.
 export function commonAnswer(input: AtsApplication, field: AtsField) {
   const text = field.label.toLowerCase().replace(/\s+/g, ' ').trim();
-  if (/\bnot\b|\bhear\b/.test(text)) return undefined;
+  // A follow-up ("If yes, what type of sponsorship?") is not the yes/no question it follows.
+  if (/\bnot\b|\bhear\b|^if (yes|so)\b/.test(text)) return undefined;
   if (field.kind === 'text') {
     if (/^linkedin\b|\blinkedin (profile|url|link)\b/.test(text)) return input.answers.linkedin;
     if (/^github\b|\bgithub (profile|url|link|username)\b/.test(text)) return input.answers.github;
