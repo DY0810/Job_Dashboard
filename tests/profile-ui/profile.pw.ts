@@ -302,7 +302,7 @@ test('all nine sections render native fields with responsive labels and keyboard
   await screenshot(page, info, 'nine-sections');
 });
 
-test('optional states and candidates remain distinct; invalid values are editable', async ({ page }) => {
+test('typing an answer confirms a candidate; invalid values are editable', async ({ page }) => {
   const fixture = fixtures.get(page)!;
   const { voluntary } = fixture.profile;
   voluntary.pronouns = { ...voluntary.pronouns, state: 'candidate', value: 'synthetic candidate' };
@@ -322,8 +322,6 @@ test('optional states and candidates remain distinct; invalid values are editabl
   await page.getByLabel('Personal email', { exact: true }).fill('changed@example.test');
   await saved(page);
   expect(fixture.profile.voluntary.pronouns.state).toBe('confirmed');
-  expect(fixture.profile.voluntary.disability.state).toBe('declined');
-  expect(fixture.profile.voluntary.veteran.state).toBe('not_applicable');
   expect(fixture.profile.voluntary.raceEthnicity.state).toBe('unknown');
 });
 

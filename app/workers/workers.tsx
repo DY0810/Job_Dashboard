@@ -4,8 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { X } from 'lucide-react';
 import { HEARTBEAT_MS } from '../../lib/applications/worker-protocol';
-import { WorkerControl, applicationActions, initialView, pairingStatus, workerStatus, type WorkerView } from './control';
-import DiscoveryStatus from './discovery-status';
+import { WorkerControl, initialView, pairingStatus, workerStatus, type WorkerView } from './control';
 import styles from './workers.module.css';
 
 const label = (value: string) => value.replaceAll('_', ' ');
@@ -75,7 +74,6 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
   const disabled = view.busy || !!view.pending;
   const workers = view.workers?.workers ?? [];
   const runs = view.runs?.runs ?? [];
-  const visible = view.runs?.applications.filter((app) => app.hiddenAt === null) ?? [];
   const grant = view.grant;
   const selectedWorker = workers.find((w) => w.id === selected && w.revokedAt === null);
   const runnerAvailable = workers.some((worker) => workerStatus(worker, view.now) === 'Online');
@@ -167,29 +165,6 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
           </div>
         </li>)}
       </ul>}
-    </section>
-    <DiscoveryStatus ownerId={view.account!.ownerId} runs={runs} locked={view.locked} />
-    <section className={styles.section} aria-labelledby="applications-heading">
-      <h4 id="applications-heading">Application state</h4>
-      {!visible.length ? <p className={styles.muted}>No applications.</p> :
-        <ul className={styles.applications} aria-label="Application states">
-          {visible.map((app) => <li key={app.id} aria-label={`Application ${app.requisition}`}>
-            <div className={styles.row}><strong>{app.company ?? app.tenant}</strong>
-              <span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>Run {short(app.runId)}</span></div>
-            <div className={styles.row}><span className={styles.muted}>{label(app.state)}</span>
-              {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
-            </div>
-            <div className={styles.actions}>
-              {applicationActions(app, runs.find((run) => run.id === app.runId)).map((action) =>
-                <button className={styles.button} type="button" key={action}
-                  disabled={action === 'emergency-stop' ? view.busy && view.pending?.body.action === action : disabled}
-                  onClick={() => void control.commandApplication(app, action)}>
-                  {action === 'approve-submit' ? 'Approve and submit' : action === 'retry-safe' ? 'Retry safe' : action === 'emergency-stop' ? 'Emergency stop' :
-                    action === 'skip' ? 'Skip' : 'Cancel'}
-                </button>)}
-            </div>
-          </li>)}
-        </ul>}
     </section>
   </>;
 }
