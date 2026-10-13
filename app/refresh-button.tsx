@@ -45,6 +45,13 @@ export function RefreshButton({ hosted }: { hosted?: boolean }) {
   };
   useEffect(() => stop, []);
 
+  // ponytail: one blind retry. Opening or closing a posting writes history, and Next drops a
+  // refresh still in flight when that happens; re-issue on drop if one retry proves too few.
+  const refreshTable = () => {
+    router.refresh();
+    setTimeout(() => router.refresh(), 3000);
+  };
+
   const poll = () => {
     stop();
     refreshedTable.current = false;
@@ -57,7 +64,7 @@ export function RefreshButton({ hosted }: { hosted?: boolean }) {
       // The table is worth re-rendering once enrich has run: that is when new rows exist.
       if ((next === 'syncing' || next === 'done') && !refreshedTable.current) {
         refreshedTable.current = true;
-        router.refresh();
+        refreshTable();
       }
       if (next === 'done') {
         stop();
@@ -103,7 +110,7 @@ export function RefreshButton({ hosted }: { hosted?: boolean }) {
         stop();
         setWaiting(false);
         setNote('cloud refresh complete');
-        router.refresh();
+        refreshTable();
         setTimeout(() => setNote(null), 5000);
         return;
       }

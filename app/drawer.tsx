@@ -79,10 +79,11 @@ export function Drawer({ closeHref }: { closeHref: string }) {
   // modified or middle click falls through to the browser and opens the deep link in a tab.
   useEffect(() => {
     const open = (event: MouseEvent) => {
-      const link = (event.target as Element | null)?.closest?.('a[data-job]');
+      const link = (event.target as Element | null)?.closest?.<HTMLAnchorElement>('a[data-job]');
       if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
       event.preventDefault();
-      window.history.pushState(null, '', link.getAttribute('href'));
+      // A double click must not push the same entry twice, or Back would reopen a closed drawer.
+      if (link.href !== window.location.href) window.history.pushState(null, '', link.href);
     };
     document.addEventListener('click', open);
     return () => document.removeEventListener('click', open);

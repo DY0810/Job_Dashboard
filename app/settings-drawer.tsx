@@ -8,8 +8,12 @@ import { Modal } from './modal';
 import styles from './workers/workers.module.css';
 
 // Every page wears the header: a static import shipped this body, and full zod with it, to pages that never open it.
-const Settings = dynamic(() => import('./settings/settings'));
-const Workers = dynamic(() => import('./workers/workers'));
+// `loading` gives the drawer its own Suspense boundary, so it opens at once instead of holding the page.
+// A failed chunk (a deploy since this tab loaded, or offline) renders a note: error.tsx wears this header too.
+const loading = () => <p className={styles.message} role="status">Loading private settings...</p>;
+const failed = () => ({ default: () => <p className={styles.message} role="alert">Settings could not load. Reload the page.</p> });
+const Settings = dynamic(() => import('./settings/settings').catch(failed), { loading });
+const Workers = dynamic(() => import('./workers/workers').catch(failed), { loading });
 
 /**
  * `?settings=1` on the current path. Native history: Next syncs useSearchParams without a server round trip.
@@ -18,6 +22,7 @@ const Workers = dynamic(() => import('./workers/workers'));
 export function setSettingsOpen(open: boolean) {
   if (!open && window.history.state?.workieSettings) return window.history.back();
   const url = new URL(window.location.href);
+  if (open && url.searchParams.get('settings') === '1') return;
   if (open) url.searchParams.set('settings', '1'); else url.searchParams.delete('settings');
   if (open) window.history.pushState({ workieSettings: true }, '', url); else window.history.replaceState(null, '', url);
 }

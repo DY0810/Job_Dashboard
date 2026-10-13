@@ -74,6 +74,8 @@ describe('personal board state', () => {
     expect(defaultFiltersHref(parseParams({ basis: 'freelance' }), saved))
       .toBe('/?basis=freelance&pay=paid%2Cunknown&level=entry%2Cjunior%2Cmid');
     expect(defaultFiltersHref(parseParams({}), null)).toBeNull();
+    expect(defaultFiltersHref(parseParams({ level: 'senior+', job: '5' }), saved, true))
+      .toBe('/?pay=paid%2Cunknown&level=entry%2Cjunior%2Cmid');
   });
 
   it('lets explicit URLs and clear override defaults, including after navigation or reload', () => {

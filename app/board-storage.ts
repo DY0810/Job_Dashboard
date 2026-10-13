@@ -80,7 +80,11 @@ export function stillEngaged(engaged: boolean, saved: string, live: string): boo
   return saved !== '' && live !== '' && (engaged || live === saved);
 }
 
-/** Defaults only fill a bare landing URL; an explicit filter set always wins. */
+/**
+ * Defaults only fill a bare landing URL; an explicit filter set always wins. A landing keeps its
+ * drawer; a click (`force`) drops it, since the drawer is modal and so already closed — and `p`
+ * can still name a posting that was closed in the browser after the server rendered it.
+ */
 export function defaultFiltersHref(p: Params, saved: string | null, force = false): string | null {
   if (saved === null || saved.length > 2000) return null;
   if (!force && (hasFilters(p) || p.unfiltered || p.page > 1)) return null;
@@ -89,7 +93,7 @@ export function defaultFiltersHref(p: Params, saved: string | null, force = fals
     ...Object.fromEntries([...FILTERS, 'badge'].map((key) => [key, raw[key]])),
     tab: p.tab,
     basis: p.basis ?? undefined,
-    job: p.job === null ? undefined : String(p.job),
+    job: force || p.job === null ? undefined : String(p.job),
   });
   if (!hasFilters(next) && !force) return null;
   if (force && !hasFilters(next)) next.unfiltered = true;

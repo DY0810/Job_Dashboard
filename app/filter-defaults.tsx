@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { FILTERS, cleared, href, parseParams, type Params } from '@/lib/params';
 import { useBoardPush } from './auto-apply';
 import {
@@ -41,7 +41,8 @@ export function FilterDefaults({ p }: { p: Params }) {
   const router = useRouter();
   const [, push] = useBoardPush();
   const button = useRef<HTMLButtonElement>(null);
-  const current = href(p);
+  // The live URL, not `p`: the posting drawer opens and closes in the browser, after the server rendered `p`.
+  const current = href(parseParams(Object.fromEntries(useSearchParams())));
   // Null until mounted: storage is per browser, so the server renders the plain button.
   const [stored, setStored] = useState<string | null>(null);
   const [live, setLive] = useState(() => filterQuery(p));
