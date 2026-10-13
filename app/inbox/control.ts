@@ -166,7 +166,7 @@ export class InboxControl {
     }
   }
   private async load(owner: string, signal: AbortSignal, cursor?: string) {
-    const inbox = InboxPageSchema.parse(await this.request(`/api/inbox?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, signal, owner));
+    const inbox = InboxPageSchema.parse(await this.request(`/api/inbox?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, signal, owner));
     if (inbox.ownerId !== owner) throw new RequestError(403, 'PRINCIPAL_CHANGED');
     let selected = this.view.selected;
     if (selected) {

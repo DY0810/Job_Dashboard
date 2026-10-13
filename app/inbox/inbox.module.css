@@ -96,7 +96,8 @@
   font: inherit; font-size: 16px; color: var(--fg); background: var(--canvas);
 }
 .field textarea { resize: vertical; min-height: 100px; }
-.choice { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; }
+/* Doubled class outranks the Auto Apply page's grid labels. */
+label.choice.choice { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; }
 .choice input { flex: 0 0 auto; }
 .detail { margin: 12px 0; display: grid; grid-template-columns: minmax(75px, auto) 1fr; gap: 4px 12px; }
 .detail dt { color: var(--fg-dim); }
