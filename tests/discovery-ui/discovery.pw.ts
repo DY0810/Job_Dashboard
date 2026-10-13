@@ -4,13 +4,10 @@ import { DiscoveryFixture, ownerA, ownerB } from './fixture';
 
 // Parent-owned fresh loopback build only. No nested agents or cross-task messaging.
 const fixtures = new WeakMap<Page, DiscoveryFixture>();
-const workers = new WeakMap<Page, WorkerFixture>();
-const statusReads = new WeakMap<Page, string[]>();
 const errors = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ context, page, baseURL }) => {
   const fixture = new DiscoveryFixture(), worker = new WorkerFixture();
-  worker.addRun(); worker.addRun();
-  fixtures.set(page, fixture); workers.set(page, worker); statusReads.set(page, []); errors.set(page, []);
+  fixtures.set(page, fixture); errors.set(page, []);
   page.on('pageerror', (error) => errors.get(page)!.push(error.message));
   await page.addInitScript(() => {
     localStorage.setItem('workie-applied:1', '1');
@@ -21,11 +18,10 @@ test.beforeEach(async ({ context, page, baseURL }) => {
   await context.route('**/*', async (route) => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin === baseURL && request.method() === 'GET' &&
-        (['/applications/import', '/applications'].includes(url.pathname) || url.pathname.startsWith('/_next/static/'))) return route.continue();
+        (url.pathname === '/applications/import' || url.pathname.startsWith('/_next/static/'))) return route.continue();
     if (url.origin !== baseURL || !url.pathname.startsWith('/api/')) return route.abort();
-    const discovery = url.pathname.includes('/import/') || url.pathname.endsWith('/discovery') ||
+    const discovery = url.pathname.includes('/import/') ||
       url.pathname === '/api/auth/applicant' || url.pathname === '/api/auth/applicants';
-    if (url.pathname.endsWith('/discovery')) statusReads.get(page)!.push(url.pathname);
     try {
       const reply = await (discovery ? fixture : worker).handle(url.pathname, request.method(),
         new Headers(request.headers()), request.postData() ? request.postDataJSON() : null);
@@ -129,26 +125,6 @@ test('over 1000 flags visibly blocks import without silently previewing a subset
   expect(fixtures.get(page)!.writes).toEqual([]);
 });
 
-test('selected-run refresh shows complete backlog, current staging and truthful failed scan and fetch', async ({ page }) => {
-  await page.goto('/applications?settings=1');
-  const runs = workers.get(page)!.runs;
-  await expect(page.getByRole('link', { name: 'Import browser marks' })).toBeVisible();
-  await page.getByRole('combobox', { name: 'Discovery run', exact: true }).selectOption(runs[0].id);
-  expect(statusReads.get(page)).toEqual([]);
-  await page.getByRole('button', { name: 'Refresh discovery' }).click();
-  await expect(page.getByText('691 retained targets', { exact: true })).toBeVisible();
-  await expect(page.getByText('200 / 601 staged', { exact: true })).toBeVisible();
-  await expect(page.getByText('Scan failed', { exact: true })).toBeVisible();
-  const lastScan = await page.getByTestId('last-successful-scan').textContent();
-  fixtures.get(page)!.failStatus = true;
-  await page.getByRole('button', { name: 'Refresh discovery' }).click();
-  await expect(page.getByText('Refresh failed. Showing the last fetched status.', { exact: true })).toBeVisible();
-  expect(await page.getByTestId('last-successful-scan').textContent()).toBe(lastScan);
-  await page.getByRole('combobox', { name: 'Discovery run', exact: true }).selectOption(runs[1].id);
-  await expect(page.getByText('691 retained targets', { exact: true })).toHaveCount(0);
-  expect(statusReads.get(page)).toEqual(Array(2).fill(`/api/application-runs/${runs[0].id}/discovery`));
-});
-
 test('import keyboard controls and dense layout fit the configured viewport', async ({ page }, testInfo) => {
   await preview(page);
   const checkbox = page.getByRole('checkbox', { name: 'Select posting 1', exact: true });
@@ -157,13 +133,4 @@ test('import keyboard controls and dense layout fit the configured viewport', as
   await expect(checkbox).toBeChecked();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('import.png'), fullPage: true });
-});
-
-test('discovery layout fits the configured viewport', async ({ page }, testInfo) => {
-  await page.goto('/applications?settings=1');
-  await page.getByRole('combobox', { name: 'Discovery run', exact: true }).selectOption(workers.get(page)!.runs[0].id);
-  await page.getByRole('button', { name: 'Refresh discovery' }).click();
-  await expect(page.getByText('691 retained targets', { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath('discovery.png'), fullPage: true });
 });

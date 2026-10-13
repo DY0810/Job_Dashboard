@@ -1,13 +1,10 @@
 import { z } from 'zod';
 import { privateJson, PrivateRequestError } from '../profile/api';
 import { PolicySchema } from '../../lib/applications/policy.ts';
-import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from '../../lib/applications/state.ts';
 import {
-  ApplicationCommandSchema, ApplicationSummarySchema, HEARTBEAT_MS, PairingCreateSchema,
-  PairingGrantSchema, RevisionCommandSchema, RevocationSchema, RunCommandSchema, RunCreateSchema,
-  RunListSchema, RunSchema, WorkerListSchema,
-  type ApplicationCommand, type ApplicationSummary, type PairingGrant, type PairingSummary,
-  type Run, type RunList, type WorkerList, type WorkerSummary,
+  HEARTBEAT_MS, PairingCreateSchema, PairingGrantSchema, RevisionCommandSchema, RevocationSchema,
+  RunCommandSchema, RunCreateSchema, RunListSchema, RunSchema, WorkerListSchema,
+  type PairingGrant, type PairingSummary, type Run, type RunList, type WorkerList, type WorkerSummary,
 } from '../../lib/applications/worker-protocol.ts';
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -17,7 +14,7 @@ const PolicyResponseSchema = z.strictObject({
   acceptedPolicyVersion: z.number().nullable(), acceptedPolicyHash: z.string().nullable(),
   acceptedAt: z.string().nullable(), runnerAvailable: z.boolean(),
 });
-type Kind = 'pairing' | 'worker' | 'run' | 'application';
+type Kind = 'pairing' | 'worker' | 'run';
 type Command = {
   kind: Kind; path: string; method: 'POST' | 'DELETE'; title: string;
   body: { requestId: string; expectedRevision: number; label?: string; workerId?: string; action?: string };
@@ -42,15 +39,6 @@ export function pairingStatus(pairing: PairingSummary, now: number) {
 export function workerStatus(worker: WorkerSummary, now: number) {
   return worker.revokedAt !== null ? 'Revoked' : worker.online && worker.lastSeenAt !== null &&
     now >= worker.lastSeenAt && now - worker.lastSeenAt < HEARTBEAT_MS * 3 ? 'Online' : 'Offline';
-}
-export function applicationActions(app: ApplicationSummary, run?: Run): ApplicationCommand['action'][] {
-  if (isTerminalState(app.state)) return [];
-  if (app.state === 'submitting' || app.state === 'submission_unknown') return ['emergency-stop'];
-  const actions: ApplicationCommand['action'][] = ['skip', 'cancel'];
-  // Retry budget remains server-authoritative.
-  if (run && run.state !== 'stopped' && app.checkpoint && isSafeRetryState(app.state, app.reasonCode)) actions.push('retry-safe');
-  if (run && run.state !== 'stopped' && isAwaitingSubmitApproval(app.state, app.reasonCode)) actions.unshift('approve-submit');
-  return actions;
 }
 
 class RequestError extends Error {
@@ -227,13 +215,6 @@ export class WorkerControl {
       title: action === 'emergency-stop' ? 'Emergency stop' : `${action[0].toUpperCase()}${action.slice(1)} run`,
       body: RunCommandSchema.parse({ action, requestId: crypto.randomUUID(), expectedRevision: run.revision }) });
   }
-  commandApplication(app: ApplicationSummary, action: ApplicationCommand['action']) {
-    if (!applicationActions(app, this.view.runs?.runs.find((run) => run.id === app.runId)).includes(action)) return;
-    return this.execute({ kind: 'application', id: app.id,
-      path: `/api/application-runs/${app.runId}/applications/${app.id}/actions`, method: 'POST',
-      title: action === 'emergency-stop' ? 'Emergency stop' : `${action} application`,
-      body: ApplicationCommandSchema.parse({ action, requestId: crypto.randomUUID(), expectedRevision: app.revision }) });
-  }
   retry() {
     if (this.view.pending) return this.execute(this.view.pending);
   }
@@ -258,7 +239,7 @@ export class WorkerControl {
       await this.assertOwner(owner, signal);
       if (emergency && !retry) {
         const head = await this.head(owner, signal);
-        const current = (work.kind === 'run' ? head.runs.runs : head.runs.applications).find((row) => row.id === work.id);
+        const current = head.runs.runs.find((row) => row.id === work.id);
         if (!current) throw new RequestError(404, 'NOT_FOUND');
         if (current.state === 'stopped') {
           this.finish(work, current.revision);
@@ -276,15 +257,14 @@ export class WorkerControl {
           work.ack = { id: grant.pairingId, revision: grant.revision };
           this.update({ grant });
         } else {
-          const ack = (work.method === 'DELETE' ? RevocationSchema :
-            work.kind === 'run' ? RunSchema : ApplicationSummarySchema).parse(raw);
+          const ack = (work.method === 'DELETE' ? RevocationSchema : RunSchema).parse(raw);
           if (work.id && ack.id !== work.id) throw new RequestError(502, 'INVALID_ACK');
           work.ack = { id: ack.id, revision: ack.revision };
         }
       }
       const head = await this.head(owner, signal);
       const rows = work.kind === 'pairing' ? head.workers.pairings : work.kind === 'worker' ? head.workers.workers :
-        work.kind === 'run' ? head.runs.runs : head.runs.applications;
+        head.runs.runs;
       const current = rows.find((row) => row.id === work.ack!.id);
       if (!current || current.revision < work.ack.revision) throw new RequestError(502, 'INVALID_HEAD');
       this.finish(work, current.revision);

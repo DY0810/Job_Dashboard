@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { privateJson, PrivateRequestError } from '../../profile/api';
 import {
-  DiscoveryErrorSchema, DiscoveryStatusSchema, ImportAcknowledgementSchema, ImportConfirmRequestSchema,
-  ImportPreviewRequestSchema, ImportPreviewSchema, type DiscoveryStatus, type ImportAcknowledgement,
+  DiscoveryErrorSchema, ImportAcknowledgementSchema, ImportConfirmRequestSchema,
+  ImportPreviewRequestSchema, ImportPreviewSchema, type ImportAcknowledgement,
   type ImportConfirmRequest, type ImportPreview, type ImportPreviewRequest,
 } from '../../../lib/applications/discovery-protocol';
 
@@ -14,12 +14,10 @@ export type DiscoveryView = {
   locked: boolean; busy: boolean; error: string; notice: string;
   preview: ImportPreview | null; selected: number[]; ownership: boolean; expired: boolean;
   pending: Pending | null; ack: ImportAcknowledgement | null;
-  runId: string; status: DiscoveryStatus | null; statusStale: boolean;
 };
 export const initialDiscoveryView: DiscoveryView = {
   account: null, locked: true, busy: false, error: '', notice: '',
   preview: null, selected: [], ownership: false, expired: false, pending: null, ack: null,
-  runId: '', status: null, statusStale: false,
 };
 
 export function readLegacyMarks(storage: StorageReader) {
@@ -77,7 +75,7 @@ export class DiscoveryControl {
   view = { ...initialDiscoveryView };
   private operation: AbortController | null = null;
   private disposed = false;
-  constructor(private readonly publish: (view: DiscoveryView) => void, private readonly expectedOwner?: string) {}
+  constructor(private readonly publish: (view: DiscoveryView) => void) {}
 
   private update(patch: Partial<DiscoveryView>) {
     if (this.disposed) return;
@@ -198,30 +196,6 @@ export class DiscoveryControl {
       }
     } catch (error) { await this.fail(error, signal, owner); }
     finally { if (!signal.aborted) this.update({ busy: false }); }
-  }
-  selectRun(runId: string) {
-    if (this.disposed || (runId && !z.uuid().safeParse(runId).success)) return;
-    this.operation?.abort();
-    this.update({ runId, status: null, statusStale: false, busy: false, error: '' });
-  }
-  async refreshStatus() {
-    const { runId } = this.view;
-    if (!runId || this.disposed || this.view.busy) return;
-    const signal = this.begin();
-    this.update({ busy: true, error: '' });
-    try {
-      const account = ApplicantSchema.parse(await request('/api/auth/applicant', signal));
-      if (this.expectedOwner && account.ownerId !== this.expectedOwner) this.changedOwner();
-      if (this.view.account && account.ownerId !== this.view.account.ownerId) this.changedOwner();
-      const status = DiscoveryStatusSchema.parse(await request(`/api/application-runs/${runId}/discovery`, signal, account.ownerId));
-      if (status.ownerId !== account.ownerId) this.changedOwner();
-      if (status.runId !== runId) throw new RequestError(502);
-      await this.assertOwner(account.ownerId, signal);
-      this.update({ account, status, statusStale: false, locked: false });
-    } catch (error) {
-      await this.fail(error, signal, this.view.account?.ownerId);
-      if (!signal.aborted) this.update({ statusStale: true });
-    } finally { if (!signal.aborted) this.update({ busy: false }); }
   }
   dispose() {
     this.operation?.abort();

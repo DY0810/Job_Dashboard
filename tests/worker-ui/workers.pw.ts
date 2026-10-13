@@ -199,7 +199,7 @@ for (const target of ['same', 'different'] as const) {
   test(`delayed-before-commit resume survives only an unrelated emergency stop: ${target} run`, async ({ page }) => {
     const fixture = fixtures.get(page)!;
     const a = fixture.addRun('paused'), b = target === 'same' ? a : fixture.addRun();
-    fixture.addApplication('submitting', 'submit_started', b.id);
+    const app = fixture.addApplication('submitting', 'submit_started', b.id);
     await ready(page);
     const aRow = page.getByRole('listitem', { name: `Run ${a.id.slice(0, 8)}`, exact: true });
     const bRow = page.getByRole('listitem', { name: `Run ${b.id.slice(0, 8)}`, exact: true });
@@ -230,37 +230,9 @@ for (const target of ['same', 'different'] as const) {
       expect(fixture.writes).toHaveLength(3);
       expect(fixture.writes[2].body).toEqual(body);
     }
-    await expect(page.getByText('submission unknown', { exact: true })).toBeVisible();
+    expect(app.state).toBe('submission_unknown');
   });
 }
-
-test('a submitting sibling can be emergency stopped without losing a delayed application command', async ({ page }) => {
-  const fixture = fixtures.get(page)!;
-  fixture.addRun();
-  const a = fixture.addApplication('queued');
-  fixture.addApplication('submitting', 'submit_started');
-  await ready(page);
-  const aRow = page.getByRole('listitem', { name: 'Application role-1', exact: true });
-  const bRow = page.getByRole('listitem', { name: 'Application role-2', exact: true });
-  let release!: () => void;
-  fixture.beforeWrite = () => new Promise<void>((resolve) => { release = resolve; });
-  await aRow.getByRole('button', { name: 'Skip', exact: true }).click();
-  await expect.poll(() => typeof release).toBe('function');
-  const body = structuredClone(fixture.writes[0].body);
-  fixture.beforeWrite = undefined;
-  await bRow.getByRole('button', { name: 'Emergency stop', exact: true }).click();
-  await expect(bRow.getByText('submission unknown', { exact: true })).toBeVisible();
-  release();
-  await expect.poll(() => a.state).toBe('skipped');
-  const retry = page.getByRole('button', { name: 'Retry pending request', exact: true });
-  await expect(retry).toBeEnabled();
-  await retry.click();
-  await expect(retry).toHaveCount(0);
-  await expect(aRow.getByText('skipped', { exact: true })).toBeVisible();
-  expect(fixture.writes).toHaveLength(3);
-  expect(fixture.writes[2].body).toEqual(body);
-  await expect(bRow.getByRole('button')).toHaveCount(1);
-});
 
 test('a delayed head cannot republish an expired grant or an artificially online worker', async ({ page }) => {
   await page.addInitScript(() => {
@@ -295,23 +267,9 @@ test('a delayed head cannot republish an expired grant or an artificially online
   expect(await page.evaluate(() => (window as unknown as { copiedGrants: number }).copiedGrants)).toBe(0);
 });
 
-test('pause resume stop and emergency stop are durable; unknown applications never offer retry skip or cancel', async ({ page }) => {
-  const fixture = fixtures.get(page)!;
-  fixture.addRun();
-  fixture.addApplication('submission_unknown', 'receipt_not_verified');
-  fixture.addApplication('provider_unavailable', 'provider_not_configured');
-  fixture.addApplication('needs_document', 'missing_resume');
+test('pause resume stop and emergency stop are durable', async ({ page }) => {
+  fixtures.get(page)!.addRun();
   await ready(page);
-  const unknown = page.getByRole('listitem', { name: 'Application role-1', exact: true });
-  await expect(unknown.getByText('Reason: receipt not verified', { exact: true })).toBeVisible();
-  await expect(unknown.getByRole('button')).toHaveCount(1);
-  await expect(unknown.getByRole('button', { name: 'Emergency stop' })).toBeVisible();
-  const retryable = page.getByRole('listitem', { name: 'Application role-2', exact: true });
-  await retryable.getByRole('button', { name: 'Retry safe', exact: true }).click();
-  await expect(retryable.getByText('screening', { exact: true })).toBeVisible();
-  const blocked = page.getByRole('listitem', { name: 'Application role-3', exact: true });
-  await expect(blocked.getByRole('button', { name: 'Retry safe', exact: true })).toHaveCount(0);
-  await expect(blocked.getByText('Reason: missing resume', { exact: true })).toBeVisible();
   await run(page).getByRole('button', { name: 'Pause', exact: true }).click();
   await expect(run(page).getByText('paused', { exact: true })).toBeVisible();
   await page.reload();
@@ -321,7 +279,6 @@ test('pause resume stop and emergency stop are durable; unknown applications nev
   await expect(run(page).getByText('stopped', { exact: true })).toBeVisible();
   await page.reload();
   await expect(run(page).getByText('stopped', { exact: true })).toBeVisible();
-  await expect(unknown.getByText('submission unknown', { exact: true })).toBeVisible();
   await page.getByRole('combobox', { name: 'Run worker', exact: true }).selectOption(workerId);
   await page.getByRole('button', { name: 'Create run', exact: true }).click();
   const next = run(page).filter({ has: page.getByRole('button', { name: 'Stop', exact: true }) });
@@ -330,38 +287,6 @@ test('pause resume stop and emergency stop are durable; unknown applications nev
   await expect(next).toHaveCount(0);
   await page.reload();
   await expect(run(page).getByText('stopped', { exact: true })).toHaveCount(2);
-});
-
-test('skip cancel and a server-rejected safe retry reconcile without inventing a retry budget', async ({ page }) => {
-  const fixture = fixtures.get(page)!;
-  fixture.addRun();
-  fixture.addApplication('needs_answer', 'answer_required');
-  fixture.addApplication('queued');
-  const retryable = fixture.addApplication('retryable_failure', 'temporary_failure');
-  await ready(page);
-  const skipped = page.getByRole('listitem', { name: 'Application role-1', exact: true });
-  const cancelled = page.getByRole('listitem', { name: 'Application role-2', exact: true });
-  const retry = page.getByRole('listitem', { name: 'Application role-3', exact: true });
-  await skipped.getByRole('button', { name: 'Skip', exact: true }).click();
-  await expect(skipped.getByText('skipped', { exact: true })).toBeVisible();
-  await cancelled.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(cancelled.getByText('cancelled', { exact: true })).toBeVisible();
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await retry.getByRole('button', { name: 'Retry safe', exact: true }).click();
-    await expect(retry.getByText('screening', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Retry pending request' })).toHaveCount(0);
-    retryable.state = 'retryable_failure'; retryable.reasonCode = 'temporary_failure'; retryable.revision++;
-    await refresh(page);
-  }
-  await retry.getByRole('button', { name: 'Retry safe', exact: true }).click();
-  await expect(alert(page)).toContainText('State changed');
-  await expect(page.getByRole('button', { name: 'Retry pending request' })).toHaveCount(0);
-  await expect(retry.getByText('retryable failure', { exact: true })).toBeVisible();
-  await page.reload();
-  await expect(skipped.getByText('skipped', { exact: true })).toBeVisible();
-  await expect(cancelled.getByText('cancelled', { exact: true })).toBeVisible();
-  await expect(skipped.getByRole('button')).toHaveCount(0);
-  await expect(cancelled.getByRole('button')).toHaveCount(0);
 });
 
 test('offline unpaired disabled-policy configuration and unknown-protocol states remain honest', async ({ page }) => {
