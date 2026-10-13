@@ -907,6 +907,12 @@ describe('roles auto-apply can fill live in Applications, not on the board', () 
     expect(await order(params('design'))).not.toContain('d-sf-3d');
   });
 
+  it('shows a role Auto Apply gave up on again', async () => {
+    db.update(postings).set({ canonicalUrl: 'https://jobs.ashbyhq.com/Acme/0F6C2C9E-1111-4222-8333-944455556666/' }).where(eq(postings.id, idOf('d-sf-3d'))).run();
+    const returned = ['https://jobs.ashbyhq.com/acme/0f6c2c9e-1111-4222-8333-944455556666'];
+    expect((await listPostings(db, params('design'), NOW, returned)).map((row) => refOf.get(row.id))).toContain('d-sf-3d');
+  });
+
   it('keeps a role whose link the worker cannot fill', async () => {
     db.update(postings).set({ canonicalUrl: 'https://careers.acme.com/jobs/123' }).where(eq(postings.id, idOf('d-sf-3d'))).run();
     expect(await order(params('design'))).toContain('d-sf-3d');

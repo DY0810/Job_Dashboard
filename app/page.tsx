@@ -29,6 +29,8 @@ import { ApplicantSwitcher } from "./applicant-switcher";
 import { AppliedCheckbox } from "./applied-checkbox";
 import { AppliedSync } from "./applied-sync";
 import { AppNav } from "./app-nav";
+import { getPrivateDb } from "@/lib/private-db";
+import { returnedPostingUrls } from "@/lib/applications/runs";
 
 /**
  * The table, described once: header label and width class together, in render order. `grow`
@@ -335,10 +337,12 @@ export default async function Page({
 
   const now = Date.now();
   const db = getDb();
+  // Roles Auto Apply gave up on come back here. The board still renders when the private store is down.
+  const returned = await Promise.resolve().then(() => returnedPostingUrls(getPrivateDb())).catch(() => []);
 
   // In parallel: two independent reads, and against Turso every await is a network round trip.
   const [fetched, lastRun] = await Promise.all([
-    listPostings(db, p, now),
+    listPostings(db, p, now, returned),
     driver(db)
       .select({ startedAt: connectorRuns.startedAt })
       .from(connectorRuns)
@@ -431,10 +435,10 @@ export default async function Page({
       ) : rows.length === 0 ? (
         // The counts below are the only extra queries, and only on a page with no rows: the
         // empty state asks about the tab, the zero-result state asks about these filters.
-        (await tabIsEmpty(db, p, now)) ? (
-          <Empty outside={await outsideTargetLocations(db, bare(p), now)} />
+        (await tabIsEmpty(db, p, now, returned)) ? (
+          <Empty outside={await outsideTargetLocations(db, bare(p), now, returned)} />
         ) : (
-          <NoMatches p={p} outside={await outsideTargetLocations(db, p, now)} />
+          <NoMatches p={p} outside={await outsideTargetLocations(db, p, now, returned)} />
         )
       ) : (
         <div className="min-h-0 flex-1 overflow-auto" role="region" aria-label="Job results" tabIndex={0}>

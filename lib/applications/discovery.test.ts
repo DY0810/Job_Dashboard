@@ -501,7 +501,8 @@ describe('cap-held backlog and explicit historical attempts', () => {
     // Delete hides a terminal row without changing its state; the history row stays.
     const hidden = await commandApplication(db, 'alice', run.id, fresh.id, { ...request(), expectedRevision: fresh.revision, action: 'delete' }, options);
     expect(hidden.state).toBe('submitted');
-    expect((await listRuns(db, 'alice')).applications.map((a) => a.id)).toEqual([live.id]);
+    // The attempt a restart replaced left Auto Apply too.
+    expect((await listRuns(db, 'alice')).applications.map((a) => a.id)).toEqual([]);
     expect((await appRows()).find((a) => a.id === fresh.id)?.hiddenAt).toBe(now);
   });
 

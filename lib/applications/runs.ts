@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, workers } from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
@@ -43,6 +43,27 @@ export async function createRun(db: PrivateDb, ownerId: string, input: RunCreate
   if (result instanceof WorkerError) throw result;
   return result;
 }
+/**
+ * A role that stopped again after a retry (same-row retry or a restarted attempt) leaves Auto Apply and goes back to
+ * the Jobs board, as does the attempt a restart replaced. Neither is ever re-queued by discovery: its identity already has rows.
+ */
+const returnedToBoard = sql`(coalesce(${applications.reasonCode}, '') = 'restarted' or (${applications.state} in
+  ('failed', 'retryable_failure', 'blocked_unsupported', 'provider_unavailable', 'needs_document')
+  and (${applications.retries} > 0 or ${applications.attempt} > 1)))`;
+
+/** Posting URLs, in `onlyOnBoard`'s lowercase form, of roles Auto Apply gave up on, for every applicant. */
+export async function returnedPostingUrls(db: PrivateDb): Promise<string[]> {
+  const rows = await db.selectDistinct({ ats: applications.ats, tenant: applications.tenant, requisition: applications.requisition })
+    .from(applications).where(and(isNull(applications.hiddenAt), returnedToBoard, sql`${applications.reasonCode} is not 'restarted'`));
+  return rows.flatMap(({ ats, tenant, requisition }) => {
+    const [t, r] = [tenant.toLowerCase(), requisition.toLowerCase()];
+    if (ats === 'greenhouse') return [`https://job-boards.greenhouse.io/${t}/jobs/${r}`, `https://boards.greenhouse.io/${t}/jobs/${r}`];
+    if (ats === 'ashby') return [`https://jobs.ashbyhq.com/${t}/${r}`];
+    if (ats === 'lever') return [t.startsWith('jobs.eu.lever.co:') ? `https://jobs.eu.lever.co/${t.slice(17)}/${r}` : `https://jobs.lever.co/${t}/${r}`];
+    return [];
+  });
+}
+
 export async function listRuns(db: PrivateDb, ownerId: string): Promise<RunList> {
   return workerTransaction(db, async (tx) => ({
     ownerId,
@@ -52,7 +73,7 @@ export async function listRuns(db: PrivateDb, ownerId: string): Promise<RunList>
       .from(applications)
       .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
       .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)))
-      .where(and(eq(applications.ownerId, ownerId), isNull(applications.hiddenAt))).orderBy(desc(applications.createdAt)).limit(100))
+      .where(and(eq(applications.ownerId, ownerId), isNull(applications.hiddenAt), not(returnedToBoard))).orderBy(desc(applications.createdAt)).limit(100))
       .map(({ app, submission, receipt }) => applicationSummary(app, {
         company: submission?.company ?? receipt?.company, role: submission?.role ?? receipt?.role,
         receiptId: receipt?.receiptId, submittedAt: receipt?.submittedAt,
