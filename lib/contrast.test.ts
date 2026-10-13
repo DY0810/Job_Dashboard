@@ -146,6 +146,26 @@ describe('contrast', () => {
   });
 });
 
+describe('status badges', () => {
+  // Every tone's hue and chroma scale, read from the stylesheet; the bare `.badge` rule is the neutral.
+  const tones = [...CSS.matchAll(/\.badge(?:\[data-tone="(\w+)"\])? \{\s*--h: ([\d.]+);\s*--k: ([\d.]+);/g)]
+    .map(([, tone = 'neutral', h, k]) => [tone, Number(h), Number(k)] as const);
+
+  it.each(['light', 'dark'] as const)('%s theme: every tone label passes WCAG AA on its own fill', (theme) => {
+    const p = themes[theme];
+    expect(tones.length).toBeGreaterThan(10);
+    for (const [tone, h, k] of tones) {
+      const fg = `oklch(${p['badge-fg-l']} ${Number(p['badge-fg-c']) * k} ${h})`;
+      const bg = `oklch(${p['badge-bg-l']} ${Number(p['badge-bg-c']) * k} ${h})`;
+      expect(Number(ratio(fg, bg).toFixed(2)), `${theme} ${tone}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('no badge hue sits on the amber accent', () => {
+    for (const [tone, h, k] of tones) if (k > 0.5) expect(Math.abs(h - 75), tone).toBeGreaterThan(40);
+  });
+});
+
 describe('theme structure', () => {
   const active = Object.keys(root).filter((k) => !k.startsWith('--light-') && !k.startsWith('--dark-'));
   const media = declarations(block(':root:not([data-theme="light"]) {'));

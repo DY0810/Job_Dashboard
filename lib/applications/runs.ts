@@ -4,6 +4,7 @@ import type { PrivateDb } from '../private-db/index.ts';
 import { applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, workers } from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from './state.ts';
+import { postingUrl } from './posting-url.ts';
 import {
   RunCreateSchema, RunCommandSchema, ApplicationCommandSchema,
   type RunCreate, type RunCommand, type ApplicationCommand, type Run,
@@ -56,11 +57,10 @@ export async function returnedPostingUrls(db: PrivateDb): Promise<string[]> {
   const rows = await db.selectDistinct({ ats: applications.ats, tenant: applications.tenant, requisition: applications.requisition })
     .from(applications).where(and(isNull(applications.hiddenAt), returnedToBoard, sql`${applications.reasonCode} is not 'restarted'`));
   return rows.flatMap(({ ats, tenant, requisition }) => {
-    const [t, r] = [tenant.toLowerCase(), requisition.toLowerCase()];
-    if (ats === 'greenhouse') return [`https://job-boards.greenhouse.io/${t}/jobs/${r}`, `https://boards.greenhouse.io/${t}/jobs/${r}`];
-    if (ats === 'ashby') return [`https://jobs.ashbyhq.com/${t}/${r}`];
-    if (ats === 'lever') return [t.startsWith('jobs.eu.lever.co:') ? `https://jobs.eu.lever.co/${t.slice(17)}/${r}` : `https://jobs.lever.co/${t}/${r}`];
-    return [];
+    const url = postingUrl(ats, tenant.toLowerCase(), requisition.toLowerCase());
+    if (!url) return [];
+    // Board rows carry either Greenhouse host.
+    return ats === 'greenhouse' ? [url, url.replace('://job-boards.', '://boards.')] : [url];
   });
 }
 

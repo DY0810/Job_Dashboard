@@ -23,6 +23,12 @@
   --light-fg-faint: oklch(0.615 0.012 75);
   --light-accent: oklch(0.52 0.14 75);
   --light-scrim: oklch(0.25 0.01 75 / 0.45);
+  /* Status badges: lightness and chroma per theme, hue per tone (see .badge). Bare numbers so
+     one pair serves every hue; lib/contrast.test.ts measures each tone. */
+  --light-badge-bg-l: 0.935;
+  --light-badge-bg-c: 0.03;
+  --light-badge-fg-l: 0.43;
+  --light-badge-fg-c: 0.08;
 
   --dark-canvas: oklch(0.16 0.006 75);
   --dark-surface: oklch(0.225 0.008 75);
@@ -32,6 +38,10 @@
   --dark-fg-faint: oklch(0.52 0.01 75);
   --dark-accent: oklch(0.8 0.14 75);
   --dark-scrim: oklch(0.12 0.006 75 / 0.6);
+  --dark-badge-bg-l: 0.27;
+  --dark-badge-bg-c: 0.03;
+  --dark-badge-fg-l: 0.85;
+  --dark-badge-fg-c: 0.07;
 
   --canvas: var(--light-canvas);
   --surface: var(--light-surface);
@@ -41,6 +51,10 @@
   --fg-faint: var(--light-fg-faint);
   --accent: var(--light-accent);
   --scrim: var(--light-scrim);
+  --badge-bg-l: var(--light-badge-bg-l);
+  --badge-bg-c: var(--light-badge-bg-c);
+  --badge-fg-l: var(--light-badge-fg-l);
+  --badge-fg-c: var(--light-badge-fg-c);
   color-scheme: light;
 
   /* The only two easing curves in the app. `--ease-drawer` is pinned by .impeccable.md;
@@ -59,6 +73,10 @@
     --fg-faint: var(--dark-fg-faint);
     --accent: var(--dark-accent);
     --scrim: var(--dark-scrim);
+    --badge-bg-l: var(--dark-badge-bg-l);
+    --badge-bg-c: var(--dark-badge-bg-c);
+    --badge-fg-l: var(--dark-badge-fg-l);
+    --badge-fg-c: var(--dark-badge-fg-c);
     color-scheme: dark;
   }
 }
@@ -73,6 +91,10 @@
   --fg-faint: var(--dark-fg-faint);
   --accent: var(--dark-accent);
   --scrim: var(--dark-scrim);
+  --badge-bg-l: var(--dark-badge-bg-l);
+  --badge-bg-c: var(--dark-badge-bg-c);
+  --badge-fg-l: var(--dark-badge-fg-l);
+  --badge-fg-c: var(--dark-badge-fg-c);
   color-scheme: dark;
 }
 
@@ -501,6 +523,52 @@
   }
 }
 
+/* ────────────────────────────────────────────────────────────── status badges ──
+ * A label, not a control: tinted fill, no border, no hover, no press, so it never reads as a
+ * `.chip`. Each meaning gets its own low-chroma hue plus a glyph, so colour is never the only
+ * signal. Hues stay clear of ~75: amber is the accent and means fresh. Neutral tones (queued,
+ * skipped, cancelled, archived) keep the palette's hue-75 tint at near-zero chroma.
+ */
+.badge {
+  --h: 75;
+  --k: 0.2;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px 0 4px;
+  border-radius: 2px;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+  background: oklch(var(--badge-bg-l) calc(var(--badge-bg-c) * var(--k)) var(--h));
+  color: oklch(var(--badge-fg-l) calc(var(--badge-fg-c) * var(--k)) var(--h));
+}
+.badge svg { flex: none; }
+.badge[data-tone="retry"] { --h: 125; --k: 1; }
+.badge[data-tone="applied"] { --h: 150; --k: 1; }
+.badge[data-tone="approval"] { --h: 178; --k: 1; }
+.badge[data-tone="unsupported"] { --h: 205; --k: 1; }
+.badge[data-tone="progress"] { --h: 235; --k: 1; }
+.badge[data-tone="login"] { --h: 260; --k: 1; }
+.badge[data-tone="answer"] { --h: 285; --k: 1; }
+.badge[data-tone="document"] { --h: 310; --k: 1; }
+.badge[data-tone="verification"] { --h: 335; --k: 1; }
+.badge[data-tone="unknown"] { --h: 0; --k: 1; }
+.badge[data-tone="failed"] { --h: 25; --k: 1; }
+
+/* Tab counts. A pill, so it is never mistaken for a status. */
+.count-badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+}
+
 /* ────────────────────────────────────────────────────────────────────── drawer ──
  * Native <dialog>: Esc, the top layer, the backdrop and focus return are all
  * platform behaviour.
@@ -599,6 +667,75 @@ dialog.drawer[open]::backdrop {
 
   @starting-style {
     dialog.drawer[open] {
+      transform: none;
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────── modal ──
+ * The drawer's native-dialog contract, centred. Opened a few times a week (settings, profile
+ * edits), so it gets a 160ms fade and a 0.98 -> 1 scale; reduced motion keeps only the fade.
+ * The side drawer (app/side-drawer.tsx) is not styled here: it wears `dialog.drawer` above.
+ */
+dialog.modal {
+  margin: auto;
+  width: min(560px, 100vw - 32px);
+  max-width: none;
+  max-height: min(720px, 100dvh - 32px);
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--canvas);
+  color: var(--fg);
+  overflow: hidden;
+  opacity: 0;
+  transform: scale(0.98);
+  transition:
+    opacity 160ms var(--ease-drawer),
+    transform 160ms var(--ease-drawer),
+    overlay 160ms var(--ease-drawer) allow-discrete,
+    display 160ms var(--ease-drawer) allow-discrete;
+}
+
+dialog.modal[open] {
+  opacity: 1;
+  transform: none;
+}
+
+@starting-style {
+  dialog.modal[open] {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+dialog.modal::backdrop {
+  background: var(--scrim);
+  opacity: 0;
+  transition:
+    opacity 160ms var(--ease-drawer),
+    overlay 160ms var(--ease-drawer) allow-discrete,
+    display 160ms var(--ease-drawer) allow-discrete;
+}
+
+dialog.modal[open]::backdrop {
+  opacity: 1;
+}
+
+@starting-style {
+  dialog.modal[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.modal,
+  dialog.modal[open] {
+    transform: none;
+  }
+
+  @starting-style {
+    dialog.modal[open] {
       transform: none;
     }
   }
