@@ -668,7 +668,7 @@ describe('worker intervention DAL', () => {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
-  });
+  }, 20_000); // ~0.5s alone, but crossed the 5s default under a loaded CI runner.
 
   it('rejects a descriptor exceeding the stored byte limit before it can enter a worker page', async () => {
     const a = await prepared(), lease = (await pollWorker(db, a.token, { protocolVersion: 1 }, options)).lease!;
