@@ -202,8 +202,16 @@ export function userFilters(p: Omit<Params, 'page' | 'job'>, now: number): SQL[]
   return parts.filter((part) => part !== undefined);
 }
 
+/**
+ * Roles the worker can auto-apply to are listed in Applications, not on the board. Greenhouse is the only
+ * ATS with an adapter (docs/auto-apply-support.md); the hosts match `official()` in application-identity.ts.
+ * Board-only: discovery reads `userFilters`, which must keep these rows.
+ * ponytail: canonical URL only; a posting whose Greenhouse link is only in its sources still shows here.
+ */
+const autoApplicable = sql`(${postings.canonicalUrl} like 'https://boards.greenhouse.io/%' or ${postings.canonicalUrl} like 'https://job-boards.greenhouse.io/%')`;
+
 function where(p: Params, now: number): SQL {
-  return and(eq(postings.track, p.tab), ...visible(now), ...userFilters(p, now))!;
+  return and(eq(postings.track, p.tab), ...visible(now), ...userFilters(p, now), sql`not ${autoApplicable}`)!;
 }
 
 /**
@@ -262,7 +270,7 @@ export async function outsideTargetLocations(
   const row = await driver(db)
     .select({ n: count() })
     .from(postings)
-    .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), hiddenByLocation))
+    .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), hiddenByLocation, sql`not ${autoApplicable}`))
     .get();
   return row?.n ?? 0;
 }

@@ -434,3 +434,42 @@ export async function retryUnsubmittedApplication(
   if (result instanceof WorkerError) throw result;
   return result;
 }
+
+/** The applicant restarts a role that never reached the employer (cancelled, failed, skipped, or stuck on a hold):
+ * a live attempt is cancelled and a fresh one queues in `runId`, which must be running on the current policy.
+ * Submitted or possibly-submitted attempts are excluded; those go through reapply or reconciliation. */
+export async function restartApplication(
+  db: PrivateDb, ownerId: string, runId: string, input: ReapplyRequest, options: WorkerOptions = {},
+) {
+  const command = ReapplyRequestSchema.parse(input), scope = `application:restart:${runId}`;
+  const result = await workerTransaction(db, async (tx) => {
+    const replay = await replayCommand<ReturnType<typeof applicationSummary>>(tx, ownerId, scope, command);
+    if (replay) return replay;
+    const [run] = await tx.select().from(applicationRuns).where(runScope(ownerId, runId));
+    if (!run) fail(404, 'NOT_FOUND', 'Run not found.');
+    const [worker] = await tx.select().from(workers).where(and(eq(workers.ownerId, ownerId), eq(workers.id, run.workerId)));
+    if (!worker || !await currentWorker(tx, worker, options)) return new WorkerError(403, 'FORBIDDEN', 'Worker is revoked.');
+    const now = nowAt(options);
+    if (!await currentDiscoveryPolicy(tx, run, now)) fail(409, 'POLICY_CHANGED', 'The run is not running on the current policy.');
+    const [previous] = await tx.select().from(applications).where(and(
+      eq(applications.ownerId, ownerId), eq(applications.id, command.previousApplicationId),
+    ));
+    if (!previous) fail(404, 'NOT_FOUND', 'Previous application not found.');
+    if (previous.revision !== command.expectedRevision || previous.hiddenAt !== null ||
+        ['submitted', 'submitting', 'submission_unknown'].includes(previous.state)) fail();
+    const [latest] = await tx.select().from(applications).where(identityMatch(previous)).orderBy(desc(applications.attempt)).limit(1);
+    if (latest.id !== previous.id || await manuallySuppressed(tx, previous)) fail(409, 'DUPLICATE_BLOCKED', 'Application is suppressed.');
+    if (!isTerminalState(previous.state)) {
+      one(await tx.update(applications).set({
+        state: 'cancelled', reasonCode: 'restarted', revision: previous.revision + 1, fence: previous.fence + 1,
+        leaseUntil: null, leaseCheckedAt: null,
+      }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, previous.id), eq(applications.revision, previous.revision))).returning());
+    }
+    const row = await nextAttempt(tx, run, previous, now);
+    const acknowledgement = applicationSummary(row);
+    await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
+    return acknowledgement;
+  });
+  if (result instanceof WorkerError) throw result;
+  return result;
+}

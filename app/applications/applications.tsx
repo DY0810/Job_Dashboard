@@ -112,15 +112,64 @@ const documentHelp: Record<string, string> = {
   cover_letter_unavailable: 'The form asks for a cover letter. Allow cover letters in the Auto Apply policy, then retry.',
 };
 
+const postCommand = (path: string, ownerId: string, expectedRevision: number, body: object) => fetch(path, {
+  method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000),
+  headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
+  body: JSON.stringify({ requestId: crypto.randomUUID(), expectedRevision, ...body }),
+});
+const errorCode = async (response: Response) => (await response.clone().json().catch(() => null))?.code as string | undefined;
+
+/** Restart queues a fresh attempt of a role the employer never received; delete hides the row (and cancels it if live). */
+function ManagePanel({ app, runs, ownerId, onChange }: { app: { id: string; runId: string; revision: number; state: string }; runs: Run[]; ownerId: string; onChange: () => void }) {
+  const [busy, setBusy] = useState<'restart' | 'delete' | null>(null);
+  const [error, setError] = useState('');
+  const restartable = !['submitted', 'submitting', 'submission_unknown'].includes(app.state);
+  const restart = async () => {
+    setBusy('restart'); setError('');
+    try {
+      // Its own run first, then other running runs newest first; the server takes only a running run on the current policy.
+      const targets = runs.filter((run) => run.state === 'running').sort((a, b) => Number(b.id === app.runId) - Number(a.id === app.runId));
+      if (!targets.length) throw new Error('No run is running. Start one from Workers, then restart.');
+      let response: Response | null = null;
+      for (const run of targets) {
+        response = await postCommand(`/api/application-runs/${run.id}/restart`, ownerId, app.revision, { previousApplicationId: app.id });
+        if (response.ok || !['POLICY_CHANGED', 'DISCOVERY_REQUIRED'].includes(await errorCode(response) ?? '')) break;
+      }
+      if (!response!.ok) {
+        const code = await errorCode(response!);
+        throw new Error(code === 'POLICY_CHANGED' ? 'The Auto Apply policy changed since the running run started. Start a new run from Workers, then restart.'
+          : code === 'DISCOVERY_REQUIRED' ? 'No running run has found this role yet. Restart after its discovery finishes.'
+          : code === 'DUPLICATE_BLOCKED' ? 'This role was already retried or marked applied.' : 'Could not restart. Refresh and try again.');
+      }
+      onChange();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not restart.'); }
+    finally { setBusy(null); }
+  };
+  const remove = async () => {
+    if (!window.confirm(restartable && !['failed', 'skipped', 'cancelled'].includes(app.state)
+      ? 'Cancel this application and remove it from the list?' : 'Remove this application from the list?')) return;
+    setBusy('delete'); setError('');
+    try {
+      const response = await postCommand(`/api/application-runs/${app.runId}/applications/${app.id}/actions`, ownerId, app.revision, { action: 'delete' });
+      if (!response.ok) throw new Error('Could not delete. Refresh and try again.');
+      onChange();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not delete.'); }
+    finally { setBusy(null); }
+  };
+  return <div className={styles.row}>
+    {restartable && <button className={styles.button} type="button" disabled={!!busy} onClick={() => void restart()}>
+      {busy === 'restart' ? 'Restarting...' : app.state === 'cancelled' ? 'Restart cancelled' : 'Restart'}</button>}
+    {!['submitting', 'submission_unknown'].includes(app.state) &&
+      <button className={styles.button} type="button" disabled={!!busy} onClick={() => void remove()}>{busy === 'delete' ? 'Deleting...' : 'Delete'}</button>}
+    {error && <span role="alert" className={styles.reason}>{error}</span>}
+  </div>;
+}
+
 /** A document hold the applicant has fixed resumes here, in its own run or, after a policy change, in the newest running run. */
 function RetryPanel({ app, runs, ownerId, onChange }: { app: { id: string; runId: string; revision: number; reasonCode: string | null }; runs: Run[]; ownerId: string; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const post = (path: string, body: object) => fetch(path, {
-    method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000),
-    headers: { 'content-type': 'application/json', [EXPECTED_APPLICANT_HEADER]: ownerId },
-    body: JSON.stringify({ requestId: crypto.randomUUID(), expectedRevision: app.revision, ...body }),
-  });
+  const post = (path: string, body: object) => postCommand(path, ownerId, app.revision, body);
   const retry = async () => {
     setBusy(true); setError('');
     try {
@@ -264,6 +313,7 @@ export default function Applications() {
                   <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
                 {approve && view.account &&
                   <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
+                {view.account && <ManagePanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
                 {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}
                   item={outreach.get(app.id)!} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
               </li>;
