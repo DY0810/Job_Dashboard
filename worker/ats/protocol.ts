@@ -16,10 +16,14 @@ export const atsFieldKey = /^[a-z][a-z0-9_-]{0,63}(\[\])?$/;
 export const AtsFieldSchema = z.strictObject({
   key: z.string().regex(atsFieldKey), label: z.string().trim().min(1).max(1000),
   kind: z.enum(['text', 'email', 'date', 'select', 'combobox', 'radio', 'checkbox', 'file']), required: z.boolean(),
-  name: z.string().regex(/^[a-zA-Z0-9_.-]{1,100}$/).optional(),
+  // Lever names inputs "cards[<uuid>][field0]"; Ashby uses bare UUIDs or the question's own wording.
+  name: z.string().regex(/^[^"\\\r\n]{1,400}$/).optional(),
   options: z.array(z.string().trim().min(1).max(300)).max(100).optional(), // the inbox's own choice limits
 });
 export type AtsField = z.infer<typeof AtsFieldSchema>;
+/** A form's own id when it already fits atsFieldKey, otherwise a stable key derived from it. */
+export const fieldKeyFor = (raw: string) => atsFieldKey.test(raw) ? raw :
+  `f-${createHash('sha256').update(raw).digest('hex').slice(0, 24)}`;
 export const formQuestionKey = (field: Pick<AtsField, 'key' | 'label'>) =>
   `form-${createHash('sha256').update(`${field.key}\u0000${field.label}`).digest('hex').slice(0, 32)}`;
 // Adapters list only actions Workie can perform. None implements 'inspect': offering it let the model
@@ -51,11 +55,39 @@ export class AtsError extends Error {
 
 export type AtsAdapter = {
   readonly id: AtsIdentity['ats'];
+  /** The vendor's hosted application hostnames; a ready form there opens visibly for the applicant's human check. */
+  readonly hosts: readonly string[];
+  /** Origins a hosted form needs besides its own (uploads, autocomplete, captcha). */
+  readonly origins: readonly string[];
+  /** The confirmed profile answer for a field, or undefined when the applicant must answer it. */
+  answer(input: AtsApplication, field: AtsField): AtsValue | undefined;
   observe(runtime: BrowserRuntime, input: AtsApplication, signal?: AbortSignal): Promise<AtsObservation>;
   fill(runtime: BrowserRuntime, input: AtsApplication, observation: AtsObservation, signal?: AbortSignal): Promise<void>;
   submit(runtime: BrowserRuntime, input: AtsApplication, signal?: AbortSignal): Promise<void>;
   receipt(runtime: BrowserRuntime, input: AtsApplication, signal?: AbortSignal): Promise<AtsReceipt>;
 };
+
+// Questions most employers ask in their own words, answered only from confirmed profile facts.
+// Anything ambiguous (negations, combined questions, unrecognized wording) still goes to the inbox.
+export function commonAnswer(input: AtsApplication, field: AtsField) {
+  const text = field.label.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (/\bnot\b|\bhear\b/.test(text)) return undefined;
+  if (field.kind === 'text') {
+    if (/^linkedin\b|\blinkedin (profile|url|link)\b/.test(text)) return input.answers.linkedin;
+    if (/^github\b|\bgithub (profile|url|link|username)\b/.test(text)) return input.answers.github;
+    if (/^(personal |other )?(website|portfolio)( url| link)?( \(optional\))?$/.test(text)) return input.answers.portfolio;
+    if (/^((current|most recent) )?(school|university|college)( name)?$|^(what|which) (school|university|college) (do|did) you (currently )?attend\??$/.test(text)) {
+      return input.answers['school--0'];
+    }
+  }
+  const authorization = /\bauthori[sz]ed to work\b/.test(text), sponsorship = /\bsponsorship\b/.test(text);
+  if (authorization === sponsorship) return undefined;
+  // Uppercase US only: "work with us" is not a country.
+  const us = /united states|\bh-?1b\b/.test(text) || /(^|[^A-Za-z])(U\.S\.A?\.?|USA|US)(?![A-Za-z])/.test(field.label);
+  const postingCountry = /\bthe country\b/.test(text) && /\b(appl(y|ying|ied)|this (job|role|position))\b/.test(text);
+  if (authorization) return us ? input.answers.us_authorized : postingCountry ? input.answers.posting_authorized : undefined;
+  return input.answers[`${us ? 'us' : 'posting'}_sponsorship_${/\bfuture\b/.test(text) ? 'ever' : 'now'}`];
+}
 
 export async function locateField(page: Page, field: AtsField) {
   const byId = page.locator(`[id="${field.key}"]`).first();

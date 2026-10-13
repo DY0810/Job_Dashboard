@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
-import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, atsFieldKey, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
+import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, atsFieldKey, commonAnswer, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
 
 const VERIFICATION_WAIT_MS = 30 * 60_000; // time for the applicant to find the emailed code
 
@@ -57,28 +57,6 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
   return commonAnswer(input, field);
 }
 
-// Questions most employers ask in their own words, answered only from confirmed profile facts.
-// Anything ambiguous (negations, combined questions, unrecognized wording) still goes to the inbox.
-function commonAnswer(input: AtsApplication, field: AtsField) {
-  const text = field.label.toLowerCase().replace(/\s+/g, ' ').trim();
-  if (/\bnot\b|\bhear\b/.test(text)) return undefined;
-  if (field.kind === 'text') {
-    if (/^linkedin\b|\blinkedin (profile|url|link)\b/.test(text)) return input.answers.linkedin;
-    if (/^github\b|\bgithub (profile|url|link|username)\b/.test(text)) return input.answers.github;
-    if (/^(personal |other )?(website|portfolio)( url| link)?( \(optional\))?$/.test(text)) return input.answers.portfolio;
-    if (/^((current|most recent) )?(school|university|college)( name)?$|^(what|which) (school|university|college) (do|did) you (currently )?attend\??$/.test(text)) {
-      return input.answers['school--0'];
-    }
-  }
-  const authorization = /\bauthori[sz]ed to work\b/.test(text), sponsorship = /\bsponsorship\b/.test(text);
-  if (authorization === sponsorship) return undefined;
-  // Uppercase US only: "work with us" is not a country.
-  const us = /united states|\bh-?1b\b/.test(text) || /(^|[^A-Za-z])(U\.S\.A?\.?|USA|US)(?![A-Za-z])/.test(field.label);
-  const postingCountry = /\bthe country\b/.test(text) && /\b(appl(y|ying|ied)|this (job|role|position))\b/.test(text);
-  if (authorization) return us ? input.answers.us_authorized : postingCountry ? input.answers.posting_authorized : undefined;
-  return input.answers[`${us ? 'us' : 'posting'}_sponsorship_${/\bfuture\b/.test(text) ? 'ever' : 'now'}`];
-}
-
 // document.title collapses runs of spaces, so HP IQ's "Productivity  (Summer 2027)" must be compared collapsed.
 export const hostedTitle = (role: string, company: string) => `Job Application for ${role} at ${company}`.replace(/\s+/g, ' ').trim();
 
@@ -121,6 +99,15 @@ async function menuOptions(page: import('playwright').Page, field: AtsField) {
 
 export const greenhouse: AtsAdapter = {
   id: 'greenhouse',
+  hosts: ['job-boards.greenhouse.io'],
+  origins: ['https://job-boards.cdn.greenhouse.io', 'https://s4-recruiting.cdn.greenhouse.io', 'https://my.greenhouse.io', 'https://boards.greenhouse.io',
+    // The Location (City) autocomplete; without it the profile's location can never be selected.
+    'https://api-geocode-earth-proxy.greenhouse.io',
+    // Attached files upload on attach (a blocked upload removes the file input); Email is validated on blur.
+    'https://grnhse-prod-jben-us-west-2.s3.us-west-2.amazonaws.com', 'https://email-address-validator.us.greenhouse.io',
+    // Greenhouse runs reCAPTCHA Enterprise on submit, as in any browser; blocking it can leave a submit unconfirmed.
+    'https://www.recaptcha.net', 'https://www.gstatic.com'],
+  answer: greenhouseAnswer,
   async observe(runtime, input, signal) {
     signal?.throwIfAborted();
     const page = await pageFor(input, runtime);

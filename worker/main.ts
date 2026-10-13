@@ -10,7 +10,7 @@ import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, S
 import { readMaskedGrant, readMaskedSecret } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
 import { createBrowserRuntime } from "./browser.ts";
-import { greenhouse, greenhouseAnswer } from "./ats/greenhouse.ts";
+import { greenhouse } from "./ats/greenhouse.ts";
 import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
 import { screenApplication, screeningQuestions, formQuestions } from "./screening.ts";
 import { AtsError } from "./ats/protocol.ts";
@@ -266,16 +266,9 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       const hostname = new URL(application.applicationUrl).hostname;
       runtime = await browser({
         userDataDir: join(directory, "browser", `${application.identity.ats}-${application.identity.tenant.replace(/[^A-Za-z0-9_-]/g, "_")}`),
-        approvedOrigins: [new URL(application.applicationUrl).origin,
-          ...(hostname === "job-boards.greenhouse.io" ? ["https://job-boards.cdn.greenhouse.io", "https://s4-recruiting.cdn.greenhouse.io", "https://my.greenhouse.io", "https://boards.greenhouse.io",
-            // The Location (City) autocomplete; without it the profile's location can never be selected.
-            "https://api-geocode-earth-proxy.greenhouse.io",
-            // Attached files upload on attach (a blocked upload removes the file input); Email is validated on blur.
-            "https://grnhse-prod-jben-us-west-2.s3.us-west-2.amazonaws.com", "https://email-address-validator.us.greenhouse.io",
-            // Greenhouse runs reCAPTCHA Enterprise on submit, as in any browser; blocking it can leave a submit unconfirmed.
-            "https://www.recaptcha.net", "https://www.gstatic.com"] : [])],
-        // Greenhouse may ask for an emailed code before it accepts a submission; the applicant enters it in this window.
-        allowLoopback: /^127\./.test(hostname), headless: !(lease.state === "ready" && hostname === "job-boards.greenhouse.io"),
+        approvedOrigins: [new URL(application.applicationUrl).origin, ...(adapter.hosts.includes(hostname) ? adapter.origins : [])],
+        // A hosted form may ask for an emailed code or a captcha before it accepts a submission; the applicant does that in this window.
+        allowLoopback: /^127\./.test(hostname), headless: !(lease.state === "ready" && adapter.hosts.includes(hostname)),
       });
       const observed = await adapter.observe(runtime, application, signal);
       const currentApplication = application;
@@ -284,8 +277,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         if (reviewed !== undefined) currentApplication.answers[field.key] = reviewed;
       }
       const missing = observed.fields.filter(field => field.required && field.kind !== 'file' &&
-        (adapter === greenhouse ? greenhouseAnswer(currentApplication, field) :
-          currentApplication.answers[formQuestionKey(field)] ?? currentApplication.answers[field.key]) === undefined);
+        adapter.answer(currentApplication, field) === undefined);
       if (missing.length) return formQuestions(applicationContext, missing);
       // A transcript upload takes the applicant's undergraduate transcript.
       for (const field of observed.fields) {
