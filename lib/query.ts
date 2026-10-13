@@ -206,13 +206,18 @@ export function userFilters(p: Omit<Params, 'page' | 'job'>, now: number): SQL[]
  * Roles the worker can auto-apply to are listed in Applications, not on the board: the ATSs with an adapter
  * (Greenhouse, Lever, Ashby; docs/auto-apply-support.md), whose hosts match `official()` in application-identity.ts.
  * Board-only: discovery reads `userFilters`, which must keep these rows.
+ * `returned` are roles Auto Apply gave up on after a retry (`returnedToBoard`); they show here again.
  * ponytail: canonical URL only; a posting whose ATS link is only in its sources still shows here.
  */
-const autoApplicable = sql`(${sql.join(['https://boards.greenhouse.io/%', 'https://job-boards.greenhouse.io/%', 'https://jobs.lever.co/%',
-  'https://jobs.eu.lever.co/%', 'https://jobs.ashbyhq.com/%'].map((prefix) => sql`${postings.canonicalUrl} like ${prefix}`), sql` or `)})`;
+function onlyOnBoard(returned: readonly string[]): SQL {
+  const auto = sql`(${sql.join(['https://boards.greenhouse.io/%', 'https://job-boards.greenhouse.io/%', 'https://jobs.lever.co/%',
+    'https://jobs.eu.lever.co/%', 'https://jobs.ashbyhq.com/%'].map((prefix) => sql`${postings.canonicalUrl} like ${prefix}`), sql` or `)})`;
+  if (!returned.length) return sql`not ${auto}`;
+  return sql`(not ${auto} or rtrim(lower(${postings.canonicalUrl}), '/') in (${sql.join(returned.map((url) => sql`${url}`), sql`, `)}))`;
+}
 
-function where(p: Params, now: number): SQL {
-  return and(eq(postings.track, p.tab), ...visible(now), ...userFilters(p, now), sql`not ${autoApplicable}`)!;
+function where(p: Params, now: number, returned: readonly string[]): SQL {
+  return and(eq(postings.track, p.tab), ...visible(now), ...userFilters(p, now), onlyOnBoard(returned))!;
 }
 
 /**
@@ -230,11 +235,11 @@ function where(p: Params, now: number): SQL {
  */
 export const ROW_CAP = 200;
 
-export async function listPostings(db: ReadDb, p: Params, now: number = Date.now()) {
+export async function listPostings(db: ReadDb, p: Params, now: number = Date.now(), returned: readonly string[] = []) {
   return await driver(db)
     .select(ROW)
     .from(postings)
-    .where(where(p, now))
+    .where(where(p, now, returned))
     .orderBy(desc(effectiveAt), asc(seniorityRank), asc(postings.id))
     // ROW_CAP + 1: the extra row is not rendered, it is the answer to "is there more?".
     .limit(ROW_CAP + 1)
@@ -245,11 +250,11 @@ export async function listPostings(db: ReadDb, p: Params, now: number = Date.now
 export type Row = Awaited<ReturnType<typeof listPostings>>[number];
 
 /** True when the tab holds no rows at all — the difference between "empty" and "no matches". */
-export async function tabIsEmpty(db: ReadDb, p: Params, now: number = Date.now()): Promise<boolean> {
+export async function tabIsEmpty(db: ReadDb, p: Params, now: number = Date.now(), returned: readonly string[] = []): Promise<boolean> {
   const rows = await driver(db)
     .select({ id: postings.id })
     .from(postings)
-    .where(where(bare(p), now))
+    .where(where(bare(p), now, returned))
     .limit(1)
     .all();
   return rows.length === 0;
@@ -267,11 +272,12 @@ export async function outsideTargetLocations(
   db: ReadDb,
   p: Params,
   now: number = Date.now(),
+  returned: readonly string[] = [],
 ): Promise<number> {
   const row = await driver(db)
     .select({ n: count() })
     .from(postings)
-    .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), hiddenByLocation, sql`not ${autoApplicable}`))
+    .where(and(eq(postings.track, p.tab), ...structural(now), ...userFilters(p, now), hiddenByLocation, onlyOnBoard(returned)))
     .get();
   return row?.n ?? 0;
 }

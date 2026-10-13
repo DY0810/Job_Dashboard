@@ -11,7 +11,7 @@ import { hashValue } from './stores.ts';
 import { APPLICATION_STATES, SAFE_STAGES, canTransition, type ApplicationState } from './state.ts';
 import * as p from './worker-protocol.ts';
 import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing } from './pairing.ts';
-import { createRun, listRuns, commandRun, commandApplication } from './runs.ts';
+import { createRun, listRuns, commandRun, commandApplication, returnedPostingUrls } from './runs.ts';
 import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
@@ -613,6 +613,16 @@ describe('zero-row writes cannot acknowledge authority', () => {
     });
 });
 describe('durable owner controls', () => {
+  it('sends a role that stops again after a retry back to the Jobs board', async () => {
+    const { app } = await prepared();
+    await db.update(applications).set({ state: 'needs_document', reasonCode: 'document_tailoring_unavailable' }).where(eq(applications.id, app.id));
+    expect((await listRuns(db, 'alice')).applications.map((row) => row.id)).toContain(app.id);
+    await db.update(applications).set({ retries: 1 }).where(eq(applications.id, app.id));
+    expect((await listRuns(db, 'alice')).applications.map((row) => row.id)).not.toContain(app.id);
+    await db.insert(applications).values({ id: randomUUID(), ownerId: 'alice', runId: app.runId, workerId: app.workerId,
+      ats: 'ashby', tenant: 'Acme', requisition: '0F6C2C9E-1111-4222-8333-944455556666', state: 'failed', retries: 1, availableAt: 0, createdAt: 0 });
+    expect(await returnedPostingUrls(db)).toEqual(['https://jobs.ashbyhq.com/acme/0f6c2c9e-1111-4222-8333-944455556666']);
+  });
   it('persists pause/resume/stop with command replay, conflicts and no destructive withdrawal claims', async () => {
     const { worker, app, run } = await prepared();
     const lease = await claim(worker.token), pause = { ...revision(1), action: 'pause' as const };
