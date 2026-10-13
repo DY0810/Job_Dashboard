@@ -7,9 +7,10 @@ that a live tenant uses the same fields.
 | ATS family | Adapter | Fixture flow | Live form read | Live submit receipt | Current limits |
 | --- | --- | --- | --- | --- | --- |
 | Greenhouse | `greenhouse` | PASS: synthetic fill, upload, submit, exact-role receipt | Not performed | Not performed | Field set is tenant-specific; employer API credentials are not used. |
+| Lever | `lever` | PASS: synthetic fill, upload, submit, thanks-page receipt | PASS: observe and fill (no submit) on Palantir, Shield AI, Ro, 2026-10-12 | Not performed | hCaptcha on submit waits for the applicant in the visible window; challenge path unobserved. |
+| Ashby | `ashby` | PASS: synthetic fill, upload, submit, success-state receipt | PASS: observe and fill (no submit) on OpenAI, Ramp, Notion, 2026-10-12 | Not performed | reCAPTCHA is scored invisibly; a rejected score waits for the applicant. Success text is from Ashby's page script, unobserved live. |
 
-Ashby, Lever, Jobvite, Workday, Oracle Candidate Experience and iCIMS have no
-adapter: their fixture-only stubs were removed in October 2026, and an
+Jobvite, Workday, Oracle Candidate Experience and iCIMS have no adapter: an
 application on any of them ends at `blocked_unsupported`/`adapter_unavailable`
 before screening.
 

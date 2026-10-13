@@ -895,3 +895,20 @@ describe('row cap', () => {
       .map((row) => row.id)).toContain(id);
   });
 });
+
+describe('roles auto-apply can fill live in Applications, not on the board', () => {
+  it.each([
+    'https://job-boards.greenhouse.io/acme/jobs/123',
+    'https://jobs.lever.co/acme/0f6c2c9e-1111-4222-8333-944455556666',
+    'https://jobs.eu.lever.co/acme/0f6c2c9e-1111-4222-8333-944455556666',
+    'https://jobs.ashbyhq.com/acme/0f6c2c9e-1111-4222-8333-944455556666',
+  ])('hides %s', async (url) => {
+    db.update(postings).set({ canonicalUrl: url }).where(eq(postings.id, idOf('d-sf-3d'))).run();
+    expect(await order(params('design'))).not.toContain('d-sf-3d');
+  });
+
+  it('keeps a role whose link the worker cannot fill', async () => {
+    db.update(postings).set({ canonicalUrl: 'https://careers.acme.com/jobs/123' }).where(eq(postings.id, idOf('d-sf-3d'))).run();
+    expect(await order(params('design'))).toContain('d-sf-3d');
+  });
+});
