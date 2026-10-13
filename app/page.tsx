@@ -19,15 +19,12 @@ import {
 } from "@/lib/params";
 import { rowChips } from "@/lib/chips";
 import { listPostings, outsideTargetLocations, ROW_CAP, tabIsEmpty, type Row } from "@/lib/query";
-import { RefreshButton } from "./refresh-button";
 import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
 import { ChevronRight, ExternalLink } from "lucide-react";
-import { ThemeToggle } from "./theme-toggle";
-import { ApplicantSwitcher } from "./applicant-switcher";
 import { AppliedCheckbox } from "./applied-checkbox";
 import { AppliedSync } from "./applied-sync";
-import { AppNav } from "./app-nav";
+import { AppHeader } from "./app-header";
 import { getPrivateDb } from "@/lib/private-db";
 import { returnedPostingUrls } from "@/lib/applications/runs";
 
@@ -268,9 +265,7 @@ function Empty({ outside }: { outside: number }) {
 function NotConfigured() {
   return (
     <main className="board-page" id="main-content">
-      <header className="app-header">
-        <AppNav current="/" />
-      </header>
+      <AppHeader current="/" />
       <h1 className="board-title">Job board unavailable</h1>
       <div className="prose max-w-lg py-12">
         <p>No database is configured for this deployment.</p>
@@ -363,19 +358,7 @@ export default async function Page({
 
   return (
     <main className="board-page" id="main-content">
-      <header className="app-header">
-        <AppNav current="/" />
-        <div className="app-tools">
-          <span className="nums app-status">
-            {lastRun
-              ? `Updated ${ago(lastRun.startedAt, now)} ago`
-              : "No ingest run yet"}
-          </span>
-          <RefreshButton hosted={Boolean(process.env.VERCEL)} />
-          <ThemeToggle />
-          <ApplicantSwitcher />
-        </div>
-      </header>
+      <AppHeader current="/" />
 
       <section className="board-intro" aria-label="Job board overview">
         <div>
@@ -384,6 +367,10 @@ export default async function Page({
             {rows.length} {rows.length === 1 ? "role" : "roles"} on this page
             <span aria-hidden="true"> / </span>
             <span className="board-fresh">{freshCount} new in the last 24 hours</span>
+            <span aria-hidden="true"> / </span>
+            <span className="nums">
+              {lastRun ? `Updated ${ago(lastRun.startedAt, now)} ago` : "No ingest run yet"}
+            </span>
           </p>
         </div>
         <div className="board-switches">

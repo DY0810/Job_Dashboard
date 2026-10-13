@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
-import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunCreateSchema, RunListSchema, WorkerListSchema, type Outreach, type Run } from '../../lib/applications/worker-protocol';
+import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type Outreach, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState } from '../../lib/applications/state';
 import { privateJson, PrivateRequestError, type PrivateApi } from '../profile/api';
@@ -148,7 +148,7 @@ function ManagePanel({ app, runs, ownerId, retryShown, onChange }: { app: { id: 
       }
       if (!response!.ok) {
         const code = await errorCode(response!);
-        throw new Error(code === 'POLICY_CHANGED' ? 'The Auto Apply policy changed since the running run started. Start a new run from Workers, then retry.'
+        throw new Error(code === 'POLICY_CHANGED' ? 'The Auto Apply policy changed since the running run started. Start a new run from Settings, then retry.'
           : code === 'DISCOVERY_REQUIRED' ? 'No running run has found this role yet. Retry after its discovery finishes.'
           : code === 'DUPLICATE_BLOCKED' ? 'This role was already retried or marked applied.' : 'Could not retry. Refresh and try again.');
       }
@@ -176,28 +176,6 @@ function ManagePanel({ app, runs, ownerId, retryShown, onChange }: { app: { id: 
   </div>;
 }
 
-/** Starts a run on the first online worker, the same create-run call as Workers; the run then finds and fills roles on its own. */
-function StartPanel({ workerId, policyEnabled, ownerId, onChange }: { workerId: string | undefined; policyEnabled: boolean; ownerId: string; onChange: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const start = async () => {
-    setBusy(true); setError('');
-    try {
-      await privateJson('/api/application-runs', { method: 'POST', owner: ownerId, timeout: 30_000,
-        body: JSON.stringify(RunCreateSchema.parse({ workerId, requestId: crypto.randomUUID(), expectedRevision: 0 })) });
-      onChange();
-    } catch { setError('Could not start. Check the worker and policy on Workers, then try again.'); }
-    finally { setBusy(false); }
-  };
-  if (!policyEnabled) return <div className={styles.row}><span>Turn on the Auto Apply policy in Profile to start.</span></div>;
-  if (!workerId) return <div className={styles.row}><span>Start a worker to begin auto applying.</span><Link href="/workers" prefetch={false}>Workers</Link></div>;
-  return <div className={styles.row}>
-    <span>No run is going.</span>
-    <button className={styles.button} type="button" disabled={busy} onClick={() => void start()}>{busy ? 'Starting...' : 'Start auto apply'}</button>
-    {error && <span role="alert" className={styles.reason}>{error}</span>}
-  </div>;
-}
-
 /** A document hold the applicant has fixed resumes here, in its own run or, after a policy change, in the newest running run. */
 function RetryPanel({ app, runs, ownerId, onChange, children }: { app: { id: string; runId: string; revision: number; reasonCode: string | null }; runs: Run[]; ownerId: string; onChange: () => void; children: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
@@ -216,7 +194,7 @@ function RetryPanel({ app, runs, ownerId, onChange, children }: { app: { id: str
           response = await post(`/api/application-runs/${run.id}/retry-unsubmitted`, { previousApplicationId: app.id });
           if (await code() !== 'POLICY_CHANGED') break;
         }
-        if (await code() === 'POLICY_CHANGED') throw new Error('The Auto Apply policy changed after this run started. Start a new run from Workers, then retry.');
+        if (await code() === 'POLICY_CHANGED') throw new Error('The Auto Apply policy changed after this run started. Start a new run from Settings, then retry.');
         if (await code() === 'DISCOVERY_REQUIRED') throw new Error('The new run has not found this role yet. Retry after its discovery finishes.');
       }
       if (!response.ok) throw new Error('Could not retry. Refresh and try again.');
@@ -300,8 +278,10 @@ export default function Applications() {
     void load();
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(true); }, HEARTBEAT_MS * 3);
     const focus = () => { if (document.visibilityState === 'visible') void load(true); };
+    const manual = () => void load(true);
     window.addEventListener('focus', focus);
-    return () => { clearInterval(timer); window.removeEventListener('focus', focus); };
+    window.addEventListener('workie:refresh', manual);
+    return () => { clearInterval(timer); window.removeEventListener('focus', focus); window.removeEventListener('workie:refresh', manual); };
   }, [load]);
   const reload = useCallback(() => void load(true), [load]);
   const questions = useQuestions(reload);
@@ -336,11 +316,8 @@ export default function Applications() {
         <div className={styles.row}>
           <span>{onlineWorkers.length ? `${onlineWorkers.length} worker${onlineWorkers.length === 1 ? '' : 's'} online` : 'No worker online'}</span>
           <span className={styles.muted}>{view.policy?.enabled ? 'Policy enabled' : 'Policy disabled'}</span>
-          <Link href="/workers" prefetch={false}>Manage workers</Link>
+          <Link href="/applications?settings=1" prefetch={false} scroll={false}>Start or manage in Settings</Link>
         </div>
-        {view.account && !view.runs?.runs.some((run) => run.state === 'running') &&
-          <StartPanel workerId={onlineWorkers.find((worker) => worker.revokedAt === null)?.id} policyEnabled={!!view.policy?.enabled}
-            ownerId={view.account.ownerId} onChange={() => void load(true)} />}
         {applications.length > 0 && <div className={styles.row} aria-label="Application state counts">
           {Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([state, count]) =>
             <span key={state}>{count} <span className={styles.muted}>{label(state)}</span></span>)}
@@ -348,7 +325,7 @@ export default function Applications() {
       </section>
       <section className={styles.section} aria-labelledby="history-heading">
         <h2 id="history-heading">History</h2>
-        {!applications.length ? <p className={styles.muted}>Start a run from Workers after enabling a policy.</p> :
+        {!applications.length ? <p className={styles.muted}>Start a run from Settings after enabling a policy.</p> :
           <ul className={styles.applications} aria-label="Application history">
             {applications.map((app) => {
               const retry = app.state === 'needs_document' && !!app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3;

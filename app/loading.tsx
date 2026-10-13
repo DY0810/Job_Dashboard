@@ -1,9 +1,9 @@
-import { AppNav } from './app-nav';
+import { AppHeader } from './app-header';
 
 export default function Loading() {
   return (
     <main id="main-content" className="board-page" aria-busy="true">
-      <header className="app-header"><AppNav current="/" /></header>
+      <AppHeader current="/" />
       <section className="board-intro" aria-label="Loading job board">
         <div>
           <h1 className="board-title">Loading jobs…</h1>

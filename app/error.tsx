@@ -1,6 +1,6 @@
 'use client';
 
-import { AppNav } from './app-nav';
+import { AppHeader } from './app-header';
 
 /**
  * The database is a local file that may not have been migrated yet, so the useful error
@@ -9,7 +9,7 @@ import { AppNav } from './app-nav';
 export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
     <main id="main-content" className="board-page">
-      <header className="app-header"><AppNav current="/" /></header>
+      <AppHeader current="/" />
       <div className="prose max-w-lg py-12" role="alert">
         <p className="board-eyebrow">Job board</p>
         <h1 className="board-title">Couldn’t load jobs</h1>

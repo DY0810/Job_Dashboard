@@ -1,8 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
-import { AppNav } from './app-nav';
-import { ApplicantSwitcher } from './applicant-switcher';
-import { ThemeToggle } from './theme-toggle';
+import { AppHeader } from './app-header';
 
 /** Private pages are never indexed and never send a referrer. */
 export const privateMetadata = (title: string): Metadata => ({
@@ -14,11 +12,7 @@ export function PrivateShell({ current, styles, switcher = true, children }: {
   current: string; styles: Record<string, string>; switcher?: boolean; children: ReactNode;
 }) {
   return <main id="main-content" className={styles.page}>
-    <header className={`${styles.header} app-header`}>
-      <AppNav current={current} />
-      <ThemeToggle />
-      {switcher && <ApplicantSwitcher />}
-    </header>
+    <AppHeader current={current} switcher={switcher} />
     {children}
   </main>;
 }

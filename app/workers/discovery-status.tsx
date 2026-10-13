@@ -25,7 +25,7 @@ export default function DiscoveryStatus({ ownerId, runs, locked }: { ownerId: st
   }, [locked, runs, view.runId]);
   const status = view.status;
   return <section className={styles.section} aria-labelledby="discovery-heading">
-    <h2 id="discovery-heading">Discovery</h2>
+    <h4 id="discovery-heading">Discovery</h4>
     <div className={styles.form}>
       <label>Discovery run
         <select value={view.runId} disabled={locked} onChange={(event) => control.current?.selectRun(event.target.value)}>

@@ -50,3 +50,8 @@
 .changes { display: grid; gap: 8px; margin: 6px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .changes del { display: block; color: var(--fg-dim); }
 .changes ins { display: block; text-decoration: none; }
+/* Settings drawer: the Workers and Settings panels reuse `.page` for their form styles, not its page height. */
+dialog .page { min-height: 0; padding-bottom: 0; }
+.section h3 { font-size: 15px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 8px; }
+.row > h3 { margin: 0; }
+.section h4 { font-size: 13px; font-weight: 600; margin: 0 0 8px; }

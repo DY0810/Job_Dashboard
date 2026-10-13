@@ -4,9 +4,7 @@ const destinations = [
   ['Jobs', '/'],
   ['Auto Apply', '/applications'],
   ['Profile', '/profile'],
-  ['Workers', '/workers'],
   ['Notes', '/talkie'],
-  ['Settings', '/settings'],
 ] as const;
 
 export function AppNav({ current }: { current: string }) {
@@ -27,7 +25,6 @@ export function AppNav({ current }: { current: string }) {
           </Link>
         ))}
       </nav>
-      <Link href="/sign-in" prefetch={false} className="app-account" aria-current={current === '/sign-in' ? 'page' : undefined}>Account</Link>
     </div>
   );
 }

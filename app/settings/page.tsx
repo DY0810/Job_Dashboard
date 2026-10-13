@@ -1,10 +1,6 @@
-import Settings from './settings';
-import styles from '../workers/workers.module.css';
-import { PrivateShell, privateMetadata } from '../private-shell';
+import { redirect } from 'next/navigation';
 
-export const dynamic = 'force-dynamic';
-export const metadata = privateMetadata('Settings');
-
+/** Settings is a drawer now; old links land on it. */
 export default function SettingsPage() {
-  return <PrivateShell current="/settings" styles={styles}><Settings /></PrivateShell>;
+  redirect('/applications?settings=1');
 }

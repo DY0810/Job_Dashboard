@@ -1,7 +1,7 @@
 'use client';
 
 import { RefreshCw } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
 import type { HostedRefreshStatus, Phase } from '@/lib/refresh-status';
@@ -26,9 +26,13 @@ const LABEL: Record<Phase, string> = {
  * in the shared database, nudges the GitHub Actions cycle to start, and watches for that
  * cycle to land. That is what lets anyone with the link fetch new jobs — no laptop involved,
  * so the wait is the cycle's real duration (about ten minutes), which the label says.
+ *
+ * Off the board there is no ingest to run: it announces `workie:refresh` and the page's own
+ * panels reload their data.
  */
 export function RefreshButton({ hosted }: { hosted: boolean }) {
   const router = useRouter();
+  const board = usePathname() === '/';
   const [phase, setPhase] = useState<Phase>('idle');
   const [note, setNote] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
@@ -120,6 +124,7 @@ export function RefreshButton({ hosted }: { hosted: boolean }) {
 
   const start = async () => {
     setNote(null);
+    if (!board) return void window.dispatchEvent(new Event('workie:refresh'));
     if (hosted) return askRunner();
     const res = await fetch('/api/refresh', { method: 'POST' }).catch(() => null);
     if (!res) return setNote('could not reach the server');

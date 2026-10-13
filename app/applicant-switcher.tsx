@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import * as z from 'zod/mini';
+import { ChevronRight } from 'lucide-react';
 
 const responseSchema = z.object({ applicants: z.array(z.object({
   ownerId: z.string(), email: z.email(), name: z.string(), active: z.boolean(),
@@ -32,16 +33,16 @@ export function ApplicantSwitcher() {
       window.location.reload();
     } catch { setError('Could not switch applicant profile.'); setBusy(false); }
   }
-  return <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
-    <label className="flex min-w-0 items-center gap-2">
-      <span>Applicant</span>
-      <select className="note-input min-w-0 max-w-64" aria-label="Applicant profile" value={active.ownerId} disabled={busy}
+  return <>
+    <span className="select-box min-w-0">
+      <select className="select min-w-0 max-w-48" aria-label="Applicant profile" value={active.ownerId} disabled={busy}
         onChange={(event) => void select(event.target.value)}>
         {applicants.map((applicant) => <option value={applicant.ownerId} key={applicant.ownerId}>
           {applicant.name || applicant.email} ({applicant.email})
         </option>)}
       </select>
-    </label>
-    {error && <span role="alert">{error}</span>}
-  </div>;
+      <ChevronRight size={12} strokeWidth={1.25} absoluteStrokeWidth />
+    </span>
+    {error && <span role="alert" className="text-[11px]">{error}</span>}
+  </>;
 }

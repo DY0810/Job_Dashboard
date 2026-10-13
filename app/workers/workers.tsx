@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { X } from 'lucide-react';
 import { HEARTBEAT_MS } from '../../lib/applications/worker-protocol';
 import { WorkerControl, applicationActions, initialView, pairingStatus, workerStatus, type WorkerView } from './control';
@@ -12,13 +12,15 @@ const label = (value: string) => value.replaceAll('_', ' ');
 const date = (value: number | null) => value === null ? 'Never' : new Date(value).toLocaleString();
 const short = (id: string) => id.slice(0, 8);
 
-export default function Workers() {
+export default function Workers({ guard }: { guard: RefObject<(() => boolean) | null> }) {
   const [view, setView] = useState<WorkerView>(initialView);
   const control = useRef<WorkerControl | null>(null);
   useEffect(() => {
     const item = new WorkerControl(setView);
     control.current = item;
     void item.refresh();
+    guard.current = () => { if (!item.view.pending) return false; item.preventNavigation(); return true; };
+    const manual = () => void item.refresh();
     const focus = () => { if (document.visibilityState === 'visible') void item.refresh(!item.view.locked); };
     const visibility = () => { if (document.visibilityState === 'hidden') item.suspend(); else focus(); };
     const clock = setInterval(() => item.tick(), 1000);
@@ -31,7 +33,7 @@ export default function Workers() {
     const navigation = (event: MouseEvent) => {
       const link = event.target instanceof Element ? event.target.closest('a') : null;
       if (!item.view.pending || !link || link.target === '_blank' || event.metaKey || event.ctrlKey ||
-          new URL(link.href).pathname === '/workers') return;
+          new URL(link.href).searchParams.get('settings') === '1') return;
       event.preventDefault(); event.stopPropagation();
       item.preventNavigation();
     };
@@ -39,22 +41,20 @@ export default function Workers() {
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('beforeunload', beforeUnload);
     document.addEventListener('click', navigation, true);
+    window.addEventListener('workie:refresh', manual);
     return () => {
-      item.dispose(); control.current = null;
+      item.dispose(); control.current = null; guard.current = null;
       clearInterval(clock); clearInterval(poll);
       window.removeEventListener('focus', focus);
       document.removeEventListener('visibilitychange', visibility);
       window.removeEventListener('beforeunload', beforeUnload);
       document.removeEventListener('click', navigation, true);
+      window.removeEventListener('workie:refresh', manual);
     };
-  }, []);
-  return <>
-    <div className={styles.toolbar}>
-      <h1>Workers</h1>
-      {!view.locked && <span className={styles.muted}>{view.account?.email}</span>}
-      <button type="button" className={styles.button} disabled={view.loading} onClick={() => void control.current?.refresh()}>
-        Refresh status
-      </button>
+  }, [guard]);
+  return <section className={styles.section} aria-labelledby="workers-heading">
+    <div className={styles.row}>
+      <h3 id="workers-heading">Workers</h3>
       <Link href="/applications/import" prefetch={false}>Import browser marks</Link>
     </div>
     {view.loading && view.locked && <p role="status">Checking applicant session...</p>}
@@ -66,7 +66,7 @@ export default function Workers() {
     {view.account && <div hidden={view.locked}>
       <WorkerPanel key={view.account.ownerId} view={view} control={control.current!} />
     </div>}
-  </>;
+  </section>;
 }
 
 function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerControl }) {
@@ -85,7 +85,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
       <button type="button" className={styles.button} disabled={view.busy} onClick={() => void control.retry()}>Retry pending request</button>
     </div>}
     <section className={styles.section} aria-labelledby="pairing-heading">
-      <h2 id="pairing-heading">Pairing</h2>
+      <h4 id="pairing-heading">Pairing</h4>
       <form className={styles.form} onSubmit={(event) => { event.preventDefault(); void control.createPairing(name); }}>
         <label>Worker label
           <input name="worker-label" value={name} onChange={(event) => setName(event.target.value)}
@@ -116,7 +116,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
         </li>)}</ul>}
     </section>
     <section className={styles.section} aria-labelledby="paired-heading">
-      <h2 id="paired-heading">Paired workers</h2>
+      <h4 id="paired-heading">Paired workers</h4>
       {!workers.length ? <p className={styles.muted}>Unpaired / no workers.</p> : <ul className={styles.list} aria-label="Workers">
         {workers.map((worker) => <li key={worker.id}>
           <div><strong>{worker.label}</strong> <span className={styles.muted}>v{worker.workerVersion}</span></div>
@@ -128,7 +128,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
       </ul>}
     </section>
     <section className={styles.section} aria-labelledby="runs-heading">
-      <h2 id="runs-heading">Runs</h2>
+      <h4 id="runs-heading">Runs</h4>
       <p className={styles.muted}>
         {view.policy?.enabled ? 'Policy enabled' : 'Policy disabled'} / {runnerAvailable ? 'Runner online' : 'Runner offline'}
       </p>
@@ -169,7 +169,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
     </section>
     <DiscoveryStatus ownerId={view.account!.ownerId} runs={runs} locked={view.locked} />
     <section className={styles.section} aria-labelledby="applications-heading">
-      <h2 id="applications-heading">Application state</h2>
+      <h4 id="applications-heading">Application state</h4>
       {!view.runs?.applications.length ? <p className={styles.muted}>No applications.</p> :
         <ul className={styles.applications} aria-label="Application states">
           {view.runs.applications.map((app) => <li key={app.id} aria-label={`Application ${app.requisition}`}>

@@ -1,10 +1,6 @@
-import Workers from './workers';
-import styles from './workers.module.css';
-import { PrivateShell, privateMetadata } from '../private-shell';
+import { redirect } from 'next/navigation';
 
-export const dynamic = 'force-dynamic';
-export const metadata = privateMetadata('Workers');
-
+/** Workers lives in the settings drawer now; old links land on it. */
 export default function WorkersPage() {
-  return <PrivateShell current="/workers" styles={styles}><Workers /></PrivateShell>;
+  redirect('/applications?settings=1');
 }

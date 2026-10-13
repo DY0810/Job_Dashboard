@@ -40,7 +40,12 @@ export function Modal({
       ref={ref}
       className={kind}
       aria-labelledby={titleId}
-      onCancel={onClose}
+      // Esc asks; `open` decides. Without preventDefault the dialog would close behind a
+      // parent that declined to, leaving `open` true on a closed dialog.
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
       onPointerDown={(event) => {
         pressedBackdrop.current = event.target === ref.current;
       }}

@@ -5,8 +5,7 @@ import { TURSO_ENV, getDb, needsTurso } from '@/lib/db';
 import { listNotes, listWeeks, weekKey, weekLabel, weekRange } from '@/lib/notes';
 import { Calendar } from 'lucide-react';
 import { Board } from './board';
-import { AppNav } from '../app-nav';
-import { ThemeToggle } from '../theme-toggle';
+import { AppHeader } from '../app-header';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Notes | Workie' };
@@ -27,8 +26,9 @@ export default async function Talkie({
 
   if (needsTurso()) {
     return (
-      <main id="main-content" className="min-h-dvh px-4 py-12 text-[11px] text-fg-dim">
-        Database not configured: set {TURSO_ENV.join(' and ')}.
+      <main id="main-content" className="min-h-dvh px-4 text-[11px] text-fg-dim">
+        <AppHeader current="/talkie" />
+        <p className="py-12">Database not configured: set {TURSO_ENV.join(' and ')}.</p>
       </main>
     );
   }
@@ -38,8 +38,9 @@ export default async function Talkie({
 
   return (
     <main id="main-content" className="min-h-dvh px-4 pb-16">
-      <header className="app-header">
-        <AppNav current="/talkie" />
+      <AppHeader current="/talkie" />
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <h1 className="board-title">Notes</h1>
         <details className="relative ml-auto">
           <summary className="chip flex cursor-pointer list-none items-center gap-1.5" aria-label="Pick a week">
             <Calendar size={12} strokeWidth={1.25} absoluteStrokeWidth />
@@ -55,9 +56,7 @@ export default async function Talkie({
             ))}
           </div>
         </details>
-        <ThemeToggle />
-      </header>
-      <h1 className="board-title mt-6">Notes</h1>
+      </div>
       <Board key={week} notes={notes} canWrite={week === current} week={week} />
     </main>
   );
