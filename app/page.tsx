@@ -24,7 +24,6 @@ import { Drawer } from "./drawer";
 import { BadgeChip, Filters, RowChip } from "./filters";
 import { ChevronRight, ExternalLink } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
-import { NotificationBell } from "./notification-bell";
 import { ApplicantSwitcher } from "./applicant-switcher";
 import { AppliedCheckbox } from "./applied-checkbox";
 import { AppliedSync } from "./applied-sync";
@@ -271,7 +270,6 @@ function NotConfigured() {
     <main className="board-page" id="main-content">
       <header className="app-header">
         <AppNav current="/" />
-        <NotificationBell />
       </header>
       <h1 className="board-title">Job board unavailable</h1>
       <div className="prose max-w-lg py-12">
@@ -375,7 +373,6 @@ export default async function Page({
           </span>
           <RefreshButton hosted={Boolean(process.env.VERCEL)} />
           <ThemeToggle />
-          <NotificationBell />
           <ApplicantSwitcher />
         </div>
       </header>

@@ -9,6 +9,7 @@ import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState } from '../../lib/applications/state';
 import { privateJson, PrivateRequestError, type PrivateApi } from '../profile/api';
 import DocumentsPane from '../profile/documents-pane';
+import { ApplicationQuestions, useQuestions } from './questions';
 import styles from '../workers/workers.module.css';
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -299,11 +300,11 @@ export default function Applications() {
     void load();
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(true); }, HEARTBEAT_MS * 3);
     const focus = () => { if (document.visibilityState === 'visible') void load(true); };
-    const answered = () => void load(true);
     window.addEventListener('focus', focus);
-    window.addEventListener('workie:inbox-closed', answered);
-    return () => { clearInterval(timer); window.removeEventListener('focus', focus); window.removeEventListener('workie:inbox-closed', answered); };
+    return () => { clearInterval(timer); window.removeEventListener('focus', focus); };
   }, [load]);
+  const reload = useCallback(() => void load(true), [load]);
+  const questions = useQuestions(reload);
 
   const applications = view.runs?.applications ?? [];
   const counts = applications.reduce<Record<string, number>>((result, app) => {
@@ -313,6 +314,7 @@ export default function Applications() {
   const onlineWorkers = view.workers?.workers.filter((worker) => worker.online) ?? [];
   const outreach = new Map(view.outreach.map((item) => [item.applicationId, item]));
   const materials = new Map(view.materials.map((item) => [item.applicationId, item]));
+  const questionRole = new Map((questions.view.inbox?.items ?? []).flatMap((item) => item.question ? [[item.applicationId, item.question.application.role] as const] : []));
   return <>
     <div className={styles.toolbar}>
       <h1>Auto Apply</h1>
@@ -320,6 +322,8 @@ export default function Applications() {
       <button className={styles.button} type="button" disabled={view.loading || refreshing} onClick={() => void load()}>
         {refreshing ? 'Refreshing...' : 'Refresh'}
       </button>
+      {questions.view.error && <span role="alert" className={styles.reason}>{questions.view.error}</span>}
+      {questions.view.notice && <span role="status" className={styles.muted}>{questions.view.notice}</span>}
     </div>
     {view.error && <p role="alert" className={styles.message}>{view.error}</p>}
     {view.locked && !view.loading && <p className={styles.row}>
@@ -354,20 +358,19 @@ export default function Applications() {
               const manage = view.account && <ManagePanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} retryShown={retry} onChange={() => void load(true)} />;
               return <li key={app.id}>
                 <div className={styles.row}><strong>{app.company ?? app.tenant}</strong><span className={styles.muted}>{label(app.state)}</span></div>
-                <div className={styles.row}><span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>{app.ats}</span>
+                <div className={styles.row}>{(app.role ?? questionRole.get(app.id)) && <span>{app.role ?? questionRole.get(app.id)}</span>}<span className={styles.muted}>{app.ats}</span>
                   {app.receiptId && <span className={styles.muted}>Receipt {app.receiptId}{app.submittedAt ? `, ${new Date(app.submittedAt).toLocaleString()}` : ''}</span>}</div>
                 {/* The retry and approve panels explain their own hold, so the raw reason would repeat them. */}
                 {app.reasonCode && !retry && !approve && !answer && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
                 {app.state === 'queued' && caps && <span className={styles.muted}>
                   Waiting its turn. It starts on its own, up to {caps.perEmployerCap} per employer and {caps.dailyApplicationCap} a day.</span>}
-                {answer && <span>The employer&apos;s form asks something your profile does not answer.</span>}
+                <ApplicationQuestions applicationId={app.id} view={questions.view} control={questions.control} />
                 {materials.get(app.id) && <MaterialsPanel item={materials.get(app.id)!} />}
                 {approve && view.account &&
                   <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
                 {view.account && (retry
                   ? <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)}>{manage}</RetryPanel>
                   : <div className={styles.row}>
-                    {answer && <button className={styles.button} type="button" onClick={() => window.dispatchEvent(new CustomEvent('workie:answer', { detail: app.id }))}>Answer</button>}
                     {manage}
                   </div>)}
                 {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}

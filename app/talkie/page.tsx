@@ -5,7 +5,6 @@ import { TURSO_ENV, getDb, needsTurso } from '@/lib/db';
 import { listNotes, listWeeks, weekKey, weekLabel, weekRange } from '@/lib/notes';
 import { Calendar } from 'lucide-react';
 import { Board } from './board';
-import { NotificationBell } from '../notification-bell';
 import { AppNav } from '../app-nav';
 import { ThemeToggle } from '../theme-toggle';
 
@@ -57,7 +56,6 @@ export default async function Talkie({
           </div>
         </details>
         <ThemeToggle />
-        <NotificationBell />
       </header>
       <h1 className="board-title mt-6">Notes</h1>
       <Board key={week} notes={notes} canWrite={week === current} week={week} />
