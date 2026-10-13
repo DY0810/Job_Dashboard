@@ -1,0 +1,1 @@
+ALTER TABLE `private_application` ADD `hidden_at` integer;

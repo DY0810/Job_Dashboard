@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, workers } from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
@@ -52,7 +52,7 @@ export async function listRuns(db: PrivateDb, ownerId: string): Promise<RunList>
       .from(applications)
       .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
       .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)))
-      .where(eq(applications.ownerId, ownerId)).orderBy(desc(applications.createdAt)).limit(100))
+      .where(and(eq(applications.ownerId, ownerId), isNull(applications.hiddenAt))).orderBy(desc(applications.createdAt)).limit(100))
       .map(({ app, submission, receipt }) => applicationSummary(app, {
         company: submission?.company ?? receipt?.company, role: submission?.role ?? receipt?.role,
         receiptId: receipt?.receiptId, submittedAt: receipt?.submittedAt,
@@ -118,9 +118,21 @@ export async function commandApplication(
     if (replay) return replay;
     const [row] = await tx.select().from(applications).where(and(appScope(ownerId, id), eq(applications.runId, runId)));
     if (!row) fail(404, 'NOT_FOUND', 'Application not found.');
-    if (row.revision !== command.expectedRevision || isTerminalState(row.state)) fail();
     const now = nowAt(options);
     const ambiguous = row.state === 'submitting' || row.state === 'submission_unknown';
+    if (command.action === 'delete') {
+      // Hides the row (history is append-only); a live one is cancelled first, like `cancel`, so the worker drops it.
+      if (row.revision !== command.expectedRevision || row.hiddenAt !== null) fail();
+      if (ambiguous) fail(409, 'CONFLICT', 'Submission requires read-only reconciliation.');
+      const updated = one(await tx.update(applications).set({
+        hiddenAt: now, revision: row.revision + 1, fence: row.fence + 1,
+        ...(isTerminalState(row.state) ? {} : { state: 'cancelled' as const, reasonCode: 'delete', leaseUntil: null, leaseCheckedAt: null }),
+      }).where(and(appScope(ownerId, id), eq(applications.revision, row.revision), eq(applications.fence, row.fence))).returning());
+      const acknowledgement = applicationSummary(updated);
+      await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
+      return acknowledgement;
+    }
+    if (row.revision !== command.expectedRevision || isTerminalState(row.state)) fail();
     if (ambiguous && command.action !== 'emergency-stop') fail(409, 'CONFLICT', 'Submission requires read-only reconciliation.');
     let next = row.state, availableAt = row.availableAt, retries = row.retries;
     if (command.action === 'retry-safe') {

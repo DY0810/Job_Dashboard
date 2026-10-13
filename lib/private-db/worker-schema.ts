@@ -94,6 +94,8 @@ export const applications = sqliteTable('private_application', {
   retries: integer('retries').notNull().default(0),
   availableAt: integer('available_at').notNull(),
   createdAt: integer('created_at').notNull(),
+  // Rows are append-only (no-delete trigger), so "delete" in Applications only hides one.
+  hiddenAt: integer('hidden_at'),
 }, (t) => [
   uniqueIndex('private_application_owner_id').on(t.ownerId, t.id),
   uniqueIndex('private_application_identity').on(t.ownerId, t.ats, t.tenant, t.requisition, t.attempt),

@@ -72,7 +72,8 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
     expect(JSON.stringify(snapshot)).not.toContain('OMITTED');
     expect(snapshot.scope).toMatchObject({ pagination: false, publicGeographyCeiling: false, publicSeniorityCeiling: false });
     const publicRows = await listPostings(f.db, { ...policy().filters, page: 1, job: null }, NOW);
-    expect(publicRows).toHaveLength(201);
+    // Every fixture posting is a Greenhouse role, which Applications lists instead of the board.
+    expect(publicRows).toHaveLength(0);
   });
 
   it('uses only explicit SQL filters, live state and fixed effective age, not public geography/seniority', async () => {

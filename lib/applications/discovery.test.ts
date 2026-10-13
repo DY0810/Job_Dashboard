@@ -15,11 +15,11 @@ import {
 import { createEmptyPolicy, type Policy } from './policy.ts';
 import { hashValue } from './stores.ts';
 import { createPairing, pairWorker, revokeWorker } from './pairing.ts';
-import { createRun, commandRun, commandApplication } from './runs.ts';
+import { createRun, commandRun, commandApplication, listRuns } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
 import {
-  discoverWorkerRuns, stageDiscoveryManifest, getDiscoveryStatus, abandonDiscovery, reapplyApplication, retryUnsubmittedApplication,
+  discoverWorkerRuns, stageDiscoveryManifest, getDiscoveryStatus, abandonDiscovery, reapplyApplication, retryUnsubmittedApplication, restartApplication,
   DISCOVERY_INTERVAL_MS,
 } from './discovery.ts';
 import { previewLegacyImport, confirmLegacyImport } from './imports.ts';
@@ -482,6 +482,27 @@ describe('cap-held backlog and explicit historical attempts', () => {
     }
     now += DAY; // The stuck attempt used today's per-employer start.
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
+  });
+
+  it('restarts a live application as a fresh attempt, refuses a submitted one, and deletes by hiding', async () => {
+    const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    const live = (await appRows()).find((a) => a.id === lease.applicationId)!;
+    const command = { ...request(), previousApplicationId: live.id, expectedRevision: live.revision };
+    const next = await restartApplication(db, 'alice', run.id, command, options);
+    expect(await restartApplication(other, 'alice', run.id, command, options)).toEqual(next);
+    const history = await appRows();
+    expect(history.find((a) => a.id === live.id)).toMatchObject({ state: 'cancelled', reasonCode: 'restarted', leaseUntil: null });
+    expect(history.find((a) => a.id === next.id)).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: live.id });
+    const fresh = history.find((a) => a.id === next.id)!;
+    await db.update(applications).set({ state: 'submitted' }).where(eq(applications.id, fresh.id));
+    await expect(restartApplication(db, 'alice', run.id, { ...request(), previousApplicationId: fresh.id, expectedRevision: fresh.revision }, options))
+      .rejects.toMatchObject({ status: 409 });
+    // Delete hides a terminal row without changing its state; the history row stays.
+    const hidden = await commandApplication(db, 'alice', run.id, fresh.id, { ...request(), expectedRevision: fresh.revision, action: 'delete' }, options);
+    expect(hidden.state).toBe('submitted');
+    expect((await listRuns(db, 'alice')).applications.map((a) => a.id)).toEqual([live.id]);
+    expect((await appRows()).find((a) => a.id === fresh.id)?.hiddenAt).toBe(now);
   });
 
   it('resumes a document hold the applicant fixed: in its own run, or after a policy change in a run started under it', async () => {
