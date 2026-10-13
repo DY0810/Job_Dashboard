@@ -1,10 +1,11 @@
 import 'server-only';
-import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, not, or, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, workers } from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from './state.ts';
 import { postingUrl } from './posting-url.ts';
+import { ARCHIVE_KEEP_MS } from './buckets.ts';
 import {
   RunCreateSchema, RunCommandSchema, ApplicationCommandSchema,
   type RunCreate, type RunCommand, type ApplicationCommand, type Run,
@@ -17,12 +18,21 @@ import {
 
 export const runSummary = ({ id, workerId, revision, state, createdAt }: typeof applicationRuns.$inferSelect): Run =>
   ({ id, workerId, revision, state, createdAt });
-export const applicationSummary = ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint, retries }: ApplicationRow,
+export const applicationSummary = ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint, retries, createdAt, hiddenAt }: ApplicationRow,
   meta: { company?: string | null; role?: string | null; receiptId?: string | null; submittedAt?: number | null } = {}): ApplicationSummary =>
   ({ id, runId, workerId, ats, tenant, requisition, state, revision, reasonCode, checkpoint, retries,
     company: meta.company ?? null, role: meta.role ?? null, receiptId: meta.receiptId ?? null, submittedAt: meta.submittedAt ?? null,
-    provider: null, costUsd: null });
+    provider: null, costUsd: null, createdAt, hiddenAt });
 
+/** A new running run bound to the owner's current policy, or null when that policy is not enabled. */
+export async function insertRun(tx: WorkerTx, ownerId: string, workerId: string, now: number) {
+  const policy = await getPolicy(tx, ownerId, now);
+  if (!policy.enabled || !policy.policyHash) return null;
+  return one(await tx.insert(applicationRuns).values({
+    id: randomUUID(), ownerId, workerId, policyRevision: policy.revision,
+    policyVersion: policy.policyVersion, policyHash: policy.policyHash, createdAt: now,
+  }).returning());
+}
 export async function createRun(db: PrivateDb, ownerId: string, input: RunCreate, options: WorkerOptions = {}): Promise<Run> {
   const command = RunCreateSchema.parse(input);
   const result = await workerTransaction(db, async (tx) => {
@@ -31,12 +41,8 @@ export async function createRun(db: PrivateDb, ownerId: string, input: RunCreate
     const [worker] = await tx.select().from(workers).where(and(eq(workers.ownerId, ownerId), eq(workers.id, command.workerId)));
     if (!worker) fail(404, 'NOT_FOUND', 'Worker not found.');
     if (!await currentWorker(tx, worker, options)) return new WorkerError(403, 'FORBIDDEN', 'Worker is revoked.');
-    const now = nowAt(options), policy = await getPolicy(tx, ownerId, now);
-    if (!policy.enabled || !policy.policyHash) fail(403, 'FORBIDDEN', 'An enabled current policy is required.');
-    const row = one(await tx.insert(applicationRuns).values({
-      id: randomUUID(), ownerId, workerId: worker.id, policyRevision: policy.revision,
-      policyVersion: policy.policyVersion, policyHash: policy.policyHash, createdAt: now,
-    }).returning());
+    const now = nowAt(options), row = await insertRun(tx, ownerId, worker.id, now);
+    if (!row) fail(403, 'FORBIDDEN', 'An enabled current policy is required.');
     const acknowledgement = runSummary(row);
     await saveCommand(tx, ownerId, 'run:create', command, acknowledgement, now);
     return acknowledgement;
@@ -64,7 +70,8 @@ export async function returnedPostingUrls(db: PrivateDb): Promise<string[]> {
   });
 }
 
-export async function listRuns(db: PrivateDb, ownerId: string): Promise<RunList> {
+/** Hidden (archived) rows stay listed for 30 days after hiding. */
+export async function listRuns(db: PrivateDb, ownerId: string, options: WorkerOptions = {}): Promise<RunList> {
   return workerTransaction(db, async (tx) => ({
     ownerId,
     runs: (await tx.select().from(applicationRuns).where(eq(applicationRuns.ownerId, ownerId))
@@ -73,7 +80,8 @@ export async function listRuns(db: PrivateDb, ownerId: string): Promise<RunList>
       .from(applications)
       .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
       .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)))
-      .where(and(eq(applications.ownerId, ownerId), isNull(applications.hiddenAt), not(returnedToBoard))).orderBy(desc(applications.createdAt)).limit(100))
+      .where(and(eq(applications.ownerId, ownerId), not(returnedToBoard),
+        or(isNull(applications.hiddenAt), gt(applications.hiddenAt, nowAt(options) - ARCHIVE_KEEP_MS)))).orderBy(desc(applications.createdAt)).limit(100))
       .map(({ app, submission, receipt }) => applicationSummary(app, {
         company: submission?.company ?? receipt?.company, role: submission?.role ?? receipt?.role,
         receiptId: receipt?.receiptId, submittedAt: receipt?.submittedAt,

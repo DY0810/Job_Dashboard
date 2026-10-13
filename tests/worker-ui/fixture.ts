@@ -23,7 +23,7 @@ export class WorkerFixture {
   now = Date.now();
   workers: WorkerSummary[] = [WorkerSummarySchema.parse({
     id: workerId, label: 'Synthetic laptop', revision: 1, workerVersion: '0.1.0', capabilities: ['control-v1'],
-    createdAt: this.now - 60_000, lastSeenAt: this.now, revokedAt: null, online: true,
+    createdAt: this.now - 60_000, lastSeenAt: this.now, revokedAt: null, online: true, dailyStartMinute: null, timeZone: null,
   })];
   pairings: PairingSummary[] = [];
   runs: Run[] = [];
@@ -51,7 +51,7 @@ export class WorkerFixture {
   addApplication(state: ApplicationSummary['state'], reasonCode: string | null = null, applicationRunId = runId) {
     const app = ApplicationSummarySchema.parse({ id: crypto.randomUUID(), runId: applicationRunId, workerId, ats: 'synthetic',
       tenant: 'fixture-employer', requisition: `role-${this.applications.length + 1}`, revision: 1, state, reasonCode,
-      checkpoint: { stage: 'screening', sequence: 1 } });
+      checkpoint: { stage: 'screening', sequence: 1 }, createdAt: this.now, hiddenAt: null });
     this.applications.push(app);
     return app;
   }

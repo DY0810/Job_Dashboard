@@ -75,6 +75,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
   const disabled = view.busy || !!view.pending;
   const workers = view.workers?.workers ?? [];
   const runs = view.runs?.runs ?? [];
+  const visible = view.runs?.applications.filter((app) => app.hiddenAt === null) ?? [];
   const grant = view.grant;
   const selectedWorker = workers.find((w) => w.id === selected && w.revokedAt === null);
   const runnerAvailable = workers.some((worker) => workerStatus(worker, view.now) === 'Online');
@@ -170,9 +171,9 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
     <DiscoveryStatus ownerId={view.account!.ownerId} runs={runs} locked={view.locked} />
     <section className={styles.section} aria-labelledby="applications-heading">
       <h4 id="applications-heading">Application state</h4>
-      {!view.runs?.applications.length ? <p className={styles.muted}>No applications.</p> :
+      {!visible.length ? <p className={styles.muted}>No applications.</p> :
         <ul className={styles.applications} aria-label="Application states">
-          {view.runs.applications.map((app) => <li key={app.id} aria-label={`Application ${app.requisition}`}>
+          {visible.map((app) => <li key={app.id} aria-label={`Application ${app.requisition}`}>
             <div className={styles.row}><strong>{app.company ?? app.tenant}</strong>
               <span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>Run {short(app.runId)}</span></div>
             <div className={styles.row}><span className={styles.muted}>{label(app.state)}</span>

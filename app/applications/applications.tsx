@@ -286,7 +286,8 @@ export default function Applications() {
   const reload = useCallback(() => void load(true), [load]);
   const questions = useQuestions(reload);
 
-  const applications = view.runs?.applications ?? [];
+  // Hidden (archived) rows arrive for 30 days; this page still lists only visible ones.
+  const applications = view.runs?.applications.filter((app) => app.hiddenAt === null) ?? [];
   const counts = applications.reduce<Record<string, number>>((result, app) => {
     result[app.state] = (result[app.state] ?? 0) + 1;
     return result;

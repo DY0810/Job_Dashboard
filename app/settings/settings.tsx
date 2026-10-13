@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { z } from 'zod';
 import { privateJson, PrivateRequestError } from '../profile/api';
 import { PolicySchema } from '../../lib/applications/policy';
-import { RunCreateSchema, RunListSchema, WorkerListSchema } from '../../lib/applications/worker-protocol';
+import { RunCreateSchema, RunListSchema, WorkerListSchema, WorkerScheduleSchema, type WorkerSummary } from '../../lib/applications/worker-protocol';
+import { formatDailyStart } from '../../lib/applications/schedule';
 import styles from '../workers/workers.module.css';
 
 const ApplicantSchema = z.strictObject({ ownerId: z.string().min(1), email: z.email(), name: z.string() });
@@ -50,6 +51,34 @@ function StartPanel({ workerId, policyEnabled, ownerId }: { workerId: string | u
   </div>;
 }
 
+const hhmm = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+
+/** The server starts a run on this worker each day once this local time passes (pollWorker). Keyed by revision, so a save remounts it. */
+function DailyStart({ worker, ownerId }: { worker: WorkerSummary | undefined; ownerId: string }) {
+  const [value, setValue] = useState(worker?.dailyStartMinute == null ? '' : hhmm(worker.dailyStartMinute));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!worker) return <div className={styles.row}><span>Pair a worker below to schedule a daily start.</span></div>;
+  const save = async (dailyStart: string | null) => {
+    setBusy(true); setError('');
+    try {
+      await privateJson(`/api/workers/${worker.id}`, { method: 'PATCH', owner: ownerId, timeout: 15_000,
+        body: JSON.stringify(WorkerScheduleSchema.parse({ requestId: crypto.randomUUID(), expectedRevision: worker.revision,
+          dailyStart, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })) });
+      window.dispatchEvent(new Event('workie:refresh'));
+    } catch { setError('Could not save the daily start. Refresh and try again.'); }
+    finally { setBusy(false); }
+  };
+  return <div className={styles.row}>
+    <span>{worker.dailyStartMinute === null ? 'No daily start.' : `Starts daily at ${formatDailyStart(worker.dailyStartMinute)} (${worker.timeZone})`}</span>
+    <input type="time" aria-label="Daily start time" style={{ width: 'auto' }} value={value} onChange={(event) => setValue(event.target.value)} />
+    <button className={styles.button} type="button" disabled={busy || !value} onClick={() => void save(value)}>Save</button>
+    {worker.dailyStartMinute !== null &&
+      <button className={styles.button} type="button" disabled={busy} onClick={() => void save(null)}>Clear</button>}
+    {error && <span role="alert" className={styles.reason}>{error}</span>}
+  </div>;
+}
+
 type Data = {
   account: z.infer<typeof ApplicantSchema>; policy: z.infer<typeof PolicyResponseSchema>;
   workers: z.infer<typeof WorkerListSchema>; runs: z.infer<typeof RunListSchema>;
@@ -87,13 +116,14 @@ export default function Settings({ children }: { children: ReactNode }) {
   const policy = data?.policy.policy;
   const running = data?.runs.runs.some((run) => run.state === 'running');
   const worker = data?.workers.workers.find((item) => item.online && item.revokedAt === null);
+  const scheduled = worker ?? data?.workers.workers.find((item) => item.revokedAt === null);
   return <>
     <section className={styles.section} aria-labelledby="auto-apply-heading">
       <h3 id="auto-apply-heading">Auto Apply</h3>
       {loading && <p className={styles.message} role="status">Loading private settings...</p>}
       {error && <div className={styles.message}><span role="alert">{error}</span><Link href="/sign-in" prefetch={false}>Sign in</Link></div>}
       {data && <>
-        {/* Task 3: the daily start time control goes here, above the manual start. */}
+        <DailyStart key={scheduled ? `${scheduled.id}:${scheduled.revision}` : 'none'} worker={scheduled} ownerId={data.account.ownerId} />
         {running ? <div className={styles.row}><span>A run is going.</span></div> :
           <StartPanel workerId={worker?.id} policyEnabled={data.policy.enabled} ownerId={data.account.ownerId} />}
         <div className={styles.row}>

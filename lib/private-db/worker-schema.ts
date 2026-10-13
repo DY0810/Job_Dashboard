@@ -36,6 +36,9 @@ export const workers = sqliteTable('private_worker', {
   createdAt: integer('created_at').notNull(),
   lastSeenAt: integer('last_seen_at'),
   revokedAt: integer('revoked_at'),
+  // Daily auto-apply start: minutes after local midnight in `timeZone` (IANA). Both null when unscheduled.
+  dailyStartMinute: integer('daily_start_minute'),
+  timeZone: text('time_zone'),
 }, (t) => [
   uniqueIndex('private_worker_owner_id').on(t.ownerId, t.id),
   uniqueIndex('private_worker_registration').on(t.ownerId, t.registrationId),
