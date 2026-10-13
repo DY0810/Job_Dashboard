@@ -93,14 +93,14 @@ function ApprovePanel({ app, ownerId, onChange }: { app: { id: string; runId: st
       });
       onChange();
     } catch (e) {
-      setError(e instanceof PrivateRequestError ? (e.status === 403 ? 'Turn on Submit in the Auto Apply policy first.' : 'Could not approve. Refresh and try again.')
-        : e instanceof Error ? e.message : 'Could not approve.');
+      setError(e instanceof PrivateRequestError ? (e.status === 403 ? 'Turn on Submit in the Auto Apply policy first.' : 'Could not apply. Refresh and try again.')
+        : e instanceof Error ? e.message : 'Could not apply.');
     }
     finally { setBusy(false); }
   };
   return <div className={styles.row}>
-    <span>Form filled. Review the resume and cover letter, then approve to submit.</span>
-    <button className={styles.button} type="button" disabled={busy} onClick={() => void approve()}>{busy ? 'Approving...' : 'Approve and submit'}</button>
+    <span>Form filled. Review the resume and cover letter, then press Apply to submit.</span>
+    <button className={styles.button} type="button" disabled={busy} onClick={() => void approve()}>{busy ? 'Applying...' : 'Apply'}</button>
     {error && <span role="alert" className={styles.reason}>{error}</span>}
   </div>;
 }
@@ -119,17 +119,18 @@ const postCommand = (path: string, ownerId: string, expectedRevision: number, bo
 });
 const errorCode = async (response: Response) => (await response.clone().json().catch(() => null))?.code as string | undefined;
 
-/** Restart queues a fresh attempt of a role the employer never received; delete hides the row (and cancels it if live). */
-function ManagePanel({ app, runs, ownerId, onChange }: { app: { id: string; runId: string; revision: number; state: string }; runs: Run[]; ownerId: string; onChange: () => void }) {
+/** Retry queues a fresh attempt of a role the employer never received; delete hides the row (and cancels it if live). */
+function ManagePanel({ app, runs, ownerId, retryShown, onChange }: { app: { id: string; runId: string; revision: number; state: string }; runs: Run[]; ownerId: string; retryShown: boolean; onChange: () => void }) {
   const [busy, setBusy] = useState<'restart' | 'delete' | null>(null);
   const [error, setError] = useState('');
   const restartable = !['submitted', 'submitting', 'submission_unknown'].includes(app.state);
+  // A document hold has its own Retry with the fix it needs; one Retry per row.
   const restart = async () => {
     setBusy('restart'); setError('');
     try {
       // Its own run first, then other running runs newest first; the server takes only a running run on the current policy.
       const targets = runs.filter((run) => run.state === 'running').sort((a, b) => Number(b.id === app.runId) - Number(a.id === app.runId));
-      if (!targets.length) throw new Error('No run is running. Start one from Workers, then restart.');
+      if (!targets.length) throw new Error('No run is running. Start auto apply, then retry.');
       let response: Response | null = null;
       for (const run of targets) {
         response = await postCommand(`/api/application-runs/${run.id}/restart`, ownerId, app.revision, { previousApplicationId: app.id });
@@ -137,12 +138,12 @@ function ManagePanel({ app, runs, ownerId, onChange }: { app: { id: string; runI
       }
       if (!response!.ok) {
         const code = await errorCode(response!);
-        throw new Error(code === 'POLICY_CHANGED' ? 'The Auto Apply policy changed since the running run started. Start a new run from Workers, then restart.'
-          : code === 'DISCOVERY_REQUIRED' ? 'No running run has found this role yet. Restart after its discovery finishes.'
-          : code === 'DUPLICATE_BLOCKED' ? 'This role was already retried or marked applied.' : 'Could not restart. Refresh and try again.');
+        throw new Error(code === 'POLICY_CHANGED' ? 'The Auto Apply policy changed since the running run started. Start a new run from Workers, then retry.'
+          : code === 'DISCOVERY_REQUIRED' ? 'No running run has found this role yet. Retry after its discovery finishes.'
+          : code === 'DUPLICATE_BLOCKED' ? 'This role was already retried or marked applied.' : 'Could not retry. Refresh and try again.');
       }
       onChange();
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not restart.'); }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not retry.'); }
     finally { setBusy(null); }
   };
   const remove = async () => {
@@ -157,8 +158,8 @@ function ManagePanel({ app, runs, ownerId, onChange }: { app: { id: string; runI
     finally { setBusy(null); }
   };
   return <div className={styles.row}>
-    {restartable && <button className={styles.button} type="button" disabled={!!busy} onClick={() => void restart()}>
-      {busy === 'restart' ? 'Restarting...' : app.state === 'cancelled' ? 'Restart cancelled' : 'Restart'}</button>}
+    {restartable && !retryShown && <button className={styles.button} type="button" disabled={!!busy} onClick={() => void restart()}>
+      {busy === 'restart' ? 'Retrying...' : 'Retry'}</button>}
     {!['submitting', 'submission_unknown'].includes(app.state) &&
       <button className={styles.button} type="button" disabled={!!busy} onClick={() => void remove()}>{busy === 'delete' ? 'Deleting...' : 'Delete'}</button>}
     {error && <span role="alert" className={styles.reason}>{error}</span>}
@@ -338,7 +339,7 @@ export default function Applications() {
                   <RetryPanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
                 {approve && view.account &&
                   <ApprovePanel app={app} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
-                {view.account && <ManagePanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
+                {view.account && <ManagePanel app={app} runs={view.runs?.runs ?? []} ownerId={view.account.ownerId} retryShown={retry} onChange={() => void load(true)} />}
                 {outreach.get(app.id) && view.account && <OutreachPanel key={`${app.id}:${outreach.get(app.id)!.updatedAt}`}
                   item={outreach.get(app.id)!} ownerId={view.account.ownerId} onChange={() => void load(true)} />}
               </li>;
