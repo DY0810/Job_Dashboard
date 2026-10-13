@@ -113,6 +113,18 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
               aria-label={`Cancel pairing ${pairing.label}`}>Cancel pairing</button>}</div>
         </li>)}</ul>}
     </section>
+    <section className={styles.section} aria-labelledby="paired-heading">
+      <h2 id="paired-heading">Paired workers</h2>
+      {!workers.length ? <p className={styles.muted}>Unpaired / no workers.</p> : <ul className={styles.list} aria-label="Workers">
+        {workers.map((worker) => <li key={worker.id}>
+          <div><strong>{worker.label}</strong> <span className={styles.muted}>v{worker.workerVersion}</span></div>
+          <span>{workerStatus(worker, view.now)}</span>
+          <span className={styles.muted}>Last heartbeat {date(worker.lastSeenAt)}</span>
+          <div>{worker.revokedAt === null && <button type="button" className={styles.button} disabled={disabled}
+            aria-label={`Revoke ${worker.label}`} onClick={() => void control.revoke('worker', worker)}>Revoke</button>}</div>
+        </li>)}
+      </ul>}
+    </section>
     <section className={styles.section} aria-labelledby="runs-heading">
       <h2 id="runs-heading">Runs</h2>
       <p className={styles.muted}>
