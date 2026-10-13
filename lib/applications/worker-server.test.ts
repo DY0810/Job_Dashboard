@@ -694,4 +694,16 @@ describe('daily start schedule', () => {
     await expect(scheduleWorker(db, 'alice', worker.workerId, { ...schedule, ...revision(cleared.revision + 1) }, options))
       .rejects.toMatchObject({ status: 403 });
   });
+  it('does not start a run for a start time that passed before the schedule was saved', async () => {
+    const worker = await paired();
+    const poll = () => pollWorker(db, worker.token, { protocolVersion: 1 }, options);
+    // 15:00 in New York: today's 09:00 already passed, so the first run is tomorrow's.
+    now += 12 * 3_600_000;
+    await scheduleWorker(db, 'alice', worker.workerId, { ...revision(1), dailyStart: '09:00', timeZone: 'America/New_York' }, options);
+    await poll();
+    expect(await db.select().from(applicationRuns)).toHaveLength(0);
+    now += 18 * 3_600_000;
+    await poll();
+    expect(await db.select().from(applicationRuns)).toHaveLength(1);
+  });
 });

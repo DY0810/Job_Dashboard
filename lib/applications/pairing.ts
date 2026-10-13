@@ -128,11 +128,12 @@ export async function scheduleWorker(db: PrivateDb, ownerId: string, id: string,
     if (!await currentWorker(tx, row, options)) return new WorkerError(403, 'FORBIDDEN', 'Worker is revoked.');
     const [hours, minutes] = command.dailyStart?.split(':').map(Number) ?? [];
     const dailyStartMinute = command.dailyStart === null ? null : hours * 60 + minutes;
+    const now = nowAt(options);
     const updated = one(await tx.update(workers).set({
-      dailyStartMinute, timeZone: dailyStartMinute === null ? null : command.timeZone, revision: row.revision + 1,
+      dailyStartMinute, timeZone: dailyStartMinute === null ? null : command.timeZone, dailyStartUpdatedAt: now, revision: row.revision + 1,
     }).where(and(eq(workers.id, id), eq(workers.ownerId, ownerId), eq(workers.revision, row.revision))).returning());
     const acknowledgement = { id, revision: updated.revision, dailyStartMinute: updated.dailyStartMinute, timeZone: updated.timeZone };
-    await saveCommand(tx, ownerId, scope, command, acknowledgement, nowAt(options));
+    await saveCommand(tx, ownerId, scope, command, acknowledgement, now);
     return acknowledgement;
   });
   if (result instanceof WorkerError) throw result;

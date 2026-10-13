@@ -3872,6 +3872,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "daily_start_updated_at": {
+          "name": "daily_start_updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {

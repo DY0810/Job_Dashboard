@@ -39,6 +39,8 @@ export const workers = sqliteTable('private_worker', {
   // Daily auto-apply start: minutes after local midnight in `timeZone` (IANA). Both null when unscheduled.
   dailyStartMinute: integer('daily_start_minute'),
   timeZone: text('time_zone'),
+  // When the schedule was last saved or cleared: a start that passed before then does not fire.
+  dailyStartUpdatedAt: integer('daily_start_updated_at'),
 }, (t) => [
   uniqueIndex('private_worker_owner_id').on(t.ownerId, t.id),
   uniqueIndex('private_worker_registration').on(t.ownerId, t.registrationId),

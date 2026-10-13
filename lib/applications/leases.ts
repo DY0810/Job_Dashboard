@@ -49,10 +49,11 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
       eq(workers.id, worker.id), eq(workers.ownerId, worker.ownerId), eq(workers.revision, worker.revision),
     )).returning());
     // The daily start: once today's start has passed, start one run unless one is going or already started since then.
-    // Inside the poll's write transaction, so concurrent polls serialize and cannot both insert.
+    // A start that passed before the schedule was saved waits for tomorrow. Inside the poll's write transaction,
+    // so concurrent polls serialize and cannot both insert.
     if (worker.dailyStartMinute !== null && worker.timeZone !== null) {
       const start = dailyStartInstant(now, worker.dailyStartMinute, worker.timeZone);
-      if (start <= now && !(await tx.select({ id: applicationRuns.id }).from(applicationRuns).where(and(
+      if (start <= now && start >= (worker.dailyStartUpdatedAt ?? 0) && !(await tx.select({ id: applicationRuns.id }).from(applicationRuns).where(and(
         eq(applicationRuns.ownerId, worker.ownerId), eq(applicationRuns.workerId, worker.id),
         or(eq(applicationRuns.state, 'running'), gte(applicationRuns.createdAt, start)),
       )).limit(1)).length) await insertRun(tx, worker.ownerId, worker.id, now);
