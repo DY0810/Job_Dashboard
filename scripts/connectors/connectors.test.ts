@@ -11,13 +11,13 @@ import { normalizeCompany, normalizeTitle } from '../../lib/normalize.ts';
 import { RobotsDisallowedError } from '../../lib/runtime.ts';
 import type { Connector, ConnectorContext, ConnectorPosting, FetchOptions, Runtime } from '../../lib/runtime.ts';
 
-import { ashby, greenhouse, lever, recruitee, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
+import { ashby, greenhouse, lever, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
 import { braintrust, freelancer, hn, jobicy, jobicyEngineering, muse, remoteok, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
 import { jooble } from './keyed.ts';
 import { parseReadmeTable, simplifyInternships, simplifyNewGrads } from './repo.ts';
-import { designjobsCareers, dribbble, jobspresso, remotive, weworkremotely, weworkremotelyDesign } from './rss.ts';
+import { dribbble, jobspresso, remotive, weworkremotely, weworkremotelyDesign } from './rss.ts';
 
 /** A runtime that answers every request with one canned body. */
 function stubRuntime(body: string): Runtime {
@@ -82,7 +82,6 @@ const RECORDED: Connector[] = [
   lever,
   ashby,
   workable,
-  recruitee,
   hn,
   remoteok,
   workingnomads,
@@ -94,10 +93,8 @@ const RECORDED: Connector[] = [
   jobspresso,
   simplifyInternships,
   workday,
-  teamtailor,
   amazon,
   jobicy,
-  designjobsCareers,
 ];
 
 describe.each(RECORDED.map((connector) => [connector.name, connector] as const))(
@@ -1054,113 +1051,6 @@ describe('jobicy', () => {
 
     expect(rows).toHaveLength(200);
     expect(degraded).toEqual(['jobicy-engineering: received 200 jobs at the 200-row API cap']);
-  });
-});
-
-describe('teamtailor', () => {
-  /**
-   * The bug this connector was written around: Teamtailor answers JSON Feed 1.1, so the
-   * postings are under `items`. A reader looking for `data` or `jobs` — the shape every other
-   * ATS here uses — reports an empty board on a board with 28 openings.
-   */
-  it('reads the JSON Feed `items` array, not `data` or `jobs`', async () => {
-    const results = await teamtailor.fetch(replay('teamtailor').context);
-    expect(results.length).toBeGreaterThan(0);
-  });
-
-  /**
-   * The reason it is worth having at all. The feed's own fields carry no place; the embedded
-   * schema.org JobPosting does, and the Design tab shows target locations only — a posting
-   * with no parseable city never appears there.
-   */
-  it('takes the city from the embedded JobPosting, which is the only place it exists', async () => {
-    const results = await teamtailor.fetch(replay('teamtailor').context);
-    const located = results.filter((posting) => posting.location);
-    expect(located.length).toBeGreaterThan(0);
-    for (const posting of located) expect(posting.location).not.toMatch(/^\s*$/);
-  });
-
-  it('keeps one place for a posting listed in several', async () => {
-    const stub = await teamtailor.fetch({
-      ...replay('teamtailor').context,
-      runtime: stubRuntime(
-        JSON.stringify({
-          version: 'https://jsonfeed.org/version/1.1',
-          items: [
-            {
-              id: '1',
-              title: 'Senior Digital Designer',
-              url: 'https://koto.teamtailor.com/jobs/1-x',
-              date_published: '2026-08-18T00:00:00+01:00',
-              content_html: '<h3>The Role</h3><p>Brand work.</p>',
-              _jobposting: {
-                datePosted: '2026-08-18',
-                jobLocation: [
-                  { address: { addressLocality: 'Los Angeles', addressRegion: 'CA', addressCountry: 'US' } },
-                  { address: { addressLocality: 'Berlin', addressCountry: 'DE' } },
-                ],
-              },
-            },
-          ],
-        }),
-      ),
-    });
-    expect(stub[0].location).toBe('Los Angeles, CA, US');
-    expect(stub[0].location).not.toContain('Berlin');
-  });
-
-  it('is priority-1 ATS', async () => {
-    for (const posting of await teamtailor.fetch(replay('teamtailor').context)) {
-      expect(posting.sourceKind).toBe('ats');
-    }
-  });
-});
-
-/**
- * `normalizeLocation` reads a trailing two-letter code as a US state on purpose, so `ca` means
- * California. Passing `addressCountry` verbatim therefore filed Koto's Berlin internship under
- * Delaware — and a Toronto role under California, which the Design tab's location rule shows.
- */
-describe('teamtailor location, and the country-code collision', () => {
-  const feed = (address: Record<string, string>) =>
-    JSON.stringify({
-      version: 'https://jsonfeed.org/version/1.1',
-      items: [
-        {
-          id: '1',
-          title: 'Brand Designer',
-          url: 'https://koto.teamtailor.com/jobs/1-x',
-          date_published: '2026-08-18T00:00:00+01:00',
-          content_html: '<p>Brand work.</p>',
-          _jobposting: { datePosted: '2026-08-18', jobLocation: [{ address }] },
-        },
-      ],
-    });
-
-  const locationOf = async (address: Record<string, string>) =>
-    (
-      await teamtailor.fetch({
-        ...replay('teamtailor').context,
-        runtime: stubRuntime(feed(address)),
-      })
-    )[0].location;
-
-  it.each([
-    [{ addressLocality: 'Berlin', addressCountry: 'DE' }, 'Berlin'],
-    [{ addressLocality: 'Toronto', addressCountry: 'CA' }, 'Toronto'],
-    [{ addressLocality: 'Mumbai', addressCountry: 'IN' }, 'Mumbai'],
-  ])('drops a two-letter foreign country code (%j)', async (address, expected) => {
-    expect(await locationOf(address as Record<string, string>)).toBe(expected);
-  });
-
-  it('keeps the region and country for a US posting, where the region really is a state', async () => {
-    expect(
-      await locationOf({ addressLocality: 'Los Angeles', addressRegion: 'CA', addressCountry: 'US' }),
-    ).toBe('Los Angeles, CA, US');
-  });
-
-  it('keeps a country that is spelled out, since a name cannot be read as a state', async () => {
-    expect(await locationOf({ addressLocality: 'Berlin', addressCountry: 'Germany' })).toBe('Berlin, Germany');
   });
 });
 
