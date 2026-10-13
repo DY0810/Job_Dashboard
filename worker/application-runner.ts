@@ -51,7 +51,7 @@ export async function runAtsApplication(input: {
   const persist = async (receipt: AtsReceipt) => {
     if (input.submission) {
       try {
-        const page = runtime.context.pages()[0];
+        const page = await runtime.page();
         if (!page) throw new AtsError('RECEIPT_NOT_VERIFIED');
         const confirmation = page.locator('[data-receipt="application"]').first();
         const observedText = (await (await confirmation.count() ? confirmation : page.locator('body')).innerText()).trim().slice(0, 2000);

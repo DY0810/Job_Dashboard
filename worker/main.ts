@@ -9,7 +9,7 @@ import { controlOrigin, workerTransport, TransportError, type WorkerTransport } 
 import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, ScopeSchema } from "./pairing.ts";
 import { readMaskedGrant, readMaskedSecret } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
-import { createBrowserRuntime } from "./browser.ts";
+import { openApplicationTab, type BrowserRuntime } from "./browser.ts";
 import { greenhouse } from "./ats/greenhouse.ts";
 import { lever } from "./ats/lever.ts";
 import { ashby } from "./ats/ashby.ts";
@@ -156,7 +156,7 @@ export function untailoredArtifactManifest(applicationId: string, source: Applic
 
 /** Runs one leased stage. Exported so tests can drive the real pipeline against fixture forms. */
 export function createStageDispatch(control: WorkerTransport, directory: string, signal: AbortSignal,
-  browser: typeof createBrowserRuntime = createBrowserRuntime): StageDispatch {
+  browser: typeof openApplicationTab = openApplicationTab): StageDispatch {
   return async (lease, guard, context) => {
     let applicationContext;
     try {
@@ -240,7 +240,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }
     }
     const workDirectory = await mkdtemp(join(directory, "application-"));
-    let runtime: Awaited<ReturnType<typeof createBrowserRuntime>> | undefined;
+    let runtime: BrowserRuntime | undefined;
     let application: AtsApplication | null = null;
     let submissionStarted = false;
     try {
@@ -267,10 +267,11 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       };
       const hostname = new URL(application.applicationUrl).hostname;
       runtime = await browser({
-        userDataDir: join(directory, "browser", `${application.identity.ats}-${application.identity.tenant.replace(/[^A-Za-z0-9_-]/g, "_")}`),
+        userDataDir: join(directory, "browser", "applications"),
         approvedOrigins: [new URL(application.applicationUrl).origin, ...(adapter.hosts.includes(hostname) ? adapter.origins : [])],
-        // A hosted form may ask for an emailed code or a captcha before it accepts a submission; the applicant does that in this window.
-        allowLoopback: /^127\./.test(hostname), headless: !(lease.state === "ready" && adapter.hosts.includes(hostname)),
+        // Every application opens in a new tab of one visible window, so the applicant can watch it fill
+        // and type an emailed code or solve a captcha the form asks for at submit.
+        allowLoopback: /^127\./.test(hostname), headless: false,
       });
       const observed = await adapter.observe(runtime, application, signal);
       const currentApplication = application;

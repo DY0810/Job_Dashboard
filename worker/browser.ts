@@ -64,40 +64,92 @@ async function assertUrl(value: string, origins: ReadonlySet<string>, allowLoopb
 
 export type BrowserRuntime = {
   context: BrowserContext;
+  /** This application's own tab, the same one on every call. */
   page(): Promise<Page>;
   navigate(page: Page, url: string): Promise<Page>;
   close(): Promise<void>;
 };
 
-export async function createBrowserRuntime(options: BrowserOptions): Promise<BrowserRuntime> {
-  if (!isAbsolute(options.userDataDir)) throw new BrowserEgressError('Persistent browser directory is required.');
-  const origins = canonicalOrigins(options.approvedOrigins);
-  if (!origins.size) throw new BrowserEgressError('At least one approved origin is required.');
+/** One persistent context; each request is checked against the origins of the tab that made it. */
+type Host = { context: BrowserContext; allowed: WeakMap<Page, ReadonlySet<string>>; idle: Page[] };
+
+async function launch(options: BrowserOptions): Promise<Host> {
   await mkdir(options.userDataDir, { recursive: true, mode: 0o700 });
   await chmod(options.userDataDir, 0o700);
-  const allowLoopback = options.allowLoopback === true;
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     headless: options.headless ?? true,
     serviceWorkers: 'block',
     timeout: 15_000,
   });
+  const allowed = new WeakMap<Page, ReadonlySet<string>>();
   await context.route('**/*', async (route) => {
     try {
-      await assertUrl(route.request().url(), origins, allowLoopback);
+      // A tab no application owns (a popup, the idle tab) reaches nothing.
+      const origins = allowed.get(route.request().frame().page());
+      if (!origins) throw new BrowserEgressError('Unassigned tab.');
+      await assertUrl(route.request().url(), origins, options.allowLoopback === true);
       await route.continue();
     } catch {
       await route.abort('blockedbyclient');
     }
   });
+  return { context, allowed, idle: [...context.pages()] };
+}
+
+function validate(options: BrowserOptions) {
+  if (!isAbsolute(options.userDataDir)) throw new BrowserEgressError('Persistent browser directory is required.');
+  const origins = canonicalOrigins(options.approvedOrigins);
+  if (!origins.size) throw new BrowserEgressError('At least one approved origin is required.');
+  return origins;
+}
+
+function tab(host: Host, origins: ReadonlySet<string>, allowLoopback: boolean): BrowserRuntime {
+  let page: Promise<Page> | undefined;
   return {
-    context,
-    page: () => context.newPage(),
-    navigate: async (page, url) => {
+    context: host.context,
+    page: () => page ??= (async () => {
+      const opened = host.idle.pop() ?? await host.context.newPage();
+      host.allowed.set(opened, origins);
+      return opened;
+    })(),
+    navigate: async (target, url) => {
       await assertUrl(url, origins, allowLoopback);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-      await assertUrl(page.url(), origins, allowLoopback);
-      return page;
+      await target.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+      await assertUrl(target.url(), origins, allowLoopback);
+      return target;
     },
-    close: () => context.close(),
+    close: async () => {
+      const opened = await page;
+      if (!opened || opened.isClosed()) return;
+      host.allowed.delete(opened);
+      // The last tab is blanked rather than closed so the window stays up between applications.
+      if (host.context.pages().length > 1) return opened.close();
+      await opened.goto('about:blank');
+      host.idle.push(opened);
+    },
   };
+}
+
+/** A browser of its own for one application, closed with it. */
+export async function createBrowserRuntime(options: BrowserOptions): Promise<BrowserRuntime> {
+  const origins = validate(options);
+  const host = await launch(options);
+  return { ...tab(host, origins, options.allowLoopback === true), close: () => host.context.close() };
+}
+
+const hosts = new Map<string, Promise<Host>>();
+
+/**
+ * The worker's one browser window: each application opens in a new tab of it, and closing the
+ * application closes only its tab. Relaunched if the applicant closes the window.
+ */
+export async function openApplicationTab(options: BrowserOptions): Promise<BrowserRuntime> {
+  const origins = validate(options);
+  let host = hosts.get(options.userDataDir);
+  if (!host) {
+    host = launch(options);
+    hosts.set(options.userDataDir, host);
+    host.then((value) => value.context.on('close', () => hosts.delete(options.userDataDir)), () => hosts.delete(options.userDataDir));
+  }
+  return tab(await host, origins, options.allowLoopback === true);
 }

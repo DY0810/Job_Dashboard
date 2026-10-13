@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { chromium } from 'playwright';
-import { BrowserEgressError, createBrowserRuntime } from './browser.ts';
+import { BrowserEgressError, createBrowserRuntime, openApplicationTab } from './browser.ts';
 import { greenhouse, hostedFields, hostedTitle } from './ats/greenhouse.ts';
 import { lever } from './ats/lever.ts';
 import { fillField, formQuestionKey as leverQuestionKey, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
@@ -69,7 +69,7 @@ test('a renamed Greenhouse board passes on the exact role and job URL; a wrong r
     const observe = (title, redirect) => {
       context.route(redirect ?? job, route => route.fulfill({ contentType: 'text/html',
         body: `<title>${title}</title><form id="application-form"><label for="first_name">First name</label><input id="first_name"></form>` }), { times: 1 });
-      return greenhouse.observe({ context, page: () => context.newPage(), navigate: async (page, url) => { await page.goto(redirect ?? url); return page; } },
+      return greenhouse.observe({ context, page: async () => context.pages()[0] ?? context.newPage(), navigate: async (page, url) => { await page.goto(redirect ?? url); return page; } },
         { identity: { ats: 'greenhouse', tenant: 'xai', requisition: '5252108007' }, company: 'xAI', role, applicationUrl: job });
     };
     const observation = await observe(`Job Application for ${role} at SpaceXAI`);
@@ -103,7 +103,7 @@ test('an unanswered required Greenhouse dropdown reaches the inbox as a choice o
         input.addEventListener('keydown', event => { if (event.key === 'Escape') menu.innerHTML = ''; });
       }
     </script>` }));
-    const observation = await greenhouse.observe({ context, page: () => context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } },
+    const observation = await greenhouse.observe({ context, page: async () => context.pages()[0] ?? context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } },
       { identity: { ats: 'greenhouse', tenant: 'riotgamesup', requisition: '8222015' }, company: 'Riot Games', role, applicationUrl: job, answers: {} });
     assert.deepEqual(observation.fields.map(field => [field.key, field.options]),
       [['question_1', ['2028', '2027', 'Already Graduated']], ['question_2[]', ['Yes']], ['candidate-location', undefined]]);
@@ -139,7 +139,7 @@ test('a Riot-like form hydrated after load asks its dropdowns as choices and its
         input.addEventListener('keydown', event => { if (event.key === 'Escape') { menu.innerHTML = ''; input.setAttribute('aria-expanded', 'false'); } });
       } }, 1_500));
     </script>` }));
-    const runtime = { context, page: () => context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } };
+    const runtime = { context, page: async () => context.pages()[0] ?? context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } };
     const observation = await greenhouse.observe(runtime,
       { identity: { ats: 'greenhouse', tenant: 'riotgamesup', requisition: '8222015' }, company: 'Riot Games', role, applicationUrl: job, answers: {} });
     const { questions } = formQuestions({ profileRevision: 1, company: 'Riot Games', role, applicationUrl: job, applicationId: crypto.randomUUID(),
@@ -515,7 +515,7 @@ async function leverFixture(browser, title = leverRole) {
   });
   await context.route(`${leverJob}/thanks`, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<title>Fixture Co - ${title}</title>
     <div class="posting-headline"><h2>${title}</h2></div><div class="confirmation-message"><h3 data-qa="msg-submit-success">Application submitted!</h3></div>` }));
-  return { posted, runtime: { context, page: () => context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } } };
+  return { posted, runtime: { context, page: async () => context.pages()[0] ?? context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } } };
 }
 const leverApplication = (answers = {}) => ({ identity: { ats: 'lever', tenant: 'fixture', requisition: '0b2c3d4e-1111-4222-8333-944455566677' },
   company: 'Fixture Co', role: leverRole, applicationUrl: leverJob, documents: {},
@@ -576,4 +576,31 @@ test('a Lever form for another role or posting is an identity mismatch', { skip:
     await assert.rejects(lever.observe(runtime, { ...leverApplication(), applicationUrl: 'https://jobs.lever.co/fixture/11111111-1111-4111-8111-111111111111/apply' }), /ATS_IDENTITY_MISMATCH/);
     await assert.rejects(lever.observe(runtime, { ...leverApplication(), applicationUrl: 'https://jobs.eu.lever.co/fixture/0b2c3d4e-1111-4222-8333-944455566677' }), /ATS_IDENTITY_MISMATCH/);
   } finally { await browser.close(); }
+});
+
+test('applications open as tabs of one window, each reaching only its own origins', { skip: !browserReady }, async () => {
+  const listen = () => new Promise(resolve => { const server = createServer((_, response) => response.end('<title>ok</title>'));
+    server.listen(0, '127.0.0.1', () => resolve(server)); });
+  const [a, b] = await Promise.all([listen(), listen()]);
+  const origin = server => `http://127.0.0.1:${server.address().port}`;
+  const userDataDir = await mkdtemp(join(tmpdir(), 'workie-tabs-'));
+  const open = server => openApplicationTab({ userDataDir, approvedOrigins: [`${origin(server)}/`], allowLoopback: true, headless: true });
+  let first;
+  try {
+    first = await open(a); const second = await open(b);
+    const pageA = await first.navigate(await first.page(), `${origin(a)}/`);
+    const pageB = await second.navigate(await second.page(), `${origin(b)}/`);
+    assert.equal(first.context, second.context, 'one window');
+    assert.notEqual(pageA, pageB, 'one tab per application');
+    assert.equal(await pageA.evaluate(url => fetch(url).then(() => 'reached', () => 'blocked'), `${origin(b)}/`), 'blocked');
+    await second.close();
+    assert.ok(pageB.isClosed(), 'a finished application closes its tab');
+    await first.close();
+    assert.equal(first.context.pages().length, 1, 'the last tab stays so the window stays up');
+    const third = await open(a);
+    assert.equal(await third.page(), pageA, 'the idle tab is reused');
+  } finally {
+    await first?.context.close(); a.close(); b.close();
+    await rm(userDataDir, { recursive: true, force: true });
+  }
 });
