@@ -154,7 +154,9 @@ export function Drawer({ closeHref }: { closeHref: string }) {
         // of the screen — and a leftward drag-select of the preview text that overshoots
         // releases there, which counts as a backdrop click and used to discard the outline and
         // the whole queue with it. `back` and `close` are both still one press away.
-        if (event.target === ref.current && !drafting) close();
+        // `detail` < 2: the drawer now opens under the pointer before a double click's second
+        // press, which would otherwise land on the backdrop and shut it again.
+        if (event.target === ref.current && !drafting && event.detail < 2) close();
       }}
     >
       <div className="flex h-full flex-col">
