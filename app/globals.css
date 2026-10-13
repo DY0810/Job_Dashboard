@@ -203,8 +203,7 @@
     clip-path: inset(50%);
   }
   .rows[data-track] tbody { display: block; }
-  .rows[data-track] tr.band th { display: block; }
-  .rows[data-track] tbody tr:not(.band) {
+  .rows[data-track] tbody tr {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 5px 10px;
@@ -261,8 +260,7 @@
   vertical-align: baseline;
   white-space: nowrap;
   /* MOTION 1/3 — row hover. A token shift, not choreography: no transform, so nothing
-     moves and the row under the cursor cannot shift out from under it. Band rows carry
-     <th>, not <td>, so the selector below skips them without needing to name them. */
+     moves and the row under the cursor cannot shift out from under it. */
   background-color: transparent;
   transition: background-color 100ms var(--ease-state);
 }
@@ -368,31 +366,11 @@
   text-overflow: ellipsis;
 }
 
-/* `:not([colspan])` excludes the two cells that span the table — the band label and the
-   row-cap notice. Without it this rule (0,2,1) outranked `.band th { text-align: left }`
-   (0,1,1), and because the band's single spanning cell IS its row's last child, the one
-   element the contract calls the page's memorable thing rendered right-aligned. */
+/* `:not([colspan])` excludes the row-cap notice, which spans the table. */
 .rows td:last-child:not([colspan]),
 .rows th:last-child:not([colspan]) {
   padding-right: 0;
   text-align: right;
-}
-
-/* The band label: the one place the accent is spent. */
-.band th {
-  text-align: left;
-  padding-top: 14px;
-  color: var(--fg-dim);
-  border-bottom: 0;
-}
-
-.band-fresh th {
-  color: var(--accent);
-  border-bottom: 1px solid var(--accent);
-}
-
-.band:first-child th {
-  padding-top: 0;
 }
 
 /* ────────────────────────────────────────────────────────────── chips + selects ──
@@ -970,11 +948,6 @@ dialog.drawer .chip { min-height: 30px; }
 .rows td[data-field="title"] { color: var(--fg); font-size: 13px; font-weight: 600; }
 .rows td[data-field="company"] a { font-weight: 500; }
 .rows tbody tr:focus-within td { background-color: var(--surface); }
-.band th { padding-top: 18px; padding-bottom: 6px; font-size: 10px; font-weight: 600; letter-spacing: .1em; }
-.band:first-child th { padding-top: 10px; }
-/* 6px between a band's divider and its first row: padding on a table row's cells, margin on a phone's grid row. */
-@media (min-width: 901px) { .rows tr.band + tr > td { padding-top: 11px; } }
-@media (max-width: 900px) { .rows[data-track] tr.band + tr { margin-top: 6px; } }
 
 /* Only the results change on a filter; they dim, without animation, until the new rows land. */
 .board-results { display: flex; flex: 1; flex-direction: column; min-height: 0; }
@@ -1008,7 +981,7 @@ dialog.drawer .chip { min-height: 30px; }
   .filter-label { width: 100%; line-height: 1.2; }
   /* Tops align here, not bottoms, so the dropdown sits as close under its label as the chips do under theirs. */
   .filter-select-group { gap: 0; }
-  .rows[data-track] tbody tr:not(.band) { gap: 6px 12px; padding: 16px 0; }
+  .rows[data-track] tbody tr { gap: 6px 12px; padding: 16px 0; }
   .rows[data-track] td[data-field="title"] { font-size: 15px; }
   .rows[data-track] td[data-field="company"] { font-size: 13px; }
   .rows[data-track] [data-field="badges"] > span { gap: 6px; }

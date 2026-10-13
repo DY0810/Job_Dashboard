@@ -195,24 +195,6 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
   );
 }
 
-function Band({
-  label,
-  fresh,
-  span,
-}: {
-  label: string;
-  fresh?: boolean;
-  span: number;
-}) {
-  return (
-    <tr className={`band${fresh ? " band-fresh" : ""}`}>
-      <th colSpan={span} scope="colgroup">
-        {label}
-      </th>
-    </tr>
-  );
-}
-
 function Command({ children }: { children: string }) {
   return (
     <code className="border border-rule bg-surface px-1 py-px text-fg">
@@ -362,8 +344,6 @@ export default async function Page({
   const rows = fetched.slice(0, ROW_CAP);
   const pages = Math.max(1, Math.ceil(total / ROW_CAP));
 
-  // Recency is the first sort key, so the fresh rows are a prefix, not a partition. Asserted
-  // in query.test.ts against this same constant, because nothing in SQL guarantees it now.
   const freshCount = rows.filter(
     (row) => now - row.effectiveAt < WINDOW_MS.day,
   ).length;
@@ -458,17 +438,7 @@ export default async function Page({
               </tr>
             </thead>
             <tbody>
-              {freshCount > 0 ? (
-                <Band label="last 24 hours" fresh span={columns.length} />
-              ) : null}
-              {rows.slice(0, freshCount).map((row) => (
-                <PostingRow key={row.id} row={row} p={p} now={now} />
-              ))}
-              {/* "earlier" only means something next to a fresh band; alone it is a label for everything. */}
-              {freshCount > 0 && freshCount < rows.length ? (
-                <Band label="earlier" span={columns.length} />
-              ) : null}
-              {rows.slice(freshCount).map((row) => (
+              {rows.map((row) => (
                 <PostingRow key={row.id} row={row} p={p} now={now} />
               ))}
             </tbody>
