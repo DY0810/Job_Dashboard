@@ -4,7 +4,6 @@ const destinations = [
   ['Jobs', '/'],
   ['Auto Apply', '/applications'],
   ['Profile', '/profile'],
-  ['Workers', '/workers'],
   ['Notes', '/talkie'],
   ['Settings', '/settings'],
 ] as const;

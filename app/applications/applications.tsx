@@ -190,7 +190,7 @@ function StartPanel({ workerId, policyEnabled, ownerId, onChange }: { workerId: 
     finally { setBusy(false); }
   };
   if (!policyEnabled) return <div className={styles.row}><span>Turn on the Auto Apply policy in Profile to start.</span></div>;
-  if (!workerId) return <div className={styles.row}><span>Start a worker to begin auto applying.</span><Link href="/workers" prefetch={false}>Workers</Link></div>;
+  if (!workerId) return <div className={styles.row}><span>Start a worker to begin auto applying.</span><Link href="/settings" prefetch={false}>Settings</Link></div>;
   return <div className={styles.row}>
     <span>No run is going.</span>
     <button className={styles.button} type="button" disabled={busy} onClick={() => void start()}>{busy ? 'Starting...' : 'Start auto apply'}</button>
@@ -336,7 +336,7 @@ export default function Applications() {
         <div className={styles.row}>
           <span>{onlineWorkers.length ? `${onlineWorkers.length} worker${onlineWorkers.length === 1 ? '' : 's'} online` : 'No worker online'}</span>
           <span className={styles.muted}>{view.policy?.enabled ? 'Policy enabled' : 'Policy disabled'}</span>
-          <Link href="/workers" prefetch={false}>Manage workers</Link>
+          <Link href="/settings" prefetch={false}>Manage workers</Link>
         </div>
         {view.account && !view.runs?.runs.some((run) => run.state === 'running') &&
           <StartPanel workerId={onlineWorkers.find((worker) => worker.revokedAt === null)?.id} policyEnabled={!!view.policy?.enabled}
