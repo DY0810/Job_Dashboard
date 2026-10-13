@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { zipSync, strToU8 } from 'fflate';
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from './runtime.ts';
 
@@ -95,4 +98,23 @@ test('parallel attempts use separate scratch directories and do not cross-read o
   const request = { role: 'role', masterHash: manifest.sourceHash, evidence: [item], edits: [{ anchorId: manifest.anchors[0].id, replacement: 'Build SDKs', evidenceIds: [item.id] }] };
   const results = await Promise.all([tailorDocument({ bytes, mime: DOCX, manifest, request }), tailorDocument({ bytes, mime: DOCX, manifest, request })]);
   assert.equal(results[0].sha256, results[1].sha256);
+});
+
+test('a LaTeX PDF with subset CID fonts gets its bullet line rewritten in place', async () => {
+  // latex-resume.tex, compiled with xelatex: the text is glyph ids, so the byte-level edit cannot apply.
+  const bytes = await readFile(new URL('./fixtures/latex-resume.pdf', import.meta.url));
+  const manifest = await createTemplateManifest(bytes, PDF, 'Product Designer');
+  assert.ok(!manifest.anchors.some((item) => item.text.includes('Jun 2025')), 'a title with a right-aligned date is not rewritable');
+  const target = manifest.anchors.find((item) => item.text.startsWith('• Designed'));
+  const item = { ...evidence(), excerpt: target.text };
+  const replacement = '• Designed patient onboarding in Figma, cutting drop-off for 20,000 people at three clinics.';
+  const tailored = await tailorDocument({ bytes, mime: PDF, manifest, request: {
+    masterHash: createHash('sha256').update(bytes).digest('hex'), role: 'Product Designer', evidence: [item],
+    edits: [{ anchorId: target.id, replacement, evidenceIds: [item.id] }],
+  } });
+  const text = execFileSync('pdftotext', ['-layout', '-', '-'], { input: tailored.bytes }).toString();
+  assert.match(text, /• Designed patient onboarding in Figma, cutting drop-off/);
+  assert.doesNotMatch(text, /Designed onboarding flows/);
+  assert.match(text, /• Built a design system with 40 components/, 'other lines are untouched');
+  assert.deepEqual(tailored.checks, { pageCount: 1, linksPreserved: true, frozenTextPreserved: true, anchorsFit: true });
 });

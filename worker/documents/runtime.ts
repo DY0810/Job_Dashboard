@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFString } from 'pdf-lib';
 import { z } from 'zod';
+import { rewritePdfLines } from './pdf-lines.ts';
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const PYTHON = resolve(dirname(fileURLToPath(import.meta.url)), 'transform.py');
@@ -64,6 +65,14 @@ function formatForMime(mime: string) {
   throw new DocumentRuntimeError('UNSUPPORTED_DOCUMENT_FORMAT');
 }
 
+/** A redrawn line may add only an unembedded standard Times or Helvetica face; every original font stays. */
+function sameFonts(result: readonly string[], original: readonly string[], redrawn: boolean) {
+  if (!redrawn) return JSON.stringify(result) === JSON.stringify(original);
+  const added = result.filter((line) => !original.includes(line));
+  return original.every((line) => result.includes(line)) && result.length === original.length + added.length &&
+    added.every((line) => /^(?:Times|Helvetica)-[A-Za-z]+ Type 1 WinAnsi no no no\b/.test(line));
+}
+
 function frozenTextHash(text: string, anchors: readonly z.infer<typeof anchor>[], replacements = new Map<string, string>()) {
   let result = text;
   for (const item of anchors) result = result.replace(replacements.get(item.id) ?? item.text, `[[${item.id}]]`);
@@ -79,8 +88,10 @@ async function privateTemp(prefix: string) {
 async function python(request: Record<string, unknown>) {
   const executable = process.env.WORKIE_PYTHON?.trim() || 'python3';
   const payload = JSON.stringify(request);
+  // A LaunchAgent's PATH stops at /usr/bin, and poppler (pdfinfo, pdftotext, pdffonts) lives in Homebrew's.
   const env = {
-    NODE_ENV: 'production', PATH: process.env.PATH ?? '', PYTHONNOUSERSITE: '1', LC_ALL: 'C', LANG: 'C',
+    NODE_ENV: 'production', PATH: [process.env.PATH, '/opt/homebrew/bin', '/usr/local/bin'].filter(Boolean).join(':'),
+    PYTHONNOUSERSITE: '1', LC_ALL: 'C', LANG: 'C',
   } as NodeJS.ProcessEnv;
   return new Promise<Record<string, unknown>>((resolveResult, reject) => {
     const child = spawn(executable, [PYTHON], {
@@ -190,7 +201,18 @@ export async function tailorDocument(input: {
   try {
     const source = join(directory, `master.${fmt}`), output = join(directory, `tailored.${fmt}`);
     await writeFile(source, bytes, { mode: 0o600, flag: 'wx' });
-    await python({ operation: 'transform', input: source, output, format: fmt, edits });
+    let redrawn = false;
+    try {
+      await python({ operation: 'transform', input: source, output, format: fmt, edits });
+    } catch (error) {
+      // Most PDFs (LaTeX, Word, Google Docs) keep text as subset-font glyph ids that no byte edit can change.
+      if (fmt !== 'pdf' || !(error instanceof DocumentRuntimeError) || error.code !== 'DOCUMENT_TRANSFORM_FAILED') throw error;
+      const rewritten = await rewritePdfLines(bytes, edits).catch((cause: Error) => {
+        throw new DocumentRuntimeError('DOCUMENT_TRANSFORM_FAILED', cause.message);
+      });
+      await writeFile(output, rewritten, { mode: 0o600 });
+      redrawn = true;
+    }
     const resultBytes = await readFile(output);
     if (resultBytes.length > MAX_BYTES) throw new DocumentRuntimeError('OUTPUT_TOO_LARGE');
     const result = await inspectBytes(resultBytes, fmt, directory);
@@ -198,7 +220,7 @@ export async function tailorDocument(input: {
     if (
       result.pageCount !== manifest.pageCount ||
       JSON.stringify(result.links) !== JSON.stringify(manifest.links) ||
-      JSON.stringify(result.fontDetails) !== JSON.stringify(manifest.fontDetails) ||
+      !sameFonts(result.fontDetails, manifest.fontDetails, redrawn) ||
       JSON.stringify(result.pageGeometry) !== JSON.stringify(manifest.pageGeometry) ||
       outputFrozen !== manifest.frozenTextHash
     ) {
