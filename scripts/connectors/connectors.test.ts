@@ -13,7 +13,7 @@ import type { Connector, ConnectorContext, ConnectorPosting, FetchOptions, Runti
 
 import { ashby, greenhouse, lever, recruitee, teamtailor, workable, workday, workdayPostedAt } from './ats.ts';
 import { amazon } from './amazon.ts';
-import { braintrust, hn, jobicy, jobicyEngineering, muse, remoteok, workingnomads } from './agg.ts';
+import { braintrust, freelancer, hn, jobicy, jobicyEngineering, muse, remoteok, workingnomads } from './agg.ts';
 import { fixtureRuntime, loadFixture, recordingRuntime, type Fixture } from './fixtures.ts';
 import { jooble } from './keyed.ts';
 import { parseReadmeTable, simplifyInternships, simplifyNewGrads } from './repo.ts';
@@ -90,6 +90,7 @@ const RECORDED: Connector[] = [
   weworkremotelyDesign,
   dribbble,
   braintrust,
+  freelancer,
   jobspresso,
   simplifyInternships,
   workday,
@@ -498,6 +499,22 @@ describe('design and freelance sources', () => {
       const chosen = results[multi].location;
       const us = body.results[multi].locations!.filter((l) => l.country === 'US');
       if (us.length > 0) expect(us.map((l) => l.location)).toContain(chosen);
+    });
+  });
+
+  describe('freelancer', () => {
+    it('keeps only USD gigs, as remote freelance with their project link', async () => {
+      const body = JSON.parse(Object.values(loadFixture('freelancer'))[0]) as { result: { projects: { currency: { code: string } }[] } };
+      const usd = body.result.projects.filter((p) => p.currency.code === 'USD').length;
+      expect(usd, 'fixture needs a non-USD gig to prove the filter').toBeLessThan(body.result.projects.length);
+
+      const results = await freelancer.fetch(replay('freelancer').context);
+      expect(results).toHaveLength(usd);
+      for (const posting of results) {
+        expect(posting.sourceFields?.employmentType).toBe('freelance');
+        expect(posting.location).toBe('Remote');
+        expect(posting.sourceUrl).toMatch(/^https:\/\/www\.freelancer\.com\/projects\/.+/);
+      }
     });
   });
 

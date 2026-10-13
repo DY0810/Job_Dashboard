@@ -155,7 +155,7 @@ export const lever: AtsAdapter = {
   async observe(runtime, input, signal) {
     signal?.throwIfAborted();
     if (!at(input.applicationUrl, input, '') && !at(input.applicationUrl, input, '/apply')) throw new AtsError('ATS_IDENTITY_MISMATCH');
-    const page = await runtime.navigate(runtime.context.pages()[0] ?? await runtime.page(), `${posting(input.identity)}/apply`);
+    const page = await runtime.navigate(await runtime.page(), `${posting(input.identity)}/apply`);
     // A closed posting redirects to the company's job list.
     if (!at(page.url(), input, '/apply')) throw new AtsError('ATS_IDENTITY_MISMATCH');
     const form = page.locator('form#application-form');
@@ -167,7 +167,7 @@ export const lever: AtsAdapter = {
   },
   async fill(runtime, input, observation, signal) {
     signal?.throwIfAborted();
-    const page = runtime.context.pages()[0] ?? await runtime.page();
+    const page = await runtime.page();
     // The resume goes first: Lever's resume parsing prefills fields it finds.
     for (const field of [...observation.fields].sort((a, b) => Number(b.kind === 'file') - Number(a.kind === 'file'))) {
       const value = leverAnswer(input, field);
@@ -179,7 +179,7 @@ export const lever: AtsAdapter = {
   },
   async submit(runtime, input, signal) {
     signal?.throwIfAborted();
-    const page = runtime.context.pages()[0] ?? await runtime.page();
+    const page = await runtime.page();
     const button = page.locator('#btn-submit');
     if (!await button.count()) throw new AtsError('SUBMIT_CONTROL_NOT_FOUND');
     await button.click();
@@ -195,7 +195,7 @@ export const lever: AtsAdapter = {
   },
   async receipt(runtime, input, signal) {
     signal?.throwIfAborted();
-    const page = runtime.context.pages()[0] ?? await runtime.page();
+    const page = await runtime.page();
     if (!at(page.url(), input, '/thanks')) throw new AtsError('RECEIPT_NOT_VERIFIED');
     // The thanks page also renders for a plain visit, so it only counts after this run's own submit reached it.
     const message = page.locator('[data-qa="msg-submit-success"]');

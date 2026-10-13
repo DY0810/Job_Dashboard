@@ -11,7 +11,7 @@ function hosted(input: AtsApplication, href: string) {
   const url = new URL(href);
   return url.origin === new URL(input.applicationUrl).origin && url.pathname === formPath(input);
 }
-const page = async (runtime: Parameters<AtsAdapter['observe']>[0]) => runtime.context.pages()[0] ?? await runtime.page();
+const page = async (runtime: Parameters<AtsAdapter['observe']>[0]) => await runtime.page();
 // Every question is a field entry titled by a label whose `for` is the question's path; the entry holds its input.
 const entry = (page: Page, field: AtsField) => page.locator(`label.ashby-application-form-question-title[for="${field.name}"]`).locator('xpath=..');
 

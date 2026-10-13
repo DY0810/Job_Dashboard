@@ -170,7 +170,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
     const browser = async (options) => {
       visible[stageNow] = options.headless === false;
       const runtime = await createBrowserRuntime({ ...options, headless: true });
-      if (stageNow === 'ready') submitPage(runtime.context.pages()[0] ?? await runtime.page());
+      if (stageNow === 'ready') submitPage(await runtime.page());
       await runtime.context.route(`${URL_BASE}/**`, async (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === JOB) return route.fulfill({ contentType: 'text/html', body: FORM });
@@ -228,7 +228,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       await page.getByRole('button', { name: 'Submit application', exact: true }).click();
       assert.deepEqual(await submitted, { state: 'submitted', reasonCode: 'exact_role_receipt', durable: true });
       assert.ok(printed.some(line => line.includes('"verification-code-required"')), 'the worker says a code is needed');
-      assert.deepEqual(visible, { filling: false, ready: true }, 'only the submit stage opens a window for the applicant');
+      assert.deepEqual(visible, { filling: true, ready: true }, 'every stage that opens a form shows it to the applicant');
       assert.deepEqual(advanced, [{ revision: 2, fence: 1, state: 'submitting' }], 'heartbeats move to the revision the intent created');
 
       assert.equal(calls.receipt.intentId, applicationId);

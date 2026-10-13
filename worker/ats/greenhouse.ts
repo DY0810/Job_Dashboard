@@ -13,7 +13,7 @@ const fields: AtsField[] = [
 ];
 
 async function pageFor(input: AtsApplication, runtime: Parameters<AtsAdapter['observe']>[0]) {
-  const page = runtime.context.pages()[0] ?? await runtime.page();
+  const page = await runtime.page();
   return runtime.navigate(page, input.applicationUrl);
 }
 
@@ -145,7 +145,7 @@ export const greenhouse: AtsAdapter = {
   },
   async fill(runtime, input, observation, signal) {
     signal?.throwIfAborted();
-    const page = runtime.context.pages()[0] ?? await runtime.page();
+    const page = await runtime.page();
     for (const field of observation.fields) {
       const value = greenhouseAnswer(input, field);
       if (field.key === 'resume' || (field.key === 'cover_letter' && input.documents.cover_letter) || value !== undefined || field.required) {
@@ -156,7 +156,7 @@ export const greenhouse: AtsAdapter = {
   },
   async submit(runtime, input, signal) {
     signal?.throwIfAborted();
-    const page = runtime.context.pages()[0] ?? await runtime.page();
+    const page = await runtime.page();
     const button = page.getByRole('button', { name: 'Submit application', exact: true });
     if (!await button.count()) throw new AtsError('SUBMIT_CONTROL_NOT_FOUND');
     await button.click();
@@ -176,7 +176,7 @@ export const greenhouse: AtsAdapter = {
   },
   async receipt(runtime, input, signal) {
     signal?.throwIfAborted();
-    const page = runtime.context.pages()[0] ?? await runtime.page();
+    const page = await runtime.page();
     if (!hosted(input)) return observeReceipt(page, input);
     const url = new URL(page.url());
     if (url.origin !== 'https://job-boards.greenhouse.io' ||

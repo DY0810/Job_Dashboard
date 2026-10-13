@@ -154,7 +154,8 @@ def inspect_pdf(path: Path) -> dict[str, Any]:
     anchors = []
     for index, line in enumerate(text.splitlines()):
         clean = line.strip()
-        if clean:
+        # A title with a right-aligned date is two runs of text; only single-run lines are rewritable.
+        if clean and not re.search(r"\S {3,}\S", clean):
             anchors.append({"id": f"line-{index}", "text": clean, "kind": "line", "maxChars": len(clean)})
     return {
         "format": "pdf", "text": text, "anchors": anchors, "links": links,
