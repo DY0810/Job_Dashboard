@@ -226,7 +226,6 @@ cannot have changed are not asked.
 | `hn` | 6h | "Who is Hiring" is one thread a month. |
 | Repository lists: Simplify, Vansh, SpeedyApply, Jobright | 3h | Curated GitHub job tables. |
 | RSS + smaller aggregators — Remotive, WeWorkRemotely, Dribbble, Jobspresso, Working Nomads, RemoteOK, Arbeitnow, Braintrust, Jobicy | 1h | Provider feeds may expose a bounded window rather than the full catalog. |
-| Himalayas | 24h after a completed sweep | Daily provider cache; pending cursor imports advance on intervening runs. |
 | Muse | 1h after a completed sweep | Design and Science-and-Engineering scopes, with resumable category pagination. |
 | Keyed aggregators — Jooble | 6h | Metered free tiers, measured in calls per month. |
 

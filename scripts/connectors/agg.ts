@@ -11,7 +11,6 @@
 import type { EmploymentType } from '../../lib/extract.ts';
 import { normalizeDescription } from '../../lib/normalize.ts';
 import {
-  HttpError,
   toEpochMs,
   type Connector,
   type ConnectorContext,
@@ -291,49 +290,6 @@ export const braintrust: Connector = {
   },
 };
 
-// ---------------------------------------------------------------------------------------
-// Himalayas
-// ---------------------------------------------------------------------------------------
-
-interface HimalayasJob {
-  title?: string;
-  companyName?: string;
-  employmentType?: string;
-  locationRestrictions?: string[];
-  pubDate?: number;
-  applicationLink?: string;
-  guid?: string;
-  description?: string;
-  excerpt?: string;
-}
-
-/** Himalayas spells the type with a space and title case; the schema uses hyphenated lower. */
-const HIMALAYAS_TYPE: Record<string, EmploymentType> = {
-  'full time': 'full-time',
-  'part time': 'part-time',
-  contract: 'contract',
-  freelance: 'freelance',
-  internship: 'internship',
-  temporary: 'contract',
-};
-
-/**
- * A general remote board rather than a design one, so it feeds both tracks. Worth having for
- * the same reason workingnomads is: `track` is decided from the title, so a
- * broad board costs nothing but a classification pass and widens both tabs.
- *
- * `locationRestrictions` is where the US filter is actually won — a row restricted to
- * "United States" normalizes to a US location instead of the bare "Remote" that most remote
- * boards report, which is the difference between landing in a target tier and landing nowhere.
- *
- * The current provider contract caps a page at 20 and returns an opaque `nextCursor`. Cursor
- * traversal avoids the duplicates and skips that changing offset pagination can produce. Five
- * pages per run keep each catch-up chunk bounded; a persisted cursor resumes the full active
- * catalogue on the next cloud cycle.
- */
-const HIMALAYAS_PAGES = 5;
-const HIMALAYAS_PAGE = 20;
-const ONE_DAY = 24 * 60 * 60 * 1000;
 const DEFAULT_CATCH_UP_PAGES = 100;
 const MAX_CATCH_UP_PAGES = 1000;
 
@@ -349,167 +305,6 @@ function catchUpPageBudget(env: Record<string, string | undefined>): number {
   }
   return pages;
 }
-
-interface HimalayasCheckpoint {
-  version: 1;
-  cursor: string | null;
-  providerUpdatedAt: number | null;
-  providerTotal: number | null;
-  scanned: number;
-  complete: boolean;
-}
-
-function himalayasCheckpoint(value: unknown): HimalayasCheckpoint | null {
-  if (!value || typeof value !== 'object') return null;
-  const candidate = value as Partial<HimalayasCheckpoint>;
-  const scanned = candidate.scanned;
-  const complete = candidate.complete;
-  if (
-    candidate.version !== 1 ||
-    typeof complete !== 'boolean' ||
-    typeof scanned !== 'number' ||
-    !Number.isInteger(scanned) ||
-    scanned < 0 ||
-    (candidate.cursor !== null && typeof candidate.cursor !== 'string') ||
-    (candidate.providerUpdatedAt !== null &&
-      candidate.providerUpdatedAt !== undefined &&
-      typeof candidate.providerUpdatedAt !== 'number') ||
-    (candidate.providerTotal !== null &&
-      candidate.providerTotal !== undefined &&
-      typeof candidate.providerTotal !== 'number')
-  ) {
-    return null;
-  }
-  return {
-    version: 1,
-    cursor: candidate.cursor ?? null,
-    providerUpdatedAt: candidate.providerUpdatedAt ?? null,
-    providerTotal: candidate.providerTotal ?? null,
-    scanned,
-    complete,
-  };
-}
-
-export const himalayas: Connector = {
-  name: 'himalayas',
-  kind: 'aggregator',
-  resumable: true,
-  // The provider documents a daily data refresh. More frequent polls only re-read its cache.
-  minIntervalMs: ONE_DAY,
-  async fetch(context) {
-    const jobs: HimalayasJob[] = [];
-    const checkpoint = himalayasCheckpoint(context.checkpoint?.value);
-    const restartingSweep = context.checkpoint !== undefined && checkpoint?.complete === true;
-    const catchingUp = context.checkpoint !== undefined;
-    const pageBudget = catchingUp ? catchUpPageBudget(context.env) : HIMALAYAS_PAGES;
-    let pages = 0;
-    let totalCount: number | undefined;
-    let updatedAt: number | undefined;
-    let cursor: string | undefined = restartingSweep ? undefined : checkpoint?.cursor ?? undefined;
-    let resetCursor = false;
-    const seenCursors = new Set(cursor ? [cursor] : []);
-    for (let page = 0; page < pageBudget; page += 1) {
-      const query = new URLSearchParams({ limit: String(HIMALAYAS_PAGE) });
-      if (cursor) query.set('cursor', cursor);
-      let body: {
-        totalCount?: number;
-        nextCursor?: string;
-        updatedAt?: number;
-        jobs?: HimalayasJob[];
-      };
-      try {
-        body = await context.runtime.fetchJson(`https://himalayas.app/jobs/api?${query}`);
-      } catch (error) {
-        if (cursor && error instanceof HttpError && error.status === 400) {
-          resetCursor = true;
-          cursor = undefined;
-          context.degraded('Himalayas: provider rejected checkpoint cursor; resetting to the head');
-          break;
-        }
-        throw error;
-      }
-      totalCount ??= body.totalCount;
-      updatedAt ??= body.updatedAt;
-      const nextCursor = typeof body.nextCursor === 'string' && body.nextCursor ? body.nextCursor : undefined;
-      if (!body.jobs?.length) {
-        if (nextCursor && !seenCursors.has(nextCursor)) {
-          cursor = nextCursor;
-          seenCursors.add(nextCursor);
-          pages += 1;
-          continue;
-        }
-        if (nextCursor) {
-          resetCursor = true;
-          context.degraded('Himalayas: provider repeated a cursor after an empty page; resetting to the head');
-        }
-        cursor = undefined;
-        break;
-      }
-      jobs.push(...body.jobs);
-      pages += 1;
-      if (nextCursor && seenCursors.has(nextCursor)) {
-        resetCursor = true;
-        cursor = undefined;
-        context.degraded('Himalayas: provider repeated a cursor; resetting to the head');
-        break;
-      }
-      cursor = nextCursor;
-      if (cursor) seenCursors.add(cursor);
-      // The absence of a next cursor is the provider's completion signal.
-      if (body.jobs.length < HIMALAYAS_PAGE || !cursor) break;
-    }
-
-    if (catchingUp && context.checkpoint) {
-      const complete = !resetCursor && cursor === undefined;
-      context.checkpoint.save(
-        {
-          version: 1,
-          cursor: cursor ?? null,
-          providerUpdatedAt: updatedAt ?? checkpoint?.providerUpdatedAt ?? null,
-          providerTotal: totalCount ?? checkpoint?.providerTotal ?? null,
-          scanned: restartingSweep || resetCursor ? jobs.length : (checkpoint?.scanned ?? 0) + jobs.length,
-          complete,
-        } satisfies HimalayasCheckpoint,
-        !complete,
-      );
-    }
-
-    // A chunk never reconciles the whole source. Even its final chunk must not age the
-    // postings seen in earlier chunks toward deletion.
-    context.degraded(
-      catchingUp
-        ? `Himalayas: checkpoint catch-up read ${jobs.length} rows across ${pages} cursor pages`
-        : `Himalayas: normal head refresh read ${jobs.length} rows without whole-scan reconciliation`,
-    );
-    context.log({
-      connector: 'himalayas',
-      pages,
-      fetched: jobs.length,
-      reportedTotal: totalCount ?? null,
-      checkpointCatchup: catchingUp,
-      checkpointPending: catchingUp ? cursor !== undefined : null,
-    });
-    return jobs
-      .filter((job) => job.applicationLink ?? job.guid)
-      .map((job) => {
-        const type = HIMALAYAS_TYPE[(job.employmentType ?? '').trim().toLowerCase()];
-        return {
-          ...aggRow('himalayas', {
-            company: job.companyName,
-            title: job.title,
-            // Several restrictions means several eligible countries; the first is enough for
-            // the normalizer, and "Remote" is the honest fallback when there are none.
-            location: job.locationRestrictions?.[0] ?? 'Remote',
-            url: (job.applicationLink ?? job.guid)!,
-            postedAt: toEpochMs(job.pubDate),
-            description: job.description ?? job.excerpt ?? '',
-          }),
-          ...(type ? { sourceFields: { employmentType: type } } : {}),
-        };
-      });
-  },
-};
-
 
 // ---------------------------------------------------------------------------------------
 // Jobicy — the one design-filtered board found by the source survey that was still alive
@@ -935,7 +730,6 @@ export const aggConnectors: Connector[] = [
   remoteok,
   workingnomads,
   braintrust,
-  himalayas,
   jobicy,
   jobicyEngineering,
   muse,
