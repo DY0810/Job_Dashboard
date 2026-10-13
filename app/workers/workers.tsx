@@ -4,8 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { HEARTBEAT_MS } from '../../lib/applications/worker-protocol';
-import { WorkerControl, applicationActions, initialView, pairingStatus, workerStatus, type WorkerView } from './control';
-import DiscoveryStatus from './discovery-status';
+import { WorkerControl, initialView, pairingStatus, workerStatus, type WorkerView } from './control';
 import styles from './workers.module.css';
 
 const label = (value: string) => value.replaceAll('_', ' ');
@@ -31,7 +30,7 @@ export default function Workers() {
     const navigation = (event: MouseEvent) => {
       const link = event.target instanceof Element ? event.target.closest('a') : null;
       if (!item.view.pending || !link || link.target === '_blank' || event.metaKey || event.ctrlKey ||
-          new URL(link.href).pathname === '/workers') return;
+          new URL(link.href).pathname === '/settings') return;
       event.preventDefault(); event.stopPropagation();
       item.preventNavigation();
     };
@@ -50,8 +49,7 @@ export default function Workers() {
   }, []);
   return <>
     <div className={styles.toolbar}>
-      <h1>Workers</h1>
-      {!view.locked && <span className={styles.muted}>{view.account?.email}</span>}
+      <h2>Workers</h2>
       <button type="button" className={styles.button} disabled={view.loading} onClick={() => void control.current?.refresh()}>
         Refresh status
       </button>
@@ -166,29 +164,6 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
           </div>
         </li>)}
       </ul>}
-    </section>
-    <DiscoveryStatus ownerId={view.account!.ownerId} runs={runs} locked={view.locked} />
-    <section className={styles.section} aria-labelledby="applications-heading">
-      <h2 id="applications-heading">Application state</h2>
-      {!view.runs?.applications.length ? <p className={styles.muted}>No applications.</p> :
-        <ul className={styles.applications} aria-label="Application states">
-          {view.runs.applications.map((app) => <li key={app.id} aria-label={`Application ${app.requisition}`}>
-            <div className={styles.row}><strong>{app.company ?? app.tenant}</strong>
-              <span>{app.role ?? `Requisition ${app.requisition}`}</span><span className={styles.muted}>Run {short(app.runId)}</span></div>
-            <div className={styles.row}><span className={styles.muted}>{label(app.state)}</span>
-              {app.reasonCode && <span className={styles.reason}>Reason: {label(app.reasonCode)}</span>}
-            </div>
-            <div className={styles.actions}>
-              {applicationActions(app, runs.find((run) => run.id === app.runId)).map((action) =>
-                <button className={styles.button} type="button" key={action}
-                  disabled={action === 'emergency-stop' ? view.busy && view.pending?.body.action === action : disabled}
-                  onClick={() => void control.commandApplication(app, action)}>
-                  {action === 'approve-submit' ? 'Approve and submit' : action === 'retry-safe' ? 'Retry safe' : action === 'emergency-stop' ? 'Emergency stop' :
-                    action === 'skip' ? 'Skip' : 'Cancel'}
-                </button>)}
-            </div>
-          </li>)}
-        </ul>}
     </section>
   </>;
 }

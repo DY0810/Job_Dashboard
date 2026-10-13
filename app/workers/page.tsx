@@ -1,10 +1,4 @@
-import Workers from './workers';
-import styles from './workers.module.css';
-import { PrivateShell, privateMetadata } from '../private-shell';
+import { redirect } from 'next/navigation';
 
-export const dynamic = 'force-dynamic';
-export const metadata = privateMetadata('Workers');
-
-export default function WorkersPage() {
-  return <PrivateShell current="/workers" styles={styles}><Workers /></PrivateShell>;
-}
+// Pairing and runs live in Settings now.
+export default function WorkersPage() { redirect('/settings'); }

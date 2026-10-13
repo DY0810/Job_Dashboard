@@ -80,7 +80,7 @@ export default function Settings() {
     <section className={styles.section} aria-labelledby="runner-heading">
       <h2 id="runner-heading">Runner</h2>
       <div className={styles.row}><span>{online.length ? `${online.length} worker${online.length === 1 ? '' : 's'} online` : 'No worker online'}</span>
-        <Link href="/workers" prefetch={false}>Manage workers</Link></div>
+        <a href="#pairing-heading">Manage workers</a></div>
       <p className={styles.muted}>The runner is a separate local process. Closing this page does not stop it; sleeping the host does.</p>
     </section>
     <section className={styles.section} aria-labelledby="privacy-heading">
