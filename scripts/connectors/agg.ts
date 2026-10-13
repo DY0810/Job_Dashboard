@@ -290,6 +290,64 @@ export const braintrust: Connector = {
   },
 };
 
+// ---------------------------------------------------------------------------------------
+// Freelancer.com — design gigs from its public projects API
+// ---------------------------------------------------------------------------------------
+
+interface FreelancerProject {
+  id?: number;
+  title?: string;
+  seo_url?: string;
+  type?: string;
+  time_submitted?: number;
+  preview_description?: string;
+  description?: string;
+  budget?: { minimum?: number; maximum?: number };
+  currency?: { code?: string };
+}
+
+/**
+ * Freelancer's own job ids: Graphic Design, Logo Design, Web Design, Figma. Unlike the 2026-08
+ * free-text `query` this source was rejected for, the `jobs[]` filter bites: an unknown id
+ * returns 0 projects, not the whole board (checked 2026-10-13).
+ */
+const FREELANCER_URL =
+  'https://www.freelancer.com/api/projects/0.1/projects/active/?jobs[]=20&jobs[]=32&jobs[]=2701&jobs[]=1936&limit=100&full_description=true';
+
+/**
+ * A worldwide gig marketplace, so it is narrowed on our side to USD-priced projects (the API's
+ * `currencies[]` filter does not bite). The client is anonymous in the API, hence the fixed
+ * company. Every project is remote freelance.
+ */
+export const freelancer: Connector = {
+  name: 'freelancer',
+  kind: 'aggregator',
+  minIntervalMs: 60 * 60 * 1000,
+  async fetch(context) {
+    const body = await context.runtime.fetchJson<{ result?: { projects?: FreelancerProject[] } }>(FREELANCER_URL);
+    return (body.result?.projects ?? [])
+      .filter((p) => p.seo_url && p.title && p.currency?.code === 'USD')
+      .map((p) => {
+        const min = p.budget?.minimum ?? 0;
+        const max = Math.max(p.budget?.maximum ?? 0, min);
+        const rate = min > 0
+          ? p.type === 'hourly' ? `Rate: $${min} - $${max} per hour. ` : `Fixed budget: $${min} - $${max}. `
+          : '';
+        return {
+          ...aggRow('freelancer', {
+            company: 'Freelancer.com client',
+            title: p.title,
+            location: 'Remote',
+            url: `https://www.freelancer.com/projects/${p.seo_url}`,
+            postedAt: toEpochMs(p.time_submitted),
+            description: `${rate}${p.description ?? p.preview_description ?? ''}`,
+          }),
+          sourceFields: { employmentType: 'freelance' as const },
+        };
+      });
+  },
+};
+
 const DEFAULT_CATCH_UP_PAGES = 100;
 const MAX_CATCH_UP_PAGES = 1000;
 
@@ -730,6 +788,7 @@ export const aggConnectors: Connector[] = [
   remoteok,
   workingnomads,
   braintrust,
+  freelancer,
   jobicy,
   jobicyEngineering,
   muse,
