@@ -30,7 +30,6 @@ import { ApplicationArtifactManifestSchema, type ApplicationArtifactManifest, ar
 import { SUBMIT_APPROVAL } from "../lib/applications/state.ts";
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 import { renderCoverLetter } from "./documents/cover-letter.ts";
-import { outreachDraft, postingContacts } from "./outreach.ts";
 
 const ERROR_CODES = new Set([
   "NODE_22_REQUIRED", "UNSUPPORTED_PLATFORM", "CONFIGURATION_REQUIRED", "INVALID_ORIGIN",
@@ -353,16 +352,6 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         // Keep the letter that went out so the applicant can read it; never affects the outcome.
         await control.letter(lease.applicationId, { protocolVersion: 1, introduction: letter.introduction,
           body: letter.body.map(item => item.text), conclusion: letter.conclusion, companyParagraph: letter.companyParagraph }, signal).catch(() => {});
-      }
-      if (result.state === "submitted" && applicationContext.outreach && context.generate && localDocuments.resumeMaster) {
-        // Best effort after the verified receipt: a failed note never changes the submitted outcome.
-        const { answers } = application;
-        const link = (key: string) => typeof answers[key] === 'string' ? answers[key] as string : undefined;
-        const note = outreachDraft({ track: applicationContext.track, company: applicationContext.company, role: applicationContext.role,
-          name: applicant, linkedin: link('linkedin'), github: link('github'), portfolio: link('portfolio'),
-          letter: letter ?? await writeLetter().catch(() => undefined) });
-        await control.outreach(lease.applicationId, { protocolVersion: 1, ...note,
-          ...postingContacts(applicationContext.requirements.officialDescription) }, signal).catch(() => {});
       }
       if (result.state === "submitted" || result.state === "submission_unknown") {
         return { state: result.state, reasonCode: result.reasons[0]?.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80) || "submission_unknown", durable: true };

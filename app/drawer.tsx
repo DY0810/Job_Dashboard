@@ -4,9 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { parseParams } from '@/lib/params';
 import type { PostingDetail } from '@/lib/query';
-import { type OutreachKind, type Sender } from '@/lib/outreach';
-import { OutreachPanel } from './outreach-panel';
-import { readSenderDraft, readSenderProfile, saveSenderProfile, validSender } from './outreach-storage';
+import { linkedinSearches, type Recruiters } from '@/lib/recruiters';
 import { ExternalLink, X } from 'lucide-react';
 import { AppliedCheckbox } from './applied-checkbox';
 import { jobLinkFor } from './job-link';
@@ -32,50 +30,7 @@ export function Drawer({ closeHref }: { closeHref: string }) {
   const ref = useRef<HTMLDialogElement>(null);
   const jobId = parseParams({ job: useSearchParams().get('job') ?? undefined }).job;
   const [state, setState] = useState<State>({ status: 'loading' });
-  const [drafting, setDrafting] = useState<OutreachKind | null>(null);
-  const [sender, setSender] = useState<Sender | null>(null);
-  const [senderForm, setSenderForm] = useState<Partial<Sender> | null>(null);
-  const [pendingKind, setPendingKind] = useState<OutreachKind | null>(null);
-  const [senderError, setSenderError] = useState<string | null>(null);
-  const [senderNotice, setSenderNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<'description' | 'email'>('description');
-
-  /**
-   * The sender is asked for once per device and then never again; the RECIPIENT is asked for
-   * inside the panel, per posting, because it is a different person at every company.
-   */
-  const pickKind = (kind: OutreachKind) => {
-    const current = readSenderProfile();
-    if (!current) {
-      setSenderForm(readSenderDraft());
-      setPendingKind(kind);
-      setSenderError(null);
-      return;
-    }
-    setSender(current);
-    setDrafting(kind);
-  };
-
-  const editSender = () => {
-    setSenderForm(readSenderDraft());
-    setPendingKind(null);
-    setSenderError(null);
-  };
-
-  const saveSender = () => {
-    if (!senderForm) return;
-    const next = validSender(senderForm);
-    if (!next) {
-      setSenderError('Complete each field before saving.');
-      return;
-    }
-    const saved = saveSenderProfile(next);
-    setSender(next);
-    setSenderForm(null);
-    setSenderNotice(saved ? null : 'Browser storage is unavailable; this sender is only available in this drawer.');
-    if (pendingKind) setDrafting(pendingKind);
-    setPendingKind(null);
-  };
+  const [tab, setTab] = useState<'description' | 'recruiters'>('description');
 
   // Rows open the drawer through their plain `<a data-job>` link, one listener for all of them;
   // a click anywhere else in the row opens it too. A modified or middle click falls through to
@@ -101,10 +56,6 @@ export function Drawer({ closeHref }: { closeHref: string }) {
       if (dialog.open) dialog.close();
       return;
     }
-    // A draft belongs to the posting it was started from; opening another must not inherit it.
-    setDrafting(null);
-    setSenderForm(null);
-    setPendingKind(null);
     setTab('description');
     if (!dialog.open) dialog.showModal();
 
@@ -139,9 +90,6 @@ export function Drawer({ closeHref }: { closeHref: string }) {
    * to a listener under automation, and this way the behaviour does not depend on it.
    */
   const close = useCallback(() => {
-    setSenderForm(null);
-    setPendingKind(null);
-    setSenderError(null);
     ref.current?.close();
     if (jobId !== null) window.history.replaceState(null, '', closeHref);
   }, [jobId, closeHref]);
@@ -154,14 +102,9 @@ export function Drawer({ closeHref }: { closeHref: string }) {
       onCancel={close}
       onClick={(event) => {
         // The dialog element itself is the backdrop area; its child fills the panel.
-        //
-        // Not while a draft is open. The panel is 544px pinned right, so the backdrop is most
-        // of the screen — and a leftward drag-select of the preview text that overshoots
-        // releases there, which counts as a backdrop click and used to discard the outline and
-        // the whole queue with it. `back` and `close` are both still one press away.
         // `detail` < 2: the drawer now opens under the pointer before a double click's second
         // press, which would otherwise land on the backdrop and shut it again.
-        if (event.target === ref.current && !drafting && event.detail < 2) close();
+        if (event.target === ref.current && event.detail < 2) close();
       }}
     >
       <div className="flex h-full flex-col">
@@ -192,7 +135,7 @@ export function Drawer({ closeHref }: { closeHref: string }) {
                   </a>
                 ) : null}
                 <nav className="board-track mt-3" aria-label="Posting views">
-                  {(['description', 'email'] as const).map((item) => (
+                  {(['description', 'recruiters'] as const).map((item) => (
                     <button
                       key={item}
                       type="button"
@@ -200,7 +143,7 @@ export function Drawer({ closeHref }: { closeHref: string }) {
                       aria-current={tab === item ? 'page' : undefined}
                       onClick={() => setTab(item)}
                     >
-                      {item === 'description' ? 'Description' : 'Email'}
+                      {item === 'description' ? 'Description' : 'Recruiters'}
                     </button>
                   ))}
                 </nav>
@@ -222,40 +165,8 @@ export function Drawer({ closeHref }: { closeHref: string }) {
           </button>
         </div>
 
-        {state.status === 'ready' && tab === 'email' ? (
-          // The first panel's own top rule would double the header's.
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
-            {senderForm ? (
-              <SenderProfileForm
-                sender={senderForm}
-                error={senderError}
-                onChange={(field, value) => {
-                  setSenderForm((current) => ({ ...current, [field]: value }));
-                  setSenderError(null);
-                }}
-                onCancel={() => {
-                  setSenderForm(null);
-                  setPendingKind(null);
-                  setSenderError(null);
-                }}
-                onSave={saveSender}
-              />
-            ) : drafting ? (
-              <OutreachPanel
-                kind={drafting}
-                posting={state.posting}
-                sender={sender!}
-                onClose={() => setDrafting(null)}
-              />
-            ) : (
-              <EmailStart
-                company={state.posting.company}
-                sender={sender ?? readSenderProfile()}
-                onPick={pickKind}
-                onEditSender={editSender}
-              />
-            )}
-          </div>
+        {state.status === 'ready' && tab === 'recruiters' ? (
+          <RecruitersPanel key={state.posting.id} posting={state.posting} />
         ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {state.status === 'loading' ? (
@@ -286,8 +197,6 @@ export function Drawer({ closeHref }: { closeHref: string }) {
 
         )}
 
-        {senderNotice ? <p className="border-t border-rule px-5 py-2 text-[11px] text-fg-dim">{senderNotice}</p> : null}
-
         {state.status === 'ready' && tab === 'description' ? (
           <div className="flex items-center gap-2 border-t border-rule px-5 py-3">
             <a
@@ -306,121 +215,95 @@ export function Drawer({ closeHref }: { closeHref: string }) {
   );
 }
 
-/**
- * The outreach drafts live HERE, in the drawer, and not in a table row.
- *
- * The row is the wrong home for them twice over. `.impeccable.md` allows a row exactly three
- * affordances — its badges, the company cell, and Apply — and a fourth control repeated
- * on every row would add one more tab stop to each of them. More to the
- * point, nobody cold-emails a stranger about a job they have not read: the drawer is where
- * the posting is read, so it is where the draft belongs — one tab over from the description.
- */
-/**
- * This stays a form rather than a prompt because the embedded browser does not implement
- * `window.prompt`. It remains per-device browser state: this bundle never knows the configured
- * Gmail addresses and the server still rejects anything it does not hold.
- */
-const KINDS: { kind: OutreachKind; label: string; hint: string }[] = [
-  { kind: 'coffee', label: 'coffee chat', hint: 'Ask someone on the team for 15 minutes about the work. Not about your application.' },
-  { kind: 'referral', label: 'referral', hint: 'Ask someone you have already talked to to refer you for this role.' },
-];
+type Lookup =
+  | { status: 'loading' }
+  | { status: 'signed_out' }
+  | { status: 'error' }
+  | { status: 'ready'; recruiters: Recruiters };
 
-/** The Email tab before a draft is picked: the two kinds, and who the email goes out as. */
-function EmailStart({ company, sender, onPick, onEditSender }: {
-  company: string;
-  sender: Sender | null;
-  onPick: (kind: OutreachKind) => void;
-  onEditSender: () => void;
-}) {
+const LOOKUP_NOTE: Record<Recruiters['lookup'], string> = {
+  ok: '',
+  no_key: 'Recruiter lookup is not set up (no Hunter key), so only LinkedIn searches are shown.',
+  unavailable: 'Could not reach Hunter right now; it may be over its monthly quota.',
+};
+
+/**
+ * Who to reach at this employer: Hunter's HR and recruiting people, recruiters first, each
+ * with their LinkedIn below them. Fetched only when this tab opens, because each lookup
+ * spends Hunter quota. The LinkedIn searches need no lookup and always show.
+ */
+function RecruitersPanel({ posting }: { posting: PostingDetail }) {
+  const [lookup, setLookup] = useState<Lookup>({ status: 'loading' });
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/postings/${posting.id}/recruiters`, { credentials: 'same-origin', signal: controller.signal })
+      .then(async (response) => {
+        if (response.status === 401 || response.status === 403) return setLookup({ status: 'signed_out' });
+        if (!response.ok) return setLookup({ status: 'error' });
+        setLookup({ status: 'ready', recruiters: (await response.json()) as Recruiters });
+      })
+      .catch((error: Error) => { if (error.name !== 'AbortError') setLookup({ status: 'error' }); });
+    return () => controller.abort();
+  }, [posting.id]);
+
+  const searches = lookup.status === 'ready' ? lookup.recruiters.searches : linkedinSearches(posting.company);
+  const found = lookup.status === 'ready' ? lookup.recruiters : null;
   return (
-    <div className="prose flex flex-col gap-4 px-5 py-4">
-      <p className="text-fg-dim">
-        Write to a person at {company} about this posting. Workie fills in the company, role and link; you write
-        the personal parts and type their address.
-      </p>
-      <ul className="flex flex-col gap-3">
-        {KINDS.map(({ kind, label, hint }) => (
-          <li key={kind} className="flex items-baseline gap-3">
-            <button type="button" className="chip shrink-0" onClick={() => onPick(kind)}>
-              {label}
-            </button>
-            <span className="text-[12px] text-fg-dim">{hint}</span>
-          </li>
+    <div className="prose flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4">
+      {lookup.status === 'loading' ? <p className="text-fg-dim">Looking up recruiters at {posting.company}.</p> : null}
+      {lookup.status === 'signed_out' ? (
+        <p className="text-fg-dim">
+          <a href="/sign-in" className="underline">Sign in</a> to look up recruiters by name. The LinkedIn searches below work either way.
+        </p>
+      ) : null}
+      {lookup.status === 'error' ? <p className="text-fg-dim">Could not load recruiters for this posting.</p> : null}
+      {found && found.lookup !== 'ok' ? <p className="text-fg-dim">{LOOKUP_NOTE[found.lookup]}</p> : null}
+      {found && found.lookup === 'ok' ? (
+        found.people.length === 0 ? (
+          <p className="text-fg-dim">Hunter found no HR or recruiting people for {found.domain ?? posting.company}.</p>
+        ) : (
+          <section aria-label="Recruiters" className="flex flex-col gap-3">
+            <p className="text-[11px] text-fg-dim">
+              From Hunter.io for {found.domain ?? posting.company}. Check that domain is this company before reaching out.
+            </p>
+            <ul className="flex flex-col gap-3">
+              {found.people.map((person, index) => (
+                <li key={person.email ?? index} className="flex flex-col gap-0.5 border-t border-rule pt-3 first:border-t-0 first:pt-0">
+                  <span className="text-[13px] font-semibold text-fg">{person.name ?? 'Name not listed'}</span>
+                  <span className="text-[12px] text-fg-dim">{person.title ?? 'Title not listed'}</span>
+                  <span className="flex flex-wrap gap-x-3 text-[12px]">
+                    {person.linkedin ? (
+                      <a href={person.linkedin} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 underline">
+                        LinkedIn
+                        <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
+                      </a>
+                    ) : person.name ? (
+                      <a
+                        href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${person.name} ${posting.company}`)}`}
+                        target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-fg-dim underline"
+                      >
+                        Find on LinkedIn
+                        <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
+                      </a>
+                    ) : null}
+                    {person.email ? <a href={`mailto:${person.email}`} className="text-fg-dim underline">{person.email}</a> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )
+      ) : null}
+      <section aria-label="LinkedIn searches" className="flex flex-col gap-2 border-t border-rule pt-4">
+        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">Search LinkedIn</span>
+        {searches.map((search) => (
+          <a key={search.url} href={search.url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-[12px] underline">
+            {search.label}
+            <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
+          </a>
         ))}
-      </ul>
-      <p className="flex flex-wrap items-baseline gap-2 border-t border-rule pt-4 text-[12px] text-fg-dim">
-        {sender ? `Signed and sent as ${sender.name} <${sender.from}>.` : 'No sender saved on this device yet; you set it once.'}
-        <button type="button" className="chip" onClick={onEditSender} title="Stored only on this device">
-          {sender ? 'edit sender' : 'set sender'}
-        </button>
-      </p>
+      </section>
     </div>
-  );
-}
-
-function SenderProfileForm({
-  sender,
-  error,
-  onChange,
-  onCancel,
-  onSave,
-}: {
-  sender: Partial<Sender>;
-  error: string | null;
-  onChange: (field: keyof Sender, value: string) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  return (
-    <form
-      aria-label="Sender profile"
-      className="flex flex-col gap-3 border-t border-rule px-5 py-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSave();
-      }}
-    >
-      <div className="flex items-baseline gap-2">
-        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">sender</span>
-        <span className="text-[11px] text-fg-dim">Stored only on this device.</span>
-      </div>
-      <label className="flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">your name</span>
-        <input
-          autoFocus
-          className="note-input"
-          required
-          value={sender.name ?? ''}
-          onChange={(event) => onChange('name', event.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">about you</span>
-        <textarea
-          className="note-input"
-          required
-          rows={3}
-          value={sender.intro ?? ''}
-          onChange={(event) => onChange('intro', event.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">Gmail address</span>
-        <input
-          className="note-input"
-          required
-          type="email"
-          autoComplete="email"
-          value={sender.from ?? ''}
-          onChange={(event) => onChange('from', event.target.value)}
-        />
-      </label>
-      {error ? <p className="text-[11px] text-fg-dim">{error}</p> : null}
-      <div className="flex gap-2">
-        <button type="submit" className="chip">save</button>
-        <button type="button" className="chip" onClick={onCancel}>cancel</button>
-      </div>
-    </form>
   );
 }
 

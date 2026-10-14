@@ -1164,16 +1164,7 @@ dialog.drawer .chip { min-height: 30px; }
   background: transparent; border: 0; border-bottom: 1px solid var(--rule); outline: 0;
   font: inherit; font-size: 13px; color: var(--fg);
 }
-/* The outreach compose fields. Same underline treatment as `.reply` — one input idiom in
-   this app, not three — but they hold a sentence rather than a line, so they wrap. */
-.note-input {
-  width: 100%; padding: 3px 0; resize: vertical;
-  background: transparent; border: 0; border-bottom: 1px solid var(--rule); outline: 0;
-  font: inherit; font-size: 12px; color: var(--fg);
-}
-.note-input::placeholder { color: var(--fg-faint); }
-.note-input:focus { border-bottom-color: var(--fg-dim); }
-.note-input:focus-visible, .reply:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.reply:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 
 .reply::placeholder { color: var(--fg-faint); }
 .reply:focus { border-bottom-color: var(--fg-dim); }

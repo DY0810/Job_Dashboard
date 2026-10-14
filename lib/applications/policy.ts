@@ -25,8 +25,8 @@ export const PolicySchema = z.strictObject({
   schemaVersion: z.literal(1),
   filters: PolicyFiltersSchema,
   sourceRestrictions: z.array(z.string().trim().min(1).max(200)).max(100),
-  // email_recruiters: after a verified submission, email a recruiter from your own Gmail asking for a chat.
-  // auto_send_recruiter_email: send that email in its Tue–Thu window without waiting for Send (verified recruiters only).
+  // email_recruiters and auto_send_recruiter_email are retired: nothing reads them, and they stay
+  // in the enum only so stored policies that contain them still parse with the same hash.
   actions: z.array(z.enum(['read_jobs', 'tailor_documents', 'fill_forms', 'submit', 'email_recruiters', 'auto_send_recruiter_email'])).max(6),
   destinations: z.array(z.string().regex(/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/)).max(100),
   countries: z.array(z.string().regex(/^[A-Z]{2}$/)).max(100),

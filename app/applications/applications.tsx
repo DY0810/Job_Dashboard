@@ -11,7 +11,7 @@ import { archivedAt, bucket } from '../../lib/applications/buckets';
 import { postingUrl } from '../../lib/applications/posting-url';
 import type { QuestionDetail } from '../../lib/applications/question-protocol';
 import { formatDailyStart, scheduledWorker } from '../../lib/applications/schedule';
-import { HEARTBEAT_MS, MaterialsSchema, OutreachListSchema, RunListSchema, WorkerListSchema, type ApplicationSummary, type Outreach, type Run } from '../../lib/applications/worker-protocol';
+import { HEARTBEAT_MS, MaterialsSchema, RunListSchema, WorkerListSchema, type ApplicationSummary, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from '../../lib/applications/state';
 import { Modal } from '../modal';
@@ -37,7 +37,6 @@ type View = {
   workers: z.infer<typeof WorkerListSchema> | null;
   runs: z.infer<typeof RunListSchema> | null;
   policy: z.infer<typeof PolicyResponseSchema> | null;
-  outreach: Outreach[];
   materials: Material[];
   loading: boolean;
   locked: boolean;
@@ -46,7 +45,7 @@ type View = {
 };
 
 type Material = z.infer<typeof MaterialsSchema>['materials'][number];
-const initialView: View = { account: null, workers: null, runs: null, policy: null, outreach: [], materials: [], loading: true, locked: true, error: '', loadedAt: 0 };
+const initialView: View = { account: null, workers: null, runs: null, policy: null, materials: [], loading: true, locked: true, error: '', loadedAt: 0 };
 
 async function request(path: string, owner?: string) {
   try {
@@ -84,21 +83,6 @@ function MaterialsPanel({ item }: { item: Material }) {
       <pre className={styles.preview}>{['Dear Hiring Manager,', letter.introduction, ...letter.body, letter.conclusion, letter.companyParagraph].join('\n\n')}</pre>
     </details>}
   </>;
-}
-
-export function outreachStatus(item: Outreach) {
-  const who = `${item.name ?? item.to}${item.title ? ` (${item.title})` : ''}`;
-  if (item.status === 'sent') return `Emailed ${who}${item.sentAt ? ` on ${new Date(item.sentAt).toLocaleDateString()}` : ''}`;
-  if (item.status === 'sending') return `Sending to ${who}...`;
-  const earlier = item.contactedFor ? ` Already emailed about ${item.contactedFor}.` : '';
-  if (item.status === 'skipped') return `Not sent: ${who} was already emailed about ${item.contactedFor ?? 'another role'}`;
-  if (item.status === 'failed') return `Sending to ${who} failed. Check the address and send again.`;
-  const when = (at: number | null) => at && at > Date.now() ? new Date(at).toLocaleString() : 'the next Tue–Thu morning';
-  if (item.reason === 'scheduled') return `Queued for ${who} on ${when(item.sendAfter)}. Send now to skip the wait.${earlier}`;
-  if (item.reason === 'outreach_disabled') return `Not sent to ${who}: recruiter email is off in the Auto Apply policy. Turn it on and press Send again.`;
-  if (item.reason === 'awaiting_approval') return `Draft ready for ${who}. Send queues it for ${when(item.sendAfter)}; nothing goes out until you press it.${earlier}`;
-  return item.reason === 'sender_not_configured' ? `Ready for ${who}, but Gmail sending is not set up for your address`
-    : 'Draft ready. No recruiter address was found; add one to send.';
 }
 
 const documentHelp: Record<string, string> = {
@@ -203,35 +187,6 @@ function Command({ label, busyLabel, confirm, primary, run, onDone }: {
   </>;
 }
 
-export function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: string; onChange: () => void }) {
-  const [to, setTo] = useState(item.to ?? '');
-  const [busy, setBusy] = useState<'queue' | 'now' | null>(null);
-  const [error, setError] = useState('');
-  const send = async (now: boolean) => {
-    setBusy(now ? 'now' : 'queue'); setError('');
-    try {
-      // 60s matches the route's maxDuration: a shorter client abort would hide a send that went out.
-      await privateJson(`/api/outreach/${item.applicationId}`, {
-        method: 'POST', owner: ownerId, timeout: 60_000,
-        body: JSON.stringify({ to: to.trim(), name: to.trim() === item.to ? item.name : null, now }),
-      });
-      onChange();
-    } catch { setError(`Could not ${now ? 'send' : 'queue'}. Check the address and try again.`); }
-    finally { setBusy(null); }
-  };
-  return <div>
-    <p className={styles.issue}>{outreachStatus(item)}</p>
-    <details><summary className={styles.muted}>{item.subject}</summary><pre className={styles.preview}>{item.body}</pre></details>
-    {item.status !== 'sent' && item.status !== 'sending' && <form className={styles.form} onSubmit={(event) => {
-      event.preventDefault(); void send((event.nativeEvent as SubmitEvent).submitter?.getAttribute('name') === 'now'); }}>
-      <input type="email" required value={to} onChange={(event) => setTo(event.target.value)} placeholder="recruiter@company.com" aria-label={`Recruiter email for ${item.company}`} />
-      <button className={buttonClass(true)} type="submit" disabled={!!busy}>{busy === 'queue' ? 'Queueing...' : 'Send'}</button>
-      <button className={styles.button} type="submit" name="now" disabled={!!busy}>{busy === 'now' ? 'Sending...' : 'Send now'}</button>
-      {error && <span role="alert" className={styles.reason}>{error}</span>}
-    </form>}
-  </div>;
-}
-
 /** A schedule in another time zone names it; one in the browser's own zone does not need to. */
 function zone(timeZone: string | null) {
   if (!timeZone || timeZone === Intl.DateTimeFormat().resolvedOptions().timeZone) return '';
@@ -240,9 +195,9 @@ function zone(timeZone: string | null) {
 }
 
 // `open` goes false on close while kind and id stay, so the modal fades out with its content instead of empty.
-type Dialog = { kind: 'answer' | 'upload' | 'approve' | 'outreach' | 'materials'; id: string; open: boolean };
+type Dialog = { kind: 'answer' | 'upload' | 'approve' | 'materials'; id: string; open: boolean };
 const DIALOG_TITLES: Record<Dialog['kind'], string> = {
-  answer: 'Answer', upload: 'Upload', approve: 'Approve', outreach: 'Email recruiter', materials: 'Materials',
+  answer: 'Answer', upload: 'Upload', approve: 'Approve', materials: 'Materials',
 };
 const EMPTY: Record<Tab, string> = { action: 'Nothing needs action.', applied: 'No submitted applications yet.', archived: 'Nothing archived.' };
 const LIST_NAMES: Record<Tab, string> = { action: 'Needs action', applied: 'Applied', archived: 'Archived' };
@@ -258,19 +213,17 @@ export default function Applications() {
     if (!quiet) setView((current) => ({ ...current, loading: true, locked: true, error: '' }));
     try {
       const account = ApplicantSchema.parse(await request('/api/auth/applicant'));
-      const [workers, runs, policy, outreach, materials] = await Promise.all([
+      const [workers, runs, policy, materials] = await Promise.all([
         WorkerListSchema.parse(await request('/api/workers', account.ownerId)),
         RunListSchema.parse(await request('/api/application-runs', account.ownerId)),
         PolicyResponseSchema.parse(await request('/api/auto-apply/policies', account.ownerId)),
-        // Recruiter email is secondary: its failure must not hide the application history.
-        request('/api/outreach', account.ownerId).then((body) => OutreachListSchema.parse(body)).catch(() => null),
         request('/api/applications/materials', account.ownerId).then((body) => MaterialsSchema.parse(body)).catch(() => null),
       ]);
       if (workers.ownerId !== account.ownerId || runs.ownerId !== account.ownerId ||
-          (outreach && outreach.ownerId !== account.ownerId) || (materials && materials.ownerId !== account.ownerId)) {
+          (materials && materials.ownerId !== account.ownerId)) {
         throw new Error('Account changed. Refresh the current applicant.');
       }
-      setView({ account, workers, runs, policy, outreach: outreach?.outreach ?? [], materials: materials?.materials ?? [],
+      setView({ account, workers, runs, policy, materials: materials?.materials ?? [],
         loading: false, locked: false, error: '', loadedAt: Date.now() });
     } catch (error) {
       setView((current) => ({ ...current, loading: false, locked: true,
@@ -307,7 +260,6 @@ export default function Applications() {
   }
   const scheduled = scheduledWorker(view.workers?.workers);
   const caps = view.policy?.policy;
-  const outreach = new Map(view.outreach.map((item) => [item.applicationId, item]));
   const materials = new Map(view.materials.map((item) => [item.applicationId, item]));
   const asked = new Map<string, QuestionDetail[]>();
   for (const item of questions.view.inbox?.items ?? []) {
@@ -368,7 +320,6 @@ export default function Applications() {
             const upload = app.state === 'needs_document' && !!uploadKind[app.reasonCode ?? ''];
             const retryable = resumable(app) || RESTARTABLE.includes(app.state);
             const material = materials.get(app.id);
-            const draft = outreach.get(app.id);
             const href = postingUrl(app.ats, app.tenant, app.requisition);
             const company = app.company ?? app.tenant;
             const role = app.role ?? questionRole.get(app.id);
@@ -397,7 +348,6 @@ export default function Applications() {
                   run={() => archive(app, ownerId)} onDone={reload} />}
                 {href && <a className={styles.button} href={href} target="_blank" rel="noopener noreferrer">Open job post</a>}
                 {material && !(live && approval) && <button className={styles.button} type="button" onClick={show('materials')}>Materials</button>}
-                {live && draft && draft.status !== 'sent' && <button className={styles.button} type="button" onClick={show('outreach')}>Email recruiter</button>}
                 {live && retryable && <Command label="Retry" busyLabel="Retrying..." primary={primary === 'retry'} run={() => retry(app, runs, ownerId)} onDone={reload} />}
                 {live && approval && <button className={buttonClass(primary === 'approve')} type="button" onClick={show('approve')}>Approve</button>}
                 {live && upload && <button className={buttonClass(primary === 'upload')} type="button" onClick={show('upload')}>Upload</button>}
@@ -429,8 +379,6 @@ export default function Applications() {
         {materials.get(open.id) && <MaterialsPanel item={materials.get(open.id)!} />}
       </>}
       {open && dialog!.kind === 'materials' && materials.get(open.id) && <MaterialsPanel item={materials.get(open.id)!} />}
-      {open && dialog!.kind === 'outreach' && outreach.get(open.id) && <OutreachPanel key={`${open.id}:${outreach.get(open.id)!.updatedAt}`}
-        item={outreach.get(open.id)!} ownerId={ownerId} onChange={done} />}
     </Modal>
   </>;
 }
