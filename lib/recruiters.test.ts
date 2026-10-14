@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { employerDomain, findRecruiters, linkedinSearches } from './recruiters.ts';
+import { findRecruiters, linkedinSearches } from './recruiters.ts';
 
 const hunterBody = {
   data: {
@@ -14,18 +14,6 @@ const hunterBody = {
 const fakeFetch = (body: unknown, status = 200, seen: string[] = []) =>
   (async (url: string | URL | Request) => { seen.push(String(url)); return new Response(JSON.stringify(body), { status }); }) as typeof fetch;
 
-describe('employerDomain', () => {
-  it.each([
-    ['https://nuro.ai/careersitem?gh_jid=1', 'nuro.ai'],
-    ['https://www.careers.example.com/jobs/1', 'careers.example.com'],
-    ['https://boards.greenhouse.io/acme/jobs/1', null],
-    ['https://jobs.lever.co/acme/1', null],
-    ['https://acme.wd5.myworkdayjobs.com/x', null],
-    ['https://jobs.ashbyhq.com/acme/1', null],
-    ['not a url', null],
-  ])('%s -> %s', (url, domain) => expect(employerDomain(url)).toBe(domain));
-});
-
 describe('linkedinSearches', () => {
   it('builds people searches with the company encoded', () => {
     const [first] = linkedinSearches('AT&T');
@@ -35,16 +23,17 @@ describe('linkedinSearches', () => {
 
 describe('findRecruiters', () => {
   it('without a key, returns only the LinkedIn searches', async () => {
-    const result = await findRecruiters({ company: 'Nuro', canonicalUrl: 'https://nuro.ai/x' }, { key: undefined, fetch: fakeFetch(hunterBody) });
+    const result = await findRecruiters({ company: 'Nuro' }, { key: undefined, fetch: fakeFetch(hunterBody) });
     expect(result.lookup).toBe('no_key');
     expect(result.people).toEqual([]);
     expect(result.searches.length).toBeGreaterThan(0);
   });
 
-  it('searches Hunter by the employer domain, recruiters first, LinkedIn normalised', async () => {
+  it('searches Hunter by company name and reports the domain Hunter resolved, recruiters first', async () => {
     const seen: string[] = [];
-    const result = await findRecruiters({ company: 'Nuro', canonicalUrl: 'https://nuro.ai/x' }, { key: 'k', fetch: fakeFetch(hunterBody, 200, seen) });
-    expect(seen[0]).toContain('domain=nuro.ai');
+    const result = await findRecruiters({ company: 'Nuro' }, { key: 'k', fetch: fakeFetch(hunterBody, 200, seen) });
+    expect(seen[0]).toContain('company=Nuro');
+    expect(seen[0]).not.toContain('domain=');
     expect(seen[0]).toContain('department=hr');
     expect(result).toMatchObject({ lookup: 'ok', domain: 'nuro.ai' });
     expect(result.people).toEqual([
@@ -54,15 +43,18 @@ describe('findRecruiters', () => {
     ]);
   });
 
-  it('falls back to the company name when the posting sits on an ATS', async () => {
+  // A careers site is not where Hunter files the company's people: careers.withwaymo.com and
+  // pinterestcareers.com return nobody, while the names resolve to waymo.com and pinterest.com.
+  it('never searches the careers-site host the posting lives on', async () => {
     const seen: string[] = [];
-    await findRecruiters({ company: 'Acme Robotics', canonicalUrl: 'https://boards.greenhouse.io/acme/jobs/1' }, { key: 'k2', fetch: fakeFetch(hunterBody, 200, seen) });
-    expect(seen[0]).toContain('company=Acme+Robotics');
-    expect(seen[0]).not.toContain('domain=');
+    const waymo = { company: 'Waymo', canonicalUrl: 'https://careers.withwaymo.com/jobs/1' };
+    await findRecruiters(waymo, { key: 'k2', fetch: fakeFetch(hunterBody, 200, seen) });
+    expect(seen[0]).toContain('company=Waymo');
+    expect(seen[0]).not.toContain('withwaymo');
   });
 
   it('reports Hunter failures as unavailable, never throws', async () => {
-    const result = await findRecruiters({ company: 'Nuro', canonicalUrl: 'https://nuro.ai/y' }, { key: 'k3', fetch: fakeFetch({ errors: [] }, 429) });
+    const result = await findRecruiters({ company: 'Nuro' }, { key: 'k3', fetch: fakeFetch({ errors: [] }, 429) });
     expect(result).toMatchObject({ lookup: 'unavailable', people: [] });
   });
 });
