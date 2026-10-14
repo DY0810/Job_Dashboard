@@ -228,23 +228,35 @@ const LOOKUP_NOTE: Record<Recruiters['lookup'], string> = {
 };
 
 /**
+ * Answers already fetched this page load, by company: the lookup is per company, so switching
+ * tabs or opening another role there never asks again. Failures are not kept, so they retry.
+ */
+const looked = new Map<string, Recruiters>();
+
+/**
  * Who to reach at this employer: Hunter's HR and recruiting people, recruiters first, each
  * with their LinkedIn below them. Fetched only when this tab opens, because each lookup
  * spends Hunter quota. The LinkedIn searches need no lookup and always show.
  */
 function RecruitersPanel({ posting }: { posting: PostingDetail }) {
-  const [lookup, setLookup] = useState<Lookup>({ status: 'loading' });
+  const [lookup, setLookup] = useState<Lookup>(() => {
+    const known = looked.get(posting.company);
+    return known ? { status: 'ready', recruiters: known } : { status: 'loading' };
+  });
   useEffect(() => {
+    if (looked.has(posting.company)) return;
     const controller = new AbortController();
     fetch(`/api/postings/${posting.id}/recruiters`, { credentials: 'same-origin', signal: controller.signal })
       .then(async (response) => {
         if (response.status === 401 || response.status === 403) return setLookup({ status: 'signed_out' });
         if (!response.ok) return setLookup({ status: 'error' });
-        setLookup({ status: 'ready', recruiters: (await response.json()) as Recruiters });
+        const recruiters = (await response.json()) as Recruiters;
+        if (recruiters.lookup === 'ok') looked.set(posting.company, recruiters);
+        setLookup({ status: 'ready', recruiters });
       })
       .catch((error: Error) => { if (error.name !== 'AbortError') setLookup({ status: 'error' }); });
     return () => controller.abort();
-  }, [posting.id]);
+  }, [posting.id, posting.company]);
 
   const searches = lookup.status === 'ready' ? lookup.recruiters.searches : linkedinSearches(posting.company);
   const found = lookup.status === 'ready' ? lookup.recruiters : null;
