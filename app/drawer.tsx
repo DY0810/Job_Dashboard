@@ -38,6 +38,7 @@ export function Drawer({ closeHref }: { closeHref: string }) {
   const [pendingKind, setPendingKind] = useState<OutreachKind | null>(null);
   const [senderError, setSenderError] = useState<string | null>(null);
   const [senderNotice, setSenderNotice] = useState<string | null>(null);
+  const [tab, setTab] = useState<'description' | 'email'>('description');
 
   /**
    * The sender is asked for once per device and then never again; the RECIPIENT is asked for
@@ -104,6 +105,7 @@ export function Drawer({ closeHref }: { closeHref: string }) {
     setDrafting(null);
     setSenderForm(null);
     setPendingKind(null);
+    setTab('description');
     if (!dialog.open) dialog.showModal();
 
     const controller = new AbortController();
@@ -189,6 +191,19 @@ export function Drawer({ closeHref }: { closeHref: string }) {
                     <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
                   </a>
                 ) : null}
+                <nav className="board-track mt-3" aria-label="Posting views">
+                  {(['description', 'email'] as const).map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      className="board-track-link cursor-pointer bg-transparent font-[inherit]"
+                      aria-current={tab === item ? 'page' : undefined}
+                      onClick={() => setTab(item)}
+                    >
+                      {item === 'description' ? 'Description' : 'Email'}
+                    </button>
+                  ))}
+                </nav>
               </>
             ) : (
               <h2 className="text-[15px] text-fg-dim">
@@ -207,6 +222,41 @@ export function Drawer({ closeHref }: { closeHref: string }) {
           </button>
         </div>
 
+        {state.status === 'ready' && tab === 'email' ? (
+          // The first panel's own top rule would double the header's.
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
+            {senderForm ? (
+              <SenderProfileForm
+                sender={senderForm}
+                error={senderError}
+                onChange={(field, value) => {
+                  setSenderForm((current) => ({ ...current, [field]: value }));
+                  setSenderError(null);
+                }}
+                onCancel={() => {
+                  setSenderForm(null);
+                  setPendingKind(null);
+                  setSenderError(null);
+                }}
+                onSave={saveSender}
+              />
+            ) : drafting ? (
+              <OutreachPanel
+                kind={drafting}
+                posting={state.posting}
+                sender={sender!}
+                onClose={() => setDrafting(null)}
+              />
+            ) : (
+              <EmailStart
+                company={state.posting.company}
+                sender={sender ?? readSenderProfile()}
+                onPick={pickKind}
+                onEditSender={editSender}
+              />
+            )}
+          </div>
+        ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {state.status === 'loading' ? (
             <p className="prose">Loading the posting.</p>
@@ -234,35 +284,14 @@ export function Drawer({ closeHref }: { closeHref: string }) {
           )}
         </div>
 
+        )}
+
         {senderNotice ? <p className="border-t border-rule px-5 py-2 text-[11px] text-fg-dim">{senderNotice}</p> : null}
 
-        {state.status === 'ready' && senderForm ? (
-          <SenderProfileForm
-            sender={senderForm}
-            error={senderError}
-            onChange={(field, value) => {
-              setSenderForm((current) => ({ ...current, [field]: value }));
-              setSenderError(null);
-            }}
-            onCancel={() => {
-              setSenderForm(null);
-              setPendingKind(null);
-              setSenderError(null);
-            }}
-            onSave={saveSender}
-          />
-        ) : state.status === 'ready' && drafting ? (
-          <OutreachPanel
-            kind={drafting}
-            posting={state.posting}
-            sender={sender!}
-            onClose={() => setDrafting(null)}
-          />
-        ) : state.status === 'ready' ? (
+        {state.status === 'ready' && tab === 'description' ? (
           <div className="flex items-center gap-2 border-t border-rule px-5 py-3">
-            {/* `mr-auto` keeps the terminal action first and visually apart from the drafts. */}
             <a
-              className="chip mr-auto"
+              className="chip"
               href={state.posting.canonicalUrl}
               target="_blank"
               rel="noreferrer noopener"
@@ -270,16 +299,6 @@ export function Drawer({ closeHref }: { closeHref: string }) {
               apply
               <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
             </a>
-            <Outreach kind="coffee" onPick={pickKind} />
-            <Outreach kind="referral" onPick={pickKind} />
-            <button
-              type="button"
-              className="chip"
-              onClick={editSender}
-              title="Edit the sender profile stored only on this device"
-            >
-              sender
-            </button>
           </div>
         ) : null}
       </div>
@@ -294,23 +313,48 @@ export function Drawer({ closeHref }: { closeHref: string }) {
  * affordances — its badges, the company cell, and Apply — and a fourth control repeated
  * on every row would add one more tab stop to each of them. More to the
  * point, nobody cold-emails a stranger about a job they have not read: the drawer is where
- * the posting is read, so it is where the draft belongs. Apply sits in this same footer.
+ * the posting is read, so it is where the draft belongs — one tab over from the description.
  */
 /**
  * This stays a form rather than a prompt because the embedded browser does not implement
  * `window.prompt`. It remains per-device browser state: this bundle never knows the configured
  * Gmail addresses and the server still rejects anything it does not hold.
  */
-function Outreach({ kind, onPick }: { kind: OutreachKind; onPick: (kind: OutreachKind) => void }) {
+const KINDS: { kind: OutreachKind; label: string; hint: string }[] = [
+  { kind: 'coffee', label: 'coffee chat', hint: 'Ask someone on the team for 15 minutes about the work. Not about your application.' },
+  { kind: 'referral', label: 'referral', hint: 'Ask someone you have already talked to to refer you for this role.' },
+];
+
+/** The Email tab before a draft is picked: the two kinds, and who the email goes out as. */
+function EmailStart({ company, sender, onPick, onEditSender }: {
+  company: string;
+  sender: Sender | null;
+  onPick: (kind: OutreachKind) => void;
+  onEditSender: () => void;
+}) {
   return (
-    <button
-      type="button"
-      className="chip"
-      onClick={() => onPick(kind)}
-      title="Opens a compose panel: your outline on one side, the finished email on the other."
-    >
-      {kind === 'coffee' ? 'coffee chat' : 'referral'}
-    </button>
+    <div className="prose flex flex-col gap-4 px-5 py-4">
+      <p className="text-fg-dim">
+        Write to a person at {company} about this posting. Workie fills in the company, role and link; you write
+        the personal parts and type their address.
+      </p>
+      <ul className="flex flex-col gap-3">
+        {KINDS.map(({ kind, label, hint }) => (
+          <li key={kind} className="flex items-baseline gap-3">
+            <button type="button" className="chip shrink-0" onClick={() => onPick(kind)}>
+              {label}
+            </button>
+            <span className="text-[12px] text-fg-dim">{hint}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="flex flex-wrap items-baseline gap-2 border-t border-rule pt-4 text-[12px] text-fg-dim">
+        {sender ? `Signed and sent as ${sender.name} <${sender.from}>.` : 'No sender saved on this device yet; you set it once.'}
+        <button type="button" className="chip" onClick={onEditSender} title="Stored only on this device">
+          {sender ? 'edit sender' : 'set sender'}
+        </button>
+      </p>
+    </div>
   );
 }
 
