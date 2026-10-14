@@ -77,6 +77,20 @@ export function AutoApply({ p }: { p: Params }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, pending]);
 
+  // Badge chips are plain anchors (see `Chip`). One listener for all of them: an unmodified
+  // left click navigates in place, like `next/link`; a modified or middle click falls through
+  // to the browser and opens a tab.
+  useEffect(() => {
+    const follow = (event: MouseEvent) => {
+      const link = (event.target as Element | null)?.closest?.<HTMLAnchorElement>('a[data-board-nav]');
+      if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      pushRef.current(link.getAttribute('href')!);
+    };
+    document.addEventListener('click', follow);
+    return () => document.removeEventListener('click', follow);
+  }, []);
+
   useEffect(() => {
     const form = anchor.current?.closest('form');
     if (!form) return;
