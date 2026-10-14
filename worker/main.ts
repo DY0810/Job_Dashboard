@@ -165,8 +165,11 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }, signal);
       guard.check();
     } catch (error) {
-      if (error instanceof TransportError && error.status === 409 && /NEEDS_DOCUMENT/.test(error.message)) {
-        return { state: "needs_document" as const, reasonCode: "resume_required" };
+      // The posting changed since discovery froze it. Park this one; a throw would restart the
+      // worker into the same lease and stall the whole queue.
+      if (error instanceof TransportError && error.status === 409 &&
+          (error.code === "CONTEXT_UNAVAILABLE" || error.code === "IDENTITY_MISMATCH")) {
+        return { state: "retryable_failure" as const, reasonCode: error.code.toLowerCase() };
       }
       throw error;
     }

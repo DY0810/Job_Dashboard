@@ -37,7 +37,19 @@ export function controlOrigin(input: string, allowLoopback = false) {
 
 export class TransportError extends Error {
   status: number;
-  constructor(code: string, status = 0) { super(code); this.status = status; }
+  /** The server's error code (e.g. CONTEXT_UNAVAILABLE), when its error body named one. */
+  code?: string;
+  constructor(message: string, status = 0, code?: string) { super(message); this.status = status; this.code = code; }
+}
+
+async function httpError(response: Response): Promise<TransportError> {
+  let code: string | undefined;
+  try {
+    const text = new TextDecoder().decode(await readCapped(response.body!, 4096, { overflow: () => new Error("LIMIT") }));
+    const parsed = z.object({ code: z.string().regex(/^[A-Z_]{1,64}$/) }).safeParse(JSON.parse(text));
+    if (parsed.success) code = parsed.data.code;
+  } catch { /* An unreadable body only loses the code. */ }
+  return new TransportError(`HTTP_${response.status}`, response.status, code);
 }
 
 export function workerTransport(options: {
@@ -68,7 +80,7 @@ export function workerTransport(options: {
           signal: deadline,
         });
         try {
-          if (!response.ok) throw new TransportError(`HTTP_${response.status}`, response.status);
+          if (!response.ok) throw response.body ? await httpError(response) : new TransportError(`HTTP_${response.status}`, response.status);
           if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "") || !response.body) {
             throw new TransportError("INVALID_RESPONSE");
           }
