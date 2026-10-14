@@ -11,19 +11,7 @@ export type Recruiters = {
   searches: RecruiterSearch[];
 };
 
-// Hosts that carry the posting but are not the employer: ATSes and job boards.
-const NOT_EMPLOYER = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|myworkdayjobs\.com|workday\.com|icims\.com|jobvite\.com|smartrecruiters\.com|workable\.com|recruitee\.com|bamboohr\.com|rippling\.com|linkedin\.com|indeed\.com|remotive\.com|oraclecloud\.com|taleo\.net|successfactors\.com)$/;
 const RECRUITER = /recruit|talent|university|campus|early career|intern/i;
-
-/** The employer's own domain when the posting lives on its site; null when it sits on an ATS or board. */
-export function employerDomain(canonicalUrl: string): string | null {
-  try {
-    const host = new URL(canonicalUrl).hostname.toLowerCase().replace(/^www\./, '');
-    return NOT_EMPLOYER.test(host) ? null : host;
-  } catch {
-    return null;
-  }
-}
 
 const people = (keywords: string) =>
   `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`;
@@ -60,20 +48,20 @@ const cache = new Map<string, { at: number; value: Recruiters }>();
 const DAY = 86_400_000;
 
 /**
- * Hunter's domain search for the company's HR department, recruiting titles first. The employer
- * domain comes from the posting URL; on an ATS-hosted posting Hunter resolves the company name
- * itself, and the domain it resolved is returned so the viewer can tell a wrong match.
+ * Hunter's domain search for the company's HR department, recruiting titles first, searched by
+ * company NAME. The posting's own host is the wrong key: careers sites (careers.withwaymo.com,
+ * pinterestcareers.com) and job boards hold nobody, while the names resolve to waymo.com and
+ * pinterest.com. The domain Hunter resolved is returned so the viewer can spot a wrong match.
  */
 export async function findRecruiters(
-  posting: { company: string; canonicalUrl: string },
+  posting: { company: string },
   options: { key?: string; fetch?: typeof fetch } = {},
 ): Promise<Recruiters> {
   const searches = linkedinSearches(posting.company);
   const key = options.key?.trim();
   if (!key) return { lookup: 'no_key', domain: null, people: [], searches };
 
-  const domain = employerDomain(posting.canonicalUrl);
-  const query = new URLSearchParams({ ...(domain ? { domain } : { company: posting.company }), department: 'hr', type: 'personal', limit: '10' });
+  const query = new URLSearchParams({ company: posting.company, department: 'hr', type: 'personal', limit: '10' });
   const cacheKey = `${key}:${query}`;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < DAY) return hit.value;
@@ -82,7 +70,7 @@ export async function findRecruiters(
     const response = await (options.fetch ?? fetch)(`https://api.hunter.io/v2/domain-search?${query}`, {
       headers: { 'X-API-KEY': key }, redirect: 'error', signal: AbortSignal.timeout(8000),
     });
-    if (!response.ok) return { lookup: 'unavailable', domain, people: [], searches };
+    if (!response.ok) return { lookup: 'unavailable', domain: null, people: [], searches };
     const { data } = HunterSchema.parse(await response.json());
     const found = data.emails
       .map((item) => ({
@@ -92,10 +80,10 @@ export async function findRecruiters(
         linkedin: linkedinUrl(item.linkedin),
       }))
       .sort((a, b) => Number(RECRUITER.test(b.title ?? '')) - Number(RECRUITER.test(a.title ?? '')));
-    const value: Recruiters = { lookup: 'ok', domain: data.domain ?? domain, people: found, searches };
+    const value: Recruiters = { lookup: 'ok', domain: data.domain ?? null, people: found, searches };
     cache.set(cacheKey, { at: Date.now(), value });
     return value;
   } catch {
-    return { lookup: 'unavailable', domain, people: [], searches };
+    return { lookup: 'unavailable', domain: null, people: [], searches };
   }
 }
