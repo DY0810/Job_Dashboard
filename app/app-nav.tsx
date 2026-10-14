@@ -3,7 +3,6 @@ import Link from 'next/link';
 const destinations = [
   ['Jobs', '/'],
   ['Auto Apply', '/applications'],
-  ['Emails', '/emails'],
   ['Profile', '/profile'],
   ['Notes', '/talkie'],
 ] as const;
