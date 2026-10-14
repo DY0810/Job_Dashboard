@@ -269,6 +269,9 @@
   background-color: var(--surface);
 }
 
+/* The whole row opens the posting drawer (see `jobLinkFor`). */
+.rows tbody tr:has(a[data-job]) { cursor: pointer; }
+
 @media (min-width: 901px) {
   .rows thead th[data-field="applied"],
   .rows td[data-field="applied"] {

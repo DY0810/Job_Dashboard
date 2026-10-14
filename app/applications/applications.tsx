@@ -86,7 +86,7 @@ function MaterialsPanel({ item }: { item: Material }) {
   </>;
 }
 
-function outreachStatus(item: Outreach) {
+export function outreachStatus(item: Outreach) {
   const who = `${item.name ?? item.to}${item.title ? ` (${item.title})` : ''}`;
   if (item.status === 'sent') return `Emailed ${who}${item.sentAt ? ` on ${new Date(item.sentAt).toLocaleDateString()}` : ''}`;
   if (item.status === 'sending') return `Sending to ${who}...`;
@@ -203,7 +203,7 @@ function Command({ label, busyLabel, confirm, primary, run, onDone }: {
   </>;
 }
 
-function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: string; onChange: () => void }) {
+export function OutreachPanel({ item, ownerId, onChange }: { item: Outreach; ownerId: string; onChange: () => void }) {
   const [to, setTo] = useState(item.to ?? '');
   const [busy, setBusy] = useState<'queue' | 'now' | null>(null);
   const [error, setError] = useState('');
