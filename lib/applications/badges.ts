@@ -23,3 +23,17 @@ export function statusBadge(state: ApplicationState, reasonCode: string | null):
   const tone = isAwaitingSubmitApproval(state, reasonCode) ? 'approval' : TONES[state];
   return { tone, label: BADGE_LABELS[tone] };
 }
+
+/** A recruiter email's badge: a held draft says what it waits on, since each one asks for a different fix. */
+const OUTREACH_HOLDS: Record<string, Badge> = {
+  scheduled: { tone: 'queued', label: 'queued' },
+  no_recipient: { tone: 'answer', label: 'needs address' },
+  outreach_disabled: { tone: 'cancelled', label: 'held' },
+  sender_not_configured: { tone: 'unsupported', label: 'no sender' },
+};
+export function outreachBadge(status: 'draft' | 'sending' | 'sent' | 'failed' | 'skipped', reason: string | null): Badge {
+  if (status === 'sent') return { tone: 'applied', label: 'sent' };
+  if (status === 'sending') return { tone: 'progress', label: 'sending' };
+  if (status !== 'draft') return { tone: status, label: status };
+  return OUTREACH_HOLDS[reason ?? ''] ?? { tone: 'approval', label: 'needs send' };
+}

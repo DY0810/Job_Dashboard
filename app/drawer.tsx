@@ -9,6 +9,7 @@ import { OutreachPanel } from './outreach-panel';
 import { readSenderDraft, readSenderProfile, saveSenderProfile, validSender } from './outreach-storage';
 import { ExternalLink, X } from 'lucide-react';
 import { AppliedCheckbox } from './applied-checkbox';
+import { jobLinkFor } from './job-link';
 
 type State =
   | { status: 'loading' }
@@ -75,12 +76,14 @@ export function Drawer({ closeHref }: { closeHref: string }) {
     setPendingKind(null);
   };
 
-  // Rows open the drawer with plain `<a data-job>` links, one listener for all of them. A
-  // modified or middle click falls through to the browser and opens the deep link in a tab.
+  // Rows open the drawer through their plain `<a data-job>` link, one listener for all of them;
+  // a click anywhere else in the row opens it too. A modified or middle click falls through to
+  // the browser and opens the deep link in a tab, and a drag that selected text opens nothing.
   useEffect(() => {
     const open = (event: MouseEvent) => {
-      const link = (event.target as Element | null)?.closest?.<HTMLAnchorElement>('a[data-job]');
+      const link = jobLinkFor(event.target as Element | null);
       if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+      if (!window.getSelection()?.isCollapsed && !(event.target as Element).closest('a')) return;
       event.preventDefault();
       // A double click must not push the same entry twice, or Back would reopen a closed drawer.
       if (link.href !== window.location.href) window.history.pushState(null, '', link.href);
