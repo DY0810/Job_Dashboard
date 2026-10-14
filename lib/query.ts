@@ -227,7 +227,7 @@ function where(p: Params, now: number, returned: readonly string[]): SQL {
  * `listPostings` asks for one MORE than this; the page's "of Y" comes from `countPostings`,
  * run in parallel with it.
  */
-export const ROW_CAP = 200;
+export const ROW_CAP = 50;
 
 export async function listPostings(db: ReadDb, p: Params, now: number = Date.now(), returned: readonly string[] = []) {
   return await driver(db)

@@ -24,7 +24,7 @@ type State =
  * postings would be megabytes of payload the table cannot use.
  *
  * `?job=` moves through native history, which Next syncs into `useSearchParams` without a
- * server round trip: a router navigation re-rendered the whole 200-row table on the server
+ * server round trip: a router navigation re-rendered the whole table on the server
  * to open the drawer, and again to close it.
  */
 export function Drawer({ closeHref }: { closeHref: string }) {
@@ -289,7 +289,7 @@ export function Drawer({ closeHref }: { closeHref: string }) {
  *
  * The row is the wrong home for them twice over. `.impeccable.md` allows a row exactly three
  * affordances — its badges, the company cell, and Apply — and a fourth control repeated
- * across ~200 rows would add ~200 tab stops to a table that already has 784. More to the
+ * on every row would add one more tab stop to each of them. More to the
  * point, nobody cold-emails a stranger about a job they have not read: the drawer is where
  * the posting is read, so it is where the draft belongs. Apply sits in this same footer.
  */
