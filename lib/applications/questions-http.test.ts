@@ -24,7 +24,6 @@ import { GET as inboxRoute } from '../../app/api/inbox/route.ts';
 import { GET as statusRoute } from '../../app/api/inbox/status/route.ts';
 import { POST as readRoute } from '../../app/api/inbox/read/route.ts';
 import { GET as questionRoute } from '../../app/api/questions/[id]/route.ts';
-import { POST as reviewRoute } from '../../app/api/questions/[id]/review/route.ts';
 import { POST as answerRoute } from '../../app/api/questions/[id]/answer/route.ts';
 import { POST as focusRoute } from '../../app/api/questions/[id]/focus/route.ts';
 import { POST as batchRoute } from '../../app/api/worker/applications/[id]/questions/route.ts';
@@ -136,11 +135,11 @@ beforeEach(async () => {
       const request = new Request(`${origin}${req.url}`, { method: req.method, headers,
         body: ['GET', 'HEAD'].includes(req.method!) ? undefined : body });
       const path = new URL(request.url).pathname;
-      const q = path.match(/^\/api\/questions\/([^/]+)(?:\/(answer|review|focus))?$/);
+      const q = path.match(/^\/api\/questions\/([^/]+)(?:\/(answer|focus))?$/);
       const w = path.match(/^\/api\/worker\/applications\/([^/]+)\/(questions|events)$/);
       const a = path.match(/^\/api\/worker\/interventions\/([^/]+)\/ack$/);
       let response: Response;
-      if (q) response = await ({ answer: answerRoute, review: reviewRoute, focus: focusRoute }[q[2]] ?? questionRoute)(
+      if (q) response = await ({ answer: answerRoute, focus: focusRoute }[q[2]] ?? questionRoute)(
         request, { params: Promise.resolve({ id: q[1] }) });
       else if (w) response = await (w[2] === 'questions' ? batchRoute : eventRoute)(request, { params: Promise.resolve({ id: w[1] }) });
       else if (a) response = await ackRoute(request, { params: Promise.resolve({ id: a[1] }) });
@@ -192,7 +191,7 @@ afterEach(async () => {
   expect(errors).toEqual([]); expect(corpusCreated).toBe(false);
 });
 
-it('real session routes isolate owners, validate pagination and separate read/review/answer with exact replay', async () => {
+it('real session routes isolate owners, validate pagination and separate read/answer with exact replay', async () => {
   const f = await prepared(), q = await batch(f);
   expect((await http('/api/inbox')).status).toBe(401);
   const response = await http('/api/inbox?limit=1', undefined, alice);
@@ -219,13 +218,8 @@ it('real session routes isolate owners, validate pagination and separate read/re
   expect((await http('/api/inbox/read', { eventIds: [page.items[0].eventId] }, alice)).status).toBe(200);
   expect(p.InboxStatusSchema.parse(await (await http('/api/inbox/status', undefined, alice)).json()))
     .toMatchObject({ unread: 0, unresolved: 1 });
-  const current = await detail(q.id);
-  const review = await http(`/api/questions/${q.id}/review`, {
-    ...fresh(current.revision), expectedProfileRevision: current.expectedProfileRevision,
-    expectedPolicyRevision: current.expectedPolicyRevision, expectedScopeHash: current.expectedScopeHash,
-    factVersions: current.factVersions, meaningId: 'stated-hours',
-  }, alice);
-  expect(p.QuestionDetailSchema.parse(await review.json()).allowedReuse).toContain('equivalent');
+  expect((await http(`/api/questions/${q.id}/review`, {}, alice)).status).toBe(404);
+  expect((await http(path, { ...answer, reuse: 'equivalent' }, alice)).status).toBe(400);
   const input = await answerInput(q.id);
   const result = p.AnswerResultSchema.parse(await (await http(path, input, alice)).json());
   expect(result.resumedApplicationIds).toEqual([f.app.id]);

@@ -78,18 +78,17 @@ const questionPreconditions = {
 };
 export const AnswerCommandSchema = z.strictObject({
   requestId: uuid, ...questionPreconditions,
-  reuse: z.enum(['application', 'employer', 'equivalent']), answer: AnswerValueSchema,
+  reuse: z.literal('application'), answer: AnswerValueSchema,
 });
-export const ReviewCommandSchema = z.strictObject({ requestId: uuid, ...questionPreconditions, meaningId: label });
 export const FocusCommandSchema = z.strictObject({ requestId: uuid, expectedRevision: revision });
 export const ReadCommandSchema = z.strictObject({ eventIds: z.array(uuid).min(1).max(50) });
 export const QuestionBatchSchema = z.strictObject({
   questionProtocolVersion: z.literal(1), eventId: uuid, fence: revision, expectedRevision: revision,
   expectedProfileRevision: count, checkpoint: CheckpointSchema, company: label, role: label,
-  questions: z.array(QuestionDescriptorSchema).min(1).max(20),
+  questions: z.array(QuestionDescriptorSchema).min(1).max(64), // a whole form at once
 }).refine(v => new Set(v.questions.map(q => q.key)).size === v.questions.length, 'Duplicate question keys.');
 export const QuestionBatchResultSchema = z.strictObject({
-  applicationId: uuid, eventId: uuid, revision, questionIds: z.array(uuid).max(20), replayed: z.boolean(), lease: z.null(),
+  applicationId: uuid, eventId: uuid, revision, questionIds: z.array(uuid).max(64), replayed: z.boolean(), lease: z.null(),
 });
 export const AnswerResultSchema = z.strictObject({
   ownerId: z.string(), answerId: uuid, questionId: uuid, resolvedQuestionIds: z.array(uuid),
@@ -104,7 +103,7 @@ export const QuestionDetailSchema = z.strictObject({
   application: z.strictObject({ id: uuid, workerId: uuid, ats: identity, tenant: identity, requisition: identity, company: label, role: label }),
   waitingCount: count, resolved: z.boolean(), expectedProfileRevision: count, expectedPolicyRevision: revision,
   expectedScopeHash: hash, factVersions: FactVersionsSchema,
-  allowedReuse: z.array(z.enum(['application', 'employer', 'equivalent'])).max(3),
+  allowedReuse: z.array(z.literal('application')).max(1),
   canAnswer: z.boolean(), canBlank: z.boolean(), canDecline: z.boolean(), focus: FocusResultSchema.nullable(),
 });
 export const InboxStatusSchema = z.strictObject({
@@ -133,7 +132,6 @@ export type QuestionField = z.infer<typeof QuestionFieldSchema>;
 export type AnswerValue = z.infer<typeof AnswerValueSchema>;
 export type AnswerCommand = z.infer<typeof AnswerCommandSchema>;
 export type AnswerResult = z.infer<typeof AnswerResultSchema>;
-export type ReviewCommand = z.infer<typeof ReviewCommandSchema>;
 export type FocusCommand = z.infer<typeof FocusCommandSchema>;
 export type FocusResult = z.infer<typeof FocusResultSchema>;
 export type ReadCommand = z.infer<typeof ReadCommandSchema>;

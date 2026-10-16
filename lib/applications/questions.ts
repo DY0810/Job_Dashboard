@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import {
   applications, applicationEvents, documents, inboxReads, questionAnswers, questionInterventions,
-  questionReviews, questions, workers, workerPairings,
+  questions, workers, workerPairings,
 } from '../private-db/schema.ts';
 import { getPolicy, getProfile, hashValue } from './stores.ts';
 import { checkedLease } from './leases.ts';
@@ -14,10 +14,10 @@ import {
 } from './worker-store.ts';
 import {
   AnswerCommandSchema, FocusCommandSchema, InboxQuerySchema, QuestionBatchSchema, QuestionDetailSchema,
-  ReadCommandSchema, ReviewCommandSchema, InterventionAckSchema, validQuestionAnswer,
+  ReadCommandSchema, InterventionAckSchema, validQuestionAnswer,
   type AnswerCommand, type AnswerResult, type AnswerValue, type FocusCommand, type FocusResult,
   type InboxPage, type InboxStatus, type QuestionBatch, type QuestionBatchResult, type QuestionDescriptor,
-  type QuestionDetail, type ReadCommand, type ReviewCommand, type InterventionAck, type InterventionPage,
+  type QuestionDetail, type ReadCommand, type InterventionAck, type InterventionPage,
 } from './question-protocol.ts';
 
 type QuestionRow = typeof questions.$inferSelect;
@@ -118,24 +118,9 @@ async function ownedQuestion(tx: WorkerTx, ownerId: string, id: string) {
   if (!app) fail(404, 'NOT_FOUND', 'Question not found.');
   return { row, app };
 }
-async function reviewedMeaning(tx: WorkerTx, row: Pick<QuestionRow, 'ownerId' | 'semanticHash'>) {
-  const [review] = await tx.select().from(questionReviews).where(and(
-    eq(questionReviews.ownerId, row.ownerId), eq(questionReviews.semanticHash, row.semanticHash),
-  ));
-  return review;
-}
-function reuseScopes(q: QuestionDescriptor, reviewed: boolean, ctx: Context): AnswerCommand['reuse'][] {
-  const result: AnswerCommand['reuse'][] = ['application'];
-  if (!reviewed || q.scope.kind === 'application' || (q.sensitive && ctx.policy.policy.disclosure === 'ask_each_sensitive')) return result;
-  result.push('employer', 'equivalent');
-  return result;
-}
-function scopeMatches(answer: Pick<AnswerRow, 'reuse' | 'applicationId' | 'descriptor'>, row: QuestionRow) {
-  if (answer.reuse === 'application') return answer.applicationId === row.applicationId;
-  if (answer.reuse === 'employer') return answer.descriptor.scope.ats === row.descriptor.scope.ats &&
-    answer.descriptor.scope.tenant === row.descriptor.scope.tenant;
-  return true; // The exact semantic hash still contains scope kind, timeframe and any scoped employer/application.
-}
+// An answer belongs to the one application it was given for; answers are never saved for other applications.
+const sameApplication = (answer: Pick<AnswerRow, 'reuse' | 'applicationId'>, row: QuestionRow) =>
+  answer.reuse === 'application' && answer.applicationId === row.applicationId;
 async function answerValid(tx: WorkerTx, row: QuestionRow, value: AnswerValue, ctx: Context) {
   if (!validQuestionAnswer(row.descriptor, value, allowOptional(row.descriptor, ctx))) return false;
   if (value.type !== 'document') return true;
@@ -159,28 +144,20 @@ const focusResult = (row: typeof questionInterventions.$inferSelect): FocusResul
 });
 
 async function detail(tx: WorkerTx, row: QuestionRow, app: ApplicationRow, ctx: Context): Promise<QuestionDetail> {
-  const available = await canAnswer(tx, row, app, ctx), review = await reviewedMeaning(tx, row);
+  const available = await canAnswer(tx, row, app, ctx);
   const [focus] = await tx.select().from(questionInterventions).where(and(
     eq(questionInterventions.ownerId, ctx.ownerId), eq(questionInterventions.questionId, row.id),
   )).orderBy(desc(questionInterventions.createdAt), desc(questionInterventions.id)).limit(1);
-  const matches = await tx.select({ question: questions, app: applications }).from(questions)
-    .innerJoin(applications, and(eq(applications.ownerId, questions.ownerId), eq(applications.id, questions.applicationId)))
-    .where(and(eq(questions.ownerId, ctx.ownerId), eq(questions.semanticHash, row.semanticHash),
-      eq(questions.active, true), isNull(questions.resolvedAt)));
-  const waiting = new Set<string>();
-  for (const match of matches) {
-    if (fresh(match.question, ctx) && (unsent.includes(match.app.state) || isWaitingState(match.app.state)) &&
-        (review || match.question.id === row.id)) waiting.add(match.app.id);
-  }
+  const waiting = row.resolvedAt === null && fresh(row, ctx) && (unsent.includes(app.state) || isWaitingState(app.state));
   return QuestionDetailSchema.parse({
     id: row.id, ownerId: ctx.ownerId, revision: row.revision,
-    descriptor: { ...row.descriptor, meaning: { ...row.descriptor.meaning, reviewId: review?.id ?? null } },
+    descriptor: { ...row.descriptor, meaning: { ...row.descriptor.meaning, reviewId: null } },
     application: { id: app.id, workerId: app.workerId, ats: app.ats, tenant: app.tenant, requisition: app.requisition,
       company: row.company, role: row.role },
-    waitingCount: waiting.size, resolved: row.resolvedAt !== null, expectedProfileRevision: ctx.profile.revision,
+    waitingCount: Number(waiting), resolved: row.resolvedAt !== null, expectedProfileRevision: ctx.profile.revision,
     expectedPolicyRevision: ctx.policy.revision || row.policyRevision, expectedScopeHash: row.scopeHash,
     factVersions: factVersions(row.descriptor, ctx).filter(f => f.version > 0),
-    allowedReuse: available ? reuseScopes(row.descriptor, !!review, ctx) : [],
+    allowedReuse: available ? ['application'] : [],
     canAnswer: available, canBlank: available && !row.descriptor.required && row.descriptor.field.allowBlank && allowOptional(row.descriptor, ctx),
     canDecline: available && row.descriptor.field.declineValue !== null && allowOptional(row.descriptor, ctx),
     focus: focus ? focusResult(focus) : null,
@@ -268,35 +245,6 @@ export async function markInboxRead(db: PrivateDb, ownerId: string, input: ReadC
   });
 }
 
-export async function reviewQuestion(db: PrivateDb, ownerId: string, id: string, input: ReviewCommand, options: WorkerOptions = {}): Promise<QuestionDetail> {
-  const command = ReviewCommandSchema.parse(input), scope = `question:review:${id}`;
-  return workerTransaction(db, async tx => {
-    const { row, app } = await ownedQuestion(tx, ownerId, id);
-    const replay = await replayCommand<QuestionDetail>(tx, ownerId, scope, command);
-    if (replay) return replay;
-    const ctx = await context(tx, ownerId, options);
-    const facts = factVersions(row.descriptor, ctx);
-    if (command.expectedRevision !== row.revision || command.meaningId !== row.descriptor.meaning.id ||
-        command.expectedProfileRevision !== ctx.profile.revision || command.expectedPolicyRevision !== ctx.policy.revision ||
-        command.expectedScopeHash !== row.scopeHash || hashValue(command.factVersions) !== hashValue(facts) ||
-        !currentDescriptor(row, ctx) || !ctx.policy.policy.actions.includes('fill_forms') || !await eligible(tx, app, ctx)) fail();
-    let review = await reviewedMeaning(tx, row);
-    if (!review) review = one(await tx.insert(questionReviews).values({
-      id: randomUUID(), ownerId, semanticHash: row.semanticHash, meaningId: command.meaningId, createdAt: ctx.now,
-    }).returning());
-    const invalidate = !fresh(row, ctx) && row.resolvedAt !== null;
-    const updated = one(await tx.update(questions).set({
-      descriptor: { ...row.descriptor, meaning: { id: command.meaningId, reviewId: review.id } }, revision: row.revision + 1,
-      profileRevision: ctx.profile.revision, factVersions: facts,
-      ...(invalidate ? { answerId: null, resolvedAt: null } : {}),
-    }).where(and(qScope(ownerId, id), eq(questions.revision, row.revision))).returning());
-    if (invalidate) await reschedule(tx, app, ctx);
-    const result = await detail(tx, updated, app, ctx);
-    await saveCommand(tx, ownerId, scope, command, result, ctx.now);
-    return result;
-  });
-}
-
 async function reschedule(tx: WorkerTx, app: ApplicationRow, ctx: Context): Promise<boolean> {
   if (!await eligible(tx, app, ctx)) fail();
   const rows = await tx.select().from(questions).where(and(eq(questions.ownerId, ctx.ownerId),
@@ -318,14 +266,14 @@ export async function answerQuestion(db: PrivateDb, ownerId: string, id: string,
     const { row, app } = await ownedQuestion(tx, ownerId, id);
     const replay = await replayCommand<AnswerResult>(tx, ownerId, scope, command);
     if (replay) return { ...replay, replayed: true };
-    const ctx = await context(tx, ownerId, options), review = await reviewedMeaning(tx, row), facts = factVersions(row.descriptor, ctx);
+    const ctx = await context(tx, ownerId, options), facts = factVersions(row.descriptor, ctx);
     if (command.expectedRevision !== row.revision || command.expectedProfileRevision !== ctx.profile.revision ||
         command.expectedPolicyRevision !== ctx.policy.revision || command.expectedScopeHash !== row.scopeHash ||
         hashValue(command.factVersions) !== hashValue(facts) || !await canAnswer(tx, row, app, ctx) ||
-        !reuseScopes(row.descriptor, !!review, ctx).includes(command.reuse) || !await answerValid(tx, row, command.answer, ctx)) fail();
+        command.reuse !== 'application' || !await answerValid(tx, row, command.answer, ctx)) fail();
     const answer = one(await tx.insert(questionAnswers).values({
       id: randomUUID(), ownerId, applicationId: app.id, questionId: row.id, semanticHash: row.semanticHash, scopeHash: row.scopeHash,
-      meaningReviewId: review?.id ?? null, profileRevision: ctx.profile.revision, policyRevision: ctx.policy.revision,
+      meaningReviewId: null, profileRevision: ctx.profile.revision, policyRevision: ctx.policy.revision,
       factVersions: facts, reuse: command.reuse, value: command.answer, descriptor: row.descriptor,
       provenance: { source: 'user', confirmedAt: ctx.now }, createdAt: ctx.now,
     }).returning());
@@ -335,7 +283,7 @@ export async function answerQuestion(db: PrivateDb, ownerId: string, id: string,
       .orderBy(questions.createdAt, questions.id);
     const resolvedQuestionIds: string[] = [], changedApps = new Map<string, ApplicationRow>();
     for (const candidate of candidates) {
-      if (!scopeMatches(answer, candidate.question) || !await canAnswer(tx, candidate.question, candidate.app, ctx)) continue;
+      if (!sameApplication(answer, candidate.question) || !await canAnswer(tx, candidate.question, candidate.app, ctx)) continue;
       one(await tx.update(questions).set({ answerId: answer.id, resolvedAt: ctx.now, revision: candidate.question.revision + 1,
         profileRevision: ctx.profile.revision, factVersions: facts })
         .where(and(qScope(ownerId, candidate.question.id), eq(questions.revision, candidate.question.revision))).returning());
@@ -352,14 +300,11 @@ export async function answerQuestion(db: PrivateDb, ownerId: string, id: string,
 
 async function reusableAnswer(tx: WorkerTx, row: QuestionRow, app: ApplicationRow, ctx: Context) {
   if (!fresh(row, ctx) || !await canAnswer(tx, row, app, ctx)) return;
-  const review = await reviewedMeaning(tx, row);
   // rowid breaks same-millisecond ties by committed insertion order, not random UUID order.
   const answers = await tx.select().from(questionAnswers).where(and(eq(questionAnswers.ownerId, ctx.ownerId),
     eq(questionAnswers.semanticHash, row.semanticHash))).orderBy(desc(sql`rowid`));
   for (const answer of answers) {
-    if (!scopeMatches(answer, row)) continue;
-    if (answer.reuse !== 'application' && (!review || answer.meaningReviewId !== review.id ||
-        !reuseScopes(row.descriptor, true, ctx).includes(answer.reuse))) continue;
+    if (!sameApplication(answer, row)) continue;
     if (answer.policyRevision !== ctx.policy.revision ||
         hashValue(answer.factVersions) !== hashValue(row.factVersions) || !await answerValid(tx, row, answer.value, ctx)) return;
     return answer;
@@ -393,10 +338,9 @@ export async function registerQuestionBatch(
       if (descriptor.scope.ats !== app.ats || descriptor.scope.tenant !== app.tenant ||
           (descriptor.scope.applicationId !== null && descriptor.scope.applicationId !== app.id) ||
           facts.some(f => f.version === 0)) fail();
-      const review = await reviewedMeaning(tx, { ownerId: worker.ownerId, semanticHash: semantic });
-      if (descriptor.meaning.reviewId && descriptor.meaning.reviewId !== review?.id) fail();
+      if (descriptor.meaning.reviewId) fail();
       const values = {
-        descriptor: { ...descriptor, meaning: { ...descriptor.meaning, reviewId: review?.id ?? null } },
+        descriptor: { ...descriptor, meaning: { ...descriptor.meaning, reviewId: null } },
         company: command.company, role: command.role, semanticHash: semantic, scopeHash: hashValue(descriptor.scope),
         profileRevision: ctx.profile.revision, policyRevision: ctx.policy.revision, factVersions: facts,
       };

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { screenApplication, screeningQuestions, formQuestions } from './screening.ts';
 import { QuestionDispatchSchema } from './question-client.ts';
-import { formQuestionKey } from './ats/protocol.ts';
+import { AtsAnswerErrors, AtsError, fillEach, formQuestionKey } from './ats/protocol.ts';
 
 const facts = {
   countries: { state: 'confirmed', values: ['US'] }, degreeLevels: { state: 'confirmed', values: ['bachelor'] },
@@ -47,4 +47,22 @@ test('unknown employer fields become scoped inbox questions with exact wording',
   assert.equal(batch.questions[0].originalWording, 'Are you a U.S. citizen?');
   assert.equal(batch.questions[0].scope.applicationId, applicationId);
   assert.equal(batch.questions[0].sensitive, true);
+});
+
+test('a fill keeps going past rejected answers so the whole form is asked at once', async () => {
+  const filled = [];
+  const error = await fillEach(['a', 'b', 'c', 'd'], async (key) => {
+    if (key === 'a') throw new AtsError('REQUIRED_ANSWER_MISSING', key);
+    if (key === 'c') throw new AtsError('ANSWER_OPTION_INVALID', key, ['Yes', 'No']);
+    filled.push(key);
+  }).catch(caught => caught);
+  assert.ok(error instanceof AtsAnswerErrors);
+  assert.deepEqual(error.errors.map(item => [item.message, item.options]), [['a', undefined], ['c', ['Yes', 'No']]]);
+  assert.deepEqual(filled, ['b', 'd']);
+  // Anything else still stops the fill at once.
+  await assert.rejects(fillEach(['a', 'b'], async () => { throw new AtsError('FIELD_NOT_FOUND', 'a'); }), { code: 'FIELD_NOT_FOUND' });
+  const many = Array.from({ length: 30 }, (_, index) => ({ key: `question_${index}`, label: `Question ${index}?`, kind: 'text', required: true }));
+  assert.equal(formQuestions({ applicationId: crypto.randomUUID(), profileRevision: 1, company: 'Fixture', role: 'Intern',
+    identity: { ats: 'greenhouse', tenant: 'fixture', requisition: '1' }, applicationUrl: 'https://job-boards.greenhouse.io/fixture/jobs/1' },
+  many).questions.length, 30);
 });

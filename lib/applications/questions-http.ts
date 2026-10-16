@@ -7,11 +7,11 @@ import { WorkerError, withWorker } from './worker-store.ts';
 import { limitWorkerRequests } from './worker-http.ts';
 import * as p from './question-protocol.ts';
 import {
-  getInbox, getInboxStatus, getQuestion, markInboxRead, reviewQuestion, answerQuestion,
+  getInbox, getInboxStatus, getQuestion, markInboxRead, answerQuestion,
   requestQuestionFocus, registerQuestionBatch, pollQuestionInterventions, ackQuestionIntervention,
 } from './questions.ts';
 
-type BrowserAction = 'inbox' | 'status' | 'read' | 'question' | 'review' | 'answer' | 'focus';
+type BrowserAction = 'inbox' | 'status' | 'read' | 'question' | 'answer' | 'focus';
 function checkPath(request: Request, id?: string, pagination = false) {
   const query = new URL(request.url).searchParams;
   if ((id !== undefined && !z.uuid().safeParse(id).success) ||
@@ -41,8 +41,6 @@ export function questionsEndpoint(request: Request, action: BrowserAction, id?: 
         case 'question': return p.QuestionDetailSchema.parse(await getQuestion(db, ownerId, id!, options));
         case 'read': return z.strictObject({ ownerId: z.string(), eventIds: z.array(z.uuid()).max(50) })
           .parse(await markInboxRead(db, ownerId, await readPrivateJson(request, p.ReadCommandSchema)));
-        case 'review': return p.QuestionDetailSchema.parse(await reviewQuestion(db, ownerId, id!,
-          await readPrivateJson(request, p.ReviewCommandSchema), options));
         case 'answer': return p.AnswerResultSchema.parse(await answerQuestion(db, ownerId, id!,
           await readPrivateJson(request, p.AnswerCommandSchema), options));
         case 'focus': return p.FocusResultSchema.parse(await requestQuestionFocus(db, ownerId, id!,

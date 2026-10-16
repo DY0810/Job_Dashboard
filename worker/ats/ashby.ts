@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Locator, Page } from 'playwright';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
-import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey } from './protocol.ts';
+import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey } from './protocol.ts';
 
 const VERIFICATION_WAIT_MS = 30 * 60_000; // time for the applicant to pass the captcha in the visible window
 
@@ -161,24 +161,24 @@ export const ashby: AtsAdapter = {
   async fill(runtime, input, observation, signal) {
     signal?.throwIfAborted();
     const form = await page(runtime);
-    for (const field of observation.fields) {
+    await fillEach(observation.fields, async field => {
       const box = entry(form, field);
       if (field.kind === 'file') {
         const path = input.documents[field.key];
-        if (!path) { if (field.required) throw new AtsError('REQUIRED_DOCUMENT_MISSING', field.key); continue; }
+        if (!path) { if (field.required) throw new AtsError('REQUIRED_DOCUMENT_MISSING', field.key); return; }
         await box.locator('input[type=file]').setInputFiles(path);
         // Ashby uploads on attach and lists the file by name only once the upload is done.
         const name = path.split('/').pop()!;
         if (!await box.locator('.ashby-application-form-input-file-item-name', { hasText: name }).first().waitFor({ timeout: 30_000 }).then(() => true, () => false)) {
           throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
         }
-        continue;
+        return;
       }
       const value = ashbyAnswer(input, field);
-      if (value === undefined) { if (field.required) throw new AtsError('REQUIRED_ANSWER_MISSING', field.key); continue; }
+      if (value === undefined) { if (field.required) throw new AtsError('REQUIRED_ANSWER_MISSING', field.key); return; }
       await fillOne(form, box, field, value);
       if (!await verifyOne(box, field, value)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
-    }
+    });
   },
   async submit(runtime, input, signal) {
     signal?.throwIfAborted();

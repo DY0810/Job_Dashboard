@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Locator, Page } from 'playwright';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
-import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, type AtsIdentity, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey } from './protocol.ts';
+import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, type AtsIdentity, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey } from './protocol.ts';
 
 const CAPTCHA_WAIT_MS = 30 * 60_000; // time for the applicant to solve an hCaptcha challenge in the visible window
 
@@ -169,13 +169,13 @@ export const lever: AtsAdapter = {
     signal?.throwIfAborted();
     const page = await runtime.page();
     // The resume goes first: Lever's resume parsing prefills fields it finds.
-    for (const field of [...observation.fields].sort((a, b) => Number(b.kind === 'file') - Number(a.kind === 'file'))) {
+    await fillEach([...observation.fields].sort((a, b) => Number(b.kind === 'file') - Number(a.kind === 'file')), async field => {
       const value = leverAnswer(input, field);
       if (field.kind === 'file' ? field.required || input.documents[field.key] : value !== undefined || field.required) {
         await fillLever(page, field, value, input.documents);
         if (!await verifyLever(page, field, value)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
       }
-    }
+    });
   },
   async submit(runtime, input, signal) {
     signal?.throwIfAborted();

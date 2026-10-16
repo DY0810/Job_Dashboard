@@ -105,10 +105,12 @@ function formField(field: AtsField, options = field.options) {
       minLength: 1, maxLength: 4000, format: 'plain' as const };
 }
 
-export function formQuestions(context: ApplicationContext, fields: AtsField[], options?: string[]): QuestionDispatch {
+// Every unanswered field goes in one batch, up to what one 128 KB request carries; any rest is asked after.
+export function formQuestions(context: ApplicationContext, fields: AtsField[]): QuestionDispatch {
+  let bytes = 0;
   return {
     kind: 'questions', expectedProfileRevision: context.profileRevision, company: context.company, role: context.role,
-    questions: fields.slice(0, 20).map(field => ({
+    questions: fields.slice(0, 64).map(field => ({
       key: formQuestionKey(field), kind: 'needs_answer' as const, originalWording: field.label,
       reason: `Required field on the official application: ${context.applicationUrl}`,
       required: true, meaning: { id: formQuestionKey(field), reviewId: null }, schemaVersion: 1,
@@ -116,7 +118,7 @@ export function formQuestions(context: ApplicationContext, fields: AtsField[], o
         includesSubsidiaries: false, timeframe: 'current' as const, validFrom: null, validUntil: null,
         ats: context.identity.ats, tenant: context.identity.tenant, version: 1 },
       provenance: { source: 'system' as const, sourceId: null, sourceVersion: null, excerpt: field.label },
-      field: formField(field, options ?? field.options), factIds: [], sensitive: true,
-    })),
+      field: formField(field), factIds: [], sensitive: true,
+    })).filter((question, index) => (bytes += JSON.stringify(question).length) < 100_000 || index === 0),
   };
 }

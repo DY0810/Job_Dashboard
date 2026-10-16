@@ -73,18 +73,18 @@ describe('Figma voluntary choices', () => {
     profile.voluntary.veteran = confirmed(profile.voluntary.veteran, 'Never a veteran');
     const input = { identity: { ats: 'greenhouse' as const, tenant: 'figma', requisition: '6143238004' },
       company: 'Figma', role: 'Software Engineer Intern', applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/6143238004',
-      answers: applicationAnswers(profile, [], 'Figma'), documents: {} };
+      answers: applicationAnswers(profile, [], 'Figma', null, 'confirmed_only'), documents: {} };
     const field = (key: string, label: string) => ({ key, label, kind: 'combobox' as const, required: false });
     expect(greenhouseAnswer(input, field('question_19438728004', 'Pronouns'))).toBe('he/him/his');
     expect(greenhouseAnswer(input, field('gender', 'Gender'))).toBe('Male');
     expect(greenhouseAnswer(input, field('hispanic_ethnicity', 'Are you Hispanic/Latino?'))).toBe('No');
     expect(greenhouseAnswer(input, field('veteran_status', 'Veteran Status'))).toBe('I am not a protected veteran');
-    // Greenhouse's standard self-identification fields fill on every hosted form; Figma's own pronoun question does not.
+    // Greenhouse's standard self-identification fields and any Pronouns question fill on every hosted form.
     const other = { ...input, identity: { ...input.identity, tenant: 'hpiq', requisition: '6116398004' } };
     expect(greenhouseAnswer(other, field('gender', 'Gender'))).toBe('Male');
-    expect(greenhouseAnswer(other, field('question_19438728004', 'Pronouns'))).toBeUndefined();
+    expect(greenhouseAnswer(other, field('question_19438728004', 'Pronouns'))).toBe('he/him/his');
     profile.voluntary.veteran = { ...profile.voluntary.veteran, state: 'candidate', confirmedAt: null };
-    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, field('veteran_status', 'Veteran Status'))).toBeUndefined();
+    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma', null, 'confirmed_only') }, field('veteran_status', 'Veteran Status'))).toBeUndefined();
   });
 });
 
@@ -164,5 +164,34 @@ describe('common Greenhouse wording', () => {
     expect(ask('Are you authorized to work in the country you live in?')).toBeUndefined();
     expect(ask('Are you legally authorized to work in the country for which you are applying?', 'KR')).toBeUndefined();
     expect(ask('Can you work with us onsite?')).toBeUndefined();
+  });
+});
+
+describe('profile facts beyond one applicant', () => {
+  it('answers any confirmed voluntary fact and education start, not only one applicant\'s values', () => {
+    const profile = createEmptyProfile();
+    profile.voluntary.pronouns = confirmed(profile.voluntary.pronouns, 'she/her/hers');
+    profile.voluntary.gender = confirmed(profile.voluntary.gender, 'Woman');
+    profile.voluntary.raceEthnicity = confirmed(profile.voluntary.raceEthnicity, ['Hispanic or Latino']);
+    profile.voluntary.veteran = confirmed(profile.voluntary.veteran, 'I am not a protected veteran');
+    profile.voluntary.disability = confirmed(profile.voluntary.disability, 'No, I do not have a disability');
+    const school = ProfileSections.education.parse({ schools: [{}] }).schools[0];
+    school.school = confirmed(school.school, 'Art Center');
+    school.enrollmentStart = confirmed(school.enrollmentStart, { precision: 'month', value: '2024-09' });
+    profile.education.schools = [school];
+    const input = { identity: { ats: 'greenhouse' as const, tenant: 'acme', requisition: '1' },
+      company: 'Acme', role: 'Design Intern', applicationUrl: 'https://job-boards.greenhouse.io/acme/jobs/1',
+      answers: applicationAnswers(profile, [], 'Acme', null, 'confirmed_only'), documents: {} };
+    const field = (key: string, label: string) => ({ key, label, kind: 'combobox' as const, required: true });
+    expect(greenhouseAnswer(input, field('question_1', 'Pronouns'))).toBe('she/her/hers');
+    expect(greenhouseAnswer(input, field('gender', 'Gender'))).toBe('Female');
+    expect(greenhouseAnswer(input, field('hispanic_ethnicity', 'Are you Hispanic/Latino?'))).toBe('Yes');
+    expect(greenhouseAnswer(input, field('veteran_status', 'Veteran Status'))).toBe('I am not a protected veteran');
+    expect(greenhouseAnswer(input, field('disability_status', 'Disability Status'))).toBe('No, I do not have a disability');
+    expect(greenhouseAnswer(input, field('start-month--0', 'Start date month'))).toBe('September');
+    // Under ask_each_sensitive no voluntary answer is filled; each form asks.
+    const asking = { ...input, answers: applicationAnswers(profile, [], 'Acme', null, 'ask_each_sensitive') };
+    for (const [key, label] of [['question_1', 'Pronouns'], ['gender', 'Gender'], ['disability_status', 'Disability Status']])
+      expect(greenhouseAnswer(asking, field(key, label))).toBeUndefined();
   });
 });

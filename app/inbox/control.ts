@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { DraftVault, unlockDraftKey } from '../../lib/profile-drafts';
 import {
   AnswerCommandSchema, AnswerResultSchema, FocusCommandSchema, FocusResultSchema,
-  InboxPageSchema, QuestionDetailSchema, ReviewCommandSchema,
+  InboxPageSchema, QuestionDetailSchema,
   type AnswerCommand, type QuestionDetail,
 } from '../../lib/applications/question-protocol';
 import { privateJson, PrivateRequestError, type PrivateApi } from '../profile/api';
@@ -11,14 +11,13 @@ const accountSchema = z.object({ ownerId: z.string().min(1) });
 const keySchema = z.object({ ownerId: z.string(), keyVersion: z.string(), key: z.string() });
 export const EditSchema = z.object({
   input: z.string().max(100_000), choices: z.array(z.string()).max(100),
-  mode: z.enum(['answer', 'blank', 'decline']), reuse: z.enum(['application', 'employer', 'equivalent']),
+  mode: z.enum(['answer', 'blank', 'decline']),
 });
 export type Edit = z.infer<typeof EditSchema>;
 const draftSchema = z.object({ question: QuestionDetailSchema, desired: EditSchema, dirty: z.boolean() });
 const pendingSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('answer'), questionId: z.uuid(), body: AnswerCommandSchema, sent: EditSchema }),
   z.object({ kind: z.literal('focus'), questionId: z.uuid(), body: FocusCommandSchema }),
-  z.object({ kind: z.literal('review'), questionId: z.uuid(), body: ReviewCommandSchema }),
 ]);
 const snapshotSchema = z.object({
   revision: z.literal(1), drafts: z.record(z.uuid(), draftSchema), pending: pendingSchema.nullable(),
@@ -37,7 +36,7 @@ export const initialView = (): InboxView => ({
   ownerId: null, inbox: null, selected: null, locked: true, loading: true, busy: false,
   error: '', notice: '', draftError: '', recoveries: [], snapshot: emptySnapshot(), failures: 0,
 });
-export const emptyEdit = (): Edit => ({ input: '', choices: [], mode: 'answer', reuse: 'application' });
+export const emptyEdit = (): Edit => ({ input: '', choices: [], mode: 'answer' });
 export function sameQuestion(a: QuestionDetail, b: QuestionDetail) {
   return a.revision === b.revision && a.expectedScopeHash === b.expectedScopeHash &&
     a.expectedProfileRevision === b.expectedProfileRevision && a.expectedPolicyRevision === b.expectedPolicyRevision &&
@@ -234,21 +233,12 @@ export class InboxControl {
     finally { if (!signal.aborted) this.update({ busy: false }); }
   }
   back() { this.update({ selected: null, notice: '' }); }
-  edit(desired: Edit) {
-    const selected = this.view.selected;
-    if (!selected || this.view.locked) return;
-    const draft = this.view.snapshot.drafts[selected.id];
+  /** Any listed question takes an edit; every application's questions are answered together. */
+  edit(desired: Edit, question = this.view.selected) {
+    if (!question || this.view.locked) return;
+    const draft = this.view.snapshot.drafts[question.id];
     this.update({ snapshot: { ...this.view.snapshot, drafts: { ...this.view.snapshot.drafts,
-      [selected.id]: { ...draft, desired, dirty: true } } } });
-    void this.persist();
-  }
-  acceptCurrent() {
-    const question = this.view.selected;
-    if (!question || this.view.snapshot.pending || this.view.locked) return;
-    const old = this.view.snapshot.drafts[question.id];
-    const compatible = JSON.stringify(old.question.descriptor.field) === JSON.stringify(question.descriptor.field);
-    this.update({ snapshot: { ...this.view.snapshot, drafts: { ...this.view.snapshot.drafts,
-      [question.id]: { question, desired: compatible ? { ...old.desired, reuse: 'application' } : emptyEdit(), dirty: true } } }, error: '' });
+      [question.id]: { question: draft?.question ?? question, desired, dirty: true } } } });
     void this.persist();
   }
   async recover(index: number) {
@@ -260,26 +250,26 @@ export class InboxControl {
       this.update({ recoveries: this.view.recoveries.filter((item) => item !== recovery), notice: 'Draft recovered. Review before answering or retrying.' });
     }
   }
-  answer(body: AnswerCommand) {
-    const question = this.view.selected;
+  answer(body: AnswerCommand, question = this.view.selected) {
     if (!question) return;
     const draft = this.view.snapshot.drafts[question.id];
-    if (!sameQuestion(question, draft.question)) {
+    if (!draft || !sameQuestion(question, draft.question)) {
       this.update({ error: 'Question changed. Review the current question before answering.' });
       return;
     }
     return this.execute({ kind: 'answer', questionId: question.id, body: AnswerCommandSchema.parse(body), sent: structuredClone(draft.desired) });
   }
-  review() {
-    const q = this.view.selected;
-    if (q) return this.execute({ kind: 'review', questionId: q.id, body: {
-      requestId: crypto.randomUUID(), expectedRevision: q.revision,
-      expectedProfileRevision: q.expectedProfileRevision,
-      expectedPolicyRevision: q.expectedPolicyRevision,
-      expectedScopeHash: q.expectedScopeHash,
-      factVersions: q.factVersions,
-      meaningId: q.descriptor.meaning.id,
-    } });
+  /** Sends an application's answers one after another; the last one resumes the application. Stops at the first failure. */
+  async answerAll(answers: { question: QuestionDetail; body: AnswerCommand }[]) {
+    if (this.view.snapshot.pending) { this.update({ error: 'Retry the pending answer first.' }); return; }
+    for (const { question, body } of answers) {
+      // The command is built from the question as listed now, so its draft follows it.
+      const draft = this.view.snapshot.drafts[question.id] ?? { question, desired: emptyEdit(), dirty: true };
+      this.update({ snapshot: { ...this.view.snapshot, drafts: { ...this.view.snapshot.drafts, [question.id]: { ...draft, question } } } });
+      await this.answer(body, question);
+      if (this.view.error || this.view.snapshot.pending) return;
+    }
+    this.update({ notice: `${answers.length} answer${answers.length === 1 ? '' : 's'} saved.` });
   }
   focus() {
     const q = this.view.selected;
@@ -312,15 +302,11 @@ export class InboxControl {
         const newer = !!draft && JSON.stringify(draft.desired) !== JSON.stringify(work.sent);
         if (draft) drafts = { ...drafts, [work.questionId]: { ...draft, dirty: newer } };
         notice = `Answer acknowledged. ${ack.resumedApplicationIds.length} applications resumed.${newer ? ' Your newer edit is retained and was not sent.' : ''}`;
-      } else if (work.kind === 'focus') {
+      } else {
         const ack = FocusResultSchema.parse(raw);
         if (ack.questionId !== work.questionId) throw new RequestError(502);
         notice = ack.status === 'unavailable' ? 'Paired browser unavailable. This application is still waiting.' :
           'Browser focus request acknowledged. Completion still requires worker observation.';
-      } else {
-        const ack = QuestionDetailSchema.parse(raw);
-        if (ack.ownerId !== owner || ack.id !== work.questionId) throw new RequestError(502);
-        notice = 'Exact meaning reviewed. Choose an available reuse scope before answering.';
       }
       this.update({ snapshot: { ...this.view.snapshot, drafts, pending: null }, notice });
       await this.persist();

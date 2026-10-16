@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
-import { AtsError, AtsObservationSchema, type AtsAdapter, type AtsApplication, type AtsField, atsFieldKey, commonAnswer, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
+import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, atsFieldKey, commonAnswer, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
 
 const VERIFICATION_WAIT_MS = 30 * 60_000; // time for the applicant to find the emailed code
 
@@ -40,20 +40,23 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
   if (field.key === 'candidate-location' && field.label === 'Location (City)') return input.answers.current_location;
   // Every hosted form puts the same phone-country picker beside Phone.
   if (field.key === 'country' && field.label === 'Country' && input.answers.phone_country === 'US') return 'United States +1';
+  const month = (value: string) => new Date(`${value}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
   if (field.key === 'end-month--0' && field.label === 'End date month' && typeof input.answers.expected_graduation_month === 'string') {
-    return new Date(`${input.answers.expected_graduation_month}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+    return month(input.answers.expected_graduation_month);
   }
+  if (field.key === 'start-month--0' && field.label === 'Start date month' && typeof input.answers.start_month === 'string') return month(input.answers.start_month);
+  if (/^pronouns?$/i.test(field.label.trim())) return input.answers.voluntary_pronouns;
   if (input.identity.tenant === 'figma' && input.identity.requisition === '6143238004') {
     if (field.key === 'question_19438735004' && field.label === 'LinkedIn Profile') return input.answers.linkedin;
     if (field.key === 'question_19438736004' && field.label === 'Other Website') return input.answers.portfolio;
     if (field.key === 'question_19438730004' && field.label === 'If you are currently enrolled in university or a program, what is your expected graduation date?' &&
         input.answers.expected_graduation_month === '2028-12') return 'Fall 2028';
-    if (field.key === 'question_19438728004' && field.label === 'Pronouns') return input.answers.voluntary_pronouns;
   }
   // Greenhouse's standard voluntary self-identification fields, answered only from confirmed profile facts.
   if (field.key === 'gender' && field.label === 'Gender') return input.answers.voluntary_gender;
   if (field.key === 'hispanic_ethnicity' && field.label === 'Are you Hispanic/Latino?') return input.answers.voluntary_hispanic;
   if (field.key === 'veteran_status' && field.label === 'Veteran Status') return input.answers.voluntary_veteran;
+  if (field.key === 'disability_status' && field.label === 'Disability Status') return input.answers.voluntary_disability;
   return commonAnswer(input, field);
 }
 
@@ -146,13 +149,13 @@ export const greenhouse: AtsAdapter = {
   async fill(runtime, input, observation, signal) {
     signal?.throwIfAborted();
     const page = await runtime.page();
-    for (const field of observation.fields) {
+    await fillEach(observation.fields, async field => {
       const value = greenhouseAnswer(input, field);
       if (field.key === 'resume' || (field.key === 'cover_letter' && input.documents.cover_letter) || value !== undefined || field.required) {
         await fillField(page, field, value, input.documents);
         if (!await verifyField(page, field, value, input.documents)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
       }
-    }
+    });
   },
   async submit(runtime, input, signal) {
     signal?.throwIfAborted();

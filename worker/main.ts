@@ -16,7 +16,7 @@ import { ashby } from "./ats/ashby.ts";
 import { runAtsApplication, fillAtsApplication } from "./application-runner.ts";
 import { screenApplication, screeningQuestions, formQuestions } from "./screening.ts";
 import { AtsError } from "./ats/protocol.ts";
-import { AtsIdentitySchema, atsFieldKey, formQuestionKey, undergraduateTranscript, type AtsApplication } from "./ats/protocol.ts";
+import { AtsAnswerErrors, AtsIdentitySchema, answerError, atsFieldKey, formQuestionKey, undergraduateTranscript, type AtsApplication } from "./ats/protocol.ts";
 import type { StageDispatch, StructuredGenerator } from "./runtime.ts";
 import type { StructuredGenerationResult } from "./providers.ts";
 import { createStructuredProvider, ProviderError, storeProviderApiKey, structuredBudgetLedger } from "./providers.ts";
@@ -363,11 +363,14 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       if (signal.aborted) throw error;
       const providerFailure = providerFailureResult(error);
       if (providerFailure) return providerFailure;
-      if (error instanceof AtsError && /REQUIRED_ANSWER|ANSWER_/.test(error.code)) {
+      if (answerError(error)) {
         if (runtime && application && !submissionStarted) {
           const observed = await adapter.observe(runtime, application, signal).catch(() => null);
-          const field = observed?.fields.find(item => item.key === error.message);
-          if (field) return formQuestions(applicationContext, [field], error.options);
+          const fields = (error instanceof AtsAnswerErrors ? error.errors : [error]).flatMap(item => {
+            const field = observed?.fields.find(candidate => candidate.key === item.message);
+            return field ? [{ ...field, options: item.options ?? field.options }] : [];
+          });
+          if (fields.length) return formQuestions(applicationContext, fields);
         }
         return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
       }
