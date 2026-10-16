@@ -73,7 +73,7 @@ describe('Figma voluntary choices', () => {
     profile.voluntary.veteran = confirmed(profile.voluntary.veteran, 'Never a veteran');
     const input = { identity: { ats: 'greenhouse' as const, tenant: 'figma', requisition: '6143238004' },
       company: 'Figma', role: 'Software Engineer Intern', applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/6143238004',
-      answers: applicationAnswers(profile, [], 'Figma'), documents: {} };
+      answers: applicationAnswers(profile, [], 'Figma', null, 'confirmed_only'), documents: {} };
     const field = (key: string, label: string) => ({ key, label, kind: 'combobox' as const, required: false });
     expect(greenhouseAnswer(input, field('question_19438728004', 'Pronouns'))).toBe('he/him/his');
     expect(greenhouseAnswer(input, field('gender', 'Gender'))).toBe('Male');
@@ -84,7 +84,7 @@ describe('Figma voluntary choices', () => {
     expect(greenhouseAnswer(other, field('gender', 'Gender'))).toBe('Male');
     expect(greenhouseAnswer(other, field('question_19438728004', 'Pronouns'))).toBe('he/him/his');
     profile.voluntary.veteran = { ...profile.voluntary.veteran, state: 'candidate', confirmedAt: null };
-    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma') }, field('veteran_status', 'Veteran Status'))).toBeUndefined();
+    expect(greenhouseAnswer({ ...input, answers: applicationAnswers(profile, [], 'Figma', null, 'confirmed_only') }, field('veteran_status', 'Veteran Status'))).toBeUndefined();
   });
 });
 
@@ -181,7 +181,7 @@ describe('profile facts beyond one applicant', () => {
     profile.education.schools = [school];
     const input = { identity: { ats: 'greenhouse' as const, tenant: 'acme', requisition: '1' },
       company: 'Acme', role: 'Design Intern', applicationUrl: 'https://job-boards.greenhouse.io/acme/jobs/1',
-      answers: applicationAnswers(profile, [], 'Acme'), documents: {} };
+      answers: applicationAnswers(profile, [], 'Acme', null, 'confirmed_only'), documents: {} };
     const field = (key: string, label: string) => ({ key, label, kind: 'combobox' as const, required: true });
     expect(greenhouseAnswer(input, field('question_1', 'Pronouns'))).toBe('she/her/hers');
     expect(greenhouseAnswer(input, field('gender', 'Gender'))).toBe('Female');
@@ -189,5 +189,9 @@ describe('profile facts beyond one applicant', () => {
     expect(greenhouseAnswer(input, field('veteran_status', 'Veteran Status'))).toBe('I am not a protected veteran');
     expect(greenhouseAnswer(input, field('disability_status', 'Disability Status'))).toBe('No, I do not have a disability');
     expect(greenhouseAnswer(input, field('start-month--0', 'Start date month'))).toBe('September');
+    // Under ask_each_sensitive no voluntary answer is filled; each form asks.
+    const asking = { ...input, answers: applicationAnswers(profile, [], 'Acme', null, 'ask_each_sensitive') };
+    for (const [key, label] of [['question_1', 'Pronouns'], ['gender', 'Gender'], ['disability_status', 'Disability Status']])
+      expect(greenhouseAnswer(asking, field(key, label))).toBeUndefined();
   });
 });

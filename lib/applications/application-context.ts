@@ -58,7 +58,7 @@ function profileFacts(profile: Awaited<ReturnType<typeof getProfile>>['profile']
 }
 
 export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile>>['profile'], authorized: string[], company: string,
-  postingCountry: string | null = null) {
+  postingCountry: string | null = null, disclosure: 'confirmed_only' | 'ask_each_sensitive' = 'ask_each_sensitive') {
   const answers: Record<string, string | boolean | string[]> = {};
   const first = factValue<string>(profile.identity.legalFirstName) ?? factValue<string>(profile.identity.preferredName);
   const last = factValue<string>(profile.identity.legalLastName);
@@ -80,18 +80,21 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
   if (portfolio) answers.portfolio = portfolio;
   const github = factValue<string>(profile.identity.github);
   if (github) answers.github = github;
-  // Any confirmed voluntary answer goes to the form; one the form does not offer is asked with its options.
-  const pronouns = factValue<string>(profile.voluntary.pronouns);
-  if (pronouns) answers.voluntary_pronouns = pronouns;
-  const gender = factValue<string>(profile.voluntary.gender);
-  if (gender) answers.voluntary_gender = ({ man: 'Male', woman: 'Female' } as Record<string, string>)[label(gender)] ?? gender;
-  const race = factValue<string[]>(profile.voluntary.raceEthnicity);
-  if (race?.includes('Not Hispanic or Latino')) answers.voluntary_hispanic = 'No';
-  else if (race?.includes('Hispanic or Latino')) answers.voluntary_hispanic = 'Yes';
-  const veteran = factValue<string>(profile.voluntary.veteran);
-  if (veteran) answers.voluntary_veteran = /^(never|not) a veteran$/.test(label(veteran)) ? 'I am not a protected veteran' : veteran;
-  const disability = factValue<string>(profile.voluntary.disability);
-  if (disability) answers.voluntary_disability = disability;
+  // Any confirmed voluntary answer goes to the form, but only when the policy allows sensitive disclosure without asking;
+  // under ask_each_sensitive each form asks. One the form does not offer is asked with its options.
+  if (disclosure === 'confirmed_only') {
+    const pronouns = factValue<string>(profile.voluntary.pronouns);
+    if (pronouns) answers.voluntary_pronouns = pronouns;
+    const gender = factValue<string>(profile.voluntary.gender);
+    if (gender) answers.voluntary_gender = ({ man: 'Male', woman: 'Female' } as Record<string, string>)[label(gender)] ?? gender;
+    const race = factValue<string[]>(profile.voluntary.raceEthnicity);
+    if (race?.includes('Not Hispanic or Latino')) answers.voluntary_hispanic = 'No';
+    else if (race?.includes('Hispanic or Latino')) answers.voluntary_hispanic = 'Yes';
+    const veteran = factValue<string>(profile.voluntary.veteran);
+    if (veteran) answers.voluntary_veteran = /^(never|not) a veteran$/.test(label(veteran)) ? 'I am not a protected veteran' : veteran;
+    const disability = factValue<string>(profile.voluntary.disability);
+    if (disability) answers.voluntary_disability = disability;
+  }
   const school = profile.education.schools.find(item => factValue<string>(item.school));
   if (school) {
     const name = factValue<string>(school.school);
@@ -212,7 +215,8 @@ async function ownedContext(tx: WorkerTx, worker: WorkerRow, lease: { applicatio
     sourceFields: official.sourceFields, paid: official.paid,
   });
   const requirements = { ...parsedRequirements, excerpts: [...new Set([...parsedRequirements.excerpts, ...candidate.reasons])].slice(0, 32) };
-  const answers = applicationAnswers(profile, facts.workAuthorization.values, official.company, requirements.countries.length === 1 ? requirements.countries[0] : null);
+  const answers = applicationAnswers(profile, facts.workAuthorization.values, official.company,
+    requirements.countries.length === 1 ? requirements.countries[0] : null, policy.policy.disclosure);
   const screeningAnswers = await tx.select({ question: questions, answer: questionAnswers }).from(questions)
     .innerJoin(questionAnswers, and(eq(questionAnswers.ownerId, questions.ownerId), eq(questionAnswers.id, questions.answerId)))
     .where(and(eq(questions.ownerId, worker.ownerId), eq(questions.applicationId, checked.id), eq(questions.active, true)));
