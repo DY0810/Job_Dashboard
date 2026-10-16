@@ -16,7 +16,7 @@ export function eligibleDocuments(question: QuestionDetail, documents: Document[
 export function answerCommand(q: QuestionDetail, edit: Edit, documents: Document[]): AnswerCommand {
   const field = q.descriptor.field;
   let answer: AnswerValue;
-  if (!q.allowedReuse.includes(edit.reuse)) throw new Error('Choose a permitted reuse scope.');
+  if (!q.canAnswer) throw new Error('This question is read-only.');
   if (edit.mode === 'blank') {
     if (!q.canBlank) throw new Error('This question cannot be left blank.');
     answer = { type: 'blank' };
@@ -63,6 +63,6 @@ export function answerCommand(q: QuestionDetail, edit: Edit, documents: Document
   return AnswerCommandSchema.parse({
     requestId: crypto.randomUUID(), expectedRevision: q.revision, expectedProfileRevision: q.expectedProfileRevision,
     expectedPolicyRevision: q.expectedPolicyRevision, expectedScopeHash: q.expectedScopeHash,
-    factVersions: q.factVersions, reuse: edit.reuse, answer,
+    factVersions: q.factVersions, reuse: 'application', answer,
   });
 }

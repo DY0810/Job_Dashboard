@@ -86,17 +86,22 @@ it('account changes abort owner operations and remove all plaintext, including p
   expect(t.control.view.inbox?.items).toEqual([]);
 });
 
-it('changed schema/scope fences drafts and never silently reuses their previous scope', async () => {
-  const q = question(); q.allowedReuse = ['application', 'employer'];
+it('changed schema/scope fences a single draft; answering all sends each listed question once', async () => {
+  const q = question();
   const t = setup(fixture(q)); await ready(t);
-  t.control.edit({ ...emptyEdit(), input: 'private', reuse: 'employer' });
-  t.state.q = { ...q, revision: 2, expectedScopeHash: 'b'.repeat(64), allowedReuse: ['application'] };
+  t.control.edit({ ...emptyEdit(), input: 'private' });
+  t.state.q = { ...q, revision: 2, expectedScopeHash: 'b'.repeat(64) };
   await t.control.refresh();
-  await t.control.answer({ ...answerCommand(q, { ...emptyEdit(), input: 'private', reuse: 'employer' }, []), expectedRevision: 2 });
+  await t.control.answer({ ...answerCommand(q, { ...emptyEdit(), input: 'private' }, []), expectedRevision: 2 });
   expect(t.state.writes).toHaveLength(0);
   expect(t.control.view.error).toContain('changed');
-  t.control.acceptCurrent();
-  expect(t.control.view.snapshot.drafts[q.id].desired).toMatchObject({ input: 'private', reuse: 'application' });
+  // The all-questions form builds each command from the question as listed now.
+  const current = t.control.view.selected!;
+  await t.control.answerAll([{ question: current, body: answerCommand(current, { ...emptyEdit(), input: 'private' }, []) }]);
+  expect(t.state.writes).toHaveLength(1);
+  expect(t.state.writes[0].body).toMatchObject({ reuse: 'application', expectedRevision: 2 });
+  expect(t.state.resumes).toBe(1);
+  expect(t.control.view.notice).toBe('1 answer saved.');
 });
 
 it('focus is a command acknowledgement, not completion or a mark-read', async () => {

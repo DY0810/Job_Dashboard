@@ -6,78 +6,72 @@ import type { QuestionDetail } from '../../lib/applications/question-protocol';
 import DocumentsPane from '../profile/documents-pane';
 import type { DocumentOption } from '../profile/fields';
 import { answerCommand, DocumentSchema, eligibleDocuments, type Document } from './answer';
-import { sameQuestion, type Edit, type InboxControl, type InboxView } from './control';
+import { emptyEdit, type Edit, type InboxControl, type InboxView } from './control';
 import styles from './inbox.module.css';
 
-const scopeNames = { application: 'This application', employer: 'This employer', equivalent: 'Equivalent reviewed questions' };
 export const kindNames: Record<string, string> = {
   needs_answer: 'Answer needed', needs_document: 'Document needed', needs_login: 'Login needed',
   needs_verification: 'Verification needed', needs_policy_decision: 'Policy decision',
   provider_unavailable: 'Provider unavailable', failed: 'Failed',
 };
 
+export const answerKinds = ['needs_answer', 'needs_document', 'needs_policy_decision'];
+export const answerable = (q: QuestionDetail) => answerKinds.includes(q.descriptor.kind) && q.descriptor.field.type !== 'intervention';
+
+/** A login, verification or other non-answer blocker; answers go through AnswerAllForm. */
 export function QuestionForm({ question: q, control, view }: { question: QuestionDetail; control: InboxControl; view: InboxView }) {
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [error, setError] = useState('');
-  const [reviewed, setReviewed] = useState(false);
-  const onDocuments = useCallback((items: DocumentOption[]) => {
-    const parsed = z.array(DocumentSchema).safeParse(items);
-    if (parsed.success) { setDocuments(parsed.data); setError(''); }
-    else setError('Document response is incompatible. Refresh documents before choosing a file.');
-  }, []);
-  const draft = view.snapshot.drafts[q.id];
-  const edit = draft.desired;
-  const field = q.descriptor.field;
-  const stale = !sameQuestion(draft.question, q);
   const pending = view.snapshot.pending;
   const intervention = ['needs_login', 'needs_verification'].includes(q.descriptor.kind);
-  const answerForm = ['needs_answer', 'needs_document', 'needs_policy_decision'].includes(q.descriptor.kind) && field.type !== 'intervention';
-  function change(patch: Partial<Edit>) { setError(''); control.edit({ ...edit, ...patch }); }
-  const id = `question-${q.id}`;
   return <section aria-label="Current question">
     <div className={styles.row}><span className={styles.tag}>{kindNames[q.descriptor.kind]}</span>
-      <span>{q.resolved ? 'Resolved' : `${q.waitingCount} applications waiting`}</span>
       <span className={styles.muted}>{q.descriptor.required ? 'Required' : 'Optional'}</span>
     </div>
     <h3>{q.application.company} / {q.application.role}</h3>
-    <p id={`${id}-wording`}>{q.descriptor.originalWording}</p>
+    <p>{q.descriptor.originalWording}</p>
     <p className={styles.muted}>{q.descriptor.reason}</p>
-    <dl className={styles.detail}>
-      <dt>Source</dt><dd>{q.application.ats} / {q.application.tenant} / {q.application.requisition}</dd>
-      <dt>Meaning</dt><dd>{q.descriptor.meaning.id}</dd>
-      <dt>Scope</dt><dd>{q.descriptor.scope.employer ?? q.application.company} / {q.descriptor.scope.timeframe}
-        {q.descriptor.scope.country ? ` / ${q.descriptor.scope.country}` : ''}
-        {q.descriptor.scope.includesSubsidiaries ? ' / includes subsidiaries' : ''}
-        {q.descriptor.scope.validFrom ? ` / from ${q.descriptor.scope.validFrom.value} (${q.descriptor.scope.validFrom.precision})` : ''}
-        {q.descriptor.scope.validUntil ? ` / until ${q.descriptor.scope.validUntil.value} (${q.descriptor.scope.validUntil.precision})` : ''}
-      </dd>
-      {q.descriptor.provenance.excerpt && <><dt>Context</dt><dd>{q.descriptor.provenance.excerpt}</dd></>}
-      <dt>Schema</dt><dd>{q.descriptor.schemaVersion} / revision {q.revision}</dd>
-    </dl>
-    {intervention && <>
+    {intervention ? <>
       <p>Paired worker: {q.application.workerId}</p>
       <p className={styles.muted}>Host: {q.application.tenant} / {q.application.ats}</p>
       {q.focus && <p role="status">Browser: {q.focus.status}{q.focus.reason ? ` / ${q.focus.reason}` : ''}</p>}
       <button type="button" className={styles.button} disabled={view.busy || !!pending || q.resolved}
         onClick={() => void control.focus()}>Focus paired browser</button>
-    </>}
-    {!intervention && !answerForm && <p className={styles.muted}>Waiting for the worker or policy configuration to change.</p>}
-    {answerForm && <>
-      {stale && <div className={styles.alert} role="alert">
-        <p>The question, options, profile or policy changed. Your earlier draft is retained.</p>
-        <button type="button" className={styles.button} disabled={!!pending || view.busy}
-          onClick={() => { control.acceptCurrent(); setReviewed(false); }}>Use reviewed current question</button>
-      </div>}
-      {!q.canAnswer && <p role="status">{q.resolved ? 'Answer recorded. This question is read-only.' : 'This question is read-only.'}</p>}
-      {q.resolved && q.canAnswer && <p role="status">{draft.dirty ?
-        'This question is resolved. Your newer draft has not been sent.' : 'Answer recorded. You can save an updated answer.'}</p>}
-      <form className={styles.form} aria-label="Answer question" onSubmit={(event) => {
-        event.preventDefault();
-        try { setError(''); void control.answer(answerCommand(q, edit, documents)); }
-        catch (next) { setError(next instanceof Error ? next.message : 'Check the answer.'); }
-      }}>
-        <fieldset disabled={view.locked || !q.canAnswer}>
-          <legend>Answer</legend>
+    </> : <p className={styles.muted}>Waiting for the worker or policy configuration to change.</p>}
+  </section>;
+}
+
+/** Every open question of one application in a single form, sent with one Submit. */
+export function AnswerAllForm({ questions, control, view }: { questions: QuestionDetail[]; control: InboxControl; view: InboxView }) {
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [error, setError] = useState('');
+  const onDocuments = useCallback((items: DocumentOption[]) => {
+    const parsed = z.array(DocumentSchema).safeParse(items);
+    if (parsed.success) { setDocuments(parsed.data); setError(''); }
+    else setError('Document response is incompatible. Refresh documents before choosing a file.');
+  }, []);
+  const pending = view.snapshot.pending;
+  const editOf = (q: QuestionDetail) => view.snapshot.drafts[q.id]?.desired ?? emptyEdit();
+  const readOnly = questions.some((q) => !q.canAnswer);
+  return <form className={styles.form} aria-label="Answer questions" onSubmit={(event) => {
+    event.preventDefault();
+    setError('');
+    const answers = [];
+    for (const q of questions) {
+      try { answers.push({ question: q, body: answerCommand(q, editOf(q), documents) }); }
+      catch (next) { setError(`${q.descriptor.originalWording}: ${next instanceof Error ? next.message : 'Check the answer.'}`); return; }
+    }
+    void control.answerAll(answers);
+  }}>
+    <p className={styles.muted}>{questions.length} question{questions.length === 1 ? '' : 's'} for {questions[0].application.company} / {questions[0].application.role}.
+      Answer all of them, then submit once. Answers are used for this application only.</p>
+    {readOnly && <p role="status">Some questions are read-only until the worker or policy is available again.</p>}
+    <fieldset disabled={view.locked} className={styles.form}>
+      {questions.map((q, index) => {
+        const edit = editOf(q), field = q.descriptor.field, id = `question-${q.id}`;
+        const change = (patch: Partial<Edit>) => { setError(''); control.edit({ ...edit, ...patch }, q); };
+        return <fieldset key={q.id} disabled={!q.canAnswer} className={styles.item}>
+          <legend>{index + 1}. {q.descriptor.originalWording}</legend>
+          <p className={styles.muted}>{q.descriptor.required ? 'Required' : 'Optional'}{q.descriptor.provenance.excerpt &&
+            q.descriptor.provenance.excerpt !== q.descriptor.originalWording ? ` / ${q.descriptor.provenance.excerpt}` : ''}</p>
           {(q.canBlank || q.canDecline) && <div className={styles.field}>
             <label htmlFor={`${id}-mode`}>Response</label>
             <select id={`${id}-mode`} value={edit.mode} onChange={(event) => change({ mode: event.target.value as Edit['mode'] })}>
@@ -87,31 +81,21 @@ export function QuestionForm({ question: q, control, view }: { question: Questio
             </select>
           </div>}
           {edit.mode === 'answer' && <AnswerInput question={q} edit={edit} change={change} documents={documents} />}
-          <div className={styles.field}>
-            <label htmlFor={`${id}-reuse`}>Use answer for</label>
-            <select id={`${id}-reuse`} value={edit.reuse} onChange={(event) => change({ reuse: event.target.value as Edit['reuse'] })}>
-              {!q.allowedReuse.includes(edit.reuse) && <option value={edit.reuse} disabled>Previous scope unavailable</option>}
-              {q.allowedReuse.map((scope) => <option key={scope} value={scope}>{scopeNames[scope]}</option>)}
-            </select>
-          </div>
-        </fieldset>
-        {error && <p role="alert" className={styles.alert}>{error}</p>}
-        <div><button type="submit" className={styles.button} disabled={view.busy || !!pending || stale || !q.canAnswer || view.locked}>
-          {q.resolved ? 'Save updated answer' : 'Save answer'}
-        </button></div>
-      </form>
-      {!q.resolved && q.canAnswer && !q.descriptor.meaning.reviewId && <div className={styles.form}>
-        <label className={styles.choice}><input type="checkbox" checked={reviewed} disabled={view.busy || !!pending}
-          onChange={(event) => setReviewed(event.target.checked)} />I reviewed this exact wording, options and scope for answer reuse</label>
-        <div><button type="button" className={styles.button} disabled={!reviewed || view.busy || !!pending}
-          onClick={() => { void control.review(); setReviewed(false); }}>Confirm meaning for reuse</button></div>
-      </div>}
-      {field.type === 'document' && q.canAnswer && <div className={styles.documents}>
-        <p className={styles.muted}>Required: {field.documentKinds.join(', ')} / {field.mimeTypes.join(', ')} / up to {Math.floor(field.maxBytes / 1024)} KB</p>
-        <DocumentsPane api={control.api} ownerId={view.ownerId!} signal={control.signal} onDocuments={onDocuments} idPrefix="inbox-document" />
-      </div>}
-    </>}
-  </section>;
+        </fieldset>;
+      })}
+    </fieldset>
+    {questions.some((q) => q.descriptor.field.type === 'document' && q.canAnswer) && <div className={styles.documents}>
+      <DocumentsPane api={control.api} ownerId={view.ownerId!} signal={control.signal} onDocuments={onDocuments} idPrefix="inbox-document" />
+    </div>}
+    {error && <p role="alert" className={styles.alert}>{error}</p>}
+    {view.error && <p role="alert" className={styles.alert}>{view.error}</p>}
+    {view.notice && <p role="status">{view.notice}</p>}
+    <div className={styles.row}>
+      <button type="submit" className={styles.button} disabled={view.busy || !!pending || view.locked || readOnly}>
+        {view.busy ? 'Submitting...' : `Submit ${questions.length} answer${questions.length === 1 ? '' : 's'}`}</button>
+      {pending && <button type="button" className={styles.button} disabled={view.busy} onClick={() => void control.retry()}>Retry pending answer</button>}
+    </div>
+  </form>;
 }
 
 function AnswerInput({ question: q, edit, change, documents }: {

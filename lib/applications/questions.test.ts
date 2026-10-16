@@ -9,7 +9,7 @@ import { migratePrivateDb, openPrivateDb, type PrivateDb } from '../private-db/i
 import {
   applications, applicationEvents, documents, legacyImportPreviews, manualApplicationMarks,
   policyHeads, policyVersions, profileHeads, profileVersions, user,
-  questions, questionAnswers, questionReviews, questionInterventions, inboxReads,
+  questions, questionAnswers, questionInterventions, inboxReads,
 } from '../private-db/schema.ts';
 import { createEmptyProfile, type Profile } from './profile.ts';
 import { createEmptyPolicy, PolicySchema, type Policy } from './policy.ts';
@@ -29,7 +29,7 @@ import {
 } from './question-protocol.ts';
 import {
   answerQuestion, getInbox, getInboxStatus, getQuestion, markInboxRead, registerQuestionBatch,
-  requestQuestionFocus, reviewQuestion,
+  requestQuestionFocus,
   pollQuestionInterventions, ackQuestionIntervention,
 } from './questions.ts';
 
@@ -73,21 +73,11 @@ async function batch(f: Fixture, values: QuestionDescriptor[] = [descriptor()]) 
   const result = await registerQuestionBatch(db, f.token, f.app.id, input, options);
   return { result, input, lease, id: result.questionIds[0] };
 }
-async function answerInput(id: string, answer: AnswerValue = { type: 'boolean', value: true },
-  reuse: AnswerCommand['reuse'] = 'application'): Promise<AnswerCommand> {
+async function answerInput(id: string, answer: AnswerValue = { type: 'boolean', value: true }): Promise<AnswerCommand> {
   const q = await getQuestion(db, 'alice', id, options);
   return { ...request(), expectedRevision: q.revision, expectedProfileRevision: q.expectedProfileRevision,
     expectedPolicyRevision: q.expectedPolicyRevision, expectedScopeHash: q.expectedScopeHash, factVersions: q.factVersions,
-    reuse, answer };
-}
-async function review(id: string) {
-  return reviewQuestion(db, 'alice', id, await reviewInput(id), options);
-}
-async function reviewInput(id: string) {
-  const q = await getQuestion(db, 'alice', id, options);
-  return { ...request(), expectedRevision: q.revision, meaningId: q.descriptor.meaning.id,
-    expectedProfileRevision: q.expectedProfileRevision, expectedPolicyRevision: q.expectedPolicyRevision,
-    expectedScopeHash: q.expectedScopeHash, factVersions: q.factVersions };
+    reuse: 'application', answer };
 }
 async function editProfile(referenced: boolean) {
   vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
@@ -141,7 +131,7 @@ afterEach(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();
 });
 
-describe('question DAL atomic answers and scoped reuse', () => {
+describe('question DAL atomic answers, one application each', () => {
   it('stores a missing screening fact for its applicant and resumes only its application once', async () => {
     const a = await prepared(), b = await prepared();
     const context = { applicationId: a.app.id, profileRevision: 1, company: 'Synthetic Employer', role: 'Intern',
@@ -157,25 +147,22 @@ describe('question DAL atomic answers and scoped reuse', () => {
     expect((await appRow(b.app.id)).state).toBe('queued');
     expect((await db.select().from(questionAnswers)).length).toBe(1);
   });
-  it('resolves exact reviewed waiters, waits for every blocker, reuses future batches, and replays after reopening', async () => {
+  it('keeps each answer with its own application, waits for every blocker, and replays after reopening', async () => {
     const a = await prepared(), first = await batch(a);
     const b = await prepared(), second = await batch(b, [descriptor(), descriptor({ key: 'other', meaning: { id: 'other', reviewId: null },
       originalWording: 'Do you have another restriction?' })]);
-    const unrelated = await prepared(), third = await batch(unrelated, [descriptor({ originalWording: 'Have you ever worked these hours?' })]);
     const foreign = await prepared('bob'), bob = await batch(foreign);
-    expect((await getQuestion(db, 'alice', first.id, options)).allowedReuse).toEqual(['application']);
-    const reviewed = await review(first.id);
-    expect(reviewed).toMatchObject({ canAnswer: true, waitingCount: 2 });
-    expect(reviewed.allowedReuse).toContain('equivalent');
-    const input = await answerInput(first.id, { type: 'boolean', value: true }, 'equivalent');
+    expect(await getQuestion(db, 'alice', first.id, options)).toMatchObject({ allowedReuse: ['application'], waitingCount: 1 });
+    const input = await answerInput(first.id, { type: 'boolean', value: true });
     const result = await answerQuestion(db, 'alice', first.id, input, options);
-    expect(result.resolvedQuestionIds.sort()).toEqual([first.id, second.id].sort());
+    // The same wording on another application is that application's own question.
+    expect(result.resolvedQuestionIds).toEqual([first.id]);
     expect(result.resumedApplicationIds).toEqual([a.app.id]);
     expect(await appRow(a.app.id)).toMatchObject({ state: 'screening', leaseUntil: null, checkpoint: { stage: 'screening', sequence: 2 } });
-    expect(await appRow(b.app.id)).toMatchObject({ state: 'needs_answer' });
-    expect((await qRow(third.id)).resolvedAt).toBeNull();
+    expect((await qRow(second.id)).resolvedAt).toBeNull();
     expect((await qRow(bob.id)).resolvedAt).toBeNull();
-    expect((await getQuestion(db, 'alice', first.id, options)).canAnswer).toBe(true);
+    await answerQuestion(db, 'alice', second.id, await answerInput(second.id), options);
+    expect(await appRow(b.app.id)).toMatchObject({ state: 'needs_answer' });
     const remaining = second.result.questionIds[1];
     const last = await answerQuestion(db, 'alice', remaining, await answerInput(remaining), options);
     expect(last.resumedApplicationIds).toEqual([b.app.id]);
@@ -185,30 +172,33 @@ describe('question DAL atomic answers and scoped reuse', () => {
     expect(await db.select().from(questionAnswers)).toHaveLength(count);
     await expect(answerQuestion(db, 'alice', first.id, { ...input, answer: { type: 'boolean', value: false } }, options))
       .rejects.toMatchObject({ status: 409 });
+    // A later application asking the same question asks the applicant again.
     const future = await prepared('alice', 'another-employer'), matching = await batch(future);
-    expect(await qRow(matching.id)).toMatchObject({ answerId: result.answerId, resolvedAt: now });
-    expect(await appRow(future.app.id)).toMatchObject({ state: 'screening', leaseUntil: null });
-    expect(await db.select().from(questionReviews)).toHaveLength(1);
+    expect(await qRow(matching.id)).toMatchObject({ answerId: null, resolvedAt: null });
+    expect(await appRow(future.app.id)).toMatchObject({ state: 'needs_answer' });
   });
 
-  it.each(['application', 'employer'] as const)('never broadens explicit %s reuse', async reuse => {
+
+  it('refuses saving an answer for other applications', async () => {
     const a = await prepared(), first = await batch(a);
-    const b = await prepared(), second = await batch(b);
-    const c = await prepared('alice', 'different'), third = await batch(c);
-    await review(first.id);
-    await answerQuestion(db, 'alice', first.id, await answerInput(first.id, { type: 'boolean', value: false }, reuse), options);
-    expect((await qRow(second.id)).resolvedAt !== null).toBe(reuse === 'employer');
-    expect((await qRow(third.id)).resolvedAt).toBeNull();
-    const future = await prepared(), fourth = await batch(future);
-    expect((await qRow(fourth.id)).resolvedAt !== null).toBe(reuse === 'employer');
+    const input = await answerInput(first.id);
+    for (const reuse of ['employer', 'equivalent'])
+      await expect(answerQuestion(db, 'alice', first.id, { ...input, reuse } as never, options)).rejects.toBeDefined();
+    expect(await db.select().from(questionAnswers)).toHaveLength(0);
+    // A worker cannot claim a reviewed meaning either.
+    const b = await prepared(), lease = (await pollWorker(db, b.token, { protocolVersion: 1 }, options)).lease!;
+    await expect(registerQuestionBatch(db, b.token, b.app.id, { ...first.input, eventId: randomUUID(),
+      expectedRevision: lease.revision, fence: lease.fence,
+      questions: [descriptor({ meaning: { id: 'stated-hours', reviewId: randomUUID() } })],
+    }, options)).rejects.toMatchObject({ status: 409 });
   });
+
 
   it.each(['submitting', 'submission_unknown', 'submitted', 'failed', 'skipped', 'cancelled'] as const)(
     'an explicit newer answer fences unsent work while preserving %s history', async state => {
       const a = await prepared(), first = await batch(a), b = await prepared(), second = await batch(b);
-      await review(first.id);
       const original = await answerQuestion(db, 'alice', first.id,
-        await answerInput(first.id, { type: 'boolean', value: true }, 'equivalent'), options);
+        await answerInput(first.id, { type: 'boolean', value: true }), options);
       const lease = (await pollWorker(db, a.token, { protocolVersion: 1 }, options)).lease!;
       await db.update(applications).set({ state: 'ready', checkpoint: { stage: 'ready', sequence: 8 } }).where(eq(applications.id, a.app.id));
       await db.update(applications).set({ state }).where(eq(applications.id, b.app.id));
@@ -216,7 +206,7 @@ describe('question DAL atomic answers and scoped reuse', () => {
       expect((await getQuestion(db, 'alice', second.id, options)).canAnswer).toBe(false);
       await expect(answerQuestion(db, 'alice', second.id, await answerInput(second.id), options)).rejects.toMatchObject({ status: 409 });
       const updated = await answerQuestion(db, 'alice', first.id,
-        await answerInput(first.id, { type: 'boolean', value: false }, 'equivalent'), options);
+        await answerInput(first.id, { type: 'boolean', value: false }), options);
       expect(updated.answerId).not.toBe(original.answerId);
       expect(updated.resolvedQuestionIds).toEqual([first.id]);
       expect(await appRow(a.app.id)).toMatchObject({ state: 'screening', leaseUntil: null, checkpoint: { stage: 'screening', sequence: 9 } });
@@ -228,7 +218,7 @@ describe('question DAL atomic answers and scoped reuse', () => {
       expect((await db.select().from(questionAnswers).where(eq(questionAnswers.id, original.answerId)))[0].value)
         .toEqual({ type: 'boolean', value: true });
       const future = await prepared('alice', 'future'), later = await batch(future);
-      expect((await qRow(later.id)).answerId).toBe(updated.answerId);
+      expect((await qRow(later.id)).answerId).toBeNull();
       await expect(db.update(questionAnswers).set({ value: { type: 'boolean', value: false } })).rejects.toThrow();
       await expect(db.delete(questionAnswers)).rejects.toThrow();
     });
@@ -267,28 +257,6 @@ describe('question DAL atomic answers and scoped reuse', () => {
         expect((await getQuestion(db, 'alice', q.id, options)).canAnswer).toBe(false);
     });
 
-  it.each(['wording', 'options', 'precision', 'timeframe', 'scope-version', 'schema-version', 'facts', 'sensitive'] as const)(
-    'does not reuse after changed %s', async change => {
-      const numeric: QuestionField = { type: 'number', allowBlank: false, declineValue: null, min: 0, max: 100,
-        units: 'hours', precision: 1, integer: false };
-      const original = descriptor({ field: numeric });
-      const a = await prepared(), q = await batch(a, [original]); await review(q.id);
-      await answerQuestion(db, 'alice', q.id,
-        await answerInput(q.id, { type: 'number', value: 20, units: 'hours', precision: 1 }, 'equivalent'), options);
-      const changed = structuredClone(original);
-      if (change === 'wording') changed.originalWording += ' ever?';
-      if (change === 'precision') changed.field = { ...numeric, precision: 2 };
-      if (change === 'options') changed.field = { type: 'select', allowBlank: false, declineValue: null, units: null, precision: null,
-        options: [{ value: '20', label: 'Twenty or more' }], minSelections: 1, maxSelections: 1 };
-      if (change === 'timeframe') changed.scope.timeframe = 'ever';
-      if (change === 'scope-version') changed.scope.version++;
-      if (change === 'schema-version') changed.schemaVersion++;
-      if (change === 'facts') changed.factIds = [profile.availability.hoursDuringClasses.id];
-      if (change === 'sensitive') changed.sensitive = true;
-      const b = await prepared(), later = await batch(b, [changed]);
-      expect((await qRow(later.id)).resolvedAt).toBeNull();
-      expect((await getQuestion(db, 'alice', later.id, options)).allowedReuse).toEqual(['application']);
-    });
 
   it('serializes competing answers, rolls back failed resume and retains one row per field', async () => {
     const a = await prepared(), q = await batch(a), input = await answerInput(q.id);
@@ -309,49 +277,7 @@ describe('question DAL atomic answers and scoped reuse', () => {
     await expect(answerQuestion(db, 'alice', q.id, { ...input, ...request() }, options)).rejects.toMatchObject({ status: 409 });
   });
 
-  it('requires owner review, refuses forged review IDs and retains application and employer scope limits', async () => {
-    const a = await prepared(), original = descriptor();
-    const first = await batch(a, [original]);
-    await expect(answerQuestion(db, 'alice', first.id,
-      await answerInput(first.id, { type: 'boolean', value: false }, 'equivalent'), options)).rejects.toMatchObject({ status: 409 });
-    await expect(reviewQuestion(db, 'bob', first.id, await reviewInput(first.id), options))
-      .rejects.toMatchObject({ status: 404 });
-    await expect(reviewQuestion(db, 'alice', first.id, { ...await reviewInput(first.id), meaningId: 'similar-but-not-exact' }, options))
-      .rejects.toMatchObject({ status: 409 });
-    const q = await review(first.id);
-    expect(q.descriptor.meaning.reviewId).not.toBeNull();
-    const b = await prepared();
-    const lease = (await pollWorker(db, b.token, { protocolVersion: 1 }, options)).lease!;
-    await expect(registerQuestionBatch(db, b.token, b.app.id, { ...first.input, eventId: randomUUID(),
-      expectedRevision: lease.revision, fence: lease.fence,
-      questions: [descriptor({ meaning: { id: 'changed', reviewId: q.descriptor.meaning.reviewId } })],
-    }, options)).rejects.toMatchObject({ status: 409 });
-    const c = await prepared('alice', 'scoped');
-    const appOnly = await batch(c, [descriptor({ scope: { ...original.scope, kind: 'application', applicationId: c.app.id } })]);
-    expect((await review(appOnly.id)).allowedReuse).toEqual(['application']);
-    await answerQuestion(db, 'alice', first.id, await answerInput(first.id, { type: 'boolean', value: true }, 'equivalent'), options);
-    const d = await prepared('alice', 'scoped-employer');
-    const employer = await batch(d, [descriptor({ scope: { ...original.scope, kind: 'employer', employer: 'Different Company' } })]);
-    expect((await qRow(employer.id)).resolvedAt).toBeNull();
-  });
 
-  it.each(['profile', 'policy', 'expired'] as const)('future batches do not reuse answers after %s changed', async change => {
-    // A profile change matters only through a fact the answer depends on.
-    const q = descriptor(change === 'profile' ? { factIds: [profile.availability.hoursDuringClasses.id] } : {});
-    if (change === 'expired') q.scope.validUntil = { value: '2026-09-21', precision: 'day' };
-    const a = await prepared(), first = await batch(a, [q]); await review(first.id);
-    await answerQuestion(db, 'alice', first.id,
-      await answerInput(first.id, { type: 'boolean', value: true }, 'equivalent'), options);
-    if (change === 'profile') {
-      const next = structuredClone(profile); next.availability.hoursDuringClasses.version++;
-      await setProfile(next);
-    }
-    if (change === 'policy') await setPolicy({ actions: ['read_jobs', 'fill_forms'] });
-    if (change === 'expired') now += 86_400_000;
-    const b = await prepared(), later = await batch(b, [q]);
-    expect((await qRow(later.id)).resolvedAt).toBeNull();
-    if (change === 'expired') expect((await getQuestion(db, 'alice', later.id, options)).canAnswer).toBe(false);
-  });
 
   it.each(['lease', 'profile', 'scope', 'fact', 'checkpoint', 'owner'] as const)(
     'rejects invalid %s registration with no question or notification', async change => {
@@ -397,24 +323,15 @@ describe('question DAL atomic answers and scoped reuse', () => {
     expect((await answerQuestion(db, 'alice', q.id, await answerInput(q.id), options)).resumedApplicationIds).toEqual([a.app.id]);
   });
 
-  it.each([
-    { referenced: true, reviewed: true }, { referenced: false, reviewed: true },
-    { referenced: true, reviewed: false }, { referenced: false, reviewed: false },
-  ])('recovers a waiting question after a real profile save ($referenced, review: $reviewed)', async ({ referenced, reviewed }) => {
+  it.each([true, false])('recovers a waiting question after a real profile save (referenced: %s)', async referenced => {
     const a = await prepared(), q = await batch(a, [descriptor({ factIds: [profile.availability.hoursDuringClasses.id] })]);
-    const staleAnswer = await answerInput(q.id), staleReview = await reviewInput(q.id);
+    const staleAnswer = await answerInput(q.id);
     await editProfile(referenced);
     await expect(answerQuestion(db, 'alice', q.id, staleAnswer, options)).rejects.toMatchObject({ status: 409 });
-    await expect(reviewQuestion(db, 'alice', q.id, staleReview, options)).rejects.toMatchObject({ status: 409 });
     const current = await getQuestion(db, 'alice', q.id, options);
     expect(current).toMatchObject({ canAnswer: true, expectedProfileRevision: 2,
       factVersions: [{ id: profile.availability.hoursDuringClasses.id, version: referenced ? 2 : 1 }] });
     expect(await appRow(a.app.id)).toMatchObject({ state: 'needs_answer', leaseUntil: null });
-    if (reviewed) {
-      await review(q.id);
-      expect((await qRow(q.id)).resolvedAt).toBeNull();
-      expect(await db.select().from(questionAnswers)).toHaveLength(0);
-    }
     const result = await answerQuestion(db, 'alice', q.id, await answerInput(q.id), options);
     expect(result.resumedApplicationIds).toEqual([a.app.id]);
     expect(await qRow(q.id)).toMatchObject({ profileRevision: 2, factVersions: current.factVersions });
@@ -455,28 +372,25 @@ describe('question DAL atomic answers and scoped reuse', () => {
     expect((await qRow(first.id)).resolvedAt).toBeNull();
     expect((await getInboxStatus(db, 'alice', options)).unresolved).toBe(1);
     // When the worker saw the dropdown's choices, the question lists them so the next answer is an exact one.
-    const choices = formQuestions(contextFor(a), [college], ['University of California, Los Angeles', 'Other']).questions;
+    const choices = formQuestions(contextFor(a), [{ ...college, options: ['University of California, Los Angeles', 'Other'] }]).questions;
     expect(choices[0].field).toMatchObject({ type: 'select', minSelections: 1, maxSelections: 1,
       options: [{ value: 'University of California, Los Angeles', label: 'University of California, Los Angeles' }, { value: 'Other', label: 'Other' }] });
   });
 
-  it('current-profile answer updates fence active work without reusing stale facts or rewriting submitted answers', async () => {
+  it('a revised answer fences active work without touching another application or rewriting submitted answers', async () => {
     const descriptorWithFact = descriptor({ factIds: [profile.availability.hoursDuringClasses.id] });
     const a = await prepared(), first = await batch(a, [descriptorWithFact]);
     const b = await prepared(), second = await batch(b, [descriptorWithFact]);
-    await review(first.id);
-    const original = await answerQuestion(db, 'alice', first.id,
-      await answerInput(first.id, { type: 'boolean', value: true }, 'equivalent'), options);
+    const original = await answerQuestion(db, 'alice', first.id, await answerInput(first.id, { type: 'boolean', value: true }), options);
     await db.update(applications).set({ state: 'submitted' }).where(eq(applications.id, b.app.id));
     const historical = await qRow(second.id), oldAnswer = (await db.select().from(questionAnswers))[0];
     const lease = (await pollWorker(db, a.token, { protocolVersion: 1 }, options)).lease!;
     await editProfile(true);
     const c = await prepared('alice', 'new'), third = await batch(c, [descriptorWithFact]);
-    expect((await qRow(third.id)).resolvedAt).toBeNull();
-    const revised = await answerQuestion(db, 'alice', first.id,
-      await answerInput(first.id, { type: 'boolean', value: false }, 'equivalent'), options);
+    const revised = await answerQuestion(db, 'alice', first.id, await answerInput(first.id, { type: 'boolean', value: false }), options);
     expect(revised.answerId).not.toBe(original.answerId);
-    expect(revised.resolvedQuestionIds.sort()).toEqual([first.id, third.id].sort());
+    expect(revised.resolvedQuestionIds).toEqual([first.id]);
+    expect((await qRow(third.id)).resolvedAt).toBeNull();
     expect(await appRow(a.app.id)).toMatchObject({ state: 'screening', leaseUntil: null });
     expect((await appRow(a.app.id)).fence).toBeGreaterThan(lease.fence);
     expect(await qRow(second.id)).toEqual(historical);
@@ -522,16 +436,15 @@ describe('typed validation, optional questions and inbox receipts', () => {
     expect(await db.select().from(questionAnswers)).toHaveLength(0);
   });
 
-  it('requires fill permission and honors sensitive ask-each policy without wider reuse', async () => {
+  it('requires fill permission and keeps sensitive answers to their application', async () => {
     await setPolicy({ actions: ['read_jobs'] });
     const a = await prepared(), q = await batch(a);
     expect((await getQuestion(db, 'alice', q.id, options)).canAnswer).toBe(false);
     await expect(answerQuestion(db, 'alice', q.id, await answerInput(q.id), options)).rejects.toMatchObject({ status: 409 });
     await setPolicy({ actions: ['read_jobs', 'fill_forms'], disclosure: 'ask_each_sensitive' });
     const b = await prepared(), sensitive = await batch(b, [descriptor({ sensitive: true })]);
-    expect((await review(sensitive.id)).allowedReuse).toEqual(['application']);
-    await expect(answerQuestion(db, 'alice', sensitive.id,
-      await answerInput(sensitive.id, { type: 'boolean', value: true }, 'equivalent'), options)).rejects.toMatchObject({ status: 409 });
+    expect((await getQuestion(db, 'alice', sensitive.id, options)).allowedReuse).toEqual(['application']);
+    expect((await answerQuestion(db, 'alice', sensitive.id, await answerInput(sensitive.id), options)).resolvedQuestionIds).toEqual([sensitive.id]);
   });
 
   it('requires owned, available, policy-permitted document version and exact hash', async () => {

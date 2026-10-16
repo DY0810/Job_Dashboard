@@ -53,6 +53,20 @@ export class AtsError extends Error {
   constructor(code: string, message = code, options?: string[]) { super(message); this.code = code; this.options = options; }
 }
 
+/** Every field the form rejected an answer for, so the applicant answers them all at once. */
+export class AtsAnswerErrors extends AtsError {
+  readonly errors: AtsError[];
+  constructor(errors: AtsError[]) { super(errors[0].code, errors[0].message, errors[0].options); this.errors = errors; }
+}
+export const answerError = (error: unknown): error is AtsError => error instanceof AtsError && /REQUIRED_ANSWER|ANSWER_/.test(error.code);
+export async function fillEach<T>(fields: readonly T[], fill: (field: T) => Promise<void>) {
+  const errors: AtsError[] = [];
+  for (const field of fields) {
+    try { await fill(field); } catch (error) { if (answerError(error)) errors.push(error); else throw error; }
+  }
+  if (errors.length) throw new AtsAnswerErrors(errors);
+}
+
 export type AtsAdapter = {
   readonly id: AtsIdentity['ats'];
   /** The vendor's hosted application hostnames; a ready form there opens visibly for the applicant's human check. */

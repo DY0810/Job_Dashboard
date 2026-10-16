@@ -1,6 +1,6 @@
 import {
   AnswerCommandSchema, AnswerResultSchema, FocusCommandSchema, FocusResultSchema,
-  InboxPageSchema, QuestionDetailSchema, ReadCommandSchema, ReviewCommandSchema,
+  InboxPageSchema, QuestionDetailSchema, ReadCommandSchema,
   type QuestionDetail, type QuestionField,
 } from '../../lib/applications/question-protocol';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
@@ -102,12 +102,6 @@ export function fixture(initial = question()) {
         }
         if (state.answerMode === 'lost') throw new Error('Synthetic lost acknowledgement');
         return reply(answer);
-      }
-      if (path.endsWith('/review')) {
-        ReviewCommandSchema.parse(body);
-        state.q = { ...state.q, revision: state.q.revision + 1, allowedReuse: ['application', 'employer', 'equivalent'],
-          descriptor: { ...state.q.descriptor, meaning: { ...state.q.descriptor.meaning, reviewId: id() } } };
-        return reply(QuestionDetailSchema.parse(state.q));
       }
       if (path.endsWith('/focus')) {
         FocusCommandSchema.parse(body);

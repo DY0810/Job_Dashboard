@@ -80,11 +80,18 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
   if (portfolio) answers.portfolio = portfolio;
   const github = factValue<string>(profile.identity.github);
   if (github) answers.github = github;
+  // Any confirmed voluntary answer goes to the form; one the form does not offer is asked with its options.
   const pronouns = factValue<string>(profile.voluntary.pronouns);
-  if (pronouns === 'he/him/his') answers.voluntary_pronouns = pronouns;
-  if (factValue<string>(profile.voluntary.gender) === 'Man') answers.voluntary_gender = 'Male';
-  if (factValue<string[]>(profile.voluntary.raceEthnicity)?.includes('Not Hispanic or Latino')) answers.voluntary_hispanic = 'No';
-  if (factValue<string>(profile.voluntary.veteran) === 'Never a veteran') answers.voluntary_veteran = 'I am not a protected veteran';
+  if (pronouns) answers.voluntary_pronouns = pronouns;
+  const gender = factValue<string>(profile.voluntary.gender);
+  if (gender) answers.voluntary_gender = ({ man: 'Male', woman: 'Female' } as Record<string, string>)[label(gender)] ?? gender;
+  const race = factValue<string[]>(profile.voluntary.raceEthnicity);
+  if (race?.includes('Not Hispanic or Latino')) answers.voluntary_hispanic = 'No';
+  else if (race?.includes('Hispanic or Latino')) answers.voluntary_hispanic = 'Yes';
+  const veteran = factValue<string>(profile.voluntary.veteran);
+  if (veteran) answers.voluntary_veteran = /^(never|not) a veteran$/.test(label(veteran)) ? 'I am not a protected veteran' : veteran;
+  const disability = factValue<string>(profile.voluntary.disability);
+  if (disability) answers.voluntary_disability = disability;
   const school = profile.education.schools.find(item => factValue<string>(item.school));
   if (school) {
     const name = factValue<string>(school.school);
@@ -97,6 +104,7 @@ export function applicationAnswers(profile: Awaited<ReturnType<typeof getProfile
     if (level) answers['degree--0'] = level;
     if (major) answers['discipline--0'] = major;
     if (start) answers['start-year--0'] = start.value.slice(0, 4);
+    if (start && start.value.length >= 7) answers.start_month = start.value.slice(0, 7);
     if (graduation) answers['end-year--0'] = graduation.value.slice(0, 4);
     if (factValue<string>(school.status) === 'in_progress' && graduation?.precision === 'month') {
       answers.expected_graduation_month = graduation.value;
