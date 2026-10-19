@@ -197,6 +197,24 @@ describe('question DAL atomic answers, one application each', () => {
   });
 
 
+  it("a retried role reuses the answers given to its earlier attempt instead of asking again", async () => {
+    const scoped = (applicationId: string) => descriptor({ key: 'onsite', originalWording: 'Can you work on site?',
+      meaning: { id: 'onsite', reviewId: null }, scope: { ...descriptor().scope, kind: 'application', applicationId } });
+    const a = await prepared(), first = await batch(a, [scoped(a.app.id)]);
+    const answered = await answerQuestion(db, 'alice', first.id, await answerInput(first.id), options);
+    await db.update(applications).set({ state: 'cancelled', reasonCode: 'restarted', leaseUntil: null, leaseCheckedAt: null })
+      .where(eq(applications.id, a.app.id));
+    // Discovery owns real successors; the synthetic fixture has no snapshot for the guard to check.
+    await db.run(sql`drop trigger private_application_successor_guard`);
+    const retryId = randomUUID(), previous = await appRow(a.app.id);
+    await db.insert(applications).values({ id: retryId, ownerId: 'alice', runId: previous.runId, workerId: previous.workerId,
+      ats: previous.ats, tenant: previous.tenant, requisition: previous.requisition, attempt: 2, previousApplicationId: previous.id,
+      availableAt: now, createdAt: now });
+    const retry = await batch({ ...a, app: { ...a.app, id: retryId } }, [scoped(retryId)]);
+    expect(await qRow(retry.id)).toMatchObject({ answerId: answered.answerId });
+    expect((await qRow(retry.id)).resolvedAt).not.toBeNull();
+    expect(await appRow(retryId)).toMatchObject({ state: 'screening', reasonCode: null });
+  });
   it('refuses saving an answer for other applications', async () => {
     const a = await prepared(), first = await batch(a);
     const input = await answerInput(first.id);
