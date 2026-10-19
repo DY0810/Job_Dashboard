@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { screenApplication, screeningQuestions, formQuestions } from './screening.ts';
 import { QuestionDispatchSchema } from './question-client.ts';
 import { AtsAnswerErrors, AtsError, fillEach, formQuestionKey } from './ats/protocol.ts';
+import { createStageDispatch } from './main.ts';
 
 const facts = {
   countries: { state: 'confirmed', values: ['US'] }, degreeLevels: { state: 'confirmed', values: ['bachelor'] },
@@ -23,6 +24,19 @@ test('graduation and pay screening use their own confirmed facts', () => {
   assert.deepEqual(screenApplication({ ...facts, expectedGraduation: { state: 'unknown', month: null } }, requirements).reasons, ['graduation_unknown']);
   assert.equal(screenApplication({ ...facts, pay: { state: 'confirmed', amount: 25, currency: 'USD', period: 'hour' } }, requirements).status, 'needs_question');
   assert.deepEqual(screenApplication({ ...facts, pay: { state: 'confirmed', amount: 25, currency: 'USD', period: 'hour' } }, { ...requirements, paid: false }).reasons, ['unpaid_below_preference']);
+});
+
+// 2026-10-19: Glean (graduation window Fall 2027 to Spring 2028) and Figma (PhD only) were skipped as plain
+// "screening_ineligible", so DY's cards said "skipped" with no reason and offered a Retry that would skip again.
+test('a screening skip records which requirement the applicant does not meet', async () => {
+  const signal = new AbortController().signal;
+  const skip = async (blocking) => createStageDispatch({ applicationContext: async () => ({
+    identity: { ats: 'greenhouse', tenant: 'gleanwork', requisition: '4595665005' }, facts, requirements: { ...requirements, ...blocking },
+  }) }, '/nonexistent', signal)({ applicationId: crypto.randomUUID(), runId: crypto.randomUUID(), fence: 1, revision: 1, state: 'screening', checkpoint: null },
+  { check() {} }, { signal, advance() {}, generate: async () => { throw new Error('unused'); } });
+  const graduation = { graduationWindow: { earliest: '2027-09', latest: '2028-05' } };
+  assert.deepEqual(await skip(graduation), { state: 'skipped', reasonCode: 'graduation_ineligible' });
+  assert.deepEqual(await skip({ ...graduation, degreeLevels: ['doctorate'] }), { state: 'skipped', reasonCode: 'degree_ineligible,graduation_ineligible' });
 });
 
 test('missing screening facts produce application-scoped durable question descriptors', () => {

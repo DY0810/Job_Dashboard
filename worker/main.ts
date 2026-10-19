@@ -179,7 +179,9 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
     const identity = AtsIdentitySchema.parse(applicationContext.identity);
     const requirement = screenApplication(applicationContext.facts, applicationContext.requirements);
     if (lease.state === "screening") {
-      if (requirement.status === "blocked") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
+      // Keep which requirements failed (as many whole codes as fit the 80-character reason) so the card can say why.
+      if (requirement.status === "blocked") return { state: "skipped" as const,
+        reasonCode: requirement.reasons.filter((_, i, all) => all.slice(0, i + 1).join(",").length <= 80).join(",") || "screening_ineligible" };
       if (requirement.status === "needs_question") return screeningQuestions(applicationContext, requirement.reasons);
       return { state: "tailoring" as const, reasonCode: "screened" };
     }

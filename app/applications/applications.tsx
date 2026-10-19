@@ -142,6 +142,18 @@ const documentHelp: Record<string, string> = {
   cover_letter_unavailable: 'This form asks for a cover letter, and your Auto Apply policy does not allow them. Allow cover letters in Profile, then retry.',
   document_tailoring_unavailable: 'Workie could not tailor your resume for this role. Retry to try again.',
 };
+/** Why screening skipped a role: the posting's requirement the profile does not meet. */
+const skipHelp: Record<string, string> = {
+  country_ineligible: 'the role is in a country your profile does not list',
+  degree_ineligible: 'the posting asks for a degree level your profile does not list',
+  major_ineligible: 'the posting asks for a major your profile does not list',
+  term_ineligible: 'the internship term is not one you are available for',
+  graduation_ineligible: 'your expected graduation is outside the graduation dates the posting accepts',
+  work_authorization_ineligible: 'the posting needs work authorization your profile says you do not have',
+  unpaid_below_preference: 'the role is unpaid and your profile sets a minimum pay',
+  screening_ineligible: 'your profile does not meet one of the posting\'s requirements',
+};
+const skipReasons = (app: App) => app.state === 'skipped' ? (app.reasonCode ?? '').split(',').flatMap((code) => skipHelp[code] ?? []) : [];
 /** The upload that clears each hold; the worker attaches a transcript to any required file field it fits. */
 const uploadKind: Record<string, 'transcript' | 'resume_master'> = {
   transcript_unavailable: 'transcript', required_document_unavailable: 'transcript', resume_required: 'resume_master',
@@ -403,6 +415,7 @@ export default function Applications() {
               ? `Waiting its turn. It starts on its own, up to ${caps.perEmployerCap} per employer and ${caps.dailyApplicationCap} a day.`
               : approval ? 'Form filled. Review the answers, resume and cover letter, then approve to submit.'
               : app.state === 'needs_document' && documentHelp[app.reasonCode ?? ''] ? documentHelp[app.reasonCode!]
+              : skipReasons(app).length ? `Skipped: ${skipReasons(app).join('; ')}. If your profile is wrong, fix it, then retry.`
               : (app.reasonCode && !isTerminalState(app.state)) || app.state === 'failed' ? humanize(app.reasonCode ?? 'failed') : null;
             const show = (kind: Dialog['kind']) => () => setDialog({ kind, id: app.id, open: true });
             return <li key={app.id} className={styles.card}>
@@ -416,7 +429,7 @@ export default function Applications() {
               {questionsHere.length ? <div className={styles.issue}>{questionsHere.map((question) =>
                 <p key={question.id}>{question.descriptor.originalWording.split('\n\n')[0]}</p>)}</div>
                 : detail && <p className={styles.issue}>{detail}
-                  {app.reasonCode === 'cover_letter_unavailable' && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}</p>}
+                  {(app.reasonCode === 'cover_letter_unavailable' || skipReasons(app).length > 0) && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}</p>}
               <div className={styles.actions}>
                 {!archived && !['submitting', 'submission_unknown'].includes(app.state) && <Command label="Archive" busyLabel="Archiving..."
                   confirm={isTerminalState(app.state) ? 'Archive this application?' : 'Archive this application? It is still live, so this also cancels it.'}
