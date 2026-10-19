@@ -74,8 +74,8 @@ dialog .issue { margin-bottom: 12px; }
 .step { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--fg); animation: live-pulse 1.6s ease-in-out infinite; }
 @keyframes live-pulse { 50% { opacity: .25; } }
-.screen { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: contain; object-position: top; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }
-.screenEmpty { display: grid; place-items: center; aspect-ratio: 16 / 10; padding: 16px; border: 1px dashed var(--rule); border-radius: 4px; color: var(--fg-dim); font-size: 12px; text-align: center; }
+.screen { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; object-position: top; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }
+.screenEmpty { display: grid; place-items: center; aspect-ratio: 16 / 9; padding: 16px; border: 1px dashed var(--rule); border-radius: 4px; color: var(--fg-dim); font-size: 12px; text-align: center; }
 .review { display: grid; gap: 8px; margin: 8px 0 12px; overflow-wrap: anywhere; }
 .review > div { display: grid; grid-template-columns: minmax(120px, 2fr) 3fr; gap: 4px 12px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
 .review > div:last-child { border-bottom: 0; }
