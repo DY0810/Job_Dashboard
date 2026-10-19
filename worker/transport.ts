@@ -10,7 +10,7 @@ import {
   PairRequestSchema, PairResponseSchema, PollRequestSchema, PollResponseSchema,
   HeartbeatRequestSchema, EventRequestSchema, EventResponseSchema, WORKER_PROTOCOL_VERSION, POLL_TIMEOUT_MS,
   SubmissionIntentSchema, SubmissionIntentResponseSchema, ReceiptCommandSchema, ReceiptResponseSchema,
-  SubmittedLetterSchema, SubmittedLetterAckSchema,
+  SubmittedLetterSchema, SubmittedLetterAckSchema, LiveFrameSchema, LiveFrameAckSchema,
 } from "../lib/applications/worker-protocol.ts";
 import type { PairRequest, HeartbeatRequest, EventRequest } from "../lib/applications/worker-protocol.ts";
 import {
@@ -187,6 +187,11 @@ export function workerTransport(options: {
     letter: (applicationId: string, input: z.input<typeof SubmittedLetterSchema>, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       return post(`/api/worker/applications/${applicationId}/letter`, SubmittedLetterSchema.parse(input), SubmittedLetterAckSchema, signal, true);
+    },
+    // Not a checkpoint: a lost frame is replaced by the next one, so it is never retried.
+    live: (applicationId: string, input: z.input<typeof LiveFrameSchema>, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
+      return post(`/api/worker/applications/${applicationId}/live`, LiveFrameSchema.parse(input), LiveFrameAckSchema, signal);
     },
     questionBatch: (applicationId: string, input: QuestionBatch, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");

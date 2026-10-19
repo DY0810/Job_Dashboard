@@ -13,9 +13,9 @@ import {
   withWorker, workerTransaction, WorkerError, type ApplicationRow, type WorkerOptions, type WorkerTx,
 } from './worker-store.ts';
 import {
-  AnswerCommandSchema, FocusCommandSchema, InboxQuerySchema, QuestionBatchSchema, QuestionDetailSchema,
+  AnswerBatchSchema, AnswerCommandSchema, FocusCommandSchema, InboxQuerySchema, QuestionBatchSchema, QuestionDetailSchema,
   ReadCommandSchema, InterventionAckSchema, validQuestionAnswer,
-  type AnswerCommand, type AnswerResult, type AnswerValue, type FocusCommand, type FocusResult,
+  type AnswerBatch, type AnswerCommand, type AnswerResult, type AnswerValue, type FocusCommand, type FocusResult,
   type InboxPage, type InboxStatus, type QuestionBatch, type QuestionBatchResult, type QuestionDescriptor,
   type QuestionDetail, type ReadCommand, type InterventionAck, type InterventionPage,
 } from './question-protocol.ts';
@@ -261,41 +261,55 @@ async function reschedule(tx: WorkerTx, app: ApplicationRow, ctx: Context): Prom
 }
 
 export async function answerQuestion(db: PrivateDb, ownerId: string, id: string, input: AnswerCommand, options: WorkerOptions = {}): Promise<AnswerResult> {
-  const command = AnswerCommandSchema.parse(input), scope = `question:answer:${id}`;
+  const command = AnswerCommandSchema.parse(input);
+  return workerTransaction(db, tx => answerIn(tx, ownerId, id, command, options));
+}
+
+/** One transaction for a whole form, so a rejected answer saves none and one request counts once against the rate limit. */
+export async function answerQuestions(db: PrivateDb, ownerId: string, input: AnswerBatch, options: WorkerOptions = {}) {
+  const batch = AnswerBatchSchema.parse(input);
+  if (new Set(batch.answers.map(item => item.questionId)).size !== batch.answers.length) fail(400, 'INVALID_INPUT', 'Each question is answered once.');
   return workerTransaction(db, async tx => {
-    const { row, app } = await ownedQuestion(tx, ownerId, id);
-    const replay = await replayCommand<AnswerResult>(tx, ownerId, scope, command);
-    if (replay) return { ...replay, replayed: true };
-    const ctx = await context(tx, ownerId, options), facts = factVersions(row.descriptor, ctx);
-    if (command.expectedRevision !== row.revision || command.expectedProfileRevision !== ctx.profile.revision ||
-        command.expectedPolicyRevision !== ctx.policy.revision || command.expectedScopeHash !== row.scopeHash ||
-        hashValue(command.factVersions) !== hashValue(facts) || !await canAnswer(tx, row, app, ctx) ||
-        command.reuse !== 'application' || !await answerValid(tx, row, command.answer, ctx)) fail();
-    const answer = one(await tx.insert(questionAnswers).values({
-      id: randomUUID(), ownerId, applicationId: app.id, questionId: row.id, semanticHash: row.semanticHash, scopeHash: row.scopeHash,
-      meaningReviewId: null, profileRevision: ctx.profile.revision, policyRevision: ctx.policy.revision,
-      factVersions: facts, reuse: command.reuse, value: command.answer, descriptor: row.descriptor,
-      provenance: { source: 'user', confirmedAt: ctx.now }, createdAt: ctx.now,
-    }).returning());
-    const candidates = await tx.select({ question: questions, app: applications }).from(questions)
-      .innerJoin(applications, and(eq(applications.ownerId, questions.ownerId), eq(applications.id, questions.applicationId)))
-      .where(and(eq(questions.ownerId, ownerId), eq(questions.semanticHash, row.semanticHash), eq(questions.active, true)))
-      .orderBy(questions.createdAt, questions.id);
-    const resolvedQuestionIds: string[] = [], changedApps = new Map<string, ApplicationRow>();
-    for (const candidate of candidates) {
-      if (!sameApplication(answer, candidate.question) || !await canAnswer(tx, candidate.question, candidate.app, ctx)) continue;
-      one(await tx.update(questions).set({ answerId: answer.id, resolvedAt: ctx.now, revision: candidate.question.revision + 1,
-        profileRevision: ctx.profile.revision, factVersions: facts })
-        .where(and(qScope(ownerId, candidate.question.id), eq(questions.revision, candidate.question.revision))).returning());
-      resolvedQuestionIds.push(candidate.question.id); changedApps.set(candidate.app.id, candidate.app);
-    }
-    if (!resolvedQuestionIds.includes(id)) fail();
-    const resumedApplicationIds: string[] = [];
-    for (const app of changedApps.values()) if (await reschedule(tx, app, ctx)) resumedApplicationIds.push(app.id);
-    const result: AnswerResult = { ownerId, answerId: answer.id, questionId: id, resolvedQuestionIds, resumedApplicationIds, replayed: false };
-    await saveCommand(tx, ownerId, scope, command, result, ctx.now);
-    return result;
+    const results: AnswerResult[] = [];
+    for (const { questionId, command } of batch.answers) results.push(await answerIn(tx, ownerId, questionId, command, options));
+    return { ownerId, results };
   });
+}
+
+async function answerIn(tx: WorkerTx, ownerId: string, id: string, command: AnswerCommand, options: WorkerOptions): Promise<AnswerResult> {
+  const scope = `question:answer:${id}`;
+  const { row, app } = await ownedQuestion(tx, ownerId, id);
+  const replay = await replayCommand<AnswerResult>(tx, ownerId, scope, command);
+  if (replay) return { ...replay, replayed: true };
+  const ctx = await context(tx, ownerId, options), facts = factVersions(row.descriptor, ctx);
+  if (command.expectedRevision !== row.revision || command.expectedProfileRevision !== ctx.profile.revision ||
+      command.expectedPolicyRevision !== ctx.policy.revision || command.expectedScopeHash !== row.scopeHash ||
+      hashValue(command.factVersions) !== hashValue(facts) || !await canAnswer(tx, row, app, ctx) ||
+      command.reuse !== 'application' || !await answerValid(tx, row, command.answer, ctx)) fail();
+  const answer = one(await tx.insert(questionAnswers).values({
+    id: randomUUID(), ownerId, applicationId: app.id, questionId: row.id, semanticHash: row.semanticHash, scopeHash: row.scopeHash,
+    meaningReviewId: null, profileRevision: ctx.profile.revision, policyRevision: ctx.policy.revision,
+    factVersions: facts, reuse: command.reuse, value: command.answer, descriptor: row.descriptor,
+    provenance: { source: 'user', confirmedAt: ctx.now }, createdAt: ctx.now,
+  }).returning());
+  const candidates = await tx.select({ question: questions, app: applications }).from(questions)
+    .innerJoin(applications, and(eq(applications.ownerId, questions.ownerId), eq(applications.id, questions.applicationId)))
+    .where(and(eq(questions.ownerId, ownerId), eq(questions.semanticHash, row.semanticHash), eq(questions.active, true)))
+    .orderBy(questions.createdAt, questions.id);
+  const resolvedQuestionIds: string[] = [], changedApps = new Map<string, ApplicationRow>();
+  for (const candidate of candidates) {
+    if (!sameApplication(answer, candidate.question) || !await canAnswer(tx, candidate.question, candidate.app, ctx)) continue;
+    one(await tx.update(questions).set({ answerId: answer.id, resolvedAt: ctx.now, revision: candidate.question.revision + 1,
+      profileRevision: ctx.profile.revision, factVersions: facts })
+      .where(and(qScope(ownerId, candidate.question.id), eq(questions.revision, candidate.question.revision))).returning());
+    resolvedQuestionIds.push(candidate.question.id); changedApps.set(candidate.app.id, candidate.app);
+  }
+  if (!resolvedQuestionIds.includes(id)) fail();
+  const resumedApplicationIds: string[] = [];
+  for (const app of changedApps.values()) if (await reschedule(tx, app, ctx)) resumedApplicationIds.push(app.id);
+  const result: AnswerResult = { ownerId, answerId: answer.id, questionId: id, resolvedQuestionIds, resumedApplicationIds, replayed: false };
+  await saveCommand(tx, ownerId, scope, command, result, ctx.now);
+  return result;
 }
 
 async function reusableAnswer(tx: WorkerTx, row: QuestionRow, app: ApplicationRow, ctx: Context) {

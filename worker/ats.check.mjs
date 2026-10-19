@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime, openApplicationTab } from './browser.ts';
 import { greenhouse, hostedFields, hostedTitle } from './ats/greenhouse.ts';
-import { lever } from './ats/lever.ts';
+import { lever, matchOption } from './ats/lever.ts';
 import { fillField, formQuestionKey as leverQuestionKey, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
 import { AtsIdentitySchema, AtsObservationSchema } from './ats/protocol.ts';
@@ -603,4 +603,14 @@ test('applications open as tabs of one window, each reaching only its own origin
     await first?.context.close(); a.close(); b.close();
     await rm(userDataDir, { recursive: true, force: true });
   }
+});
+
+test('a long Lever list takes the one option a typed name matches', () => {
+  const schools = ['Stanford University', 'University of Southern California', 'University of California, Los Angeles', 'Other (School Not Listed)'];
+  assert.equal(matchOption(schools, 'Stanford University'), 'Stanford University');
+  assert.equal(matchOption(schools, '  stanford  university '), 'Stanford University');
+  assert.equal(matchOption(schools, 'Stanford'), 'Stanford University');
+  assert.equal(matchOption(schools, 'other'), 'Other (School Not Listed)');
+  assert.equal(matchOption(schools, 'University of'), undefined);
+  assert.equal(matchOption(schools, ''), undefined);
 });

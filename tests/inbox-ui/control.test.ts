@@ -86,7 +86,7 @@ it('account changes abort owner operations and remove all plaintext, including p
   expect(t.control.view.inbox?.items).toEqual([]);
 });
 
-it('changed schema/scope fences a single draft; answering all sends each listed question once', async () => {
+it('changed schema/scope fences a single draft; answering all sends the listed questions in one request', async () => {
   const q = question();
   const t = setup(fixture(q)); await ready(t);
   t.control.edit({ ...emptyEdit(), input: 'private' });
@@ -99,9 +99,10 @@ it('changed schema/scope fences a single draft; answering all sends each listed 
   const current = t.control.view.selected!;
   await t.control.answerAll([{ question: current, body: answerCommand(current, { ...emptyEdit(), input: 'private' }, []) }]);
   expect(t.state.writes).toHaveLength(1);
-  expect(t.state.writes[0].body).toMatchObject({ reuse: 'application', expectedRevision: 2 });
+  expect(t.state.writes[0]).toMatchObject({ path: '/api/questions/answers',
+    body: { answers: [{ questionId: current.id, command: { reuse: 'application', expectedRevision: 2 } }] } });
   expect(t.state.resumes).toBe(1);
-  expect(t.control.view.notice).toBe('1 answer saved.');
+  expect(t.control.view.notice).toBe('1 answer saved. Workie continues this application.');
 });
 
 it('focus is a command acknowledgement, not completion or a mark-read', async () => {

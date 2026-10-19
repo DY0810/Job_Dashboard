@@ -1,5 +1,5 @@
 import {
-  AnswerCommandSchema, AnswerResultSchema, FocusCommandSchema, FocusResultSchema,
+  AnswerBatchSchema, AnswerCommandSchema, AnswerResultSchema, FocusCommandSchema, FocusResultSchema,
   InboxPageSchema, QuestionDetailSchema, ReadCommandSchema,
   type QuestionDetail, type QuestionField,
 } from '../../lib/applications/question-protocol';
@@ -102,6 +102,14 @@ export function fixture(initial = question()) {
         }
         if (state.answerMode === 'lost') throw new Error('Synthetic lost acknowledgement');
         return reply(answer);
+      }
+      if (path === '/api/questions/answers') {
+        const { answers: batch } = AnswerBatchSchema.parse(body);
+        if (batch.some(({ command }) => command.expectedRevision !== state.q.revision)) return reply({ code: 'STALE_QUESTION' }, 409);
+        state.resumes++;
+        state.q = { ...state.q, resolved: true, waitingCount: 0, revision: state.q.revision + 1 };
+        return reply({ ownerId: state.owner, results: batch.map(({ questionId }) => AnswerResultSchema.parse({ ownerId: state.owner,
+          answerId: id(), questionId, resolvedQuestionIds: [questionId], resumedApplicationIds: [state.q.application.id], replayed: false })) });
       }
       if (path.endsWith('/focus')) {
         FocusCommandSchema.parse(body);

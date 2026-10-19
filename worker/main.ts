@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { credentials, nativeCredentialBackend, type CredentialBackend, type WorkerScope } from "./credentials.ts";
@@ -10,6 +10,7 @@ import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, S
 import { readMaskedGrant, readMaskedSecret } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
 import { openApplicationTab, type BrowserRuntime } from "./browser.ts";
+import { liveView } from "./live.ts";
 import { greenhouse } from "./ats/greenhouse.ts";
 import { lever } from "./ats/lever.ts";
 import { ashby } from "./ats/ashby.ts";
@@ -245,6 +246,9 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
     let runtime: BrowserRuntime | undefined;
     let application: AtsApplication | null = null;
     let submissionStarted = false;
+    let live: ReturnType<typeof liveView> | undefined;
+    // What the applicant reviews before approving: each field Workie filled and its value.
+    let review: { label: string; value: string }[] | undefined;
     try {
       const localDocuments: Record<string, string> = {};
       for (const [key, document] of Object.entries(applicationContext.documents)) {
@@ -275,6 +279,8 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         // and type an emailed code or solve a captcha the form asks for at submit.
         allowLoopback: /^127\./.test(hostname), headless: false,
       });
+      live = liveView(async frame => control.live(lease.applicationId, { protocolVersion: 1, ...frame }, signal), runtime);
+      live.step(lease.state === "filling" ? "Reading the form" : "Opening the approved application");
       const observed = await adapter.observe(runtime, application, signal);
       const currentApplication = application;
       for (const field of observed.fields) {
@@ -318,12 +324,14 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         if (!applicationContext.coverLetterAllowed || !context.generate || !localDocuments.resumeMaster) {
           return { state: "needs_document" as const, reasonCode: "cover_letter_unavailable" };
         }
+        live.step("Writing the cover letter");
         letter = await writeLetter();
         if (!applicant) throw new AtsError('REQUIRED_ANSWER_MISSING', 'first_name');
         const path = join(workDirectory, 'cover_letter.pdf');
         await writeFile(path, await renderCoverLetter(letter, applicant), { mode: 0o600, flag: 'wx' });
         application.documents.cover_letter = path;
       }
+      live.step(lease.state === "filling" ? "Filling the form" : "Filling the form again and submitting it");
       if (lease.state === "filling") {
         const result = await fillAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
           requirements: applicationContext.requirements, signal, runId: lease.runId });
@@ -331,7 +339,13 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
         if (letter) await control.letter(lease.applicationId, { protocolVersion: 1, introduction: letter.introduction,
           body: letter.body.map(item => item.text), conclusion: letter.conclusion, companyParagraph: letter.companyParagraph }, signal);
-        // Nothing is submitted until the applicant reviews the resume and letter and approves it.
+        review = observed.fields.flatMap(field => {
+          const value = field.kind === 'file' ? currentApplication.documents[field.key] && basename(currentApplication.documents[field.key])
+            : adapter.answer(currentApplication, field);
+          const text = Array.isArray(value) ? value.join(', ') : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : value;
+          return text ? [{ label: field.label.slice(0, 1000), value: text.slice(0, 4000) }] : [];
+        }).slice(0, 64);
+        // Nothing is submitted until the applicant reviews the filled form, resume and letter and approves it.
         return { state: "needs_policy_decision" as const, reasonCode: SUBMIT_APPROVAL };
       }
       const result = await runAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
@@ -377,6 +391,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
       return { state: "retryable_failure" as const, reasonCode: atsFailureReason(error) };
     } finally {
+      await live?.stop(review ? "Filled. Waiting for your approval" : "Workie left this application", review, !!review);
       if (runtime) await runtime.close().catch(() => {});
       await rm(workDirectory, { recursive: true, force: true });
     }

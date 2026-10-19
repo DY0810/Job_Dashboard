@@ -122,7 +122,7 @@ export const policyCommands = sqliteTable('private_policy_command', {
 
 export { documents, documentUploadGrants } from './document-schema.ts';
 export { applicationArtifacts } from './artifact-schema.ts';
-export { workerPairings, workers, applicationRuns, applications, applicationEvents, workerCommands } from './worker-schema.ts';
+export { workerPairings, workers, applicationRuns, applications, applicationEvents, applicationLive, workerCommands } from './worker-schema.ts';
 export { applicationSubmissions, applicationReceipts } from './submission-schema.ts';
 export { discoveryManifests, discoveryTargets, legacyImportPreviews, manualApplicationMarks } from './discovery-schema.ts';
 export { questions, questionAnswers, questionReviews, questionInterventions, inboxReads } from './question-schema.ts';

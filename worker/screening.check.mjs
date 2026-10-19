@@ -35,6 +35,15 @@ test('missing screening facts produce application-scoped durable question descri
   assert(result.questions.every(q => q.scope.applicationId === applicationId && q.required));
 });
 
+test('yes/no screening questions are choices with the values application-context reads back', () => {
+  const result = QuestionDispatchSchema.parse(screeningQuestions({ applicationId: crypto.randomUUID(), profileRevision: 2, company: 'Fixture', role: 'Intern',
+    identity: { ats: 'greenhouse', tenant: 'fixture', requisition: '123' }, requirements: { ...requirements, terms: ['Summer 2027', 'Summer 2027'] } },
+    ['employer_pay_unknown', 'work_authorization_unknown', 'term_unknown', 'graduation_unknown']));
+  const values = result.questions.map(q => q.field.type === 'select' ? q.field.options.map(o => o.value) : q.field.type);
+  assert.deepEqual(values, [['accept'], ['authorized', 'not_authorized'], ['Summer 2027'], 'text']);
+  assert(result.questions.every(q => !/\bEnter (accept|authorized)\b/.test(q.originalWording)));
+});
+
 test('unknown employer fields become scoped inbox questions with exact wording', () => {
   const applicationId = crypto.randomUUID();
   const context = { applicationId, profileRevision: 2, company: 'Fixture', role: 'Intern',
@@ -47,6 +56,11 @@ test('unknown employer fields become scoped inbox questions with exact wording',
   assert.equal(batch.questions[0].originalWording, 'Are you a U.S. citizen?');
   assert.equal(batch.questions[0].scope.applicationId, applicationId);
   assert.equal(batch.questions[0].sensitive, true);
+  // A heading-only label shows the text under it; the key stays the label's, so saved answers still match.
+  const described = QuestionDispatchSchema.parse(formQuestions(context, [{ key: 'question_9', label: 'Applicant Arbitration Agreement',
+    description: 'I acknowledge that I have read the Arbitration Agreement.', kind: 'checkbox', required: true }]));
+  assert.equal(described.questions[0].originalWording, 'Applicant Arbitration Agreement\n\nI acknowledge that I have read the Arbitration Agreement.');
+  assert.equal(described.questions[0].key, formQuestionKey({ key: 'question_9', label: 'Applicant Arbitration Agreement' }));
 });
 
 test('a fill keeps going past rejected answers so the whole form is asked at once', async () => {

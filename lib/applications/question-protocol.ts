@@ -94,6 +94,11 @@ export const AnswerResultSchema = z.strictObject({
   ownerId: z.string(), answerId: uuid, questionId: uuid, resolvedQuestionIds: z.array(uuid),
   resumedApplicationIds: z.array(uuid), replayed: z.boolean(),
 });
+/** Every answer of one application form in one request: saved together or not at all. */
+export const AnswerBatchSchema = z.strictObject({
+  answers: z.array(z.strictObject({ questionId: uuid, command: AnswerCommandSchema })).min(1).max(64),
+});
+export const AnswerBatchResultSchema = z.strictObject({ ownerId: z.string(), results: z.array(AnswerResultSchema).max(64) });
 export const FocusResultSchema = z.strictObject({
   id: uuid, questionId: uuid, applicationId: uuid, workerId: uuid, revision,
   status: z.enum(['pending', 'focused', 'unavailable', 'observed']), reason: z.string().max(300).nullable(),
@@ -132,6 +137,7 @@ export type QuestionField = z.infer<typeof QuestionFieldSchema>;
 export type AnswerValue = z.infer<typeof AnswerValueSchema>;
 export type AnswerCommand = z.infer<typeof AnswerCommandSchema>;
 export type AnswerResult = z.infer<typeof AnswerResultSchema>;
+export type AnswerBatch = z.infer<typeof AnswerBatchSchema>;
 export type FocusCommand = z.infer<typeof FocusCommandSchema>;
 export type FocusResult = z.infer<typeof FocusResultSchema>;
 export type ReadCommand = z.infer<typeof ReadCommandSchema>;

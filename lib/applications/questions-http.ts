@@ -7,11 +7,11 @@ import { WorkerError, withWorker } from './worker-store.ts';
 import { limitWorkerRequests } from './worker-http.ts';
 import * as p from './question-protocol.ts';
 import {
-  getInbox, getInboxStatus, getQuestion, markInboxRead, answerQuestion,
+  getInbox, getInboxStatus, getQuestion, markInboxRead, answerQuestion, answerQuestions,
   requestQuestionFocus, registerQuestionBatch, pollQuestionInterventions, ackQuestionIntervention,
 } from './questions.ts';
 
-type BrowserAction = 'inbox' | 'status' | 'read' | 'question' | 'answer' | 'focus';
+type BrowserAction = 'inbox' | 'status' | 'read' | 'question' | 'answer' | 'answers' | 'focus';
 function checkPath(request: Request, id?: string, pagination = false) {
   const query = new URL(request.url).searchParams;
   if ((id !== undefined && !z.uuid().safeParse(id).success) ||
@@ -43,6 +43,8 @@ export function questionsEndpoint(request: Request, action: BrowserAction, id?: 
           .parse(await markInboxRead(db, ownerId, await readPrivateJson(request, p.ReadCommandSchema)));
         case 'answer': return p.AnswerResultSchema.parse(await answerQuestion(db, ownerId, id!,
           await readPrivateJson(request, p.AnswerCommandSchema), options));
+        case 'answers': return p.AnswerBatchResultSchema.parse(await answerQuestions(db, ownerId,
+          await readPrivateJson(request, p.AnswerBatchSchema), options));
         case 'focus': return p.FocusResultSchema.parse(await requestQuestionFocus(db, ownerId, id!,
           await readPrivateJson(request, p.FocusCommandSchema), options));
       }

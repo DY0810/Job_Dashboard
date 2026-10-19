@@ -115,6 +115,15 @@ const paragraph = z.string().trim().min(1).max(900);
 const letterText = { introduction: paragraph, body: z.array(paragraph).min(1).max(4), conclusion: paragraph, companyParagraph: paragraph };
 export const SubmittedLetterSchema = z.strictObject({ ...protocol, ...letterText });
 export const SubmittedLetterAckSchema = z.strictObject({ applicationId: uuid, stored: z.literal(true) });
+// A screenshot of the application tab while the worker works it; omitted keeps the last one, null drops it.
+const liveFields = z.array(z.strictObject({ label: z.string().min(1).max(1000), value: z.string().max(4000) })).max(64);
+const liveImage = z.string().max(120_000).regex(/^[A-Za-z0-9+/]*={0,2}$/);
+export const LiveFrameSchema = z.strictObject({ ...protocol, step: z.string().trim().min(1).max(200),
+  image: liveImage.nullable().optional(), fields: liveFields.optional() });
+export const LiveFrameAckSchema = z.strictObject({ applicationId: uuid, stored: z.literal(true) });
+export const LiveListSchema = z.strictObject({ ownerId: z.string().min(1), live: z.array(z.strictObject({
+  applicationId: uuid, step: z.string(), image: liveImage.nullable(), fields: liveFields.nullable(), updatedAt: timestamp,
+})).max(500) });
 export const MaterialsSchema = z.strictObject({ ownerId: z.string().min(1), materials: z.array(z.strictObject({
   applicationId: uuid,
   resume: z.strictObject({ documentId: uuid, mime: z.string(), createdAt: timestamp,

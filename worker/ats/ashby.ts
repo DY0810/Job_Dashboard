@@ -53,7 +53,11 @@ async function formFields(page: Page): Promise<AtsField[]> {
       has('.ashby-application-form-input-radio-group') ? 'radio' : has('.ashby-application-form-input-checkbox-group') ? (group.length === 1 ? 'checkbox' : 'multi') :
         has('select') ? 'select' : has('.ashby-application-form-input-autocomplete') ? 'combobox' : has('.ashby-application-form-input-date') ? 'date' :
           has('input[type=email]') ? 'email' : has('input.ashby-application-form-input-text, textarea.ashby-application-form-input-textarea') ? 'text' : null;
-    return { path: label.htmlFor, label: (label.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 1000), kind,
+    const title = (label.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 1000);
+    // A heading-only title ("Applicant Arbitration Agreement Acknowledgement") keeps its question in the description and checkbox sentence.
+    const description = [...labels('.ashby-application-form-question-description'), ...(kind === 'checkbox' ? group : [])]
+      .map(text => text.replace(/\s+/g, ' ').trim()).filter(text => text && text !== title).join(' ').slice(0, 2000);
+    return { path: label.htmlFor, label: title, description, kind,
       required: /(^|\s)_required_/.test(label.className),
       options: kind === 'yesno' ? ['Yes', 'No'] : kind === 'radio' ? labels('.ashby-application-form-input-radio-group-option-label') : kind === 'multi' ? group :
         kind === 'select' ? [...box.querySelectorAll('option')].filter(option => !option.disabled).map(option => option.label.trim()) : undefined };
@@ -63,7 +67,7 @@ async function formFields(page: Page): Promise<AtsField[]> {
   return raw.filter(item => item.kind).map(item => ({
     // The worker attaches the tailored resume under "resume"; Ashby's own cover letter path is already "cover_letter".
     key: item.path === '_systemfield_resume' ? 'resume' : `${fieldKeyFor(item.path)}${item.kind === 'multi' ? '[]' : ''}`,
-    label: item.label || item.path, name: item.path, required: item.required,
+    label: item.label || item.path, name: item.path, required: item.required, ...(item.description ? { description: item.description } : {}),
     kind: (item.kind === 'yesno' ? 'radio' : item.kind === 'multi' ? 'select' : item.kind) as AtsField['kind'],
     options: item.options?.length && item.options.length <= 100 && item.options.every(option => option && option.length <= 300) ? item.options : undefined,
   }));

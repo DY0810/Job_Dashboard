@@ -28,7 +28,7 @@ import {
   type InterventionAck,
 } from './question-protocol.ts';
 import {
-  answerQuestion, getInbox, getInboxStatus, getQuestion, markInboxRead, registerQuestionBatch,
+  answerQuestion, answerQuestions, getInbox, getInboxStatus, getQuestion, markInboxRead, registerQuestionBatch,
   requestQuestionFocus,
   pollQuestionInterventions, ackQuestionIntervention,
 } from './questions.ts';
@@ -146,6 +146,23 @@ describe('question DAL atomic answers, one application each', () => {
     expect(answer.resumedApplicationIds).toEqual([a.app.id]);
     expect((await appRow(b.app.id)).state).toBe('queued');
     expect((await db.select().from(questionAnswers)).length).toBe(1);
+  });
+  it('saves a whole form in one request, or none of it when one answer is rejected', async () => {
+    const a = await prepared(), form = await batch(a, [descriptor(), descriptor({ key: 'other', meaning: { id: 'other', reviewId: null },
+      originalWording: 'Do you have another restriction?' })]);
+    const [first, second] = form.result.questionIds;
+    const stale = { ...await answerInput(second), expectedRevision: 99 };
+    await expect(answerQuestions(db, 'alice', { answers: [
+      { questionId: first, command: await answerInput(first) }, { questionId: second, command: stale },
+    ] }, options)).rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(questionAnswers)).toHaveLength(0);
+    expect((await qRow(first)).resolvedAt).toBeNull();
+    const saved = await answerQuestions(db, 'alice', { answers: [
+      { questionId: first, command: await answerInput(first) }, { questionId: second, command: await answerInput(second) },
+    ] }, options);
+    expect(saved.results.map(result => result.questionId)).toEqual([first, second]);
+    expect(saved.results[1].resumedApplicationIds).toEqual([a.app.id]);
+    expect(await appRow(a.app.id)).toMatchObject({ state: 'screening' });
   });
   it('keeps each answer with its own application, waits for every blocker, and replays after reopening', async () => {
     const a = await prepared(), first = await batch(a);
