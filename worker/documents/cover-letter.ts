@@ -8,7 +8,7 @@ export async function renderCoverLetter(letter: Letter, applicant: string): Prom
   const page = document.addPage([612, 792]);
   const font = await document.embedFont(StandardFonts.Helvetica);
   const paragraphs = ['Dear Hiring Manager,', letter.introduction, ...letter.body.map(item => item.text),
-    letter.conclusion, letter.companyParagraph, `Sincerely,\n${applicant}`];
+    letter.companyParagraph, letter.conclusion, `Sincerely,\n${applicant}`];
   let y = 738;
   for (const paragraph of paragraphs) {
     let line = '';

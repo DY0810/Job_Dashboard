@@ -85,7 +85,7 @@ function MaterialsPanel({ item }: { item: Material }) {
       </details>}
     </div>}
     {letter && <details><summary className={styles.muted}>Cover letter</summary>
-      <pre className={styles.preview}>{['Dear Hiring Manager,', letter.introduction, ...letter.body, letter.conclusion, letter.companyParagraph].join('\n\n')}</pre>
+      <pre className={styles.preview}>{['Dear Hiring Manager,', letter.introduction, ...letter.body, letter.companyParagraph, letter.conclusion].join('\n\n')}</pre>
     </details>}
   </>;
 }

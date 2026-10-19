@@ -75,7 +75,7 @@ export async function createArtifactIntent(
     const documentId = randomUUID(), artifactId = randomUUID(), version = Number(latest?.version ?? 0) + 1;
     const suffix = source.mime === 'application/pdf' ? '.pdf' : '.docx';
     const templateRole = typeof manifest.template.role === 'string' ? manifest.template.role : null;
-    const name = `application-${applicationId.slice(0, 8)}-${source.name.replace(/[\/\x00-\x1f\x7f]/g, '-').slice(0, 155)}${suffix}`;
+    const name = `application-${applicationId.slice(0, 8)}-${source.name.replace(/\.(?:pdf|docx)$/i, '').replace(/[\/\x00-\x1f\x7f]/g, '-').slice(0, 155)}${suffix}`;
     const [document] = await tx.insert(documents).values({
       id: documentId, ownerId: worker.ownerId, kind: 'resume_artifact', name, role: templateRole,
       parentId: source.id, masterId: source.masterId, version, objectKey: `documents/${documentId}`,

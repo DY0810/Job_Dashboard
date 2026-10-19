@@ -45,7 +45,7 @@ export function ApplicantSwitcher() {
       <select className="select min-w-0 max-w-48" aria-label="Applicant profile" value={active.ownerId} disabled={busy}
         onChange={(event) => void select(event.target.value)}>
         {applicants.map((applicant) => <option value={applicant.ownerId} key={applicant.ownerId}>
-          {applicant.name || applicant.email} ({applicant.email})
+          {applicant.name || applicant.email}
         </option>)}
       </select>
       <ChevronDown size={12} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />

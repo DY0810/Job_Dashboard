@@ -95,6 +95,9 @@ describe('application artifact protocol', () => {
     const first = await createArtifactIntent(db, token, applicationId, input, options);
     const replay = await createArtifactIntent(db, token, applicationId, input, options);
     expect(replay).toMatchObject({ artifactId: first.artifactId, documentId: first.documentId, replayed: true });
+    // The source is "master.pdf"; the artifact keeps one extension, not "master.pdf.pdf".
+    expect(await db.all(sql`select name from private_document where id = ${first.documentId}`))
+      .toEqual([{ name: `application-${applicationId.slice(0, 8)}-master.pdf` }]);
     const headers = { 'content-type': PDF, 'x-workie-protocol-version': '1', 'x-workie-request-id': input.requestId,
       'x-workie-fence': '1', 'x-workie-revision': '1' };
     const upload = () => uploadArtifact(db, token, applicationId, first.artifactId,

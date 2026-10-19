@@ -99,12 +99,35 @@ test("structured redaction preserves surrounding job text while masking sensitiv
   assert(prompt.includes("Maintain [redacted] tooling"));
   assert(prompt.includes("make 1 to 3 substantive edits"));
   assert.equal(requests[0].format.properties.edits.maxItems, 3);
-  assert.equal(requests[0].format.properties.edits.items.properties.replacement.maxLength, 40);
+  assert.equal(requests[0].format.properties.edits.items.anyOf[0].properties.replacement.maxLength, 40);
   replacement = "X".repeat(41);
   await assert.rejects(provider.generate({ task: "tailor", role: "Software Engineer", jobSummary: "Build resume tooling for internal teams.",
     evidence: [{ id: evidenceId, excerpt: "Resume experience is useful; keep this requirement." }],
     anchors: [{ id: "bullet-1", text: "Maintain resume tooling", maxChars: 40 }] }),
   error => error instanceof ProviderError && error.diagnostic === "edit_overflow");
+});
+
+test("each resume edit keeps its own line's limit, and a line cut off at its limit stays as it was", async () => {
+  const evidenceId = "00000000-0000-4000-8000-000000000023";
+  const requests = [];
+  const provider = createStructuredProvider({ scope, approvedOwnerId: scope.ownerId, providerId: LOCAL_OLLAMA_PROVIDER_ID,
+    protocol: "ollama_native", locality: "local", endpoint: LOCAL_OLLAMA_ENDPOINT, model: "synthetic-local", policy: structuredLocalPolicy,
+    pricing: structuredLocalPricing, ledger: await structuredLedgerFor("per-line"), fetchImpl: async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ model: "synthetic-local", message: { role: "assistant", content: JSON.stringify({
+        task: "tailor", confidence: 0.9, edits: [
+          { anchorId: "long", replacement: "Built a faster search service while preserving legitimate user", evidenceIds: [evidenceId] },
+          { anchorId: "short", replacement: "Wrote integration tests", evidenceIds: [evidenceId] },
+        ] }) }, done: true, prompt_eval_count: 20, eval_count: 12 }), { status: 200 });
+    } });
+  const result = await provider.generate({ task: "tailor", role: "Software Engineer", jobSummary: "Build search services.",
+    evidence: [{ id: evidenceId, excerpt: "Built a search service." }],
+    anchors: [{ id: "long", text: "Built a search service that answers quickly for every visitor.", maxChars: 62 },
+      { id: "short", text: "Wrote unit tests for the parser code.", maxChars: 37 }] });
+  assert.deepEqual(requests[0].format.properties.edits.items.anyOf.map((item) => [item.properties.anchorId.const, item.properties.replacement.maxLength]),
+    [["long", 62], ["short", 37]]);
+  // The "long" replacement is exactly 62 characters: cut off at its limit, so only the "short" edit is used.
+  assert.deepEqual(result.edits.map((edit) => edit.anchorId), ["short"]);
 });
 
 test('cover letters cite resume evidence, fit one page, and reject unsupported content', async () => {
@@ -122,6 +145,9 @@ test('cover letters cite resume evidence, fit one page, and reject unsupported c
     evidence: [{ id, excerpt: 'Built reliable TypeScript services.' }] };
   const result = await provider.generate(input);
   assert.equal((await PDFDocument.load(await renderCoverLetter(result, 'Test Applicant'))).getPageCount(), 1);
+  // The letter already says "Dear Hiring Manager,", so the model's own greeting is dropped.
+  letter.introduction = `Dear Example Hiring Team, ${letter.introduction}`;
+  assert.equal((await provider.generate(input)).introduction, result.introduction);
   letter.body[0].text = 'I built reliable TypeScript services — and learned to test each change against real requirements.';
   const proofread = await provider.generate(input);
   assert(!JSON.stringify(proofread).includes('—'));
