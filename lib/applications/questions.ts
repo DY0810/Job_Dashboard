@@ -121,6 +121,17 @@ async function ownedQuestion(tx: WorkerTx, ownerId: string, id: string) {
 // An answer belongs to the one application it was given for; answers are never saved for other applications.
 const sameApplication = (answer: Pick<AnswerRow, 'reuse' | 'applicationId'>, row: QuestionRow) =>
   answer.reuse === 'application' && answer.applicationId === row.applicationId;
+// A retry is a new attempt of the same role: the same question asked there reuses the answer given to an earlier attempt.
+const roleHash = (q: QuestionDescriptor) => semanticHash({ ...q, scope: { ...q.scope, applicationId: null } });
+async function attemptIds(tx: WorkerTx, app: ApplicationRow) {
+  const ids = [app.id];
+  for (let previous = app.previousApplicationId; previous && ids.length < 50;) {
+    const [row] = await tx.select().from(applications).where(appScope(app.ownerId, previous));
+    if (!row || row.ats !== app.ats || row.tenant !== app.tenant || row.requisition !== app.requisition) break;
+    ids.push(row.id); previous = row.previousApplicationId;
+  }
+  return ids;
+}
 async function answerValid(tx: WorkerTx, row: QuestionRow, value: AnswerValue, ctx: Context) {
   if (!validQuestionAnswer(row.descriptor, value, allowOptional(row.descriptor, ctx))) return false;
   if (value.type !== 'document') return true;
@@ -336,9 +347,10 @@ async function reusableAnswer(tx: WorkerTx, row: QuestionRow, app: ApplicationRo
   if (!fresh(row, ctx) || !await canAnswer(tx, row, app, ctx)) return;
   // rowid breaks same-millisecond ties by committed insertion order, not random UUID order.
   const answers = await tx.select().from(questionAnswers).where(and(eq(questionAnswers.ownerId, ctx.ownerId),
-    eq(questionAnswers.semanticHash, row.semanticHash))).orderBy(desc(sql`rowid`));
+    inArray(questionAnswers.applicationId, await attemptIds(tx, app)))).orderBy(desc(sql`rowid`));
+  const hash = roleHash(row.descriptor);
   for (const answer of answers) {
-    if (!sameApplication(answer, row)) continue;
+    if (answer.reuse !== 'application' || roleHash(answer.descriptor) !== hash) continue;
     if (answer.policyRevision !== ctx.policy.revision ||
         hashValue(answer.factVersions) !== hashValue(row.factVersions) || !await answerValid(tx, row, answer.value, ctx)) return;
     return answer;
