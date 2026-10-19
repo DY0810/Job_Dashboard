@@ -25,19 +25,20 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  // Saves only work on the household origin (BETTER_AUTH_URL): the same-origin check refuses every other host.
+  // So production pages opened on a *.vercel.app alias move there. Left alone: /api (workers call it on the host
+  // they paired with) and this deployment's own URL (VERCEL_URL), so a past deployment can still be opened.
+  async redirects() {
+    const origin = process.env.VERCEL_ENV === 'production' && process.env.BETTER_AUTH_URL ? new URL(process.env.BETTER_AUTH_URL) : null;
+    const stay = [origin?.hostname, process.env.VERCEL_URL].flatMap((host) => host ? [{ type: 'host' as const, value: host.replaceAll('.', '\\.') }] : []);
+    return origin ? [{ source: '/:path((?!api(?:/|$)).*)', missing: stay, destination: `${origin.origin}/:path`, permanent: false }] : [];
+  },
   // Every view is force-dynamic (filters live in the URL), so without this the CDN never
   // caches and every load — including the ~1s cold start — hits the function. The corpus
   // refreshes every 30 minutes; serving a view up to 5 minutes old, and a stale one while
   // the next renders, costs nothing visible. Vercel-CDN-Cache-Control is the edge-only
   // header: Next keeps setting its own browser Cache-Control (no-store), so back/forward
   // and reloads in the browser stay fresh — only the CDN holds a copy.
-  // Saves only work on the household origin (BETTER_AUTH_URL): the same-origin check refuses every other host.
-  // So production pages opened on a *.vercel.app alias move there. /api stays: workers call it on the host they paired with.
-  async redirects() {
-    const origin = process.env.VERCEL_ENV === 'production' && process.env.BETTER_AUTH_URL ? new URL(process.env.BETTER_AUTH_URL) : null;
-    return origin ? [{ source: '/:path((?!api/).*)', missing: [{ type: 'host' as const, value: origin.hostname }],
-      destination: `${origin.origin}/:path`, permanent: false }] : [];
-  },
   async headers() {
     const edge = { key: 'Vercel-CDN-Cache-Control', value: 'max-age=300, stale-while-revalidate=1500' };
     return [
