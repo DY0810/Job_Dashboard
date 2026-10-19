@@ -10,6 +10,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { chromium } from 'playwright';
 import { createBrowserRuntime } from '../../worker/browser.ts';
 import { createStageDispatch } from '../../worker/main.ts';
+import { ProviderError } from '../../worker/providers.ts';
 import { artifactManifestHash } from '../../lib/applications/artifact-protocol.ts';
 
 // Drives the real worker stage dispatch (screening -> tailoring -> filling -> submit) against a
@@ -200,6 +201,14 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       assert.deepEqual(await stage('tailoring'), { state: 'filling', reasonCode: 'master_resume_used', evidence: { artifactVerified: true } });
       assert.equal(context.documents.resume.sha256, master.sha256, 'the untailored master is the attached resume');
       assert.deepEqual(intent.manifest.request, { untailored: true, reason: 'EDIT_OVERFLOW' });
+      // The provider drops rewrites that ran to their line's limit; when none is left, the master is used too, not a provider outage.
+      Object.assign(context, { tailoredArtifact: null, manifestHash: null, artifactHashes: [] }); context.documents.resume = master;
+      generate = async (input) => {
+        if (input.task === 'tailor') throw new ProviderError('PROVIDER_INVALID_RESPONSE', 'edit_overflow');
+        return realGenerate(input);
+      };
+      assert.deepEqual(await stage('tailoring'), { state: 'filling', reasonCode: 'master_resume_used', evidence: { artifactVerified: true } });
+      assert.equal(context.documents.resume.sha256, master.sha256, 'the untailored master is the attached resume');
       generate = realGenerate; calls.tailor.length = 0; calls.intents.length = 0;
       Object.assign(context, { tailoredArtifact: null, manifestHash: null, artifactHashes: [] }); context.documents.resume = master;
 

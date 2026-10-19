@@ -227,12 +227,15 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       } catch (caught) {
         let error = caught;
         if (signal.aborted) throw error;
-        const providerFailure = providerFailureResult(error);
+        // No rewrite fit its line (each ran to its length limit), which is a resume that cannot be edited safely, not a provider outage.
+        const overflow = error instanceof ProviderError && error.diagnostic === "edit_overflow";
+        const providerFailure = overflow ? null : providerFailureResult(error);
         if (providerFailure) return providerFailure;
-        if (error instanceof DocumentRuntimeError && master) {
+        if ((error instanceof DocumentRuntimeError || overflow) && master) {
           // The resume could not be edited safely (e.g. a compressed PDF), so apply with the verified master unchanged.
           try {
-            await upload(untailoredArtifactManifest(lease.applicationId, source, master.template, master.bytes, error.code), master.bytes);
+            await upload(untailoredArtifactManifest(lease.applicationId, source, master.template, master.bytes,
+              error instanceof DocumentRuntimeError ? error.code : "EDIT_OVERFLOW"), master.bytes);
             return { state: "filling" as const, reasonCode: "master_resume_used", evidence: { artifactVerified: true } };
           } catch (fallback) {
             if (signal.aborted) throw fallback;
