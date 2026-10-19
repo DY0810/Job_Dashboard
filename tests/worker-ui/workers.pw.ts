@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { SUBMIT_APPROVAL } from '../../lib/applications/state';
 import { PAIRING_TTL_MS } from '../../lib/applications/worker-protocol';
 import { WorkerFixture, syntheticGrant, workerId } from './fixture';
 
@@ -307,6 +308,31 @@ test('offline unpaired disabled-policy configuration and unknown-protocol states
   fixture.invalidState = false; fixture.authStatus = 503;
   await refresh(page);
   await expect(alert(page)).toContainText('configuration');
+});
+
+// Embedded browsers (the Claude app's pane, in-app web views) return false from window.confirm without asking,
+// so Apply and Archive did nothing there. They ask on the page instead.
+test('Apply and Archive ask on the page, never through a browser prompt', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const app = fixture.addApplication('needs_policy_decision', SUBMIT_APPROVAL);
+  page.on('dialog', (dialog) => { errors.get(page)!.push(`Browser prompt: ${dialog.message()}`); void dialog.dismiss(); });
+  const writes = () => fixture.requests.filter((request) => request.method !== 'GET');
+  await page.goto('/applications');
+  await page.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(page.getByText('Archive this application? It is still live, so this also cancels it.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(writes()).toEqual([]);
+
+  await page.getByRole('button', { name: 'Approve', exact: true }).click();
+  const review = page.getByRole('dialog', { name: 'Approve / fixture-employer', exact: true });
+  await review.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(review.getByText('Submit this application to the employer now? This cannot be undone.', { exact: true })).toBeVisible();
+  expect(writes()).toEqual([]);
+  await review.getByRole('button', { name: 'Yes, apply', exact: true }).click();
+  await expect.poll(() => writes().map((request) => request.body?.action)).toEqual(['approve-submit']);
+  expect(writes()[0].path).toBe(`/api/application-runs/${app.runId}/applications/${app.id}/actions`);
 });
 
 test('dense layout has native labels keyboard focus and no overflow in light and dark', async ({ page }, info) => {
