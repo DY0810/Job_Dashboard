@@ -410,12 +410,18 @@ export default function Applications() {
             const href = postingUrl(app.ats, app.tenant, app.requisition);
             const company = app.company ?? app.tenant;
             const role = app.role ?? questionRole.get(app.id);
-            const primary = !live ? null : questionsHere.length ? 'answer' : upload ? 'upload' : approval ? 'approve' : retryable ? 'retry' : null;
+            // Screening skips again until the profile changes, so Retry is not the suggested next step there.
+            const primary = !live ? null : questionsHere.length ? 'answer' : upload ? 'upload' : approval ? 'approve'
+              : retryable && !skipReasons(app).length ? 'retry' : null;
             const detail = app.state === 'queued' && caps
               ? `Waiting its turn. It starts on its own, up to ${caps.perEmployerCap} per employer and ${caps.dailyApplicationCap} a day.`
               : approval ? 'Form filled. Review the answers, resume and cover letter, then approve to submit.'
               : app.state === 'needs_document' && documentHelp[app.reasonCode ?? ''] ? documentHelp[app.reasonCode!]
               : skipReasons(app).length ? `Skipped: ${skipReasons(app).join('; ')}. If your profile is wrong, fix it, then retry.`
+              // An earlier version of this page had a Skip button; it recorded the applicant's own choice as "skip".
+              : app.state === 'skipped' && app.reasonCode === 'skip' ? 'You skipped this role.'
+              // Questions arrive with the inbox, a moment after the rows; older ones may sit past the pages loaded here.
+              : app.reasonCode === 'question_unresolved' ? questions.view.inbox ? 'Waiting for your answers.' : 'Loading questions...'
               : (app.reasonCode && !isTerminalState(app.state)) || app.state === 'failed' ? humanize(app.reasonCode ?? 'failed') : null;
             const show = (kind: Dialog['kind']) => () => setDialog({ kind, id: app.id, open: true });
             return <li key={app.id} className={styles.card}>
@@ -429,7 +435,8 @@ export default function Applications() {
               {questionsHere.length ? <div className={styles.issue}>{questionsHere.map((question) =>
                 <p key={question.id}>{question.descriptor.originalWording.split('\n\n')[0]}</p>)}</div>
                 : detail && <p className={styles.issue}>{detail}
-                  {(app.reasonCode === 'cover_letter_unavailable' || skipReasons(app).length > 0) && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}</p>}
+                  {(app.reasonCode === 'cover_letter_unavailable' || skipReasons(app).length > 0) && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}
+                  {app.reasonCode === 'question_unresolved' && questions.view.inbox && <> <Link href="/inbox" prefetch={false}>Open Inbox</Link></>}</p>}
               <div className={styles.actions}>
                 {!archived && !['submitting', 'submission_unknown'].includes(app.state) && <Command label="Archive" busyLabel="Archiving..."
                   confirm={isTerminalState(app.state) ? 'Archive this application?' : 'Archive this application? It is still live, so this also cancels it.'}

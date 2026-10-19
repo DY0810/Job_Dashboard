@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { eq, sql } from 'drizzle-orm';
+import type { TransactionMode } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migratePrivateDb, openPrivateDb, type PrivateDb } from '../private-db/index.ts';
 import {
@@ -424,6 +425,29 @@ describe('typed validation, optional questions and inbox receipts', () => {
       expect((await getQuestion(db, 'alice', q.id, options)).canAnswer).toBe(false);
       expect((await getInbox(db, 'alice', {}, options)).items[0].kind).toBe(kind);
     });
+
+  it('reads an inbox page in a fixed number of statements, however many questions it holds', async () => {
+    // Each statement is a round trip to the hosted database; per-question lookups made the page take seconds.
+    const statements = async (count: number) => {
+      const a = await prepared('alice', `employer-${count}`);
+      await batch(a, Array.from({ length: count }, (_, i) => descriptor({ key: `q${i}`, meaning: { id: `q${i}`, reviewId: null },
+        originalWording: `Question ${i}?` })));
+      const transaction = db.$client.transaction.bind(db.$client);
+      let executed = 0;
+      const spy = vi.spyOn(db.$client, 'transaction').mockImplementation((async (mode: TransactionMode) => {
+        const tx = await transaction(mode), execute = tx.execute.bind(tx);
+        tx.execute = (statement => { executed++; return execute(statement); }) as typeof tx.execute;
+        return tx;
+      }) as never);
+      const page = await getInbox(db, 'alice', {}, options);
+      spy.mockRestore();
+      expect(page.items.filter(item => item.question?.canAnswer)).toHaveLength(page.items.length);
+      return executed;
+    };
+    // The second page adds 20 questions on one more application: only that application's eligibility check is new.
+    const one = await statements(1), many = await statements(20);
+    expect(many - one).toBeLessThan(20);
+  });
 
   it('keeps reads private, paginates stably and never resolves through read receipts', async () => {
     const a = await prepared(), q = await batch(a, [descriptor(), descriptor({ key: 'second' })]);

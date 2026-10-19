@@ -108,8 +108,8 @@ function permitted(q: QuestionDescriptor, ctx: Context) {
 }
 const allowOptional = (q: QuestionDescriptor, ctx: Context) =>
   !q.sensitive || ctx.policy.policy.disclosure === 'confirmed_only';
-async function canAnswer(tx: WorkerTx, row: QuestionRow, app: ApplicationRow, ctx: Context) {
-  return currentDescriptor(row, ctx) && permitted(row.descriptor, ctx) && await eligible(tx, app, ctx);
+async function canAnswer(tx: WorkerTx, row: QuestionRow, app: ApplicationRow, ctx: Context, isEligible = () => eligible(tx, app, ctx)) {
+  return currentDescriptor(row, ctx) && permitted(row.descriptor, ctx) && await isEligible();
 }
 async function ownedQuestion(tx: WorkerTx, ownerId: string, id: string) {
   const [row] = await tx.select().from(questions).where(qScope(ownerId, id));
@@ -143,11 +143,13 @@ const focusResult = (row: typeof questionInterventions.$inferSelect): FocusResul
   revision: row.revision, status: row.status, reason: row.reason,
 });
 
-async function detail(tx: WorkerTx, row: QuestionRow, app: ApplicationRow, ctx: Context): Promise<QuestionDetail> {
-  const available = await canAnswer(tx, row, app, ctx);
-  const [focus] = await tx.select().from(questionInterventions).where(and(
+type Intervention = typeof questionInterventions.$inferSelect;
+async function detail(tx: WorkerTx, row: QuestionRow, app: ApplicationRow, ctx: Context,
+  known?: { eligible: () => Promise<boolean>; focus: Intervention | undefined }): Promise<QuestionDetail> {
+  const available = await canAnswer(tx, row, app, ctx, known?.eligible);
+  const focus = known ? known.focus : (await tx.select().from(questionInterventions).where(and(
     eq(questionInterventions.ownerId, ctx.ownerId), eq(questionInterventions.questionId, row.id),
-  )).orderBy(desc(questionInterventions.createdAt), desc(questionInterventions.id)).limit(1);
+  )).orderBy(desc(questionInterventions.createdAt), desc(questionInterventions.id)).limit(1))[0];
   const waiting = row.resolvedAt === null && fresh(row, ctx) && (unsent.includes(app.state) || isWaitingState(app.state));
   return QuestionDetailSchema.parse({
     id: row.id, ownerId: ctx.ownerId, revision: row.revision,
@@ -211,14 +213,31 @@ export async function getInbox(
         cursor && sql`(${applicationEvents.createdAt}, ${applicationEvents.eventId}, ${applicationEvents.applicationId})
           < (${cursor.createdAt}, ${cursor.eventId}, ${cursor.applicationId})`))
       .orderBy(desc(applicationEvents.createdAt), desc(applicationEvents.eventId), desc(applicationEvents.applicationId)).limit(query.limit + 1);
+    const page = rows.slice(0, query.limit);
+    // Each statement is a round trip to the hosted database, so the page's questions, applications and focus
+    // requests are read once each, and each application's eligibility is checked once, not per notification.
+    const ids = [...new Set(page.flatMap(({ event }) => (event.acknowledgement as { questionId?: string }).questionId ?? []))];
+    const found = ids.length ? await tx.select().from(questions).where(and(eq(questions.ownerId, ownerId), inArray(questions.id, ids))) : [];
+    const appIds = [...new Set(found.map(row => row.applicationId))];
+    const apps = new Map((appIds.length ? await tx.select().from(applications)
+      .where(and(eq(applications.ownerId, ownerId), inArray(applications.id, appIds))) : []).map(app => [app.id, app]));
+    const focus = new Map<string, Intervention>();
+    for (const row of ids.length ? await tx.select().from(questionInterventions)
+      .where(and(eq(questionInterventions.ownerId, ownerId), inArray(questionInterventions.questionId, ids)))
+      .orderBy(desc(questionInterventions.createdAt), desc(questionInterventions.id)) : []) {
+      if (!focus.has(row.questionId)) focus.set(row.questionId, row);
+    }
+    const byId = new Map(found.map(row => [row.id, row])), checks = new Map<string, Promise<boolean>>();
     const items: InboxPage['items'] = [];
-    for (const { event, read } of rows.slice(0, query.limit)) {
+    for (const { event, read } of page) {
       const ack = event.acknowledgement as { kind?: string; state?: string; questionId?: string };
       let question: QuestionDetail | null = null;
       if (ack.questionId) {
-        const owned = await ownedQuestion(tx, ownerId, ack.questionId);
-        if (owned.app.id !== event.applicationId) fail();
-        question = await detail(tx, owned.row, owned.app, ctx);
+        const row = byId.get(ack.questionId), app = row && apps.get(row.applicationId);
+        if (!row || !app) fail(404, 'NOT_FOUND', 'Question not found.');
+        if (app.id !== event.applicationId) fail();
+        const once = () => checks.get(app.id) ?? checks.set(app.id, eligible(tx, app, ctx)).get(app.id)!;
+        question = await detail(tx, row, app, ctx, { eligible: once, focus: focus.get(row.id) });
       }
       items.push({ eventId: event.eventId, applicationId: event.applicationId, kind: ack.kind ?? ack.state!,
         createdAt: event.createdAt, read: read !== null, question });
