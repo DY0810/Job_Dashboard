@@ -137,3 +137,17 @@ export const workerCommands = sqliteTable('private_worker_command', {
   primaryKey({ columns: [t.ownerId, t.requestId] }),
   check('private_worker_command_json', sql`json_valid(${t.acknowledgement})`),
 ]);
+
+/** What the worker's browser shows right now for one application, and what it filled: one row, overwritten. Not history. */
+export const applicationLive = sqliteTable('private_application_live', {
+  ownerId: text('owner_id').notNull(),
+  applicationId: text('application_id').notNull(),
+  step: text('step').notNull(),
+  // A JPEG screenshot, base64; dropped when the worker leaves the application.
+  image: text('image'),
+  fields: text('fields', { mode: 'json' }).$type<{ label: string; value: string }[]>(),
+  updatedAt: integer('updated_at').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.ownerId, t.applicationId] }),
+  check('private_application_live_fields_json', sql`${t.fields} is null or json_valid(${t.fields})`),
+]);

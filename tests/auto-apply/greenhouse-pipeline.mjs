@@ -140,6 +140,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       },
       submissionIntent: async (_application, body) => { calls.submission = body; return { intentId: body.intentId, state: 'submitting', revision: 2, fence: 1 }; },
       receipt: async (_application, body) => { calls.receipt = body; return {}; },
+      live: async (_application, body) => { (calls.live ??= []).push(body); return { applicationId, stored: true }; },
       letter: async (_application, body) => {
         // Mirrors the server: the first stored letter is kept and comes back in the context.
         calls.storedLetter ??= { body, afterReceipt: calls.receipt !== null };
@@ -216,6 +217,13 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       // A filled form waits for the applicant's approval; the server moves it to ready only after Approve and submit.
       assert.deepEqual(await stage('filling'), { state: 'needs_policy_decision', reasonCode: 'submit_approval' });
       assert.equal(calls.storedLetter.afterReceipt, false, 'the letter is kept for review before anything is submitted');
+      // The applicant watched it fill and can review what was entered before approving.
+      assert.ok(calls.live.some(frame => frame.step === 'Filling the form' && frame.image?.length > 1000), 'a screenshot of the form while filling');
+      const review = calls.live.findLast(frame => frame.fields)?.fields ?? [];
+      assert.deepEqual(review.find(field => field.label === 'Why are you interested in Fixture Co?')?.value, NARRATIVE);
+      assert.ok(review.some(field => field.label === 'First Name' && field.value === 'Test'));
+      assert.equal(calls.live.at(-1).step, 'Filled. Waiting for your approval');
+      assert.ok(calls.live.findLast(frame => frame.image !== undefined)?.image, 'the filled form stays for review');
       const printed = [], write = process.stdout.write;
       process.stdout.write = (chunk, ...rest) => { printed.push(String(chunk)); return write.call(process.stdout, chunk, ...rest); };
       const submitted = stage('ready').finally(() => { process.stdout.write = write; });

@@ -11,7 +11,7 @@ import { archivedAt, bucket } from '../../lib/applications/buckets';
 import { postingUrl } from '../../lib/applications/posting-url';
 import type { QuestionDetail } from '../../lib/applications/question-protocol';
 import { formatDailyStart, scheduledWorker } from '../../lib/applications/schedule';
-import { HEARTBEAT_MS, MaterialsSchema, RunListSchema, WorkerListSchema, type ApplicationSummary, type Run } from '../../lib/applications/worker-protocol';
+import { HEARTBEAT_MS, LiveListSchema, MaterialsSchema, RunListSchema, WorkerListSchema, type ApplicationSummary, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from '../../lib/applications/state';
 import { Modal } from '../modal';
@@ -38,6 +38,7 @@ type View = {
   runs: z.infer<typeof RunListSchema> | null;
   policy: z.infer<typeof PolicyResponseSchema> | null;
   materials: Material[];
+  live: Frame[];
   loading: boolean;
   locked: boolean;
   error: string;
@@ -45,7 +46,8 @@ type View = {
 };
 
 type Material = z.infer<typeof MaterialsSchema>['materials'][number];
-const initialView: View = { account: null, workers: null, runs: null, policy: null, materials: [], loading: true, locked: true, error: '', loadedAt: 0 };
+type Frame = z.infer<typeof LiveListSchema>['live'][number];
+const initialView: View = { account: null, workers: null, runs: null, policy: null, materials: [], live: [], loading: true, locked: true, error: '', loadedAt: 0 };
 
 async function request(path: string, owner?: string) {
   try {
@@ -57,7 +59,10 @@ async function request(path: string, owner?: string) {
   }
 }
 
-type Tab = 'action' | 'applied' | 'archived';
+type Tab = 'action' | 'live' | 'applied' | 'archived';
+/** States in which the worker is working a row (or about to): the Live tab shows them. */
+const LIVE_STATES: readonly string[] = ['screening', 'tailoring', 'filling', 'submitting'];
+const LIVE_POLL_MS = 3_000;
 /** `?view=` on the current URL, other params kept. Native pushState: Next syncs useSearchParams without a server round trip. */
 function showTab(tab: Tab) {
   const url = new URL(window.location.href);
@@ -83,6 +88,51 @@ function MaterialsPanel({ item }: { item: Material }) {
       <pre className={styles.preview}>{['Dear Hiring Manager,', letter.introduction, ...letter.body, letter.conclusion, letter.companyParagraph].join('\n\n')}</pre>
     </details>}
   </>;
+}
+
+/** What the worker typed into each field, and the filled form as it looked, for review before Apply. */
+function FilledReview({ frame }: { frame: Frame | undefined }) {
+  if (!frame?.fields?.length) return <p className={styles.muted}>This form was filled before Workie kept a copy of the answers. Open the job post to compare, or retry to fill it again.</p>;
+  return <>
+    <details open><summary className={styles.muted}>Filled answers ({frame.fields.length})</summary>
+      <dl className={styles.review}>{frame.fields.map((field, index) => <div key={index}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl>
+    </details>
+    {frame.image && <details><summary className={styles.muted}>Filled form</summary>
+      {/* eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset */}
+      <img className={styles.screen} src={`data:image/jpeg;base64,${frame.image}`} alt="The filled application form in Workie's browser" />
+    </details>}
+  </>;
+}
+
+const ago = (ms: number) => {
+  const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  return seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)} min ago`;
+};
+
+/** One application the worker is on: its newest step and what its browser shows, refreshed every few seconds. */
+function LiveCard({ app, frame, role }: { app: App; frame: Frame | undefined; role: string | null | undefined }) {
+  const company = app.company ?? app.tenant;
+  const href = postingUrl(app.ats, app.tenant, app.requisition);
+  // A frame older than this means the worker is not on the page right now (between stages, or stopped).
+  const watching = !!frame && Date.now() - frame.updatedAt < 20_000 && ['filling', 'submitting'].includes(app.state);
+  const step = watching ? frame!.step : app.state === 'screening' ? 'Checking the posting against your profile'
+    : app.state === 'tailoring' ? 'Tailoring your resume' : 'Waiting for the worker to open the form';
+  return <li className={`${styles.card} ${styles.liveCard}`}>
+    <div className={styles.cardTitle}>
+      <h2 title={role ? `${company} / ${role}` : company}>{company}{role && <><span className={styles.slash}> / </span>{role}</>}</h2>
+      <StatusBadge {...statusBadge(app.state, app.reasonCode)} />
+    </div>
+    <p className={styles.step} aria-live="polite">{watching && <span className={styles.pulse} aria-hidden="true" />}{step}
+      {frame && <span className={styles.muted}> · updated {ago(frame.updatedAt)}</span>}</p>
+    {watching && frame!.image
+      // eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset
+      ? <img className={styles.screen} src={`data:image/jpeg;base64,${frame!.image}`} alt={`Workie's browser filling the ${company} application`} />
+      : <div className={styles.screenEmpty}>{app.state === 'filling' || app.state === 'submitting'
+        ? 'The form appears here as soon as the worker opens it.' : 'The form appears here when filling starts.'}</div>}
+    <div className={styles.actions}>
+      {href && <a className={styles.button} href={href} target="_blank" rel="noopener noreferrer">Open job post</a>}
+    </div>
+  </li>;
 }
 
 const documentHelp: Record<string, string> = {
@@ -199,8 +249,9 @@ type Dialog = { kind: 'answer' | 'upload' | 'approve' | 'materials'; id: string;
 const DIALOG_TITLES: Record<Dialog['kind'], string> = {
   answer: 'Answer', upload: 'Upload', approve: 'Approve', materials: 'Materials',
 };
-const EMPTY: Record<Tab, string> = { action: 'Nothing needs action.', applied: 'No submitted applications yet.', archived: 'Nothing archived.' };
-const LIST_NAMES: Record<Tab, string> = { action: 'Needs action', applied: 'Applied', archived: 'Archived' };
+const EMPTY: Record<Tab, string> = { action: 'Nothing needs action.', live: 'Nothing is being applied right now. When the worker starts an application, you can watch it fill here.',
+  applied: 'No submitted applications yet.', archived: 'Nothing archived.' };
+const LIST_NAMES: Record<Tab, string> = { action: 'Needs action', live: 'Live', applied: 'Applied', archived: 'Archived' };
 /** Rows waiting on the applicant first; queued and running rows need nothing from them. */
 const waitRank = (app: App) => ['queued', 'progress'].includes(statusBadge(app.state, app.reasonCode).tone) ? 1 : 0;
 
@@ -208,22 +259,23 @@ export default function Applications() {
   const [view, setView] = useState(initialView);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const param = useSearchParams().get('view');
-  const tab: Tab = param === 'applied' || param === 'archived' ? param : 'action';
+  const tab: Tab = param === 'applied' || param === 'archived' || param === 'live' ? param : 'action';
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setView((current) => ({ ...current, loading: true, locked: true, error: '' }));
     try {
       const account = ApplicantSchema.parse(await request('/api/auth/applicant'));
-      const [workers, runs, policy, materials] = await Promise.all([
+      const [workers, runs, policy, materials, live] = await Promise.all([
         WorkerListSchema.parse(await request('/api/workers', account.ownerId)),
         RunListSchema.parse(await request('/api/application-runs', account.ownerId)),
         PolicyResponseSchema.parse(await request('/api/auto-apply/policies', account.ownerId)),
         request('/api/applications/materials', account.ownerId).then((body) => MaterialsSchema.parse(body)).catch(() => null),
+        request('/api/applications/live', account.ownerId).then((body) => LiveListSchema.parse(body)).catch(() => null),
       ]);
       if (workers.ownerId !== account.ownerId || runs.ownerId !== account.ownerId ||
-          (materials && materials.ownerId !== account.ownerId)) {
+          (materials && materials.ownerId !== account.ownerId) || (live && live.ownerId !== account.ownerId)) {
         throw new Error('Account changed. Refresh the current applicant.');
       }
-      setView({ account, workers, runs, policy, materials: materials?.materials ?? [],
+      setView({ account, workers, runs, policy, materials: materials?.materials ?? [], live: live?.live ?? [],
         loading: false, locked: false, error: '', loadedAt: Date.now() });
     } catch (error) {
       setView((current) => ({ ...current, loading: false, locked: true,
@@ -241,17 +293,37 @@ export default function Applications() {
     return () => { clearInterval(timer); window.removeEventListener('focus', focus); window.removeEventListener('workie:refresh', manual); };
   }, [load]);
   const reload = useCallback(() => void load(true), [load]);
+  const ownerKey = view.account?.ownerId ?? '';
+  // The Live tab refreshes the screenshots on their own; rows and states follow the slower page refresh.
+  useEffect(() => {
+    if (tab !== 'live' || !ownerKey) return;
+    let alive = true;
+    const poll = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const live = LiveListSchema.parse(await privateJson('/api/applications/live', { owner: ownerKey, timeout: 10_000 }));
+        if (alive && live.ownerId === ownerKey) setView((current) => ({ ...current, live: live.live }));
+      } catch { /* The next poll retries; the page keeps the last picture. */ }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), LIVE_POLL_MS);
+    return () => { alive = false; clearInterval(timer); };
+  }, [tab, ownerKey]);
   const questions = useQuestions(reload);
   const ownerId = view.account?.ownerId ?? '';
   const api = useCallback<PrivateApi>((path, init) => privateJson(path, { ...init, owner: ownerId }), [ownerId]);
 
   const applications = view.runs?.applications ?? [];
   const runs = view.runs?.runs ?? [];
-  const lists: Record<Tab, App[]> = { action: [], applied: [], archived: [] };
+  const lists: Record<Tab, App[]> = { action: [], live: [], applied: [], archived: [] };
   for (const app of applications) {
     const list = bucket(app, view.loadedAt);
     if (list) lists[list].push(app);
+    if (LIVE_STATES.includes(app.state) && app.hiddenAt === null) lists.live.push(app);
   }
+  // The row being filled right now first.
+  lists.live.sort((a, b) => Number(['filling', 'submitting'].includes(b.state)) - Number(['filling', 'submitting'].includes(a.state)));
+  const frames = new Map(view.live.map((frame) => [frame.applicationId, frame]));
   lists.action.sort((a, b) => waitRank(a) - waitRank(b));
   const counts = new Map<string, { tone: BadgeTone; count: number }>();
   for (const app of lists.action) {
@@ -301,13 +373,16 @@ export default function Applications() {
     </p>}
     {!view.locked && <>
       <nav className="board-track" aria-label="Applications">
-        {(['action', 'applied'] as const).map((item) => <button key={item} type="button" className={`board-track-link ${styles.tab}`}
+        {(['action', 'live', 'applied'] as const).map((item) => <button key={item} type="button" className={`board-track-link ${styles.tab}`}
           aria-current={tab === item ? 'page' : undefined} onClick={() => showTab(item)}>
           {LIST_NAMES[item]}<CountBadge count={lists[item].length} />
         </button>)}
       </nav>
       {tab === 'archived' && <p className={`${styles.message} ${styles.muted}`}>Archived items are removed 30 days after archiving.</p>}
-      {!lists[tab].length ? <p className={`${styles.message} ${styles.muted}`}>{tab === 'action' && !applications.length
+      {tab === 'live' && lists.live.length > 0 && <ul className={styles.liveCards} aria-label="Live">
+        {lists.live.map((app) => <LiveCard key={app.id} app={app} frame={frames.get(app.id)} role={app.role ?? questionRole.get(app.id)} />)}
+      </ul>}
+      {tab === 'live' && lists.live.length > 0 ? null : !lists[tab].length ? <p className={`${styles.message} ${styles.muted}`}>{tab === 'action' && !applications.length
         ? 'No applications yet. Start auto apply from Settings after enabling a policy.' : EMPTY[tab]}</p> :
         <ul className={styles.cards} aria-label={LIST_NAMES[tab]}>
           {lists[tab].map((app) => {
@@ -326,7 +401,7 @@ export default function Applications() {
             const primary = !live ? null : questionsHere.length ? 'answer' : upload ? 'upload' : approval ? 'approve' : retryable ? 'retry' : null;
             const detail = app.state === 'queued' && caps
               ? `Waiting its turn. It starts on its own, up to ${caps.perEmployerCap} per employer and ${caps.dailyApplicationCap} a day.`
-              : approval ? 'Form filled. Review the resume and cover letter, then approve to submit.'
+              : approval ? 'Form filled. Review the answers, resume and cover letter, then approve to submit.'
               : app.state === 'needs_document' && documentHelp[app.reasonCode ?? ''] ? documentHelp[app.reasonCode!]
               : (app.reasonCode && !isTerminalState(app.state)) || app.state === 'failed' ? humanize(app.reasonCode ?? 'failed') : null;
             const show = (kind: Dialog['kind']) => () => setDialog({ kind, id: app.id, open: true });
@@ -339,7 +414,7 @@ export default function Applications() {
               {tab === 'applied' && app.submittedAt && <span className={styles.muted}>Applied {day(app.submittedAt)}</span>}
               {archived && <span className={styles.muted}>Archived {day(archivedAt(app))}</span>}
               {questionsHere.length ? <div className={styles.issue}>{questionsHere.map((question) =>
-                <p key={question.id}>{question.descriptor.originalWording}</p>)}</div>
+                <p key={question.id}>{question.descriptor.originalWording.split('\n\n')[0]}</p>)}</div>
                 : detail && <p className={styles.issue}>{detail}
                   {app.reasonCode === 'cover_letter_unavailable' && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}</p>}
               <div className={styles.actions}>
@@ -347,6 +422,7 @@ export default function Applications() {
                   confirm={isTerminalState(app.state) ? 'Archive this application?' : 'Archive this application? It is still live, so this also cancels it.'}
                   run={() => archive(app, ownerId)} onDone={reload} />}
                 {href && <a className={styles.button} href={href} target="_blank" rel="noopener noreferrer">Open job post</a>}
+                {live && LIVE_STATES.includes(app.state) && <button className={buttonClass(primary === null)} type="button" onClick={() => showTab('live')}>Watch live</button>}
                 {material && !(live && approval) && <button className={styles.button} type="button" onClick={show('materials')}>Materials</button>}
                 {live && retryable && <Command label="Retry" busyLabel="Retrying..." primary={primary === 'retry'} run={() => retry(app, runs, ownerId)} onDone={reload} />}
                 {live && approval && <button className={buttonClass(primary === 'approve')} type="button" onClick={show('approve')}>Approve</button>}
@@ -375,7 +451,8 @@ export default function Applications() {
           idPrefix={`auto-apply-${open.id}`} initialKind={uploadKind[open.reasonCode ?? '']} />
       </>}
       {open && dialog!.kind === 'approve' && <>
-        <p className={styles.issue}>Form filled. Review the resume and cover letter, then press Apply to submit.</p>
+        <p className={styles.issue}>Form filled. Review what Workie entered, the resume and cover letter, then press Apply to submit.</p>
+        <FilledReview frame={frames.get(open.id)} />
         {materials.get(open.id) && <MaterialsPanel item={materials.get(open.id)!} />}
       </>}
       {open && dialog!.kind === 'materials' && materials.get(open.id) && <MaterialsPanel item={materials.get(open.id)!} />}

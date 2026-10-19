@@ -72,6 +72,17 @@ export async function leverFields(form: Locator): Promise<AtsField[]> {
     options: options && options.length <= 100 && options.every(option => option.length <= 300) ? options : undefined }));
 }
 
+// A long list (Palantir's universities) is asked as text: the exact option, or the one option the typed name matches
+// ignoring case, or the one that contains it ("Stanford" picks "Stanford University"). Anything ambiguous is asked again.
+export function matchOption(options: string[], value: string) {
+  const norm = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim(), typed = norm(value);
+  if (options.includes(value) || !typed) return options.includes(value) ? value : undefined;
+  const equal = options.filter(option => norm(option) === typed);
+  if (equal.length) return equal.length === 1 ? equal[0] : undefined;
+  const containing = options.filter(option => norm(option).includes(typed));
+  return containing.length === 1 ? containing[0] : undefined;
+}
+
 async function liveOptions(locator: Locator) {
   return locator.evaluate(node => [...(node as HTMLSelectElement).options].filter(option => option.value).map(option => option.label.trim()));
 }
@@ -103,9 +114,9 @@ async function fillLever(page: Page, field: AtsField, value: AtsValue | undefine
     if (!picks.length || !picks.every(pick => field.options?.includes(pick))) throw new AtsError('ANSWER_OPTION_INVALID', field.key, field.options);
     for (const pick of picks) await page.locator(`[name="${field.name}"][value="${pick.replace(/["\\]/g, '\\$&')}"]`).check();
   } else if (field.kind === 'select') {
-    const options = await liveOptions(locator);
-    if (typeof value !== 'string' || !options.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key, options.length <= 100 ? options : undefined);
-    await locator.selectOption({ label: value });
+    const options = await liveOptions(locator), pick = typeof value === 'string' ? matchOption(options, value) : undefined;
+    if (!pick) throw new AtsError('ANSWER_OPTION_INVALID', field.key, options.length <= 100 ? options : undefined);
+    await locator.selectOption({ label: pick });
   } else if (typeof value !== 'string') {
     throw new AtsError('ANSWER_TYPE_MISMATCH', field.key);
   } else if (field.name === 'location') {
@@ -134,7 +145,8 @@ async function verifyLever(page: Page, field: AtsField, value: AtsValue | undefi
     const picks = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
     return checked.length === picks.length && picks.every(pick => checked.includes(pick));
   }
-  if (field.kind === 'select') return locator.evaluate(node => (node as HTMLSelectElement).selectedOptions[0]?.label.trim()).then(label => label === value);
+  if (field.kind === 'select') return locator.evaluate(node => (node as HTMLSelectElement).selectedOptions[0]?.label.trim())
+    .then(label => typeof value === 'string' && !!label && matchOption([label], value) === label);
   if (typeof value !== 'string') return false;
   const actual = await locator.inputValue();
   // A picked suggestion fills Lever's hidden selectedLocation ({"name":"San Francisco, CA, USA","id":...}); typed text alone is rejected on submit.

@@ -16,6 +16,7 @@ import { beginSubmission, recordReceipt } from './submissions.ts';
 import { applicationContext, applicationDocumentOwner } from './application-context.ts';
 import { createArtifactIntent, uploadArtifact } from './artifacts.ts';
 import { listMaterials, recordSubmittedLetter } from './materials.ts';
+import { listLive, recordLiveFrame } from './live.ts';
 import { documentStorageConfig, readDocumentObject } from './documents-storage.ts';
 import { getPolicy, getProfile } from './stores.ts';
 import { ApplicationContextSchema, ApplicationContextRequestSchema } from './application-context-protocol.ts';
@@ -45,7 +46,7 @@ function checkPath(request: Request, ids: string[]) {
   }
 }
 type BrowserAction = 'list-workers' | 'create-pairing' | 'revoke-pairing' | 'revoke-worker' | 'schedule-worker' |
-  'list-runs' | 'create-run' | 'command-run' | 'command-application' | 'list-materials';
+  'list-runs' | 'create-run' | 'command-run' | 'command-application' | 'list-materials' | 'list-live';
 
 const confirmed = <T>(fact: { state: string; value: T | null }) => fact.state === 'confirmed' ? fact.value : null;
 export function buildProviderConfig(
@@ -125,11 +126,12 @@ export async function browserWorkerEndpoint(request: Request, action: BrowserAct
       case 'command-run': body = p.RunSchema.parse(await commandRun(db, ownerId, ids[0], await readPrivateJson(request, p.RunCommandSchema), options)); break;
       case 'command-application': body = p.ApplicationSummarySchema.parse(await commandApplication(db, ownerId, ids[0], ids[1], await readPrivateJson(request, p.ApplicationCommandSchema), options)); break;
       case 'list-materials': body = p.MaterialsSchema.parse(await listMaterials(db, ownerId)); break;
+      case 'list-live': body = p.LiveListSchema.parse(await listLive(db, ownerId)); break;
     }
     return privateJson(body, { headers });
   } catch (error) { return errorResponse(error, headers); }
 }
-export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submission-intent' | 'receipt' | 'provider-config' | 'context' | 'artifact-intent' | 'letter', id?: string) {
+export async function workerEndpoint(request: Request, action: 'pair' | 'poll' | 'heartbeat' | 'event' | 'submission-intent' | 'receipt' | 'provider-config' | 'context' | 'artifact-intent' | 'letter' | 'live', id?: string) {
   try {
     checkPath(request, id ? [id] : []);
     const db = getPrivateDb(), options: WorkerOptions = {};
@@ -158,6 +160,7 @@ export async function workerEndpoint(request: Request, action: 'pair' | 'poll' |
       case 'context': body = ApplicationContextSchema.parse(await applicationContext(db, token, id!, ApplicationContextRequestSchema.parse(raw), options)); break;
       case 'artifact-intent': body = ArtifactIntentResponseSchema.parse(await createArtifactIntent(db, token, id!, ArtifactIntentSchema.parse(raw), options)); break;
       case 'letter': body = p.SubmittedLetterAckSchema.parse(await recordSubmittedLetter(db, token, id!, p.SubmittedLetterSchema.parse(raw), options)); break;
+      case 'live': body = p.LiveFrameAckSchema.parse(await recordLiveFrame(db, token, id!, p.LiveFrameSchema.parse(raw), options)); break;
       case 'provider-config': {
         ProviderConfigRequestSchema.parse(raw);
         body = await providerConfig(db, workerOwnerId!);

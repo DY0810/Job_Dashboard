@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { DraftVault, unlockDraftKey } from '../../lib/profile-drafts';
 import {
-  AnswerCommandSchema, AnswerResultSchema, FocusCommandSchema, FocusResultSchema,
+  AnswerBatchResultSchema, AnswerCommandSchema, AnswerResultSchema, FocusCommandSchema, FocusResultSchema,
   InboxPageSchema, QuestionDetailSchema,
   type AnswerCommand, type QuestionDetail,
 } from '../../lib/applications/question-protocol';
@@ -165,8 +165,19 @@ export class InboxControl {
     }
   }
   private async load(owner: string, signal: AbortSignal, cursor?: string) {
-    const inbox = InboxPageSchema.parse(await this.request(`/api/inbox?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, signal, owner));
-    if (inbox.ownerId !== owner) throw new RequestError(403, 'PRINCIPAL_CHANGED');
+    const page = async (after?: string) => {
+      const next = InboxPageSchema.parse(await this.request(`/api/inbox?limit=50${after ? `&cursor=${encodeURIComponent(after)}` : ''}`, signal, owner));
+      if (next.ownerId !== owner) throw new RequestError(403, 'PRINCIPAL_CHANGED');
+      return next;
+    };
+    const inbox = await page(cursor);
+    // An application's form needs all of its open questions, not only those in the newest 50 notifications.
+    // ponytail: up to 4 more pages (250 notifications); page by application on the server if an inbox outgrows it.
+    for (let more = 0; !cursor && inbox.nextCursor && more < 4; more++) {
+      const next = await page(inbox.nextCursor);
+      inbox.items.push(...next.items);
+      inbox.nextCursor = next.nextCursor;
+    }
     let selected = this.view.selected;
     if (selected) {
       selected = QuestionDetailSchema.parse(await this.request(`/api/questions/${selected.id}`, signal, owner));
@@ -259,17 +270,40 @@ export class InboxControl {
     }
     return this.execute({ kind: 'answer', questionId: question.id, body: AnswerCommandSchema.parse(body), sent: structuredClone(draft.desired) });
   }
-  /** Sends an application's answers one after another; the last one resumes the application. Stops at the first failure. */
+  /** Sends an application's answers in one request: all are saved, or none and the form shows why. */
   async answerAll(answers: { question: QuestionDetail; body: AnswerCommand }[]) {
+    const owner = this.view.ownerId;
+    if (!owner || this.view.locked || this.view.busy || this.disposed || !answers.length) return;
     if (this.view.snapshot.pending) { this.update({ error: 'Retry the pending answer first.' }); return; }
-    for (const { question, body } of answers) {
-      // The command is built from the question as listed now, so its draft follows it.
-      const draft = this.view.snapshot.drafts[question.id] ?? { question, desired: emptyEdit(), dirty: true };
-      this.update({ snapshot: { ...this.view.snapshot, drafts: { ...this.view.snapshot.drafts, [question.id]: { ...draft, question } } } });
-      await this.answer(body, question);
-      if (this.view.error || this.view.snapshot.pending) return;
-    }
-    this.update({ notice: `${answers.length} answer${answers.length === 1 ? '' : 's'} saved.` });
+    const signal = this.begin();
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      // A request carries at most 128 KB; a form of long essays goes in a few requests, each saved whole.
+      const chunks: typeof answers[] = [[]];
+      let bytes = 0;
+      for (const item of answers) {
+        const size = JSON.stringify(item.body).length + 64;
+        if (bytes + size > 120_000 && chunks[chunks.length - 1].length) { chunks.push([]); bytes = 0; }
+        chunks[chunks.length - 1].push(item);
+        bytes += size;
+      }
+      for (const chunk of chunks) {
+        const ack = AnswerBatchResultSchema.parse(await this.api('/api/questions/answers', { signal, method: 'POST',
+          body: JSON.stringify({ answers: chunk.map(({ question, body }) => ({ questionId: question.id, command: AnswerCommandSchema.parse(body) })) }) }));
+        if (ack.ownerId !== owner || ack.results.length !== chunk.length) throw new RequestError(502);
+      }
+      const drafts = { ...this.view.snapshot.drafts };
+      for (const { question } of answers) if (drafts[question.id]) drafts[question.id] = { ...drafts[question.id], dirty: false };
+      this.update({ snapshot: { ...this.view.snapshot, drafts },
+        notice: `${answers.length} answer${answers.length === 1 ? '' : 's'} saved. Workie continues this application.` });
+      await this.persist();
+      await this.load(owner, signal);
+    } catch (error) {
+      if (signal.aborted) return;
+      // this.api reports its own request errors; a bad acknowledgement is reported here.
+      if (!(error instanceof RequestError) || error.status === 502) this.fail(error);
+      try { await this.load(owner, signal); } catch (next) { if (!signal.aborted) this.fail(next); }
+    } finally { if (!signal.aborted) this.update({ busy: false }); }
   }
   focus() {
     const q = this.view.selected;

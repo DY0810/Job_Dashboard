@@ -69,9 +69,11 @@ export function AnswerAllForm({ questions, control, view }: { questions: Questio
         const edit = editOf(q), field = q.descriptor.field, id = `question-${q.id}`;
         const change = (patch: Partial<Edit>) => { setError(''); control.edit({ ...edit, ...patch }, q); };
         return <fieldset key={q.id} disabled={!q.canAnswer} className={styles.item}>
-          <legend>{index + 1}. {q.descriptor.originalWording}</legend>
+          {/* A form question's wording is its label, then the text the form shows under it. */}
+          <legend>{index + 1}. {q.descriptor.originalWording.split('\n\n')[0]}</legend>
+          {q.descriptor.originalWording.includes('\n\n') && <p>{q.descriptor.originalWording.split('\n\n').slice(1).join(' ')}</p>}
           <p className={styles.muted}>{q.descriptor.required ? 'Required' : 'Optional'}{q.descriptor.provenance.excerpt &&
-            q.descriptor.provenance.excerpt !== q.descriptor.originalWording ? ` / ${q.descriptor.provenance.excerpt}` : ''}</p>
+            !q.descriptor.originalWording.startsWith(q.descriptor.provenance.excerpt) ? ` / ${q.descriptor.provenance.excerpt}` : ''}</p>
           {(q.canBlank || q.canDecline) && <div className={styles.field}>
             <label htmlFor={`${id}-mode`}>Response</label>
             <select id={`${id}-mode`} value={edit.mode} onChange={(event) => change({ mode: event.target.value as Edit['mode'] })}>

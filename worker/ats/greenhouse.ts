@@ -71,7 +71,9 @@ export async function hostedFields(form: import('playwright').Locator): Promise<
     const input = node as HTMLInputElement;
     const label = document.getElementById(`${input.id}-label`)?.textContent ?? document.getElementById(`upload-label-${input.id}`)?.textContent ??
       document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent ?? input.getAttribute('aria-label') ?? input.id;
-    return { key: input.id, label: label.trim().replace(/\*\s*$/, '').trim(),
+    // Helper text under a question ("Commitment" with the real question below it) is part of what the applicant answers.
+    const description = (document.getElementById(`${input.id}-description`)?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000);
+    return { key: input.id, label: label.trim().replace(/\*\s*$/, '').trim(), ...(description ? { description } : {}),
       kind: input.type === 'file' ? 'file' : input.getAttribute('role') === 'combobox' ? 'combobox' :
         input.tagName === 'SELECT' ? 'select' : input.type === 'checkbox' ? 'checkbox' : input.type === 'radio' ? 'radio' :
           input.type === 'email' ? 'email' : 'text',

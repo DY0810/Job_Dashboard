@@ -59,13 +59,27 @@ const screeningPrompts: Record<string, string> = {
   country_unknown: 'Which two-letter country code applies to your job eligibility for this role?',
   degree_unknown: 'What degree level are you pursuing or have you completed?',
   major_unknown: 'What is your academic major for this application?',
-  term_unknown: 'Which internship term are you available for?',
+  term_unknown: 'Which internship term are you available for? If none, archive the application to skip it.',
   graduation_unknown: 'What is your expected graduation month? Enter YYYY-MM.',
-  work_authorization_unknown: 'Are you legally authorized to work in the country required for this role? Enter authorized or not_authorized.',
-  employer_pay_unknown: 'The posting does not state pay. Enter accept only if you agree to consider this role despite your pay preference.',
-  employer_pay_range_unknown: 'The published minimum is below your pay preference. Enter accept only if you agree to consider this role.',
-  pay_currency_unverified: 'The pay currency or period differs from your preference. Enter accept only if you agree to consider this role.',
+  work_authorization_unknown: 'Are you legally authorized to work in the country required for this role?',
+  employer_pay_unknown: 'The posting does not state pay. Consider this role anyway? To skip it, archive the application.',
+  employer_pay_range_unknown: 'The published minimum is below your pay preference. Consider this role anyway? To skip it, archive the application.',
+  pay_currency_unverified: 'The pay currency or period differs from your preference. Consider this role anyway? To skip it, archive the application.',
 };
+// Values are what application-context reads back; labels are what the applicant sees.
+const consider: [string, string][] = [['accept', 'Yes, consider this role']];
+const screeningChoices: Record<string, (context: ApplicationContext) => [string, string][]> = {
+  work_authorization_unknown: () => [['authorized', 'Yes, I am authorized'], ['not_authorized', 'No, I am not authorized']],
+  employer_pay_unknown: () => consider, employer_pay_range_unknown: () => consider, pay_currency_unverified: () => consider,
+  term_unknown: context => [...new Set(context.requirements.terms)].map(term => [term, term]),
+};
+const textField = { type: 'text' as const, allowBlank: false, declineValue: null, units: null, precision: null,
+  minLength: 1, maxLength: 160, format: 'plain' as const };
+function screeningField(reason: string, context: ApplicationContext) {
+  const choices = screeningChoices[reason]?.(context) ?? [];
+  return choices.length ? { type: 'select' as const, allowBlank: false, declineValue: null, units: null, precision: null,
+    options: choices.map(([value, label]) => ({ value, label })), minSelections: 1, maxSelections: 1 } : textField;
+}
 
 export function screeningQuestions(context: ApplicationContext, reasons: string[]): QuestionDispatch {
   return {
@@ -84,8 +98,7 @@ export function screeningQuestions(context: ApplicationContext, reasons: string[
           ats: context.identity.ats, tenant: context.identity.tenant, version: 1 },
         provenance: { source: 'system' as const, sourceId: null, sourceVersion: null,
           excerpt: context.requirements.excerpts.find(excerpt => excerpt.toLowerCase().includes(reason.includes('graduation') ? 'graduat' : reason.includes('pay') ? 'pay' : 'require'))?.slice(0, 1000) ?? null },
-        field: { type: 'text' as const, allowBlank: false, declineValue: null, units: null, precision: null,
-          minLength: 1, maxLength: 160, format: 'plain' as const }, factIds: [],
+        field: screeningField(reason, context), factIds: [],
         sensitive: reason === 'work_authorization_unknown',
       };
     }),
@@ -111,7 +124,8 @@ export function formQuestions(context: ApplicationContext, fields: AtsField[]): 
   return {
     kind: 'questions', expectedProfileRevision: context.profileRevision, company: context.company, role: context.role,
     questions: fields.slice(0, 64).map(field => ({
-      key: formQuestionKey(field), kind: 'needs_answer' as const, originalWording: field.label,
+      key: formQuestionKey(field), kind: 'needs_answer' as const,
+      originalWording: field.description ? `${field.label}\n\n${field.description}`.slice(0, 4000) : field.label,
       reason: `Required field on the official application: ${context.applicationUrl}`,
       required: true, meaning: { id: formQuestionKey(field), reviewId: null }, schemaVersion: 1,
       scope: { kind: 'application' as const, country: null, employer: null, applicationId: context.applicationId,

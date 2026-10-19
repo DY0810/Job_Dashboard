@@ -15,6 +15,9 @@ export type AtsIdentity = z.infer<typeof AtsIdentitySchema>;
 export const atsFieldKey = /^[a-z][a-z0-9_-]{0,63}(\[\])?$/;
 export const AtsFieldSchema = z.strictObject({
   key: z.string().regex(atsFieldKey), label: z.string().trim().min(1).max(1000),
+  // Text the form shows under a heading-only label (Ashby's checkbox sentence, Greenhouse's helper text). Shown in
+  // the inbox, never part of the key or answer matching, so wording fixes do not orphan saved answers.
+  description: z.string().trim().min(1).max(2000).optional(),
   kind: z.enum(['text', 'email', 'date', 'select', 'combobox', 'radio', 'checkbox', 'file']), required: z.boolean(),
   // Lever names inputs "cards[<uuid>][field0]"; Ashby uses bare UUIDs or the question's own wording.
   name: z.string().regex(/^[^"\\\r\n]{1,400}$/).optional(),
