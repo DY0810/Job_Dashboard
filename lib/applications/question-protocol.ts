@@ -118,7 +118,9 @@ export const InboxItemSchema = z.strictObject({
   eventId: uuid, applicationId: uuid, kind: label, createdAt: count, read: z.boolean(), question: QuestionDetailSchema.nullable(),
 });
 export const InboxPageSchema = InboxStatusSchema.extend({ items: z.array(InboxItemSchema).max(50), nextCursor: uuid.nullable() });
-export const InboxQuerySchema = z.strictObject({ limit: z.coerce.number().int().min(1).max(50).default(20), cursor: uuid.optional() });
+export const InboxQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(50).default(20), cursor: uuid.optional(), applicationId: uuid.optional(),
+});
 export const InterventionPollSchema = z.strictObject({ questionProtocolVersion: z.literal(1) });
 export const InterventionCommandSchema = FocusResultSchema.extend({
   expectedApplicationRevision: revision, fence: revision, descriptor: QuestionDescriptorSchema, checkpoint: CheckpointSchema.nullable(),

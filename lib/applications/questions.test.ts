@@ -449,6 +449,15 @@ describe('typed validation, optional questions and inbox receipts', () => {
     expect(many - one).toBeLessThan(20);
   });
 
+  it("lists one application's notifications when asked", async () => {
+    const a = await prepared('alice', 'first'); await batch(a);
+    const b = await prepared('alice', 'second'); await batch(b);
+    expect((await getInbox(db, 'alice', {}, options)).items).toHaveLength(2);
+    const page = await getInbox(db, 'alice', { applicationId: a.app.id }, options);
+    expect(page.items.map(item => item.applicationId)).toEqual([a.app.id]);
+    expect((await getInbox(db, 'bob', { applicationId: a.app.id }, options)).items).toEqual([]);
+  });
+
   it('keeps reads private, paginates stably and never resolves through read receipts', async () => {
     const a = await prepared(), q = await batch(a, [descriptor(), descriptor({ key: 'second' })]);
     const initial = await getInboxStatus(db, 'alice', options);

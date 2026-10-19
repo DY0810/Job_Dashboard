@@ -160,3 +160,26 @@ it('uses protocol precision/units/options and permits only eligible immutable do
   expect(answerCommand(docQ, { ...emptyEdit(), input: doc.id }, [doc]).answer).toMatchObject({ documentId: doc.id, version: 3, sha256: doc.sha256 });
   expect(pollingDelay(100)).toBe(120_000);
 });
+
+it("reads a waiting application's own questions only when they are older than the notifications loaded", async () => {
+  const f = fixture(), paths: string[] = [];
+  const older = '00000000-0000-4000-8000-0000000000aa';
+  const t = setup({ ...f, respond: async (path, method, body, headers) => {
+    paths.push(path);
+    const result = await f.respond(path, method, body, headers);
+    if (!path.startsWith('/api/inbox?') || path.includes(`applicationId=${f.state.q.application.id}`)) return result;
+    // Every page of the inbox is other notifications and points at older ones.
+    return { ...result, json: { ...(result.json as object), items: [], nextCursor: older } };
+  } });
+  const own = () => paths.filter((path) => path.includes('applicationId=')).length;
+  const has = () => t.control.view.inbox!.items.some((item) => item.question?.id === f.state.q.id);
+  await t.control.refresh();
+  expect(has()).toBe(false);
+  t.control.need([f.state.q.application.id]);
+  await vi.waitFor(() => expect(has()).toBe(true));
+  expect(own()).toBe(1);
+  // The next poll reads it again, so the card keeps its questions.
+  await t.control.refresh();
+  expect(has()).toBe(true);
+  expect(own()).toBe(2);
+});

@@ -195,7 +195,7 @@ export async function getInboxStatus(db: PrivateDb, ownerId: string, options: Wo
   return workerTransaction(db, tx => inboxStatus(tx, ownerId, nowAt(options)));
 }
 export async function getInbox(
-  db: PrivateDb, ownerId: string, input: { limit?: number; cursor?: string } = {}, options: WorkerOptions = {},
+  db: PrivateDb, ownerId: string, input: { limit?: number; cursor?: string; applicationId?: string } = {}, options: WorkerOptions = {},
 ): Promise<InboxPage> {
   const query = InboxQuerySchema.parse(input);
   return workerTransaction(db, async tx => {
@@ -210,6 +210,7 @@ export async function getInbox(
     }
     const rows = await tx.select({ event: applicationEvents, read: inboxReads.eventId }).from(applicationEvents)
       .leftJoin(inboxReads, readJoin).where(and(eq(applicationEvents.ownerId, ownerId), notification,
+        query.applicationId ? eq(applicationEvents.applicationId, query.applicationId) : undefined,
         cursor && sql`(${applicationEvents.createdAt}, ${applicationEvents.eventId}, ${applicationEvents.applicationId})
           < (${cursor.createdAt}, ${cursor.eventId}, ${cursor.applicationId})`))
       .orderBy(desc(applicationEvents.createdAt), desc(applicationEvents.eventId), desc(applicationEvents.applicationId)).limit(query.limit + 1);

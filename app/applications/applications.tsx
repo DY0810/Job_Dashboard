@@ -357,6 +357,8 @@ export default function Applications() {
   // An answered application has no open question left: the modal has done its job.
   const answered = answering && !asked.has(dialog.id);
   useEffect(() => { if (answered) hide(); }, [answered]);
+  const waiting = applications.filter((app) => app.reasonCode === 'question_unresolved' && app.hiddenAt === null).map((app) => app.id).join(',');
+  useEffect(() => { questions.control?.need(waiting ? waiting.split(',') : []); }, [questions.control, waiting]);
   const close = () => { if (answering) questions.control?.back(); hide(); };
   const done = () => { hide(); reload(); };
 
