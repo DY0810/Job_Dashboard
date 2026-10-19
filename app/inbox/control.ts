@@ -67,6 +67,7 @@ export class InboxControl {
   private keyVersion = '';
   private disposed = false;
   private persisted: Promise<boolean> = Promise.resolve(true);
+  private waiting = new Set<string>();
   constructor(private readonly publish: (view: InboxView) => void, private readonly storage: Storage | null) {}
   get signal() { return this.ownerAbort.signal; }
   get dirty() {
@@ -164,19 +165,36 @@ export class InboxControl {
       this.update({ draftError: 'Encrypted recovery unavailable. Keep this tab open until your answer is acknowledged.' });
     }
   }
+  /** Applications waiting on answers; any whose questions are older than the pages loaded below are read on their own. */
+  need(applicationIds: string[]) {
+    const added = applicationIds.some((id) => !this.waiting.has(id));
+    this.waiting = new Set(applicationIds);
+    if (added && this.view.inbox?.nextCursor) void this.refresh();
+  }
   private async load(owner: string, signal: AbortSignal, cursor?: string) {
-    const page = async (after?: string) => {
-      const next = InboxPageSchema.parse(await this.request(`/api/inbox?limit=50${after ? `&cursor=${encodeURIComponent(after)}` : ''}`, signal, owner));
+    const page = async (after?: string, applicationId?: string) => {
+      const next = InboxPageSchema.parse(await this.request(`/api/inbox?limit=50${after ? `&cursor=${encodeURIComponent(after)}` : ''}${
+        applicationId ? `&applicationId=${applicationId}` : ''}`, signal, owner));
       if (next.ownerId !== owner) throw new RequestError(403, 'PRINCIPAL_CHANGED');
       return next;
     };
     const inbox = await page(cursor);
     // An application's form needs all of its open questions, not only those in the newest 50 notifications.
-    // ponytail: up to 4 more pages (250 notifications); page by application on the server if an inbox outgrows it.
     for (let more = 0; !cursor && inbox.nextCursor && more < 4; more++) {
       const next = await page(inbox.nextCursor);
       inbox.items.push(...next.items);
       inbox.nextCursor = next.nextCursor;
+    }
+    // Past 250 notifications, a waiting application with none of its questions loaded reads its own, so Answer still works.
+    // ponytail: one that has only some of its questions in the newest 250 still shows only those.
+    if (!cursor && inbox.nextCursor) {
+      const loaded = new Set(inbox.items.flatMap((item) => item.question && !item.question.resolved ? [item.applicationId] : []));
+      for (const id of this.waiting) {
+        for (let next: Page | null = null, more = 0; !loaded.has(id) && (!next || next.nextCursor) && more < 3; more++) {
+          next = await page(next?.nextCursor ?? undefined, id);
+          inbox.items.push(...next.items);
+        }
+      }
     }
     let selected = this.view.selected;
     if (selected) {
