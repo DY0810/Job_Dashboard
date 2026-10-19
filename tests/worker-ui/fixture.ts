@@ -4,7 +4,7 @@ import { createEmptyPolicy, PolicySchema } from '../../lib/applications/policy';
 import { InboxPageSchema } from '../../lib/applications/question-protocol';
 import { isTerminalState } from '../../lib/applications/state';
 import {
-  ApplicationCommandSchema, ApplicationSummarySchema, MaterialsSchema, PairingCreateSchema, PairingGrantSchema,
+  ApplicationCommandSchema, ApplicationSummarySchema, LiveListSchema, MaterialsSchema, PairingCreateSchema, PairingGrantSchema,
   PAIRING_TTL_MS, RevisionCommandSchema, RevocationSchema, RunCommandSchema, RunCreateSchema,
   RunListSchema, RunSchema, WorkerListSchema, WorkerScheduleAckSchema, WorkerScheduleSchema, WorkerSummarySchema,
   type ApplicationSummary, type PairingSummary, type Run, type WorkerSummary,
@@ -92,6 +92,7 @@ export class WorkerFixture {
       if (path === '/api/auto-apply/policies') return { status: 200, json: structuredClone(this.policy) };
       // The Auto Apply page under the settings drawer reads these too.
       if (path === '/api/applications/materials') return reply(MaterialsSchema, { ownerId: this.owner, materials: [] });
+      if (path === '/api/applications/live') return reply(LiveListSchema, { ownerId: this.owner, live: [] });
       throw new Error(`Unexpected synthetic GET: ${path}`);
     }
     assert.equal(headers.get('content-type'), 'application/json');
