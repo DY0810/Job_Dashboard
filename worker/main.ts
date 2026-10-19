@@ -113,6 +113,8 @@ export function atsFailureReason(error: unknown) {
   }
   if (error instanceof z.ZodError) return "ats_schema_invalid";
   if (error instanceof Error && error.name === "TimeoutError") return "ats_timeout";
+  // Workie's own error codes (e.g. COVER_LETTER_EXCEEDS_ONE_PAGE) hold no private value, so the reason names them.
+  if (error instanceof Error && /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(error.message)) return `ats_${error.message.toLowerCase()}`.slice(0, 80);
   return "ats_execution_failed";
 }
 

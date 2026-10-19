@@ -156,6 +156,14 @@ test('cover letters cite resume evidence, fit one page, and reject unsupported c
   await assert.rejects(provider.generate(input), error => error instanceof ProviderError && error.diagnostic === 'letter_evidence');
 });
 
+test("the longest letter the schema allows fits one page, and symbols Helvetica lacks do not fail it", async () => {
+  const text = (n) => 'I built and shipped a data pipeline that cut processing time by forty percent. '.repeat(20).slice(0, n).trim();
+  const letter = { task: 'cover_letter', confidence: 0.9, model: 'synthetic', usage: { input_tokens: 0, output_tokens: 0 },
+    introduction: `Latency went 2s \u2192 1s, p99 \u2265 target \u2212 noise \u2603. ${text(640)}`,
+    body: [900, 900, 900, 900].map(n => ({ text: text(n), evidenceIds: [] })), companyParagraph: text(500), conclusion: text(500) };
+  assert.equal((await PDFDocument.load(await renderCoverLetter(letter, 'Test Applicant'))).getPageCount(), 1);
+});
+
 test("BYOK compatible output uses the approved keychain address and exact result schema", async () => {
   const ledger = await structuredLedgerFor("byok");
   const calls = [];
