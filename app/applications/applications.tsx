@@ -435,8 +435,7 @@ export default function Applications() {
               {questionsHere.length ? <div className={styles.issue}>{questionsHere.map((question) =>
                 <p key={question.id}>{question.descriptor.originalWording.split('\n\n')[0]}</p>)}</div>
                 : detail && <p className={styles.issue}>{detail}
-                  {(app.reasonCode === 'cover_letter_unavailable' || skipReasons(app).length > 0) && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}
-                  {app.reasonCode === 'question_unresolved' && questions.view.inbox && <> <Link href="/inbox" prefetch={false}>Open Inbox</Link></>}</p>}
+                  {(app.reasonCode === 'cover_letter_unavailable' || skipReasons(app).length > 0) && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}</p>}
               <div className={styles.actions}>
                 {!archived && !['submitting', 'submission_unknown'].includes(app.state) && <Command label="Archive" busyLabel="Archiving..."
                   confirm={isTerminalState(app.state) ? 'Archive this application?' : 'Archive this application? It is still live, so this also cancels it.'}
