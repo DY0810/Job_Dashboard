@@ -145,6 +145,15 @@ describe('connector isolation (Phase 2 gate)', () => {
     expect(db.select().from(postings).all()).toHaveLength(2);
     expect(result.runs.find((run) => run.connector === 'bad-shape')?.degraded).toContain('discarded 1 malformed postings');
   });
+  it('decodes escaped company and title names before they are stored', async () => {
+    const db = memoryDb();
+    const escaped: Connector = { name: 'escaped', kind: 'ats', fetch: async () => [
+      posting({ company: 'hims &amp;#038; hers', title: 'Data &amp; ML Intern' }),
+    ] };
+    await runIngest({ db, connectors: [escaped], runtime: flakyRuntime(), runId: 'escaped', log: silent });
+    expect(db.select({ company: postings.company, title: postings.title }).from(postings).all())
+      .toEqual([{ company: 'hims & hers', title: 'Data & ML Intern' }]);
+  });
   it('one healthy + one 500 + one hang: the run completes, records three rows, exits 0', async () => {
     const db = memoryDb();
     const result = await runIngest({

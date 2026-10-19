@@ -19,7 +19,7 @@ import { parseArgs } from 'node:util';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { dedupePostings, publisherIdOf, SOURCE_PRIORITY } from '../lib/dedupe.ts';
-import { normalizeLocation } from '../lib/normalize.ts';
+import { decodeHtmlEntities, normalizeLocation } from '../lib/normalize.ts';
 import { openDb, type Db } from '../lib/db/index.ts';
 import { connectorRuns, postingSources, postings } from '../lib/db/schema.ts';
 import type { SourceFields } from '../lib/extract.ts';
@@ -268,8 +268,11 @@ export async function runIngest(options: IngestOptions): Promise<IngestResult> {
           } catch {
             return false;
           }
-        }).map((posting) => Number.isFinite(new Date(posting.postedAt).getTime())
-          ? posting : { ...posting, postedAt: Number.NaN });
+        }).map((posting) => ({
+          // Some feeds escape twice ("hims &amp;#038; hers"), so names are decoded to a fixed point here, once for every source.
+          ...posting, company: decodeHtmlEntities(posting.company).trim(), title: decodeHtmlEntities(posting.title).trim(),
+          postedAt: Number.isFinite(new Date(posting.postedAt).getTime()) ? posting.postedAt : Number.NaN,
+        }));
         if (fetched.length !== received.length) {
           context.degraded(`discarded ${received.length - fetched.length} malformed postings`);
         }
