@@ -1,7 +1,10 @@
 import 'server-only';
-import { and, desc, eq, inArray, isNull, not, or, sql } from 'drizzle-orm';
+import { and, desc, eq, exists, gt, inArray, isNull, not, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import type { PrivateDb } from '../private-db/index.ts';
-import { applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, workers } from '../private-db/schema.ts';
+import {
+  applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, manualApplicationMarks, workers,
+} from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from './state.ts';
 import { postingUrl } from './posting-url.ts';
@@ -70,25 +73,36 @@ export async function returnedPostingUrls(db: PrivateDb): Promise<string[]> {
   });
 }
 
+const newer = alias(applications, 'newer');
 /** Archived rows (hidden, or 14 days old) stay listed for 30 days after archiving; the same cutoff as `bucket`. */
 export async function listRuns(db: PrivateDb, ownerId: string, options: WorkerOptions = {}): Promise<RunList> {
-  return workerTransaction(db, async (tx) => ({
-    ownerId,
-    runs: (await tx.select().from(applicationRuns).where(eq(applicationRuns.ownerId, ownerId))
-      .orderBy(desc(applicationRuns.createdAt)).limit(100)).map(runSummary),
-    applications: (await tx.select({ app: applications, submission: applicationSubmissions, receipt: applicationReceipts })
-      .from(applications)
-      .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
-      .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)))
-      .where(and(eq(applications.ownerId, ownerId), not(returnedToBoard),
-        or(and(isNull(applications.hiddenAt), inArray(applications.state, ['submitted', ...IN_FLIGHT_STATES])),
-          sql`coalesce(${applications.hiddenAt}, ${applications.createdAt} + ${ARCHIVE_AFTER_MS}) > ${nowAt(options) - ARCHIVE_KEEP_MS}`)))
-      .orderBy(desc(applications.createdAt)).limit(100))
-      .map(({ app, submission, receipt }) => applicationSummary(app, {
-        company: submission?.company ?? receipt?.company, role: submission?.role ?? receipt?.role,
-        receiptId: receipt?.receiptId, submittedAt: receipt?.submittedAt,
-      })),
-  }));
+  return workerTransaction(db, async (tx) => {
+    const sameRole = <T extends typeof applications | typeof newer | typeof manualApplicationMarks>(table: T) => and(
+      eq(table.ownerId, applications.ownerId), eq(table.ats, applications.ats),
+      eq(table.tenant, applications.tenant), eq(table.requisition, applications.requisition));
+    // A stopped attempt Auto Apply can never retry needs nothing from the applicant: a newer attempt of the role exists,
+    // or the applicant marked the role applied by hand. Restart refuses both (DUPLICATE_BLOCKED), so neither is listed.
+    const cannotRetry = and(inArray(applications.state, ['failed', 'skipped', 'cancelled']), or(
+      exists(tx.select({ id: newer.id }).from(newer).where(and(sameRole(newer), gt(newer.attempt, applications.attempt)))),
+      exists(tx.select({ id: manualApplicationMarks.id }).from(manualApplicationMarks).where(sameRole(manualApplicationMarks)))));
+    return {
+      ownerId,
+      runs: (await tx.select().from(applicationRuns).where(eq(applicationRuns.ownerId, ownerId))
+        .orderBy(desc(applicationRuns.createdAt)).limit(100)).map(runSummary),
+      applications: (await tx.select({ app: applications, submission: applicationSubmissions, receipt: applicationReceipts })
+        .from(applications)
+        .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
+        .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)))
+        .where(and(eq(applications.ownerId, ownerId), not(returnedToBoard), not(cannotRetry!),
+          or(and(isNull(applications.hiddenAt), inArray(applications.state, ['submitted', ...IN_FLIGHT_STATES])),
+            sql`coalesce(${applications.hiddenAt}, ${applications.createdAt} + ${ARCHIVE_AFTER_MS}) > ${nowAt(options) - ARCHIVE_KEEP_MS}`)))
+        .orderBy(desc(applications.createdAt)).limit(100))
+        .map(({ app, submission, receipt }) => applicationSummary(app, {
+          company: submission?.company ?? receipt?.company, role: submission?.role ?? receipt?.role,
+          receiptId: receipt?.receiptId, submittedAt: receipt?.submittedAt,
+        })),
+    };
+  });
 }
 export async function releaseRunApplications(tx: WorkerTx, ownerId: string, runId: string, state: 'paused' | 'stopped') {
   for (const app of await tx.select().from(applications).where(and(eq(applications.ownerId, ownerId), eq(applications.runId, runId)))) {

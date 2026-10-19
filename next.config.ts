@@ -31,6 +31,13 @@ const nextConfig: NextConfig = {
   // the next renders, costs nothing visible. Vercel-CDN-Cache-Control is the edge-only
   // header: Next keeps setting its own browser Cache-Control (no-store), so back/forward
   // and reloads in the browser stay fresh — only the CDN holds a copy.
+  // Saves only work on the household origin (BETTER_AUTH_URL): the same-origin check refuses every other host.
+  // So production pages opened on a *.vercel.app alias move there. /api stays: workers call it on the host they paired with.
+  async redirects() {
+    const origin = process.env.VERCEL_ENV === 'production' && process.env.BETTER_AUTH_URL ? new URL(process.env.BETTER_AUTH_URL) : null;
+    return origin ? [{ source: '/:path((?!api/).*)', missing: [{ type: 'host' as const, value: origin.hostname }],
+      destination: `${origin.origin}/:path`, permanent: false }] : [];
+  },
   async headers() {
     const edge = { key: 'Vercel-CDN-Cache-Control', value: 'max-age=300, stale-while-revalidate=1500' };
     return [

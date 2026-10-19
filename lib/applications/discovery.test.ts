@@ -457,6 +457,8 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect(history.find((a) => a.id === previous.id)).toMatchObject({ state: 'skipped', attempt: 1 });
     expect(history.find((a) => a.id === next.id)).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: previous.id });
     await expect(reapplyApplication(db, 'alice', run.id, { ...command, ...request() }, options)).rejects.toMatchObject({ code: 'DUPLICATE_BLOCKED' });
+    // The skipped attempt can never be retried again, so only the newest attempt is listed.
+    expect((await listRuns(db, 'alice', options)).applications.map((a) => a.id)).toEqual([next.id]);
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
   });
 
@@ -637,6 +639,8 @@ describe('owner-confirmed frozen legacy imports', () => {
     await confirmLegacyImport(db, 'alice', confirmInput(p), options);
     const [app] = await appRows();
     expect(app).toMatchObject({ state: state === 'submitting' ? 'submission_unknown' : 'skipped', leaseUntil: null });
+    // A role marked applied by hand can't be retried, so its skipped attempt leaves the list; an unknown submission stays.
+    expect((await listRuns(db, 'alice', options)).applications.map((a) => a.id)).toEqual(state === 'screening' ? [] : [app.id]);
     expect(app.fence).toBeGreaterThan(lease.fence);
     await expect(heartbeatWorker(db, token, { protocolVersion: 1, lease: ref(lease) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
     await expect(recordWorkerEvent(db, token, lease.applicationId, {

@@ -339,11 +339,12 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
         if (letter) await control.letter(lease.applicationId, { protocolVersion: 1, introduction: letter.introduction,
           body: letter.body.map(item => item.text), conclusion: letter.conclusion, companyParagraph: letter.companyParagraph }, signal);
-        review = observed.fields.flatMap(field => {
+        review = observed.fields.map(field => {
           const value = field.kind === 'file' ? currentApplication.documents[field.key] && basename(currentApplication.documents[field.key])
             : adapter.answer(currentApplication, field);
           const text = Array.isArray(value) ? value.join(', ') : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : value;
-          return text ? [{ label: field.label.slice(0, 1000), value: text.slice(0, 4000) }] : [];
+          // An optional field Workie had no answer for is listed too, so the applicant sees it went in empty.
+          return { label: field.label.slice(0, 1000), value: text ? text.slice(0, 4000) : 'Left blank' };
         }).slice(0, 64);
         // Nothing is submitted until the applicant reviews the filled form, resume and letter and approves it.
         return { state: "needs_policy_decision" as const, reasonCode: SUBMIT_APPROVAL };
