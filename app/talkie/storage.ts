@@ -1,7 +1,6 @@
-import { del, get, localStore, set, type Store as LocalStore } from '../local-store';
+import { get, localStore, set, type Store as LocalStore } from '../local-store';
 
 const DRAFTS_KEY = 'talkie-drafts-v1';
-const TOKEN_KEY = 'talkie-token';
 const AUTHOR_KEY = 'talkie-author';
 
 export type NewNoteDraft = {
@@ -93,19 +92,6 @@ export function clearEditDraft(noteId: number, store?: LocalStore | null): void 
   const edits = { ...state.edits };
   delete edits[key];
   void writeState({ ...state, edits }, store);
-}
-
-export function readTalkieToken(store: LocalStore | null = localStore()): string | null {
-  return get(TOKEN_KEY, store)?.trim() || null;
-}
-
-export function saveTalkieToken(token: string, store: LocalStore | null = localStore()): boolean {
-  return set(TOKEN_KEY, token, store);
-}
-
-/** Storage restrictions should not prevent an in-memory token from being used. */
-export function clearTalkieToken(store: LocalStore | null = localStore()): void {
-  del(TOKEN_KEY, store);
 }
 
 export function readTalkieAuthor(store: LocalStore | null = localStore()): string {

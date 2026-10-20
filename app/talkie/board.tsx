@@ -7,15 +7,12 @@ import { X } from 'lucide-react';
 import {
   clearEditDraft,
   clearNewNoteDraft,
-  clearTalkieToken,
   readEditDraft,
   readNewNoteDraft,
   readTalkieAuthor,
-  readTalkieToken,
   saveEditDraft,
   saveNewNoteDraft,
   saveTalkieAuthor,
-  saveTalkieToken,
   type NewNoteDraft,
 } from './storage';
 import { DeferredEditWriter, sameNoteDraft, shouldAttachServerId } from './autosave';
@@ -28,18 +25,14 @@ type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type Grab = Edge | 'move';
 const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
-class TokenError extends Error {}
-
-async function call<T>(url: string, init: RequestInit, token: string | null, fallback: string): Promise<T> {
+async function call<T>(url: string, init: RequestInit, fallback: string): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: {
       'content-type': 'application/json',
-      ...(token ? { 'x-workie-token': token } : {}),
       ...init.headers,
     },
   });
-  if (res.status === 401) throw new TokenError('a write token is needed to change this board');
   if (res.status === 503) throw new Error('writes are not configured on this deployment');
   if (!res.ok) throw new Error(res.status === 429 ? 'this week is full' : fallback);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
@@ -67,10 +60,6 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const [author, setAuthor] = useState('');
-  const [tokenForm, setTokenForm] = useState(false);
-  const [token, setToken] = useState('');
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const [retryWrites, setRetryWrites] = useState(0);
   const [mounted, setMounted] = useState(false);
   const origin = useRef<{ x: number; y: number } | null>(null);
   const createTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -129,18 +118,7 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
 
   const patch = (id: number, fn: (n: NoteWithComments) => NoteWithComments) =>
     setNotes((all) => all.map((n) => (n.id === id ? fn(n) : n)));
-  const write = async <T,>(url: string, init: RequestInit, fallback: string): Promise<T> => {
-    try {
-      return await call<T>(url, init, sessionToken ?? readTalkieToken(), fallback);
-    } catch (error) {
-      if (error instanceof TokenError) {
-        clearTalkieToken();
-        setSessionToken(null);
-        setTokenForm(true);
-      }
-      throw error;
-    }
-  };
+  const write = <T,>(url: string, init: RequestInit, fallback: string): Promise<T> => call<T>(url, init, fallback);
 
   const save = (pendingDraft: NewNoteDraft, keepEditor: boolean): Promise<void> => {
     const body = pendingDraft.body.trim();
@@ -224,10 +202,10 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
   };
   useEffect(() => {
     if (pending?.body.trim()) scheduleSave(pending);
-    // A restored draft gets its first autosave after mount. A newly supplied token retries
-    // it too; body changes schedule directly through `updatePending`.
+    // A restored draft gets its first autosave after mount; body changes schedule directly
+    // through `updatePending`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending?.clientKey, retryWrites]);
+  }, [pending?.clientKey]);
   const updatePending = (next: NewNoteDraft, autosave: boolean = true) => {
     replacePending(next);
     if (!saveNewNoteDraft(next)) {
@@ -299,38 +277,6 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
         ) : null}
       </div>
 
-      {tokenForm ? (
-        <form
-          aria-label="Talkie write token"
-          className="flex flex-wrap items-end gap-2 border-b border-rule py-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const next = token.trim();
-            if (!next) return;
-            setSessionToken(next);
-            saveTalkieToken(next);
-            setToken('');
-            setTokenForm(false);
-            setRetryWrites((version) => version + 1);
-          }}
-        >
-          <label className="flex min-w-48 flex-1 flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">write token</span>
-            <input
-              autoFocus
-              required
-              type="password"
-              autoComplete="off"
-              className="border-b border-rule bg-transparent text-fg outline-none focus:border-fg-dim"
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-            />
-          </label>
-          <button type="submit" className="chip">save token</button>
-          <button type="button" className="chip" onClick={() => setTokenForm(false)}>cancel</button>
-        </form>
-      ) : null}
-
       <div
         className="board"
         data-readonly={canWrite ? undefined : ''}
@@ -352,7 +298,6 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
             onDelete={() => remove(note.id)}
             onReply={(body) => reply(note.id, body)}
             onUnreply={(cid) => unreply(note.id, cid)}
-            retryWrites={retryWrites}
           />
         ))}
 
@@ -406,11 +351,11 @@ function When({ at, mounted }: { at: Date; mounted: boolean }) {
 }
 
 function NoteCard({
-  note, mounted, canWrite, onEdit, onResize, onDelete, onReply, onUnreply, retryWrites,
+  note, mounted, canWrite, onEdit, onResize, onDelete, onReply, onUnreply,
 }: {
   note: NoteWithComments; mounted: boolean; canWrite: boolean;
   onEdit: (body: string) => Promise<void>; onResize: (geometry: Partial<Rect>) => Promise<void>; onDelete: () => Promise<void>;
-  onReply: (body: string) => Promise<void>; onUnreply: (cid: number) => Promise<void>; retryWrites: number;
+  onReply: (body: string) => Promise<void>; onUnreply: (cid: number) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftBody, setDraftBody] = useState(note.body);
@@ -461,10 +406,10 @@ function NoteCard({
   useEffect(() => {
     if (!editing || !readEditDraft(note.id) || !draftBody.trim()) return;
     ensureWriter().retry();
-    // Token submission changes `retryWrites`; recovery gets one retry without requiring
-    // another keystroke. Normal edits are scheduled by `onChange` below.
+    // Recovery gets one retry without requiring another keystroke. Normal edits are
+    // scheduled by `onChange` below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, retryWrites]);
+  }, [editing]);
 
   // Resizing after the fact: every edge and corner is a grip. Right/left change the width
   // (left moves the note as it shrinks); bottom/top set a MINIMUM height (top moves it) —

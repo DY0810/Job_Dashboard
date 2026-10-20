@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { getDb, needsTurso } from '@/lib/db';
-import { writeGate } from '@/lib/write-gate';
 import { deleteComment } from '@/lib/notes';
 
 const Id = z.coerce.number().int().positive();
@@ -10,8 +9,6 @@ const Id = z.coerce.number().int().positive();
  * `deleteComment` — so this route cannot reach a comment that lives under a different note.
  */
 export async function DELETE(request: Request, context: { params: Promise<{ id: string; cid: string }> }) {
-  const denied = writeGate(request);
-  if (denied) return denied;
   const params = await context.params;
   const id = Id.safeParse(params.id);
   const cid = Id.safeParse(params.cid);
