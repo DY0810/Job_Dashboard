@@ -6,12 +6,13 @@ import { privateEndpoint, readPrivateJson, PrivateInputError } from './private-h
 import { WorkerError, withWorker } from './worker-store.ts';
 import { limitWorkerRequests } from './worker-http.ts';
 import * as p from './question-protocol.ts';
+import { formOptions } from './form-options.ts';
 import {
   getInbox, getInboxStatus, getQuestion, markInboxRead, answerQuestion, answerQuestions,
   requestQuestionFocus, registerQuestionBatch, pollQuestionInterventions, ackQuestionIntervention,
 } from './questions.ts';
 
-type BrowserAction = 'inbox' | 'status' | 'read' | 'question' | 'answer' | 'answers' | 'focus';
+type BrowserAction = 'inbox' | 'status' | 'read' | 'question' | 'options' | 'answer' | 'answers' | 'focus';
 function checkPath(request: Request, id?: string, pagination = false) {
   const query = new URL(request.url).searchParams;
   if ((id !== undefined && !z.uuid().safeParse(id).success) ||
@@ -39,6 +40,11 @@ export function questionsEndpoint(request: Request, action: BrowserAction, id?: 
         }
         case 'status': return p.InboxStatusSchema.parse(await getInboxStatus(db, ownerId, options));
         case 'question': return p.QuestionDetailSchema.parse(await getQuestion(db, ownerId, id!, options));
+        case 'options': {
+          const { descriptor, application } = await getQuestion(db, ownerId, id!, options);
+          return { options: descriptor.field.type === 'text' && descriptor.key.startsWith('form-')
+            ? await formOptions(application.ats, application.tenant, application.requisition, descriptor.originalWording) : [] };
+        }
         case 'read': return z.strictObject({ ownerId: z.string(), eventIds: z.array(z.uuid()).max(50) })
           .parse(await markInboxRead(db, ownerId, await readPrivateJson(request, p.ReadCommandSchema)));
         case 'answer': return p.AnswerResultSchema.parse(await answerQuestion(db, ownerId, id!,
