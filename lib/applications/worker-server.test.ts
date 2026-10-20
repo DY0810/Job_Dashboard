@@ -624,11 +624,13 @@ describe('durable owner controls', () => {
     expect(ids).not.toContain(expired);
     expect(ids).toEqual(expect.arrayContaining([archived, submitted, unknown]));
   });
-  it('sends a role that stops again after a retry back to the Jobs board', async () => {
+  it('sends a role that stops again after a retry back to the Jobs board and keeps it in Auto Apply', async () => {
     const { app } = await prepared();
     await db.update(applications).set({ state: 'needs_document', reasonCode: 'document_tailoring_unavailable' }).where(eq(applications.id, app.id));
     expect((await listRuns(db, 'alice')).applications.map((row) => row.id)).toContain(app.id);
     await db.update(applications).set({ retries: 1 }).where(eq(applications.id, app.id));
+    expect((await listRuns(db, 'alice')).applications.map((row) => row.id)).toContain(app.id);
+    await db.update(applications).set({ state: 'failed', reasonCode: 'restarted' }).where(eq(applications.id, app.id));
     expect((await listRuns(db, 'alice')).applications.map((row) => row.id)).not.toContain(app.id);
     await db.insert(applications).values({ id: randomUUID(), ownerId: 'alice', runId: app.runId, workerId: app.workerId,
       ats: 'ashby', tenant: 'Acme', requisition: '0F6C2C9E-1111-4222-8333-944455556666', state: 'failed', retries: 1, availableAt: 0, createdAt: 0 });

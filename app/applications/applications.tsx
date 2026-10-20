@@ -477,6 +477,9 @@ export default function Applications() {
               : approval ? 'Form filled. Review the answers, resume and cover letter, then approve to submit.'
               : app.state === 'needs_document' && documentHelp[app.reasonCode ?? ''] ? documentHelp[app.reasonCode!]
               : skipReasons(app).length ? `Skipped: ${skipReasons(app).join('; ')}. If your profile is wrong, fix it, then retry.`
+              // runs.ts sends a role that stops again after a retry back to the Jobs board; it stays listed here too.
+              : (app.retries ?? 0) > 0 && ['failed', 'retryable_failure', 'blocked_unsupported', 'provider_unavailable'].includes(app.state)
+                ? `${humanize(app.reasonCode ?? 'failed')}. It stopped again after a retry, so it is also back on the Jobs board. Retry once more, or archive it.`
               // An earlier version of this page had a Skip button; it recorded the applicant's own choice as "skip".
               : app.state === 'skipped' && app.reasonCode === 'skip' ? 'You skipped this role.'
               // Questions arrive with the inbox, a moment after the rows; older ones may sit past the pages loaded here.
