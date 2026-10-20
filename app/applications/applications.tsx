@@ -115,6 +115,14 @@ function LiveCard({ app, frame, role }: { app: App; frame: Frame | undefined; ro
   const href = postingUrl(app.ats, app.tenant, app.requisition);
   // A frame older than this means the worker is not on the page right now (between stages, or stopped).
   const watching = !!frame && Date.now() - frame.updatedAt < 20_000 && ['filling', 'submitting'].includes(app.state);
+  // Full screen is a fixed overlay rather than the Fullscreen API, which iPhone Safari does not offer for images.
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    if (!full) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setFull(false); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [full]);
   const step = watching ? frame!.step : app.state === 'screening' ? 'Checking the posting against your profile'
     : app.state === 'tailoring' ? 'Tailoring your resume' : 'Waiting for the worker to open the form';
   return <li className={`${styles.card} ${styles.liveCard}`}>
@@ -122,14 +130,20 @@ function LiveCard({ app, frame, role }: { app: App; frame: Frame | undefined; ro
       <h2 title={role ? `${company} / ${role}` : company}>{company}{role && <><span className={styles.slash}> / </span>{role}</>}</h2>
       <StatusBadge {...statusBadge(app.state, app.reasonCode)} />
     </div>
-    <p className={styles.step} aria-live="polite">{watching && <span className={styles.pulse} aria-hidden="true" />}{step}
-      {frame && <span className={styles.muted}> · updated {ago(frame.updatedAt)}</span>}</p>
-    {watching && frame!.image
-      // eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset
-      ? <img className={styles.screen} src={`data:image/jpeg;base64,${frame!.image}`} alt={`Workie's browser filling the ${company} application`} />
-      : <div className={styles.screenEmpty}>{app.state === 'filling' || app.state === 'submitting'
-        ? 'The form appears here as soon as the worker opens it.' : 'The form appears here when filling starts.'}</div>}
+    <div className={full ? styles.fullScreen : undefined} role={full ? 'dialog' : undefined} aria-modal={full || undefined}
+      aria-label={full ? `${company} application, full screen` : undefined}>
+      <p className={styles.step} aria-live="polite">{watching && <span className={styles.pulse} aria-hidden="true" />}{step}
+        {frame && <span className={styles.muted}> · updated {ago(frame.updatedAt)}</span>}
+        {full && <button className={styles.button} type="button" autoFocus onClick={() => setFull(false)}>Exit full screen</button>}</p>
+      {watching && frame!.image
+        // eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset
+        ? <img className={styles.screen} src={`data:image/jpeg;base64,${frame!.image}`} alt={`Workie's browser filling the ${company} application`}
+          onClick={() => setFull(!full)} />
+        : <div className={styles.screenEmpty}>{app.state === 'filling' || app.state === 'submitting'
+          ? 'The form appears here as soon as the worker opens it.' : 'The form appears here when filling starts.'}</div>}
+    </div>
     <div className={styles.actions}>
+      <button className={styles.button} type="button" onClick={() => setFull(true)}>Full screen</button>
       {href && <a className={styles.button} href={href} target="_blank" rel="noopener noreferrer">Open job post</a>}
     </div>
   </li>;
