@@ -3,13 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   clearEditDraft,
   clearNewNoteDraft,
-  clearTalkieToken,
   readEditDraft,
   readNewNoteDraft,
-  readTalkieToken,
   saveEditDraft,
   saveNewNoteDraft,
-  saveTalkieToken,
 } from './storage.ts';
 
 function store(values: Record<string, string> = {}) {
@@ -59,7 +56,7 @@ describe('Talkie local recovery', () => {
     expect(readNewNoteDraft('2026-W37', saved)).toEqual(DRAFT);
   });
 
-  it('keeps storage failures from blocking token and draft behavior', () => {
+  it('keeps storage failures from blocking draft behavior', () => {
     const blocked = {
       getItem: () => { throw new Error('blocked'); },
       setItem: () => { throw new Error('blocked'); },
@@ -67,8 +64,5 @@ describe('Talkie local recovery', () => {
     };
     expect(saveNewNoteDraft(DRAFT, blocked)).toBe(false);
     expect(readNewNoteDraft('2026-W37', blocked)).toBeNull();
-    expect(saveTalkieToken('token', blocked)).toBe(false);
-    expect(readTalkieToken(blocked)).toBeNull();
-    expect(() => clearTalkieToken(blocked)).not.toThrow();
   });
 });

@@ -1,5 +1,4 @@
 import { getDb, needsTurso } from '@/lib/db';
-import { writeGate } from '@/lib/write-gate';
 import {
   MAX_NOTES_PER_WEEK,
   NoteInput,
@@ -11,8 +10,6 @@ import {
 
 /** Anyone with the URL can post — hence the size cap per note and the count cap per week. */
 export async function POST(request: Request) {
-  const denied = writeGate(request);
-  if (denied) return denied;
   try {
     if (needsTurso()) return Response.json({ error: 'database not configured' }, { status: 503 });
     const input = NoteInput.safeParse(await request.json().catch(() => null));
