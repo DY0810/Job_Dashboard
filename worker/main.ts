@@ -258,6 +258,9 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
     let review: { label: string; value: string }[] | undefined;
     try {
       const localDocuments: Record<string, string> = {};
+      const applicant = [applicationContext.answers.first_name, applicationContext.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
+      // Employers see the uploaded file's name, so the resume goes up as the applicant's, e.g. DongYeopLee_Resume.docx.
+      const resumeName = applicant.replace(/[^\p{L}\p{N}]/gu, '');
       for (const [key, document] of Object.entries(applicationContext.documents)) {
         guard.check();
         const bytes = await control.downloadDocument(lease.applicationId, document.documentId, document.path, signal);
@@ -265,7 +268,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
           throw new Error("DOCUMENT_RECONCILIATION_FAILED");
         }
         const extension = document.mime === "application/pdf" ? ".pdf" : ".docx";
-        const path = join(workDirectory, `${key}${extension}`);
+        const path = join(workDirectory, `${key === 'resume' && resumeName ? `${resumeName}_Resume` : key}${extension}`);
         await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
         localDocuments[key] = path;
       }
@@ -307,7 +310,6 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         // Named so the applicant knows to add a transcript or allow transcripts in the policy.
         return { state: "needs_document" as const, reasonCode: undergraduateTranscript(unavailable.label) ? "transcript_unavailable" : "required_document_unavailable" };
       }
-      const applicant = [application.answers.first_name, application.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
       const writeLetter = async () => {
         // The letter saved when the form was filled is the one the applicant approved; reuse it.
         const saved = applicationContext.letter;

@@ -253,6 +253,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       assert.deepEqual(fields, { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', phone: '(415) 555-0123', country: '+1',
         question_101: 'https://linkedin.com/in/test', question_102: 'Yes', question_103: 'No', question_104: NARRATIVE });
       assert.equal(sha256(Buffer.from(files.resume.base64, 'base64')), context.tailoredArtifact.outputHash, 'the tailored resume is the one submitted');
+      assert.match(files.resume.name, /^TestApplicant_Resume\.(docx|pdf)$/, 'the employer receives the resume under the applicant\'s name');
       assert.equal(calls.letter.at(-1).jobSummary, JD);
       const letterPath = join(directory, 'letter.pdf');
       await writeFile(letterPath, Buffer.from(files.cover_letter.base64, 'base64'));
