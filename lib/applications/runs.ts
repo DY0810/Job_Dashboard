@@ -54,8 +54,8 @@ export async function createRun(db: PrivateDb, ownerId: string, input: RunCreate
   return result;
 }
 /**
- * A role that stopped again after a retry (same-row retry or a restarted attempt) leaves Auto Apply and goes back to
- * the Jobs board, as does the attempt a restart replaced. Neither is ever re-queued by discovery: its identity already has rows.
+ * A role that stopped again after a retry (same-row retry or a restarted attempt) goes back to the Jobs board, as does the
+ * attempt a restart replaced. Neither is ever re-queued by discovery: its identity already has rows.
  */
 const returnedToBoard = sql`(coalesce(${applications.reasonCode}, '') = 'restarted' or (${applications.state} in
   ('failed', 'retryable_failure', 'blocked_unsupported', 'provider_unavailable', 'needs_document')
@@ -93,7 +93,9 @@ export async function listRuns(db: PrivateDb, ownerId: string, options: WorkerOp
         .from(applications)
         .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
         .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)))
-        .where(and(eq(applications.ownerId, ownerId), not(returnedToBoard), not(cannotRetry!),
+        // A role back on the board stays in Needs action too, so a row that leaves Live never just vanishes;
+        // only the attempt a restart replaced is dropped, since its newer attempt is listed.
+        .where(and(eq(applications.ownerId, ownerId), sql`coalesce(${applications.reasonCode}, '') <> 'restarted'`, not(cannotRetry!),
           or(and(isNull(applications.hiddenAt), inArray(applications.state, ['submitted', ...IN_FLIGHT_STATES])),
             sql`coalesce(${applications.hiddenAt}, ${applications.createdAt} + ${ARCHIVE_AFTER_MS}) > ${nowAt(options) - ARCHIVE_KEEP_MS}`)))
         .orderBy(desc(applications.createdAt)).limit(100))

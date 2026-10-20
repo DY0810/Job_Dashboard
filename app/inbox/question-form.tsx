@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import type { QuestionDetail } from '../../lib/applications/question-protocol';
+import { privateJson } from '../profile/api';
 import DocumentsPane from '../profile/documents-pane';
 import type { DocumentOption } from '../profile/fields';
 import { answerCommand, DocumentSchema, eligibleDocuments, type Document } from './answer';
@@ -100,11 +101,27 @@ export function AnswerAllForm({ questions, control, view }: { questions: Questio
   </form>;
 }
 
+/** A dropdown too long to send with its question (Palantir's 3,302 universities) is asked as text; these are its choices, read from the form. */
+function useFormOptions(q: QuestionDetail) {
+  const [options, setOptions] = useState<string[]>([]);
+  const lookup = q.descriptor.field.type === 'text' && q.descriptor.key.startsWith('form-') && q.application.ats === 'lever';
+  useEffect(() => {
+    if (!lookup) return;
+    let alive = true;
+    privateJson(`/api/questions/${q.id}/options`, { owner: q.ownerId, timeout: 15_000 })
+      .then((body) => { if (alive) setOptions(z.object({ options: z.array(z.string()) }).parse(body).options); })
+      .catch(() => { /* Without the choices the answer is typed; the worker matches it to the form's options. */ });
+    return () => { alive = false; };
+  }, [lookup, q.id, q.ownerId]);
+  return options;
+}
+
 function AnswerInput({ question: q, edit, change, documents }: {
   question: QuestionDetail; edit: Edit; change: (patch: Partial<Edit>) => void; documents: Document[];
 }) {
   const field = q.descriptor.field;
   const id = `answer-${q.id}`;
+  const choices = useFormOptions(q);
   if (field.type === 'radio' || field.type === 'boolean' || field.type === 'multiselect') {
     const options = field.type === 'boolean' ? [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] : field.options;
     return <fieldset aria-label={q.descriptor.originalWording}>
@@ -130,8 +147,14 @@ function AnswerInput({ question: q, edit, change, documents }: {
       </select> : field.type === 'document' ? <select id={id} required value={edit.input} onChange={(event) => change({ input: event.target.value })}>
         <option value="">Choose available document...</option>
         {eligibleDocuments(q, documents).map((doc) => <option key={doc.id} value={doc.id}>{doc.name} / v{doc.version}</option>)}
-      </select> : field.type === 'text' ? <input id={id} required type={field.format === 'plain' ? 'text' : field.format}
-        value={edit.input} minLength={field.minLength} maxLength={field.maxLength} onChange={(event) => change({ input: event.target.value })} /> :
+      </select> : field.type === 'text' ? <>
+        <input id={id} required type={field.format === 'plain' ? 'text' : field.format} list={choices.length ? `${id}-choices` : undefined}
+          value={edit.input} minLength={field.minLength} maxLength={field.maxLength} onChange={(event) => change({ input: event.target.value })} />
+        {choices.length > 0 && <>
+          <datalist id={`${id}-choices`}>{choices.map((choice, index) => <option key={index} value={choice} />)}</datalist>
+          <span className={styles.muted}>Start typing to pick one of the form&apos;s {choices.length} choices.</span>
+        </>}
+      </> :
         field.type === 'number' ? <>
           <input id={id} type="number" required value={edit.input} min={field.min ?? undefined} max={field.max ?? undefined}
             step={field.integer ? 1 : 10 ** -field.precision} onChange={(event) => change({ input: event.target.value })} />

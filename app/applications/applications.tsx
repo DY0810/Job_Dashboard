@@ -62,6 +62,9 @@ async function request(path: string, owner?: string) {
 type Tab = 'action' | 'live' | 'applied' | 'archived';
 /** States in which the worker is working a row (or about to): the Live tab shows them. */
 const LIVE_STATES: readonly string[] = ['screening', 'tailoring', 'filling', 'submitting'];
+/** Live also keeps a form that is waiting on the applicant's answers or approval, so it can be finished from there. */
+const inLive = (app: ApplicationSummary) => app.hiddenAt === null &&
+  (LIVE_STATES.includes(app.state) || app.reasonCode === 'question_unresolved' || isAwaitingSubmitApproval(app.state, app.reasonCode));
 const LIVE_POLL_MS = 3_000;
 /** `?view=` on the current URL, other params kept. Native pushState: Next syncs useSearchParams without a server round trip. */
 function showTab(tab: Tab) {
@@ -109,28 +112,68 @@ const ago = (ms: number) => {
   return seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)} min ago`;
 };
 
-/** One application the worker is on: its newest step and what its browser shows, refreshed every few seconds. */
-function LiveCard({ app, frame, role }: { app: App; frame: Frame | undefined; role: string | null | undefined }) {
+/** One application the worker is on, or one waiting on the applicant: its newest step and what its browser shows, refreshed every few seconds. */
+function LiveCard({ app, frame, role, asked, questions, ownerId, onAnswer, onDone }: {
+  app: App; frame: Frame | undefined; role: string | null | undefined; asked: QuestionDetail[];
+  questions: ReturnType<typeof useQuestions>; ownerId: string; onAnswer: () => void; onDone: () => void;
+}) {
   const company = app.company ?? app.tenant;
   const href = postingUrl(app.ats, app.tenant, app.requisition);
+  const approval = isAwaitingSubmitApproval(app.state, app.reasonCode);
   // A frame older than this means the worker is not on the page right now (between stages, or stopped).
   const watching = !!frame && Date.now() - frame.updatedAt < 20_000 && ['filling', 'submitting'].includes(app.state);
-  const step = watching ? frame!.step : app.state === 'screening' ? 'Checking the posting against your profile'
+  const step = watching ? frame!.step : asked.length ? 'Waiting for your answers' : approval ? 'Filled. Waiting for your approval'
+    : app.state === 'screening' ? 'Checking the posting against your profile'
     : app.state === 'tailoring' ? 'Tailoring your resume' : 'Waiting for the worker to open the form';
+  // A form waiting on the applicant keeps its last picture so they can see what they are answering or approving.
+  const image = (watching || approval || asked.length > 0) ? frame?.image : undefined;
+  // Full screen is a fixed overlay rather than the Fullscreen API, which iPhone Safari does not offer for images.
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    if (!full) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setFull(false); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [full]);
+  const apply = approval
+    ? <Command label="Apply" busyLabel="Applying..." primary confirm="Submit this application to the employer now? This cannot be undone."
+      run={() => approve(app, ownerId)} onDone={onDone} />
+    : <button className={styles.button} type="button" disabled
+      title={asked.length ? 'Answer the questions first.' : 'Apply opens once Workie has filled the form.'}>Apply</button>;
   return <li className={`${styles.card} ${styles.liveCard}`}>
     <div className={styles.cardTitle}>
       <h2 title={role ? `${company} / ${role}` : company}>{company}{role && <><span className={styles.slash}> / </span>{role}</>}</h2>
       <StatusBadge {...statusBadge(app.state, app.reasonCode)} />
     </div>
-    <p className={styles.step} aria-live="polite">{watching && <span className={styles.pulse} aria-hidden="true" />}{step}
-      {frame && <span className={styles.muted}> · updated {ago(frame.updatedAt)}</span>}</p>
-    {watching && frame!.image
-      // eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset
-      ? <img className={styles.screen} src={`data:image/jpeg;base64,${frame!.image}`} alt={`Workie's browser filling the ${company} application`} />
-      : <div className={styles.screenEmpty}>{app.state === 'filling' || app.state === 'submitting'
-        ? 'The form appears here as soon as the worker opens it.' : 'The form appears here when filling starts.'}</div>}
+    <div className={full ? styles.fullScreen : undefined} role={full ? 'dialog' : undefined} aria-modal={full || undefined}
+      aria-label={full ? `${company} application, full screen` : undefined}>
+      <p className={styles.step} aria-live="polite">{watching && <span className={styles.pulse} aria-hidden="true" />}{step}
+        {frame && <span className={styles.muted}> · updated {ago(frame.updatedAt)}</span>}
+        {full && <button className={styles.button} type="button" autoFocus onClick={() => setFull(false)}>Exit full screen</button>}</p>
+      <div className={full ? styles.fullBody : undefined}>
+        {image
+          // eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset
+          ? <img className={styles.screen} src={`data:image/jpeg;base64,${image}`} alt={`Workie's browser filling the ${company} application`}
+            onClick={() => setFull(!full)} />
+          : <div className={styles.screenEmpty}>{app.state === 'filling' || app.state === 'submitting'
+            ? 'The form appears here as soon as the worker opens it.' : 'The form appears here when filling starts.'}</div>}
+        {full && <div className={styles.fullPanel}>
+          {asked.length > 0 && <>
+            {questions.view.error && <p role="alert" className={styles.message}>{questions.view.error}</p>}
+            <ApplicationQuestions applicationId={app.id} view={questions.view} control={questions.control} />
+          </>}
+          {frame?.fields?.length ? <details open={!asked.length}><summary className={styles.muted}>Filled answers ({frame.fields.length})</summary>
+            <dl className={styles.review}>{frame.fields.map((field, index) => <div key={index}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl>
+          </details> : !asked.length && <p className={styles.muted}>The answers Workie fills show here.</p>}
+          <div className={styles.actions}>{apply}</div>
+        </div>}
+      </div>
+    </div>
     <div className={styles.actions}>
+      <button className={styles.button} type="button" onClick={() => setFull(true)}>Full screen</button>
       {href && <a className={styles.button} href={href} target="_blank" rel="noopener noreferrer">Open job post</a>}
+      {asked.length > 0 && <button className={buttonClass(true)} type="button" onClick={onAnswer}>Answer</button>}
+      {apply}
     </div>
   </li>;
 }
@@ -340,7 +383,7 @@ export default function Applications() {
   for (const app of applications) {
     const list = bucket(app, view.loadedAt);
     if (list) lists[list].push(app);
-    if (LIVE_STATES.includes(app.state) && app.hiddenAt === null) lists.live.push(app);
+    if (inLive(app)) lists.live.push(app);
   }
   // The row being filled right now first.
   lists.live.sort((a, b) => Number(['filling', 'submitting'].includes(b.state)) - Number(['filling', 'submitting'].includes(a.state)));
@@ -403,7 +446,12 @@ export default function Applications() {
       </nav>
       {tab === 'archived' && <p className={`${styles.message} ${styles.muted}`}>Archived items are removed 30 days after archiving.</p>}
       {tab === 'live' && lists.live.length > 0 && <ul className={styles.liveCards} aria-label="Live">
-        {lists.live.map((app) => <LiveCard key={app.id} app={app} frame={frames.get(app.id)} role={app.role ?? questionRole.get(app.id)} />)}
+        {lists.live.map((app) => <LiveCard key={app.id} app={app} frame={frames.get(app.id)} role={app.role ?? questionRole.get(app.id)}
+          asked={asked.get(app.id) ?? []} questions={questions} ownerId={ownerId} onDone={reload} onAnswer={() => {
+            const here = asked.get(app.id) ?? [];
+            if (here.length === 1) void questions.control?.select(here[0]);
+            setDialog({ kind: 'answer', id: app.id, open: true });
+          }} />)}
       </ul>}
       {tab === 'live' && lists.live.length > 0 ? null : !lists[tab].length ? <p className={`${styles.message} ${styles.muted}`}>{tab === 'action' && !applications.length
         ? 'No applications yet. Start auto apply from Settings after enabling a policy.' : EMPTY[tab]}</p> :
@@ -429,6 +477,9 @@ export default function Applications() {
               : approval ? 'Form filled. Review the answers, resume and cover letter, then approve to submit.'
               : app.state === 'needs_document' && documentHelp[app.reasonCode ?? ''] ? documentHelp[app.reasonCode!]
               : skipReasons(app).length ? `Skipped: ${skipReasons(app).join('; ')}. If your profile is wrong, fix it, then retry.`
+              // runs.ts sends a role that stops again after a retry back to the Jobs board; it stays listed here too.
+              : (app.retries ?? 0) > 0 && ['failed', 'retryable_failure', 'blocked_unsupported', 'provider_unavailable'].includes(app.state)
+                ? `${humanize(app.reasonCode ?? 'failed')}. It stopped again after a retry, so it is also back on the Jobs board. Retry once more, or archive it.`
               // An earlier version of this page had a Skip button; it recorded the applicant's own choice as "skip".
               : app.state === 'skipped' && app.reasonCode === 'skip' ? 'You skipped this role.'
               // Questions arrive with the inbox, a moment after the rows; older ones may sit past the pages loaded here.
