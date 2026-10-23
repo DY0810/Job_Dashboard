@@ -63,6 +63,39 @@ export async function retryingFetch(request: Request): Promise<Response> {
   }
 }
 
+/** Longest one round trip to Turso may take. Reads here answer in well under a second. */
+export const TURSO_DEADLINE_MS = 10_000;
+
+/** Whether a Hrana pipeline only runs SELECTs, so running it twice changes nothing. */
+function readsOnly(body: string): boolean {
+  try {
+    const { requests } = JSON.parse(body) as { requests: { type: string; stmt?: { sql?: string } }[] };
+    return requests.every(({ type, stmt }) => type === 'close' || (type === 'execute' && /^\s*select\b/i.test(stmt?.sql ?? '')));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `fetch` for the app's Turso clients, the board's included. Undici waits 300s for response
+ * headers by default, which is Vercel's whole function budget, so a request on a socket Turso
+ * dropped without closing it held `/` until the platform killed it. Each attempt now stops at
+ * the deadline.
+ *
+ * A dropped socket also fails fast ("other side closed", EPIPE). Like `retryingFetch`, the
+ * request is then resent once on a fresh socket, but only when it only reads: the server may
+ * have run the first attempt, and the app's clients also write notes, comments and claims.
+ */
+export async function tursoFetch(request: Request, deadlineMs = TURSO_DEADLINE_MS): Promise<Response> {
+  const retry = readsOnly(await request.clone().text()) ? request.clone() : null;
+  try {
+    return await fetch(request, { signal: AbortSignal.timeout(deadlineMs) });
+  } catch (error) {
+    if (!retry) throw error;
+    return fetch(retry, { signal: AbortSignal.timeout(deadlineMs) });
+  }
+}
+
 /**
  * One connection per process. Next's dev server re-evaluates modules on every edit, so the
  * handle is cached on `globalThis` — otherwise each hot reload leaks a file descriptor.
@@ -134,6 +167,7 @@ export function getDb(): ReadDb {
         connection: {
           url: process.env.TURSO_DATABASE_URL!,
           authToken: process.env.TURSO_AUTH_TOKEN,
+          fetch: tursoFetch,
         },
         schema,
       })
