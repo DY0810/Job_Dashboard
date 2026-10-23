@@ -480,6 +480,16 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await poll(token)).lease).not.toBeNull();
   });
 
+  it('keeps the daily cap in the last hour before a midnight daylight-saving jump', async () => {
+    now = Date.UTC(2026, 8, 6, 3, 10); // 11:10 pm in Santiago; at midnight its clocks jump to 1 am
+    const { token, run, worker } = await prepared('alice', { dailyApplicationCap: 1 }); addPostings(2);
+    await db.update(workers).set({ dailyStartMinute: 1, timeZone: 'America/Santiago' }).where(eq(workers.id, worker.workerId));
+    await complete(token, run.id);
+    await skip((await poll(token)).lease!.applicationId);
+    now = Date.UTC(2026, 8, 6, 3, 40);
+    expect((await poll(token)).lease).toBeNull();
+  });
+
   it('enforces per-employer caps across runs while never charging a resumed lease twice', async () => {
     const { token, run } = await prepared('alice', { perEmployerCap: 1 }); addPostings(3, 1, true); await complete(token, run.id);
     const first = (await poll(token)).lease!;

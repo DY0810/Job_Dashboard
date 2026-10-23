@@ -254,8 +254,10 @@ function capDay(now: number, timeZone: string | null): [number, number] {
     return [day, day + DAY_MS];
   }
   // A local day is 23 to 25 hours long, so 36 hours after its midnight is always inside the next one.
-  const start = dailyStartInstant(now, 0, timeZone);
-  return [start, dailyStartInstant(start + 36 * 3_600_000, 0, timeZone)];
+  const next = (start: number) => dailyStartInstant(start + 36 * 3_600_000, 0, timeZone);
+  const start = dailyStartInstant(now, 0, timeZone), end = next(start);
+  // A midnight in a spring-forward gap resolves an hour early, so the hour before it opens the next day's window.
+  return end > now ? [start, end] : [end, next(end)];
 }
 
 /**
