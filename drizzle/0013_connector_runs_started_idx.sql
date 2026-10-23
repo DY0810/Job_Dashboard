@@ -1,0 +1,1 @@
+CREATE INDEX `connector_runs_started_idx` ON `connector_runs` (`started_at`);

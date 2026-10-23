@@ -61,14 +61,18 @@ async function policyFor(ownerId = 'alice', overrides: Partial<Policy> = {}) {
   await db.insert(policyHeads).values({ ownerId, revision: 1, policyVersion: 1, enabled: true,
     acceptedPolicyVersion: 1, acceptedPolicyHash: hash, acceptedAt: now });
 }
-async function prepared(ownerId = 'alice', overrides: Partial<Policy> = {}) {
-  await policyFor(ownerId, overrides);
+async function pairedWorker(ownerId = 'alice') {
   const grant = await createPairing(db, ownerId, { ...request(), expectedRevision: 0, label: 'Synthetic' }, options);
   const token = secret();
   const worker = await pairWorker(db, {
     ...request(), protocolVersion: 1, workerId: randomUUID(), grant: grant.grant, workerToken: token,
     workerVersion: '0.1.0', capabilities: ['control-v1'],
   }, options);
+  return { worker, token };
+}
+async function prepared(ownerId = 'alice', overrides: Partial<Policy> = {}) {
+  await policyFor(ownerId, overrides);
+  const { worker, token } = await pairedWorker(ownerId);
   const run = await createRun(db, ownerId, { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
   return { run, worker, token };
 }
@@ -164,8 +168,11 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect(await appRows()).toHaveLength(601);
     expect((await manifests())[0]).toMatchObject({ hash: manifest.hash, state: 'ready', stagedCount: 601 });
     await stageDiscoveryManifest(other, token, manifest.id, options);
-    const overlapping = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
-    await complete(token, overlapping.id);
+    await expect(createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options))
+      .rejects.toMatchObject({ status: 409, code: 'RUN_ACTIVE' });
+    const second = await pairedWorker();
+    const overlapping = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: second.worker.workerId }, options);
+    await complete(second.token, overlapping.id);
     expect(await appRows()).toHaveLength(601);
     expect((await getDiscoveryStatus(db, 'alice', overlapping.id, options)).counts.duplicate).toBe(601);
     now += DISCOVERY_INTERVAL_MS + 1;
@@ -181,6 +188,20 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect(await getDiscoveryStatus(db, 'alice', run.id, options)).toMatchObject({ state: 'ready', lastScanAt: now });
     await discoverWorkerRuns(db, token, provider, options);
     expect(await manifests()).toHaveLength(1);
+  });
+
+  it('rescans an unchanged corpus without a new snapshot or restaging, and snapshots again once it changes', async () => {
+    const { token, run } = await prepared(); addPostings(3); await complete(token, run.id);
+    const [first] = await manifests();
+    now += DISCOVERY_INTERVAL_MS + 1;
+    await discoverWorkerRuns(db, token, provider, options);
+    expect(await manifests()).toEqual([first]);
+    expect(await getDiscoveryStatus(db, 'alice', run.id, options)).toMatchObject({ state: 'ready', lastScanAt: now, manifestId: first.id });
+    now += DISCOVERY_INTERVAL_MS + 1; addPostings(1, 4);
+    await discoverWorkerRuns(db, token, provider, options);
+    // The first snapshot queued three applications, so it is kept as their evidence.
+    expect((await manifests()).map((m) => m.id)).toContain(first.id);
+    expect(await getDiscoveryStatus(db, 'alice', run.id, options)).toMatchObject({ state: 'ready', candidateCount: 4, counts: { eligible: 4 } });
   });
 
   it('rolls back a failed final chunk and retries the exact hash without advancing progress or clocks', async () => {
@@ -215,7 +236,7 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect((await manifests())[0].hash).toBe(manifest.hash);
   });
 
-  it('reconsiders previously held work from a new snapshot without rewriting prior manifest evidence', async () => {
+  it('reconsiders previously held work from a new snapshot and drops the snapshot nothing refers to', async () => {
     const { token, run } = await prepared('alice', { undisclosedPay: 'ask' }); addPostings(1);
     corpus.update(postings).set({ paid: null }).run();
     await complete(token, run.id);
@@ -224,7 +245,10 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     corpus.update(postings).set({ paid: true, payRateMin: 50 }).run(); now += DISCOVERY_INTERVAL_MS + 1;
     await discoverWorkerRuns(db, token, provider, options);
     expect(await appRows()).toHaveLength(1);
-    expect((await manifests()).find((m) => m.id === first.id)?.artifact).toEqual(first.artifact);
+    // No target, application or run points at the held-only snapshot any more.
+    expect((await manifests()).map((m) => m.id)).not.toContain(first.id);
+    expect(await manifests()).toHaveLength(1);
+    await expect(db.run(sql`delete from private_discovery_manifest`)).rejects.toHaveProperty('cause.message', expect.stringMatching(/in use are retained/));
   });
 
   it('reports roles held for an applicant decision, and why, apart from roles the policy excludes', async () => {
@@ -277,16 +301,27 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect((await poll(token)).lease).toMatchObject({ runId: replacement.id });
   });
 
-  it('queues roles a replacement run marked duplicate once the run holding them stops', async () => {
-    const { token, run, worker } = await prepared(); addPostings(3); await complete(token, run.id);
-    const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
-    await complete(token, replacement.id);
+  it('queues roles another worker\'s run marked duplicate at its next snapshot once the run holding them stops', async () => {
+    const { token, run } = await prepared(); addPostings(3); await complete(token, run.id);
+    const second = await pairedWorker();
+    const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: second.worker.workerId }, options);
+    await complete(second.token, replacement.id);
     expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 0, duplicate: 3 });
     await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'stop' }, options);
-    now += DISCOVERY_INTERVAL_MS + 1;
-    await discoverWorkerRuns(db, token, provider, options);
-    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 3, duplicate: 0 });
-    expect((await poll(token)).lease).toMatchObject({ runId: replacement.id });
+    now += DISCOVERY_INTERVAL_MS + 1; addPostings(1, 4);
+    await discoverWorkerRuns(db, second.token, provider, options);
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 4, duplicate: 0 });
+    expect((await poll(second.token)).lease).toMatchObject({ runId: replacement.id });
+  });
+
+  it('runs one run at a time per worker on the current policy', async () => {
+    const { run, worker } = await prepared();
+    const create = () => createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
+    await expect(create()).rejects.toMatchObject({ status: 409, code: 'RUN_ACTIVE' });
+    const paused = await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'pause' }, options);
+    await create();
+    await expect(commandRun(db, 'alice', run.id, { ...request(), expectedRevision: paused.revision, action: 'resume' }, options))
+      .rejects.toMatchObject({ status: 409, code: 'RUN_ACTIVE' });
   });
 
   it.each(['DELETE', 'WAL'])('reconciles a replaced %s corpus instead of advancing the scan clock on a cached old inode', async (journal) => {
@@ -767,9 +802,10 @@ describe('cap-held backlog and explicit historical attempts', () => {
       .toMatchObject({ state: 'screening' });
     now += 5_000;
     const again = await hold();
-    // A second run still on the old policy cannot take the role: it would never lease it.
-    const stale = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
-    await complete(token, stale.id);
+    // A second run (another worker's) still on the old policy cannot take the role: it would never lease it.
+    const second = await pairedWorker();
+    const stale = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: second.worker.workerId }, options);
+    await complete(second.token, stale.id);
     // Transcripts allowed in a new policy: the old run stays bound to the old one, so the role continues in a new run.
     const policy: Policy = { ...createEmptyPolicy(), actions: ['read_jobs'], destinations: ['job-boards.greenhouse.io'], undisclosedPay: 'include', documentKinds: ['transcript'] };
     await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash: hashValue(policy), policy, createdAt: now });

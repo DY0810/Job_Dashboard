@@ -28,14 +28,25 @@ export const applicationSummary = ({ id, runId, workerId, ats, tenant, requisiti
     company: meta.company ?? null, role: meta.role ?? null, receiptId: meta.receiptId ?? null, submittedAt: meta.submittedAt ?? null,
     provider: null, costUsd: null, createdAt, hiddenAt });
 
+/** A worker runs one run per policy at a time: a second would capture and stage every snapshot again. */
+async function refuseSecondRun(tx: WorkerTx, run: Pick<typeof applicationRuns.$inferSelect,
+  'ownerId' | 'workerId' | 'policyRevision' | 'policyVersion' | 'policyHash'>) {
+  const [live] = await tx.select({ id: applicationRuns.id }).from(applicationRuns).where(and(
+    eq(applicationRuns.ownerId, run.ownerId), eq(applicationRuns.workerId, run.workerId), eq(applicationRuns.state, 'running'),
+    eq(applicationRuns.policyRevision, run.policyRevision), eq(applicationRuns.policyVersion, run.policyVersion),
+    eq(applicationRuns.policyHash, run.policyHash))).limit(1);
+  if (live) fail(409, 'RUN_ACTIVE', 'This worker already has a running run.');
+}
 /** A new running run bound to the owner's current policy, or null when that policy is not enabled. */
 export async function insertRun(tx: WorkerTx, ownerId: string, workerId: string, now: number) {
   const policy = await getPolicy(tx, ownerId, now);
   if (!policy.enabled || !policy.policyHash) return null;
-  return one(await tx.insert(applicationRuns).values({
+  const run = {
     id: randomUUID(), ownerId, workerId, policyRevision: policy.revision,
     policyVersion: policy.policyVersion, policyHash: policy.policyHash, createdAt: now,
-  }).returning());
+  };
+  await refuseSecondRun(tx, run);
+  return one(await tx.insert(applicationRuns).values(run).returning());
 }
 export async function createRun(db: PrivateDb, ownerId: string, input: RunCreate, options: WorkerOptions = {}): Promise<Run> {
   const command = RunCreateSchema.parse(input);
@@ -144,6 +155,7 @@ export async function commandRun(db: PrivateDb, ownerId: string, id: string, inp
       if (!policy.enabled || policy.revision !== row.policyRevision || policy.policyVersion !== row.policyVersion || policy.policyHash !== row.policyHash) {
         fail(403, 'FORBIDDEN', 'Run policy is no longer enabled.');
       }
+      await refuseSecondRun(tx, row);
     }
     const state = command.action === 'resume' ? 'running' : command.action === 'pause' ? 'paused' : 'stopped';
     const incomplete = row.discoveryState === 'capturing' || row.discoveryState === 'staging';

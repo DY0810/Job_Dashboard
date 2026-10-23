@@ -154,7 +154,11 @@ export const connectorRuns = sqliteTable(
     error: text('error'),
     startedAt: integer('started_at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (table) => [uniqueIndex('connector_runs_run_connector_idx').on(table.runId, table.connector)],
+  (table) => [
+    uniqueIndex('connector_runs_run_connector_idx').on(table.runId, table.connector),
+    // The board and refresh read the latest run on every request; without this each read scans every run.
+    index('connector_runs_started_idx').on(table.startedAt),
+  ],
 );
 
 /**

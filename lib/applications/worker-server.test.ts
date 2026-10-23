@@ -298,7 +298,9 @@ describe('async leases, checkpoints and stable identity', () => {
         const busy = await prepared('alice', 'blocked');
         await claim(busy.worker.token);
       }
-      const run = await createRun(db, 'alice', { requestId: randomUUID(), expectedRevision: 0, workerId: worker.workerId }, options);
+      // A worker runs one live run at a time, so the busy tenant's run takes the runnable role too.
+      const run = reason === 'busy-tenant' ? blocked
+        : await createRun(db, 'alice', { requestId: randomUUID(), expectedRevision: 0, workerId: worker.workerId }, options);
       const runnable = await enqueueApplication(db, 'alice', run.id,
         { ats: 'fixture', tenant: 'unrelated', requisition: 'runnable' }, options);
       expect(await db.select().from(applications).where(eq(applications.workerId, worker.workerId))).toHaveLength(251);
