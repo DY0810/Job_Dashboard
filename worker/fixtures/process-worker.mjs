@@ -30,7 +30,7 @@ try {
     },
   });
 } catch (error) {
-  outcome = ["CLOCK_UNSAFE", "HTTP_401", "NETWORK_UNAVAILABLE", "BINDING_CHANGED"].includes(error.message) ? error.message : "fixture_failed";
+  outcome = ["CLOCK_UNSAFE", "HTTP_401", "LEASE_EXPIRED", "BINDING_CHANGED"].includes(error.message) ? error.message : "fixture_failed";
   process.exitCode = 1;
 }
 await writeFile(join(config.directory, "done"), JSON.stringify({ outcome }), { mode: 0o600 });

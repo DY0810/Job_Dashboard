@@ -7,6 +7,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 import { privateStore } from "./storage.ts";
 import { keychainAddress } from "./credentials.ts";
 import { SAFE_STAGES } from "../lib/applications/state.ts";
@@ -254,4 +255,21 @@ test("stop requests the running worker and recover clears only a dead lock", { t
   assert.equal(recovered.code, 0, recovered.stderr);
   assert.equal(JSON.parse(recovered.stdout).status, "recovered");
   assert.equal(await seeded.store.read("lock"), null);
+});
+
+test("a fatal error ends the process even while the browser window is open, and every log line is dated", { timeout: 40000 }, async t => {
+  // The worker was revoked: every control request is refused.
+  const scope = await fixture(t, async (req, res) => { await body(req); res.writeHead(401); res.end(); });
+  const { items } = await seed(scope);
+  let stopped;
+  const logged = new Promise(resolve => stopped = resolve);
+  const run = cli(t, scope, "start", { items, window: true }, output => { if (output.includes('"stopped"')) stopped(); });
+  await Promise.race([logged, run]);
+  const result = await Promise.race([run, sleep(10000, null, { ref: false })]);
+  assert(result, "the worker logged its error but stayed alive, so launchd never restarted it");
+  assert.equal(result.code, 1, result.stderr);
+  const lines = text => text.split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line));
+  const printed = [...lines(result.stdout), ...lines(result.stderr)];
+  assert.deepEqual(printed.map(line => [Object.keys(line), line.status ?? line.error]), [[["at", "status"], "stopped"], [["at", "error"], "HTTP_401"]]);
+  for (const { at } of printed) assert.equal(new Date(at).toISOString(), at);
 });

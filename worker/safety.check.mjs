@@ -79,6 +79,21 @@ test("only one process-store lock wins, including concurrent recovery of a termi
   await unlock();
 });
 
+test("a lock left by an earlier boot is recovered even when a live process now has its pid", async () => {
+  // A power loss or forced shutdown leaves the lock; after the reboot another process (here the test runner) can
+  // hold the recorded pid, which used to make every restart and `recover` fail with WORKER_LOCKED.
+  const store = await privateStore(await scratch("worker-lock-"), scope);
+  const unlock = await store.lock();
+  const { boot } = await store.read("lock");
+  await unlock();
+  await store.write("lock", { pid: process.ppid, nonce: randomUUID(), boot });
+  await assert.rejects(store.lock(), /WORKER_LOCKED/, "a live owner from this boot keeps its lock");
+  await store.write("lock", { pid: process.ppid, nonce: randomUUID(), boot: "an-earlier-boot" });
+  const recovered = await store.lock();
+  await assert.rejects(store.lock(), /WORKER_LOCKED/);
+  await recovered();
+});
+
 test("origin accepts HTTPS or explicit numeric loopback only, never URL credentials or TLS bypass", () => {
   assert.equal(controlOrigin("https://workie.example"), scope.origin);
   assert.equal(controlOrigin("http://127.0.0.1:5011", true), "http://127.0.0.1:5011");
