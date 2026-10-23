@@ -26,6 +26,10 @@ const InterventionJournalSchema = z.strictObject({
   pending: z.strictObject({ command: InterventionCommandSchema, ack: InterventionAckSchema }).nullable(),
 });
 
+/** The batch is too large to journal, send or store, so it can never be registered; nothing reached the server. */
+export const oversized = (error: unknown) => error instanceof Error &&
+  (["LOCAL_STATE_LIMIT", "REQUEST_LIMIT"].includes(error.message) || (error instanceof TransportError && error.status === 413));
+
 export async function abortable<T>(action: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) { void action.catch(() => {}); throw new Error("STOPPED"); }
   let abort = () => {};
@@ -62,7 +66,7 @@ export function questionClient(options: {
     await store.write("intervention-checkpoint", empty);
   }
   async function stale(error: unknown, name: string, value: unknown) {
-    if (!(error instanceof TransportError) || ![404, 409].includes(error.status)) throw error;
+    if (!(error instanceof TransportError) || !([404, 409].includes(error.status) || oversized(error))) throw error;
     await store.write(`rejected-${name}`, value);
     await store.write(`${name}-checkpoint`, empty);
   }
@@ -87,9 +91,14 @@ export function questionClient(options: {
     async register(applicationId: string, batch: QuestionBatch, check: () => void) {
       const journal = BatchJournalSchema.parse({ ...empty, pending: { applicationId, batch } });
       check(); signal.throwIfAborted();
-      await store.write("question-checkpoint", journal);
-      check(); signal.throwIfAborted();
-      return register(applicationId, journal.pending!.batch);
+      try {
+        await store.write("question-checkpoint", journal);
+        check(); signal.throwIfAborted();
+        return await register(applicationId, journal.pending!.batch);
+      } catch (error) {
+        if (oversized(error)) await store.write("question-checkpoint", empty);
+        throw error;
+      }
     },
     async pollInterventions() {
       await recoverIntervention();

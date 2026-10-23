@@ -348,6 +348,8 @@ test("worker-wide failures, and any failure past a submission intent, still stop
     [() => { throw new TransportError("HTTP_404", 404, "NOT_FOUND"); }, "HTTP_404"],
     [() => { throw new TransportError("HTTP_409", 409, "LEASE_LOST"); }, "HTTP_409"],
     [() => { throw new TransportError("NETWORK_UNAVAILABLE"); }, "NETWORK_UNAVAILABLE"],
+    // A server deployed ahead of the worker answers in a shape it does not know, for every application alike.
+    [() => { throw new TransportError("INVALID_RESPONSE"); }, "INVALID_RESPONSE"],
     [() => { throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC", syscall: "write" }); }, "ENOSPC: no space left on device"],
     [guard => { guard.revoke("LEASE_LOST"); throw new Error("after the lease"); }, "LEASE_LOST"],
     [(_guard, { advance }) => { advance({ revision: 2, fence: 1, state: "submitting" }); throw new TypeError("after the intent"); }, "after the intent"],
@@ -384,4 +386,56 @@ test("a stage that never settles gives up after an hour, never inside the 30-min
   // A wedged stage used to hold the only lease forever while heartbeats kept the worker Online.
   assert.equal(await Promise.race([outcome, sleep(1000).then(() => "still running")]), "STAGE_TIMEOUT");
   assert.equal(aborted, true);
+});
+
+test("the same failure on application after application stops the worker instead of failing the whole queue", async () => {
+  // A code bug every posting hits (or anything else that is not one bad posting) used to park the queue one by one.
+  const s = scope(), store = await storeFor(s);
+  const bug = "Cannot read properties of undefined (reading 'gpa')";
+  const crash = async () => { throw new TypeError(bug); };
+  const works = async () => ({ state: "blocked_unsupported", reasonCode: "adapter_unavailable" });
+  async function run(stages) {
+    const controller = new AbortController(), events = [];
+    let leased = 0;
+    const outcome = await runWorker({ scope: s, store, signal: controller.signal,
+      transport: {
+        poll: async () => { if (++leased > 8) { controller.abort(); return clockResponse(); } return clockResponse(assignment(s)); },
+        heartbeat: async () => clockResponse(),
+        event: async (id, input) => {
+          events.push(input.reasonCode);
+          return { applicationId: id, eventId: input.eventId, revision: input.expectedRevision + 1,
+            state: input.state, replayed: false, lease: null, serverTime: Date.now() };
+        } },
+      dispatch: async () => stages[Math.min(leased, stages.length) - 1](),
+    }).then(() => "finished", error => error.message);
+    return { outcome, events };
+  }
+  assert.deepEqual(await run([crash]), { outcome: bug, events: ["worker_typeerror", "worker_typeerror", "worker_typeerror"] });
+  // launchd restarts the worker: the count is kept, so the next application is not failed too.
+  assert.deepEqual(await run([crash]), { outcome: bug, events: [] });
+  // An application that works ends the run of failures.
+  assert.deepEqual(await run([works, crash]), { outcome: bug,
+    events: ["adapter_unavailable", "worker_typeerror", "worker_typeerror", "worker_typeerror"] });
+});
+
+test("a fatal error past a submission intent leaves the code window open until the stage ends", { timeout: 10000 }, async () => {
+  // main exits (closing the window) once runWorker stops, so stopping mid-wait took the form from the applicant.
+  const s = scope(), store = await storeFor(s);
+  let skew = 0, typed, settled = false;
+  const code = new Promise(resolve => typed = resolve);
+  const outcome = runWorker({ scope: s, store, signal: new AbortController().signal,
+    clock: () => ({ mono: performance.now(), wall: Date.now() + skew }),
+    transport: { poll: async () => clockResponse(assignment(s)), heartbeat: async () => clockResponse(),
+      event: async () => assert.fail("no event after a submission intent") },
+    dispatch: async (_lease, _guard, { advance }) => {
+      advance({ revision: 2, fence: 1, state: "submitting" });
+      skew = 10_000; // the laptop slept during the verification-code wait
+      await code; // like page.waitForURL, the wait does not watch the signal
+      return { state: "submitted", reasonCode: "confirmed", durable: true };
+    },
+  }).then(() => "finished", error => error.message).finally(() => { settled = true; });
+  await sleep(2500);
+  assert.equal(settled, false, "the worker stopped while the applicant could still type the code");
+  typed();
+  assert.equal(await outcome, "CLOCK_UNSAFE");
 });
