@@ -5,7 +5,7 @@ import type { PrivateDb } from '../private-db/index.ts';
 import {
   applicationEvents, applicationRuns, applications, discoveryManifests, discoveryTargets, manualApplicationMarks, workers, workerCommands,
 } from '../private-db/schema.ts';
-import { captureCandidateSnapshot, type DiscoveryCandidate } from './discovery-source.ts';
+import { captureCandidateSnapshot, type CandidateSnapshot, type DiscoveryCandidate } from './discovery-source.ts';
 import { getPolicy, hashValue } from './stores.ts';
 import { isSafeRetryState, isTerminalState } from './state.ts';
 import type { Policy } from './policy.ts';
@@ -46,6 +46,10 @@ export async function manuallySuppressed(tx: WorkerTx, app: Pick<ApplicationRow,
   )).limit(1);
   return !!mark;
 }
+/** The snapshot as if captured at `capturedAt`: rescans of an unchanged corpus differ only in capture time and its cutoff. */
+const capturedAtTime = (snapshot: CandidateSnapshot, capturedAt: number): CandidateSnapshot => ({
+  ...snapshot, capturedAt, scope: { ...snapshot.scope, effectiveAtCutoff: snapshot.scope.effectiveAtCutoff - snapshot.capturedAt + capturedAt },
+});
 const initialDisposition = (candidate: DiscoveryCandidate): TargetDisposition =>
   !candidate.identity || candidate.identityStatus !== 'resolved' ? 'unresolved' :
     candidate.disposition !== 'candidate' ? 'held_policy' : 'eligible';
@@ -92,6 +96,18 @@ export async function discoverWorkerRuns(db: PrivateDb, token: string, corpus: C
         if (!run || !await currentDiscoveryPolicy(tx, run, now) || run.captureUntil! <= now) {
           fail(409, 'CAPTURE_STALE', 'Discovery capture no longer owns the run.');
         }
+        const [current] = run.currentManifestId ? await tx.select({
+          hash: discoveryManifests.hash, capturedAt: discoveryManifests.capturedAt, state: discoveryManifests.state,
+        }).from(discoveryManifests).where(manifestScope(run.ownerId, run.currentManifestId)) : [];
+        // An unchanged corpus keeps the current snapshot: no new manifest and no restaging, only the scan clock moves.
+        // ponytail: a role another run releases unstarted is reconsidered at the next changed snapshot, not on a rescan.
+        if (current?.state === 'ready' && hashValue(capturedAtTime(snapshot, current.capturedAt)) === current.hash) {
+          one(await tx.update(applicationRuns).set({
+            discoveryState: 'ready', captureToken: null, captureUntil: now + DISCOVERY_INTERVAL_MS, lastScanAt: now, discoveryError: null,
+          }).where(and(runScope(run.ownerId, run.id), eq(applicationRuns.captureToken, selected.captureToken!),
+            eq(applicationRuns.revision, run.revision))).returning());
+          return null;
+        }
         const id = randomUUID();
         one(await tx.insert(discoveryManifests).values({
           id, ownerId: run.ownerId, runId: run.id, policyRevision: run.policyRevision,
@@ -113,6 +129,7 @@ export async function discoverWorkerRuns(db: PrivateDb, token: string, corpus: C
       return;
     }
   }
+  if (!manifestId) return;
   try {
     await stageDiscoveryManifest(db, token, manifestId, options);
   } catch (error) {
@@ -224,6 +241,14 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
       discoveryState: 'ready', lastScanAt: now, captureUntil: now + DISCOVERY_INTERVAL_MS, discoveryError: null,
     }).where(and(runScope(worker.ownerId, run.id), eq(applicationRuns.revision, run.revision),
       eq(applicationRuns.currentManifestId, id))).returning());
+    // Superseded snapshots of this run that no run, target or application points at; the delete trigger keeps any other.
+    // ponytail: at most 5 per completed snapshot, so a backlog drains slowly; a large one is a one-off batched delete.
+    await tx.run(sql`delete from ${discoveryManifests} where id in (select m.id from ${discoveryManifests} m
+      where m.owner_id = ${worker.ownerId} and m.run_id = ${run.id} and m.id != ${id}
+        and not exists (select 1 from ${applicationRuns} r where r.owner_id = m.owner_id and r.current_manifest_id = m.id)
+        and not exists (select 1 from ${discoveryTargets} t where t.owner_id = m.owner_id and t.manifest_id = m.id)
+        and not exists (select 1 from ${applications} a where a.owner_id = m.owner_id and a.snapshot_manifest_id = m.id)
+      limit 5)`);
   });
 }
 

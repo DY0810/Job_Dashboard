@@ -99,6 +99,13 @@
       "when": 1792747069518,
       "tag": "0013_run_policy_forward",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1792792168634,
+      "tag": "0014_manifest_prune",
+      "breakpoints": true
     }
   ]
 }
