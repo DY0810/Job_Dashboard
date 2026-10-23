@@ -161,6 +161,56 @@ test("submission_unknown has no mutable dispatch or event", async () => {
   assert.equal(dispatches, 0); assert.equal(events, 0);
 });
 
+test("an unknown submission names its reason once, then the worker leaves the row alone", async () => {
+  const s = scope(), store = await storeFor(s), controller = new AbortController(), events = [];
+  const job = { ...assignment(s), state: "ready", checkpoint: { stage: "filling", sequence: 3 } };
+  let polls = 0;
+  await runWorker({ scope: s, store, signal: controller.signal,
+    transport: { poll: async () => { if (++polls > 1) controller.abort(); return clockResponse(polls === 1 ? job : null); },
+      heartbeat: async () => clockResponse(),
+      event: async (id, input) => { events.push(input); return { applicationId: id, eventId: input.eventId,
+        revision: input.expectedRevision + 1, state: input.state, replayed: false, lease: null, serverTime: Date.now() }; } },
+    dispatch: async (_lease, _guard, context) => {
+      context.advance({ revision: 2, fence: 1, state: "submitting" });
+      return { state: "submission_unknown", reasonCode: "verification_code_timeout", durable: true };
+    } });
+  assert.deepEqual(events.map(e => [e.state, e.reasonCode, e.fence, e.expectedRevision, e.checkpoint]),
+    [["submission_unknown", "verification_code_timeout", 1, 2, { stage: "ready", sequence: 4 }]]);
+});
+
+test("a verified receipt the server did not take is sent on the next reconcile lease until it is accepted or refused", async () => {
+  const s = scope(), job = assignment(s);
+  const receipt = { protocolVersion: 1, intentId: job.applicationId, identity: { ats: "fixture", tenant: "tenant", requisition: "role" },
+    company: "Fixture Co", role: "Intern", receiptId: "gh-1", submittedAt: Date.now(),
+    evidence: { source: "confirmation_page", pageUrl: "https://job-boards.greenhouse.io/tenant/jobs/role/confirmation", observedText: "Thank you for applying." } };
+  const reconcile = { ...job, state: "submission_unknown", mode: "reconcile" };
+  // The submit's receipt POST failed: the dispatch keeps the receipt (main.ts), and the next poll is that row read-only.
+  const run = async (store, answer, jobs = [{ ...job, state: "ready" }, reconcile]) => {
+    const controller = new AbortController(), sent = [], stuck = setTimeout(() => controller.abort(), 3000);
+    await runWorker({ scope: s, store, signal: controller.signal,
+      transport: { poll: async () => clockResponse(jobs.shift() ?? null), heartbeat: async () => clockResponse(),
+        event: async (id, input) => ({ applicationId: id, eventId: input.eventId, revision: input.expectedRevision + 1,
+          state: input.state, replayed: false, lease: null, serverTime: Date.now() }),
+        receipt: async (id, input) => { sent.push([id, input]); setTimeout(() => controller.abort(), 20); return answer(id, input); } },
+      dispatch: async (_lease, _guard, context) => {
+        await context.keepReceipt?.(receipt);
+        return { state: "submission_unknown", reasonCode: "receipt_persistence_failed", durable: true };
+      } });
+    clearTimeout(stuck);
+    return sent;
+  };
+  const store = await storeFor(s);
+  // Workie's server is still down: the receipt stays for the next lease.
+  assert.deepEqual(await run(store, () => { throw new TransportError("NETWORK_UNAVAILABLE"); }), [[job.applicationId, receipt]]);
+  assert.deepEqual(await run(store, (id, input) => ({ applicationId: id, intentId: input.intentId, state: "submitted", revision: 9, replayed: false }),
+    [reconcile]), [[job.applicationId, receipt]]);
+  assert.deepEqual(await store.read("receipts"), {});
+  // The applicant already resolved the row: the server refuses it for good, so it is dropped rather than resent forever.
+  const refused = await storeFor(s);
+  await run(refused, () => { throw new TransportError("HTTP_409", 409, "EXECUTION_DISABLED"); });
+  assert.deepEqual(await refused.read("receipts"), {});
+});
+
 test("every safe-stage checkpoint restarts with its exact event ID, sequence and revision", async () => {
   for (const stage of ["screening", "tailoring", "filling", "ready"]) {
     const s = scope(), store = await storeFor(s), job = { ...assignment(s),
@@ -261,4 +311,181 @@ test("a screening skip for several requirements reports them all instead of cras
       } },
     dispatch: async () => ({ state: "skipped", reasonCode: "graduation_ineligible,term_ineligible" }) });
   assert.deepEqual(events.map(e => [e.state, e.reasonCode]), [["skipped", "graduation_ineligible,term_ineligible"]]);
+});
+
+test("a missed heartbeat keeps the lease until its deadline; a refused one still stops the worker", { timeout: 40000 }, async () => {
+  // One timed-out heartbeat during a fill, or during the 30-minute verification-code wait, used to end the worker.
+  async function run(heartbeat, { leaseMs = 120000, settle = false } = {}) {
+    const s = scope(), store = await storeFor(s), controller = new AbortController();
+    const job = { ...assignment(s), leaseUntil: Date.now() + leaseMs };
+    let polled = false, beats = 0, aborted = false;
+    const events = [];
+    const outcome = await runWorker({ scope: s, store, signal: controller.signal,
+      transport: {
+        poll: async () => { const lease = polled ? null : job; polled = true; return clockResponse(lease); },
+        heartbeat: async () => { beats++; return heartbeat(job); },
+        event: async (id, input) => {
+          events.push(input); controller.abort();
+          return { applicationId: id, eventId: input.eventId, revision: input.expectedRevision + 1,
+            state: input.state, replayed: false, lease: null, serverTime: Date.now() };
+        },
+      },
+      dispatch: (_lease, _guard, { signal }) => new Promise((resolve, reject) => {
+        const stop = () => { aborted = true; reject(new Error("STOPPED")); };
+        signal.addEventListener("abort", stop);
+        if (!settle) return;
+        const beaten = setInterval(() => {
+          if (!beats) return;
+          clearInterval(beaten);
+          signal.removeEventListener("abort", stop);
+          resolve({ state: "blocked_unsupported", reasonCode: "adapter_unavailable" });
+        }, 100);
+      }),
+    }).then(() => "finished", error => error.message);
+    return { outcome, events: events.length, aborted };
+  }
+  const [blip, outage, deadline, revoked, lost, released] = await Promise.all([
+    run(() => { throw new TransportError("NETWORK_UNAVAILABLE"); }, { settle: true }),
+    run(() => { throw new TransportError("HTTP_503", 503); }, { settle: true }),
+    // Contact never comes back: the guard's own deadline still stops the stage (fail closed).
+    run(() => { throw new TransportError("NETWORK_UNAVAILABLE"); }, { leaseMs: 25000 }),
+    run(() => { throw new TransportError("HTTP_401", 401); }),
+    run(() => { throw new TransportError("HTTP_409", 409, "LEASE_LOST"); }),
+    run(() => clockResponse(null)),
+  ]);
+  assert.deepEqual(blip, { outcome: "finished", events: 1, aborted: false });
+  assert.deepEqual(outage, { outcome: "finished", events: 1, aborted: false });
+  assert.deepEqual(deadline, { outcome: "LEASE_EXPIRED", events: 0, aborted: true });
+  assert.deepEqual(revoked, { outcome: "HTTP_401", events: 0, aborted: true });
+  assert.deepEqual(lost, { outcome: "HTTP_409", events: 0, aborted: true });
+  assert.deepEqual(released, { outcome: "LEASE_LOST", events: 0, aborted: true });
+});
+
+test("an error tied to one application fails that application and the worker moves on", async () => {
+  // The server hands a restarted worker the same lease first, so a crash on one bad posting used to stop
+  // every application (the HTTP 409 context loop and the comma reason-code loop).
+  const s = scope(), store = await storeFor(s), controller = new AbortController();
+  const stages = [
+    async () => { throw new TransportError("HTTP_409", 409, "ARTIFACT_INVALID"); },
+    async () => ({ state: "skipped", reasonCode: "Bad Reason" }),
+    async () => ({ state: "filling", reasonCode: "screened" }),
+    async () => { throw new TypeError("Cannot read properties of undefined (reading 'ats')"); },
+    async () => ({ state: "blocked_unsupported", reasonCode: "adapter_unavailable" }),
+  ];
+  const events = [];
+  const outcome = await runWorker({ scope: s, store, signal: controller.signal,
+    transport: { poll: async () => clockResponse(assignment(s)), heartbeat: async () => clockResponse(),
+      event: async (id, input) => {
+        events.push(input);
+        if (events.length === stages.length) controller.abort();
+        return { applicationId: id, eventId: input.eventId, revision: input.expectedRevision + 1,
+          state: input.state, replayed: false, lease: null, serverTime: Date.now() };
+      } },
+    dispatch: async () => stages[events.length](),
+  }).then(() => "finished", error => error.message);
+  assert.equal(outcome, "finished");
+  assert.deepEqual(events.map(e => [e.state, e.reasonCode]), [
+    ["retryable_failure", "worker_http_409_artifact_invalid"], ["retryable_failure", "worker_schema_invalid"],
+    ["retryable_failure", "worker_execution_disabled"], ["retryable_failure", "worker_typeerror"],
+    ["blocked_unsupported", "adapter_unavailable"],
+  ]);
+});
+
+test("worker-wide failures, and any failure past a submission intent, still stop the worker without an event", async () => {
+  for (const [fault, expected] of [
+    [() => { throw new TransportError("HTTP_401", 401); }, "HTTP_401"],
+    [() => { throw new TransportError("HTTP_403", 403, "POLICY_CHANGED"); }, "HTTP_403"],
+    [() => { throw new TransportError("HTTP_404", 404, "NOT_FOUND"); }, "HTTP_404"],
+    [() => { throw new TransportError("HTTP_409", 409, "LEASE_LOST"); }, "HTTP_409"],
+    [() => { throw new TransportError("NETWORK_UNAVAILABLE"); }, "NETWORK_UNAVAILABLE"],
+    // A server deployed ahead of the worker answers in a shape it does not know, for every application alike.
+    [() => { throw new TransportError("INVALID_RESPONSE"); }, "INVALID_RESPONSE"],
+    [() => { throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC", syscall: "write" }); }, "ENOSPC: no space left on device"],
+    [guard => { guard.revoke("LEASE_LOST"); throw new Error("after the lease"); }, "LEASE_LOST"],
+    [(_guard, { advance }) => { advance({ revision: 2, fence: 1, state: "submitting" }); throw new TypeError("after the intent"); }, "after the intent"],
+  ]) {
+    const s = scope(), store = await storeFor(s);
+    let events = 0;
+    const outcome = await runWorker({ scope: s, store, signal: new AbortController().signal,
+      transport: { poll: async () => clockResponse(assignment(s)), heartbeat: async () => clockResponse(),
+        event: async () => { events++; } },
+      dispatch: async (_lease, guard, context) => fault(guard, context),
+    }).then(() => "finished", error => error.message);
+    assert.equal(outcome, expected);
+    assert.equal(events, 0);
+  }
+});
+
+test("a stage that never settles gives up after an hour, never inside the 30-minute verification wait", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const s = scope(), store = await storeFor(s), job = assignment(s);
+  let started, aborted = false;
+  const dispatching = new Promise(resolve => started = resolve);
+  const outcome = runWorker({ scope: s, store, signal: new AbortController().signal,
+    transport: { poll: async () => clockResponse(job), heartbeat: async () => clockResponse(job) },
+    dispatch: (_lease, _guard, { signal }) => new Promise((_, reject) => {
+      started();
+      signal.addEventListener("abort", () => { aborted = true; reject(new Error("STOPPED")); });
+    }),
+  }).then(() => "finished", error => error.message);
+  await dispatching;
+  t.mock.timers.tick(45 * 60_000);
+  await sleep(20);
+  assert.equal(aborted, false, "a stage still inside its budget, e.g. fill plus the 30-minute code wait, keeps going");
+  t.mock.timers.tick(15 * 60_000);
+  // A wedged stage used to hold the only lease forever while heartbeats kept the worker Online.
+  assert.equal(await Promise.race([outcome, sleep(1000).then(() => "still running")]), "STAGE_TIMEOUT");
+  assert.equal(aborted, true);
+});
+
+test("the same failure on application after application stops the worker instead of failing the whole queue", async () => {
+  // A code bug every posting hits (or anything else that is not one bad posting) used to park the queue one by one.
+  const s = scope(), store = await storeFor(s);
+  const bug = "Cannot read properties of undefined (reading 'gpa')";
+  const crash = async () => { throw new TypeError(bug); };
+  const works = async () => ({ state: "blocked_unsupported", reasonCode: "adapter_unavailable" });
+  async function run(stages) {
+    const controller = new AbortController(), events = [];
+    let leased = 0;
+    const outcome = await runWorker({ scope: s, store, signal: controller.signal,
+      transport: {
+        poll: async () => { if (++leased > 8) { controller.abort(); return clockResponse(); } return clockResponse(assignment(s)); },
+        heartbeat: async () => clockResponse(),
+        event: async (id, input) => {
+          events.push(input.reasonCode);
+          return { applicationId: id, eventId: input.eventId, revision: input.expectedRevision + 1,
+            state: input.state, replayed: false, lease: null, serverTime: Date.now() };
+        } },
+      dispatch: async () => stages[Math.min(leased, stages.length) - 1](),
+    }).then(() => "finished", error => error.message);
+    return { outcome, events };
+  }
+  assert.deepEqual(await run([crash]), { outcome: bug, events: ["worker_typeerror", "worker_typeerror", "worker_typeerror"] });
+  // launchd restarts the worker: the count is kept, so the next application is not failed too.
+  assert.deepEqual(await run([crash]), { outcome: bug, events: [] });
+  // An application that works ends the run of failures.
+  assert.deepEqual(await run([works, crash]), { outcome: bug,
+    events: ["adapter_unavailable", "worker_typeerror", "worker_typeerror", "worker_typeerror"] });
+});
+
+test("a fatal error past a submission intent leaves the code window open until the stage ends", { timeout: 10000 }, async () => {
+  // main exits (closing the window) once runWorker stops, so stopping mid-wait took the form from the applicant.
+  const s = scope(), store = await storeFor(s);
+  let skew = 0, typed, settled = false;
+  const code = new Promise(resolve => typed = resolve);
+  const outcome = runWorker({ scope: s, store, signal: new AbortController().signal,
+    clock: () => ({ mono: performance.now(), wall: Date.now() + skew }),
+    transport: { poll: async () => clockResponse(assignment(s)), heartbeat: async () => clockResponse(),
+      event: async () => assert.fail("no event after a submission intent") },
+    dispatch: async (_lease, _guard, { advance }) => {
+      advance({ revision: 2, fence: 1, state: "submitting" });
+      skew = 10_000; // the laptop slept during the verification-code wait
+      await code; // like page.waitForURL, the wait does not watch the signal
+      return { state: "submitted", reasonCode: "confirmed", durable: true };
+    },
+  }).then(() => "finished", error => error.message).finally(() => { settled = true; });
+  await sleep(2500);
+  assert.equal(settled, false, "the worker stopped while the applicant could still type the code");
+  typed();
+  assert.equal(await outcome, "CLOCK_UNSAFE");
 });

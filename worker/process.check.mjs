@@ -48,7 +48,8 @@ test("child survives client exit; real heartbeat, revocation, disconnect, SIGTER
     }
     if (lease) lease.claimed = true;
     const wire = lease ? Object.fromEntries(Object.entries(lease).filter(([key]) => key !== "claimed")) : null;
-    if (wire) wire.leaseUntil = now + 120000;
+    // A short lease for the disconnected worker, so its deadline passes soon after its first missed heartbeat.
+    if (wire) wire.leaseUntil = now + (lease.tenant === "disconnected" ? 25000 : 120000);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ protocolVersion: 1, serverTime: now, heartbeatMs: 20000, leaseMs: 120000, lease: wire }));
   });
@@ -114,7 +115,8 @@ test("child survives client exit; real heartbeat, revocation, disconnect, SIGTER
   assert(heartbeatDelay >= 19000 && heartbeatDelay < 26000, "Must observe the real 20-second heartbeat");
   t.diagnostic(`first heartbeat after ${Math.round(heartbeatDelay)}ms; process suspension 31000ms`);
   await eventually(async () => (await read(join(revoked.directory, "done"))).includes("HTTP_401"));
-  await eventually(async () => (await read(join(disconnected.directory, "done"))).includes("NETWORK_UNAVAILABLE"));
+  // A missed heartbeat is retried; contact never comes back, so the guard stops it at the lease deadline.
+  await eventually(async () => (await read(join(disconnected.directory, "done"))).includes("LEASE_EXPIRED"), 10000);
   await eventually(async () => (await read(join(changed.directory, "done"))).includes("BINDING_CHANGED"));
   process.kill(normal.pid, "SIGTERM");
   await eventually(async () => (await read(join(normal.directory, "done"))).includes("stopped"));

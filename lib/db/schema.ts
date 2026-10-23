@@ -89,11 +89,23 @@ export const postings = sqliteTable(
    * description plus 1,687 bytes of `source_fields` each — so reading 15,000 rows to return 900
    * meant touching ~126 MB, and a cold cache made that a 1.6-SECOND query on a local file.
    *
-   * Column order is the usable order: the equality columns first, then the one that is both a
-   * range filter and the sort key, so `posted_at` serves the 60-day cutoff and the ORDER BY from
-   * one scan instead of a temp B-tree.
+   * Column order is the usable order: the equality columns first, then `posted_at`.
+   *
+   * Every other column the board's WHERE reads rides along, so the filter never touches a row.
+   * Each of them is stored after `description`, so reading one from the table walks that row's
+   * overflow pages: with only the three key columns, an Engineering count read ~4,800 pages
+   * where this reads ~120, on every render, against Turso. `query.test.ts` holds the board to
+   * this index; a new filter column goes in here too. It replaces the three-column index it
+   * starts with, so nothing that used that one loses it.
    */
-  (table) => [index('postings_track_live_posted_idx').on(table.track, table.delistedAt, table.postedAt)],
+  (table) => [
+    index('postings_board_idx').on(
+      table.track, table.delistedAt, table.postedAt,
+      table.firstSeenRun, table.seniority, table.companyNorm, table.country, table.cityNorm, table.state,
+      table.workMode, table.isRemote, table.employmentType, table.internshipSeason, table.paid, table.badges,
+      table.canonicalUrl,
+    ),
+  ],
 );
 
 /** One row per (posting, source). A source is NEVER discarded, only added to. */

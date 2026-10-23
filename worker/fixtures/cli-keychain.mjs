@@ -9,6 +9,8 @@ if (process.env.WORKIE_WORKER_OWNER !== "synthetic-cli-owner" ||
 }
 const config = JSON.parse(readFileSync(0, "utf8"));
 const items = new Map(config.items ?? []);
+// Stands in for the shared Chromium window, whose pipes keep the event loop busy.
+if (config.window) setInterval(() => {}, 60_000);
 let operations = 0;
 export class Entry {
   constructor(service, account) { this.key = JSON.stringify([service, account]); }

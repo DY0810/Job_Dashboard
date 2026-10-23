@@ -322,8 +322,9 @@ describe('async leases, checkpoints and stable identity', () => {
     expect(next.applicationId).toBe(unrelated.id);
     const [deferred] = await db.select().from(applications).where(eq(applications.id, app.id));
     expect(deferred).toMatchObject({ state: 'submission_unknown', leaseUntil: null, leaseCheckedAt: null,
+      // Deferring keeps why the submission went unknown (its lease expired mid-submit) for the applicant.
       revision: unknown.revision + 1, fence: unknown.fence + 1, checkpoint: unknown.checkpoint, retries: 0,
-      reasonCode: 'reconciliation_deferred' });
+      reasonCode: 'lease_expired' });
     expect(deferred.availableAt).toBeGreaterThan(now + p.HEARTBEAT_MS);
     await expect(heartbeatWorker(db, worker.token, { protocolVersion: 1, lease: ref(unknown) }, options))
       .rejects.toMatchObject({ code: 'LEASE_LOST' });
@@ -473,6 +474,65 @@ describe('async leases, checkpoints and stable identity', () => {
     await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(unknown.revision), action: 'retry-safe' }, options)).rejects.toMatchObject({ status: 409 });
     await expect(db.update(applications).set({ state: 'queued' }).where(eq(applications.id, app.id))).rejects.toThrow();
   });
+  it('the applicant says an unknown submission went through: applied without an invented receipt, never re-leased', async () => {
+    const { worker, app, run } = await prepared();
+    await claim(worker.token);
+    await db.update(applications).set({ state: 'submitting' }).where(eq(applications.id, app.id));
+    now += p.LEASE_MS;
+    // DY's Muon Space row: re-leased read-only every cycle; the applicant answers while the worker holds that lease.
+    const unknown = await claim(worker.token);
+    expect(unknown).toMatchObject({ state: 'submission_unknown', mode: 'reconcile' });
+    // The page loaded before this cycle re-leased it, so the revision it sends is already stale.
+    const confirm = { ...revision(unknown.revision - 1), action: 'confirm-submitted' as const };
+    await expect(commandApplication(db, 'bob', run.id, app.id, confirm, options)).rejects.toMatchObject({ status: 404 });
+    expect(await commandApplication(db, 'alice', run.id, app.id, confirm, options))
+      .toMatchObject({ state: 'submitted', reasonCode: 'applicant_confirmed_submitted' });
+    for (let cycle = 0; cycle < 3; cycle++) {
+      now += p.LEASE_MS;
+      expect((await pollWorker(db, worker.token, { protocolVersion: 1 }, options)).lease).toBeNull();
+    }
+    expect((await db.select().from(applications).where(eq(applications.id, app.id)))[0]).toMatchObject({ state: 'submitted', leaseUntil: null });
+    await expect(heartbeatWorker(db, worker.token, { protocolVersion: 1, lease: ref(unknown) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    expect(await db.select().from(applicationReceipts)).toHaveLength(0);
+    expect((await listRuns(db, 'alice', options)).applications[0]).toMatchObject({ state: 'submitted', receiptId: null });
+    // A submission still in flight is the worker's to finish; only an unknown one can be confirmed.
+    const inFlight = await enqueueApplication(db, 'alice', run.id, { ats: 'fixture', tenant: 'other', requisition: 'role' }, options);
+    await db.update(applications).set({ state: 'submitting' }).where(eq(applications.id, inFlight.id));
+    await expect(commandApplication(db, 'alice', run.id, inFlight.id, { ...revision(inFlight.revision), action: 'confirm-submitted' }, options))
+      .rejects.toMatchObject({ status: 409 });
+    await expect(commandApplication(db, 'alice', run.id, inFlight.id, { ...revision(inFlight.revision), action: 'confirm-not-submitted' }, options))
+      .rejects.toMatchObject({ status: 409 });
+  });
+  it('keeps the worker\'s reason for an unknown submission through every reconcile cycle', async () => {
+    const { worker, app } = await prepared();
+    const lease = await claim(worker.token);
+    await db.update(applications).set({ state: 'ready', checkpoint: { stage: 'filling', sequence: 3 } }).where(eq(applications.id, app.id));
+    const started = await beginSubmission(db, worker.token, app.id, {
+      protocolVersion: 1, intentId: app.id, fence: lease.fence, expectedRevision: lease.revision,
+      identity: { ats: app.ats, tenant: app.tenant, requisition: app.requisition }, company: 'Fixture Co', role: 'Intern',
+      manifestHash: 'a'.repeat(64), artifactHashes: ['b'.repeat(64)],
+    }, options);
+    // Greenhouse emailed a code nobody typed in: the worker says so instead of leaving 'Reconciliation deferred'.
+    expect(await recordWorkerEvent(db, worker.token, app.id, {
+      protocolVersion: 1, eventId: randomUUID(), fence: started.fence, expectedRevision: started.revision,
+      state: 'submission_unknown', checkpoint: { stage: 'ready', sequence: 4 }, reasonCode: 'verification_code_timeout',
+    }, options)).toMatchObject({ state: 'submission_unknown', lease: null });
+    for (let cycle = 0; cycle < 2; cycle++) {
+      expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, mode: 'reconcile' });
+      now += p.HEARTBEAT_MS;
+      expect((await pollWorker(db, worker.token, { protocolVersion: 1 }, options)).lease).toBeNull();
+      now += p.LEASE_MS;
+    }
+    expect((await listRuns(db, 'alice', options)).applications[0]).toMatchObject({ state: 'submission_unknown', reasonCode: 'verification_code_timeout' });
+    // A receipt the worker kept (its POST failed) lands under the next reconcile lease while the row is still unknown.
+    expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, mode: 'reconcile' });
+    expect(await recordReceipt(db, worker.token, app.id, {
+      protocolVersion: 1, intentId: app.id, identity: { ats: app.ats, tenant: app.tenant, requisition: app.requisition },
+      company: 'Fixture Co', role: 'Intern', receiptId: 'gh-1', submittedAt: now,
+      evidence: { source: 'confirmation_page', pageUrl: 'https://job-boards.greenhouse.io/fixture/jobs/1/confirmation', observedText: 'Thank you for applying.' },
+    }, options)).toMatchObject({ state: 'submitted' });
+    expect((await pollWorker(db, worker.token, { protocolVersion: 1 }, options)).lease).toBeNull();
+  });
   it('unknown reconciliation after stop and policy disable cannot checkpoint any state or emit a receipt', async () => {
     const { worker, app, run } = await prepared();
     await claim(worker.token);
@@ -492,6 +552,26 @@ describe('async leases, checkpoints and stable identity', () => {
     expect(await db.select().from(applicationEvents)).toHaveLength(0);
     expect((await db.select().from(applications).where(eq(applications.id, app.id)))[0])
       .toMatchObject({ state: 'submission_unknown', revision: lease.revision, fence: lease.fence });
+  });
+  it('the applicant says an unknown submission never went through: it closes with no running run to retry it, never re-leased', async () => {
+    const { worker, app, run } = await prepared();
+    await claim(worker.token);
+    await db.update(applications).set({ state: 'submitting' }).where(eq(applications.id, app.id));
+    // Its run stopped and Auto Apply is off, so no run can queue it again; only the applicant's answer can close it.
+    await commandRun(db, 'alice', run.id, { ...revision(run.revision), action: 'stop' }, options);
+    await db.update(policyHeads).set({ enabled: false, revision: 2, acceptedPolicyHash: null,
+      acceptedPolicyVersion: null, acceptedAt: null }).where(eq(policyHeads.ownerId, 'alice'));
+    const unknown = await claim(worker.token);
+    expect(unknown).toMatchObject({ state: 'submission_unknown', mode: 'reconcile' });
+    const answer = { ...revision(unknown.revision - 1), action: 'confirm-not-submitted' as const };
+    await expect(commandApplication(db, 'bob', run.id, app.id, answer, options)).rejects.toMatchObject({ status: 404 });
+    expect(await commandApplication(db, 'alice', run.id, app.id, answer, options))
+      .toMatchObject({ state: 'failed', reasonCode: 'applicant_confirmed_not_submitted' });
+    for (let cycle = 0; cycle < 3; cycle++) {
+      now += p.LEASE_MS;
+      expect((await pollWorker(db, worker.token, { protocolVersion: 1 }, options)).lease).toBeNull();
+    }
+    await expect(heartbeatWorker(db, worker.token, { protocolVersion: 1, lease: ref(unknown) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
   });
   it('rejects unsupported future evidence paths and stale zero-row checkpoints', async () => {
     const { worker, app } = await prepared();

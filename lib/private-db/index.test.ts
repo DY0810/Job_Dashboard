@@ -8,6 +8,7 @@ import { createClient } from '@libsql/client';
 import { eq, getTableName, sql } from 'drizzle-orm';
 import { getPrivateDb, migratePrivateDb, openPrivateDb, PrivateConfigurationError, type PrivateDb } from './index.ts';
 import * as schema from './schema.ts';
+import { tursoFetch } from '../db/index.ts';
 
 vi.mock('server-only', () => ({}));
 vi.mock('@libsql/client', async (original) => {
@@ -158,7 +159,7 @@ describe('private configuration before any client construction', () => {
     opened.push(db);
     expect(db.$client.protocol).toBe('http');
     expect(createClient).toHaveBeenCalledWith({
-      url: 'https://private.example.test/', authToken: 'synthetic-only',
+      url: 'https://private.example.test/', authToken: 'synthetic-only', fetch: tursoFetch,
     });
     expect(existsSync(join(dir, 'corpus.db'))).toBe(false);
   });
