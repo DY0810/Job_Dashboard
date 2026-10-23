@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { dailyStartInstant, formatDailyStart, offlineNotice, scheduledWorker } from './schedule.ts';
 import { archivedAt, bucket, inLive, isWatching, rowsBehind } from './buckets.ts';
 import { SUBMIT_APPROVAL, type ApplicationState } from './state.ts';
+import { PARKED_STEPS } from './worker-protocol.ts';
 
 const at = (iso: string) => Date.parse(iso);
 const DAY = 86_400_000;
@@ -56,17 +57,23 @@ describe('scheduledWorker', () => {
 describe('Live', () => {
   const now = at('2026-10-13T12:00:00Z');
   const row = (state: ApplicationState, reasonCode: string | null = null) => ({ state, reasonCode, hiddenAt: null });
-  it('keeps an approved form in Live, watchable, while the worker fills it again and submits it', () => {
+  const shot = (age: number, step = 'Filling the form') => ({ updatedAt: now - age, step });
+  it('keeps an approved form in Live, watchable once the worker opens it again to submit it', () => {
     expect(inLive(row('ready', 'submit_approved'))).toBe(true);
-    expect(isWatching(row('ready', 'submit_approved'), { updatedAt: now - 1_000 }, now)).toBe(true);
+    expect(isWatching(row('ready', 'submit_approved'), shot(1_000, 'Opening the approved application'), now)).toBe(true);
+  });
+  // Apply or answers move the row on within seconds of the frame the worker posted as it parked the form.
+  it('never shows the frame of a parked form as the worker filling it, however fresh', () => {
+    expect(isWatching(row('ready', 'submit_approved'), shot(1_000, PARKED_STEPS.approval), now)).toBe(false);
+    expect(isWatching(row('screening'), shot(1_000, PARKED_STEPS.answers), now)).toBe(false);
   });
   it('shows a fresh frame while the rows still hold the state from before the fill', () => {
-    expect(isWatching(row('tailoring'), { updatedAt: now - 1_000 }, now)).toBe(true);
-    expect(isWatching(row('tailoring'), { updatedAt: now - 30_000 }, now)).toBe(false);
+    expect(isWatching(row('tailoring'), shot(1_000), now)).toBe(true);
+    expect(isWatching(row('tailoring'), shot(30_000), now)).toBe(false);
   });
   it('never shows a parked, finished or archived row as being worked', () => {
-    expect(isWatching(row('needs_policy_decision', SUBMIT_APPROVAL), { updatedAt: now - 1_000 }, now)).toBe(false);
-    expect(isWatching(row('skipped'), { updatedAt: now - 1_000 }, now)).toBe(false);
+    expect(isWatching(row('needs_policy_decision', SUBMIT_APPROVAL), shot(1_000), now)).toBe(false);
+    expect(isWatching(row('skipped'), shot(1_000), now)).toBe(false);
     expect(inLive(row('needs_policy_decision', SUBMIT_APPROVAL))).toBe(true);
     expect(inLive(row('submitted'))).toBe(false);
     expect(inLive({ ...row('ready'), hiddenAt: now })).toBe(false);
@@ -76,6 +83,13 @@ describe('Live', () => {
     expect(rowsBehind([frame], [{ id: 'a', state: 'filling' }])).toBe('');
     expect(rowsBehind([frame], [{ id: 'a', state: 'queued' }])).toBe('a filling');
     expect(rowsBehind([frame, { applicationId: 'b', state: 'needs_policy_decision' }], [{ id: 'a', state: 'filling' }])).toBe('b needs_policy_decision');
+  });
+  // listLive sends frames only for rows in Live, so a submitted or skipped row's frame just stops coming.
+  it('names the rows whose frame left the live list since the last poll', () => {
+    const before = [{ applicationId: 'a', state: 'submitting' as ApplicationState }];
+    expect(rowsBehind([], [{ id: 'a', state: 'submitting' }], before)).toBe('a left');
+    expect(rowsBehind(before, [{ id: 'a', state: 'submitting' }], before)).toBe('');
+    expect(rowsBehind([], [{ id: 'a', state: 'submitted' }], [])).toBe('');
   });
 });
 

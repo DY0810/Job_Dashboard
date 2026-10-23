@@ -9,6 +9,7 @@ import { getPolicy } from './stores.ts';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState, type ApplicationState } from './state.ts';
 import { postingUrl } from './posting-url.ts';
 import { ARCHIVE_AFTER_MS, ARCHIVE_KEEP_MS, IN_FLIGHT_STATES } from './buckets.ts';
+import { liveRow } from './live.ts';
 import {
   RunCreateSchema, RunCommandSchema, ApplicationCommandSchema,
   type RunCreate, type RunCommand, type ApplicationCommand, type Run,
@@ -97,10 +98,11 @@ export async function listRuns(db: PrivateDb, ownerId: string, options: WorkerOp
       .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
       .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)));
     // The worker takes the oldest row first, so a newest-N list hid the row it was filling or waiting to submit behind newer
-    // history. Rows being worked, waiting on the applicant or applied are always listed; past 500, old applied rows drop first.
+    // history. Rows being worked, waiting on the applicant or applied are listed; past 500, old applied rows drop first, then
+    // old waiting rows. ponytail: rows Live shows come first and are never dropped below 500 of them; query them apart past that.
     const rows = [
       ...await select().where(and(listed, not(inArray(applications.state, HISTORY_STATES))))
-        .orderBy(sql`${applications.state} = 'submitted'`, desc(applications.createdAt)).limit(500),
+        .orderBy(sql`case when ${liveRow} then 0 when ${applications.state} = 'submitted' then 2 else 1 end`, desc(applications.createdAt)).limit(500),
       ...await select().where(and(listed, inArray(applications.state, HISTORY_STATES))).orderBy(desc(applications.createdAt)).limit(100),
     ].sort((a, b) => b.app.createdAt - a.app.createdAt);
     return {

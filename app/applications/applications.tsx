@@ -355,8 +355,8 @@ export default function Applications() {
   }, [load]);
   const reload = useCallback(() => void load(true), [load]);
   const ownerKey = view.account?.ownerId ?? '';
-  const rows = useRef<App[]>([]);
-  useEffect(() => { rows.current = view.runs?.applications ?? []; }, [view.runs]);
+  const rows = useRef<App[]>([]), shown = useRef<Frame[]>([]);
+  useEffect(() => { rows.current = view.runs?.applications ?? []; shown.current = view.live; }, [view.runs, view.live]);
   // The Live tab refreshes the screenshots on their own, and the rows as soon as a frame shows a row moved.
   useEffect(() => {
     if (tab !== 'live' || !ownerKey) return;
@@ -365,8 +365,8 @@ export default function Applications() {
       if (document.visibilityState !== 'visible') return;
       try {
         const live = LiveListSchema.parse(await privateJson('/api/applications/live', { owner: ownerKey, timeout: 10_000 }));
-        // A row joined Live or changed state since the rows loaded: fetch them now instead of at the next minute's refresh.
-        const behind = rowsBehind(live.live, rows.current);
+        // A row joined, moved in or left Live since the rows loaded: fetch them now instead of at the next minute's refresh.
+        const behind = rowsBehind(live.live, rows.current, shown.current);
         const runs = behind && behind !== tried
           ? RunListSchema.parse(await privateJson('/api/application-runs', { owner: ownerKey, timeout: 10_000 })) : null;
         if (!alive || live.ownerId !== ownerKey || (runs && runs.ownerId !== ownerKey)) return;

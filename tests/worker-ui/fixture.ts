@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
+import { inLive } from '../../lib/applications/buckets';
 import { createEmptyPolicy, PolicySchema } from '../../lib/applications/policy';
 import { InboxPageSchema } from '../../lib/applications/question-protocol';
 import { isTerminalState } from '../../lib/applications/state';
@@ -28,7 +29,7 @@ export class WorkerFixture {
   pairings: PairingSummary[] = [];
   runs: Run[] = [];
   applications: ApplicationSummary[] = [];
-  /** Live frames; each is sent with its row's current state, as listLive does. */
+  /** Live frames; as listLive does, each is sent with its row's current state, and only while the row is in Live. */
   frames: { applicationId: string; step: string; image: string | null; fields: { label: string; value: string }[] | null; updatedAt: number }[] = [];
   policy = {
     revision: 2, policy: PolicySchema.parse({ ...createEmptyPolicy(), actions: ['read_jobs'],
@@ -96,7 +97,7 @@ export class WorkerFixture {
       if (path === '/api/applications/materials') return reply(MaterialsSchema, { ownerId: this.owner, materials: [] });
       if (path === '/api/applications/live') return reply(LiveListSchema, { ownerId: this.owner, live: this.frames.flatMap((frame) => {
         const app = this.applications.find((row) => row.id === frame.applicationId);
-        return app ? [{ ...frame, state: app.state }] : [];
+        return app && inLive(app) ? [{ ...frame, state: app.state }] : [];
       }) });
       throw new Error(`Unexpected synthetic GET: ${path}`);
     }

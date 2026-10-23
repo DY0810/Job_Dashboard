@@ -121,6 +121,8 @@ const liveFields = z.array(z.strictObject({ label: z.string().min(1).max(1000), 
 const liveImage = z.string().max(120_000).regex(/^[A-Za-z0-9+/]*={0,2}$/);
 export const LiveFrameSchema = z.strictObject({ ...protocol, step: z.string().trim().min(1).max(200),
   image: liveImage.nullable().optional(), fields: liveFields.optional() });
+/** The last step the worker posts when it parks a form on the applicant. It has left the page, so Live never shows it as filling. */
+export const PARKED_STEPS = { approval: 'Filled. Waiting for your approval', answers: 'Waiting for your answers' } as const;
 export const LiveFrameAckSchema = z.strictObject({ applicationId: uuid, stored: z.literal(true) });
 export const LiveListSchema = z.strictObject({ ownerId: z.string().min(1), live: z.array(z.strictObject({
   applicationId: uuid, state: ApplicationStateSchema, step: z.string(), image: liveImage.nullable(), fields: liveFields.nullable(), updatedAt: timestamp,

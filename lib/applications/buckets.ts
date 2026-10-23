@@ -1,5 +1,6 @@
 // Client-safe: which Auto Apply list a row belongs in. Archiving only hides; it never changes the application.
 import { isAwaitingSubmitApproval, type ApplicationState } from './state.ts';
+import { PARKED_STEPS } from './worker-protocol.ts';
 
 const DAY_MS = 86_400_000;
 export const ARCHIVE_AFTER_MS = 14 * DAY_MS;
@@ -28,18 +29,23 @@ export const inLive = (app: { state: ApplicationState; reasonCode: string | null
   (LIVE_STATES.includes(app.state) || app.reasonCode === 'question_unresolved' || isAwaitingSubmitApproval(app.state, app.reasonCode));
 /** A frame older than this means the worker is not on the page right now (between stages, or stopped). */
 export const FRESH_MS = 20_000;
+const parked: readonly string[] = Object.values(PARKED_STEPS);
 /**
  * The worker is on this row's form right now, so its card shows the newest step and picture. Any state the worker works will
- * do: rows reload less often than frames, so a row may still read 'tailoring' while its form is being filled.
+ * do: rows reload less often than frames, so a row may still read 'tailoring' while its form is being filled. The frame the
+ * worker posted as it parked the form never counts: after Apply or answers the row is worked again before the worker is back.
  */
-export const isWatching = (app: { state: ApplicationState }, frame: { updatedAt: number } | undefined, now: number) =>
-  !!frame && now - frame.updatedAt < FRESH_MS && LIVE_STATES.includes(app.state);
+export const isWatching = (app: { state: ApplicationState }, frame: { updatedAt: number; step: string } | undefined, now: number) =>
+  !!frame && now - frame.updatedAt < FRESH_MS && LIVE_STATES.includes(app.state) && !parked.includes(frame.step);
 /**
- * The frames whose row the page holds in another state, or not at all, as one key ('' for none): those rows moved since they
- * loaded, so the Live tab reloads them. Once per key: a row listRuns leaves out never catches up.
+ * The frames whose row the page holds in another state, or not at all, and the rows whose frame left the live list since the
+ * last poll (`before`), as one key ('' for none): those rows moved since they loaded, so the Live tab reloads them.
+ * Once per key: a row listRuns leaves out never catches up.
  */
-export function rowsBehind(frames: { applicationId: string; state: ApplicationState }[], rows: { id: string; state: ApplicationState }[]) {
+export function rowsBehind(frames: { applicationId: string; state: ApplicationState }[], rows: { id: string; state: ApplicationState }[],
+  before: { applicationId: string }[] = []) {
   const states = new Map(rows.map((row) => [row.id, row.state]));
-  return frames.filter((frame) => states.get(frame.applicationId) !== frame.state)
-    .map((frame) => `${frame.applicationId} ${frame.state}`).sort().join('\n');
+  const now = new Set(frames.map((frame) => frame.applicationId));
+  return [...frames.filter((frame) => states.get(frame.applicationId) !== frame.state).map((frame) => `${frame.applicationId} ${frame.state}`),
+    ...before.filter((frame) => !now.has(frame.applicationId)).map((frame) => `${frame.applicationId} left`)].sort().join('\n');
 }

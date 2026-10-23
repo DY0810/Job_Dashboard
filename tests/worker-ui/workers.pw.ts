@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { SUBMIT_APPROVAL } from '../../lib/applications/state';
-import { PAIRING_TTL_MS } from '../../lib/applications/worker-protocol';
+import { PAIRING_TTL_MS, PARKED_STEPS } from '../../lib/applications/worker-protocol';
 import { WorkerFixture, syntheticGrant, workerId } from './fixture';
 
 // Real Next UI, strict synthetic APIs. No keychain, real clipboard, browser profile,
@@ -345,8 +345,9 @@ test('Apply in Live full screen keeps the form on screen while the worker submit
   const fixture = fixtures.get(page)!;
   fixture.addRun();
   const app = fixture.addApplication('needs_policy_decision', SUBMIT_APPROVAL);
-  fixture.frames = [{ applicationId: app.id, step: 'Filled. Waiting for your approval', image: PIXEL,
-    fields: [{ label: 'First Name', value: 'Test' }], updatedAt: fixture.now - 60_000 }];
+  // Fresh, as when the applicant presses Apply right after the fill: the frame the worker parked the form with is not the refill.
+  fixture.frames = [{ applicationId: app.id, step: PARKED_STEPS.approval, image: PIXEL,
+    fields: [{ label: 'First Name', value: 'Test' }], updatedAt: Date.now() }];
   await page.goto('/applications?view=live');
   await page.getByRole('button', { name: 'Full screen', exact: true }).click();
   const full = page.getByRole('dialog', { name: 'fixture-employer application, full screen', exact: true });
@@ -356,6 +357,18 @@ test('Apply in Live full screen keeps the form on screen while the worker submit
   await expect(full.getByRole('img', { name: 'Workie\'s browser filling the fixture-employer application', exact: true })).toBeVisible();
   await expect(page.getByRole('list', { name: 'Live', exact: true }).getByRole('listitem')).toHaveCount(1);
   expect(fixture.writes.map((request) => request.body?.action)).toEqual(['approve-submit']);
+});
+
+// listLive stops sending a row's frame once it leaves Live; the card used to stay, saying the form had not gone out, until the minute's refresh.
+test('Live drops a form the worker submitted at its next frame poll', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const app = fixture.addApplication('submitting');
+  fixture.frames = [{ applicationId: app.id, step: 'Filling the form again and submitting it', image: PIXEL, fields: null, updatedAt: Date.now() }];
+  await page.goto('/applications?view=live');
+  await expect(page.getByRole('list', { name: 'Live', exact: true }).getByText(/^Filling the form again and submitting it · updated/)).toBeVisible();
+  app.state = 'submitted';
+  await expect(page.getByText(/^Nothing is being applied right now\./)).toBeVisible({ timeout: 10_000 });
 });
 
 // Rows reload once a minute and frames every 3 s; Live used to wait for the rows to show a form the worker had started filling.

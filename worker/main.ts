@@ -29,6 +29,7 @@ import type { ApplicationContext } from "../lib/applications/application-context
 import type { PrivateStore } from "./storage.ts";
 import { ApplicationArtifactManifestSchema, type ApplicationArtifactManifest, artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { SUBMIT_APPROVAL } from "../lib/applications/state.ts";
+import { PARKED_STEPS } from "../lib/applications/worker-protocol.ts";
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 import { renderCoverLetter } from "./documents/cover-letter.ts";
 
@@ -403,7 +404,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
       return { state: "retryable_failure" as const, reasonCode: atsFailureReason(error) };
     } finally {
-      await live?.stop(review ? "Filled. Waiting for your approval" : asking ? "Waiting for your answers" : "Workie left this application",
+      await live?.stop(review ? PARKED_STEPS.approval : asking ? PARKED_STEPS.answers : "Workie left this application",
         review, !!review || asking);
       if (runtime) await runtime.close().catch(() => {});
       await rm(workDirectory, { recursive: true, force: true });
