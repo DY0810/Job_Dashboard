@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { credentials, nativeCredentialBackend, type CredentialBackend, type WorkerScope } from "./credentials.ts";
-import { privateStore } from "./storage.ts";
+import { bootId, privateStore } from "./storage.ts";
 import { controlOrigin, workerTransport, TransportError, type WorkerTransport } from "./transport.ts";
 import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, ScopeSchema } from "./pairing.ts";
 import { readMaskedGrant, readMaskedSecret } from "./input.ts";
@@ -453,8 +453,10 @@ export async function main(args = process.argv.slice(2)) {
       return;
     }
     if (args[0] === "stop") {
-      const lock = await store.read("lock") as { pid?: number } | null;
-      if (!lock) {
+      const lock = await store.read("lock") as { pid?: number; boot?: string } | null;
+      const boot = await bootId();
+      // A lock from an earlier boot is stale, and its pid may now be some other process: never signal it.
+      if (!lock || (boot && lock.boot && lock.boot !== boot)) {
         process.stdout.write(JSON.stringify({ ...scope, status: "not-running" }) + "\n");
         return;
       }
@@ -547,8 +549,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       : error instanceof Error ? `${error.name}${error instanceof AtsError ? ` ${error.code}` : ""}: ${error.message.split("\n")[0].slice(0, 160)}` : typeof error;
     process.stderr.write(JSON.stringify({ at: new Date().toISOString(), error: code, ...(detail ? { detail } : {}) }) + "\n");
     process.exitCode = 1;
-    // The shared Chromium window keeps the event loop busy, so the process would linger and launchd would never
-    // restart it. Give the abandoned stage a moment to clean up, then exit (the window closes with the process).
-    setTimeout(() => process.exit(1), 5000).unref();
+  }).finally(() => {
+    // The shared Chromium window keeps the event loop busy, so after a stop or an error the process would linger
+    // and launchd would never restart it. Give the abandoned stage a moment to clean up, then exit (the window
+    // closes with the process).
+    setTimeout(() => process.exit(), 5000).unref();
   });
 }

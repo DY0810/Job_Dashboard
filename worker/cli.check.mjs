@@ -228,7 +228,7 @@ test("actual CLI rejects piped grants without registering or writing a credentia
   assert.deepEqual(result.vault.items, []);
 });
 
-test("stop requests the running worker and recover clears only a dead lock", { timeout: 10000 }, async t => {
+test("stop ends the running worker even with its browser window open, and recover clears only a dead lock", { timeout: 20000 }, async t => {
   const scope = await fixture(t, async (req, res) => {
     const input = await body(req);
     if (req.url === "/api/worker/poll") {
@@ -239,13 +239,14 @@ test("stop requests the running worker and recover clears only a dead lock", { t
   });
   const seeded = await seed(scope);
   let stopPromise;
-  const started = cli(t, scope, "start", { items: seeded.items }, (output) => {
+  const started = cli(t, scope, "start", { items: seeded.items, window: true }, (output) => {
     if (!stopPromise && output.includes('"idle"')) stopPromise = cli(t, scope, "stop");
   });
   for (let attempt = 0; !stopPromise && attempt < 200; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
   assert(stopPromise, "stop command was not started");
   const stop = await stopPromise;
-  const result = await started;
+  const result = await Promise.race([started, sleep(10000, null, { ref: false })]);
+  assert(result, "the worker printed stopped but stayed alive, so launchd never restarted it");
   assert.equal(stop.code, 0, stop.stderr);
   assert.equal(JSON.parse(stop.stdout).status, "stop-requested");
   assert.equal(result.code, 0, result.stderr);
@@ -255,6 +256,16 @@ test("stop requests the running worker and recover clears only a dead lock", { t
   assert.equal(recovered.code, 0, recovered.stderr);
   assert.equal(JSON.parse(recovered.stdout).status, "recovered");
   assert.equal(await seeded.store.read("lock"), null);
+
+  // After a power loss the lock's pid can belong to some other process: stop must never signal it.
+  const bystander = spawn("/bin/sleep", ["30"]);
+  t.after(() => bystander.kill("SIGKILL"));
+  const ended = new Promise(resolve => bystander.once("exit", (_code, signal) => resolve(signal)));
+  await seeded.store.write("lock", { pid: bystander.pid, nonce: "old", boot: "an-earlier-boot" });
+  const stale = await cli(t, scope, "stop");
+  assert.equal(stale.code, 0, stale.stderr);
+  assert.equal(JSON.parse(stale.stdout).status, "not-running");
+  assert.equal(await Promise.race([ended, sleep(500, "alive")]), "alive");
 });
 
 test("a fatal error ends the process even while the browser window is open, and every log line is dated", { timeout: 40000 }, async t => {

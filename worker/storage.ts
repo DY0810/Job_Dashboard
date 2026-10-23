@@ -10,7 +10,7 @@ const MAX_BYTES = 128 * 1024;
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 // This boot's ID, or "" when unknown (then only the pid check applies).
 let thisBoot: Promise<string> | undefined;
-const bootId = () => thisBoot ??= (process.platform === "darwin"
+export const bootId = () => thisBoot ??= (process.platform === "darwin"
   ? promisify(execFile)("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], { encoding: "utf8", timeout: 5_000 }).then(result => result.stdout)
   : readFile("/proc/sys/kernel/random/boot_id", "utf8")).then(id => id.trim(), () => "");
 
