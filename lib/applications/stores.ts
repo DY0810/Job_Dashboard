@@ -13,7 +13,8 @@ import {
 import { readDraftKeyConfig } from './draft-key.ts';
 import { PrivateInputError } from './private-http.ts';
 import { HEARTBEAT_MS } from './worker-protocol.ts';
-import { isWaitingState } from './state.ts';
+import { isAwaitingSubmitApproval, isWaitingState } from './state.ts';
+import { carryQuestions } from './questions.ts';
 
 type Db = Pick<PrivateDb, 'select' | 'insert' | 'update'>;
 type Tx = Parameters<Parameters<PrivateDb['transaction']>[0]>[0];
@@ -249,9 +250,10 @@ const selection = (policy: Policy) => [policy.filters, policy.destinations, poli
  * submitting one becomes submission_unknown), so its worker can do nothing more with it. A run whose rows the new policy
  * might not select (what discovery selects with changed) ends as Stop ends it, so nothing selected under the old policy
  * goes on, and a running one is replaced by a run on the new policy that discovers again. Any other run moves to the new
- * policy. An approved form waits for a new approval when Submit is off. Answers stay bound to the policy they were given
- * under, so the run's questions close and a row waiting on them screens again: the worker asks again under the new
- * policy, and a question it no longer asks cannot block the row.
+ * policy. An approved form waits for a new approval when Submit is off, and a reapplication ends when reapplication is.
+ * Each answer the new policy still allows moves to it, so an approved form submits with the answers the applicant
+ * reviewed; any other question closes. A row waiting on questions, or a filled form that lost an answer, screens again:
+ * the worker asks again under the new policy, and a question it no longer asks cannot block the row.
  * ponytail: any change to what discovery selects ends the run, widening too; re-screen each row's frozen candidate if
  * losing in-progress rows on a widened policy hurts.
  */
@@ -291,13 +293,21 @@ async function carryRunsForward(tx: Tx, ownerId: string, policy: PolicyResponse,
       .where(and(eq(applications.ownerId, ownerId), eq(applications.state, 'ready')));
   }
   if (!carried.length) return;
+  if (!policy.policy.reapplication.allowed) {
+    // Reapplying to a role the employer already received needs the policy's permission to go on, not only to start.
+    await tx.update(applications).set({ ...bump, state: 'cancelled', reasonCode: 'reapplication_disabled' }).where(and(
+      eq(applications.ownerId, ownerId), inArray(applications.runId, carried), unfinished,
+      sql`exists (select 1 from ${applications} p where p.owner_id = ${applications.ownerId} and p.ats = ${applications.ats}
+        and p.tenant = ${applications.tenant} and p.requisition = ${applications.requisition} and p.state = 'submitted')`));
+  }
   const asked = await tx.selectDistinct({ app: applications }).from(applications).innerJoin(questions, and(
     eq(questions.ownerId, applications.ownerId), eq(questions.applicationId, applications.id), eq(questions.active, true),
   )).where(and(eq(applications.ownerId, ownerId), inArray(applications.runId, carried), unfinished));
+  const lost = await carryQuestions(tx, ownerId, asked.map(({ app }) => app.id), now);
   for (const { app } of asked) {
-    await tx.update(questions).set({ active: false, revision: sql`${questions.revision} + 1` }).where(and(
-      eq(questions.ownerId, ownerId), eq(questions.applicationId, app.id), eq(questions.active, true)));
-    if (isWaitingState(app.state) && ['question_unresolved', 'run_paused'].includes(app.reasonCode ?? '')) {
+    // A form refilled at submit without an answer it lost would go out unlike the one the applicant reviewed.
+    const filled = !isWaitingState(app.state) || isAwaitingSubmitApproval(app.state, app.reasonCode);
+    if ((isWaitingState(app.state) && ['question_unresolved', 'run_paused'].includes(app.reasonCode ?? '')) || (lost.has(app.id) && filled)) {
       await tx.update(applications).set({
         ...bump, state: 'screening', reasonCode: 'policy_changed',
         checkpoint: { stage: 'screening', sequence: (app.checkpoint?.sequence ?? 0) + 1 },

@@ -791,6 +791,17 @@ describe('a policy change the applicant enables', () => {
     expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, state: 'ready' });
   });
 
+  it('refuses Apply on a run its revoked worker paused, since no worker can lease the approved form there', async () => {
+    await startPolicy();
+    const { worker, run, app } = await prepared();
+    const held = await park(worker.token, app.id);
+    await revokeWorker(db, 'alice', worker.workerId, revision(1), options);
+    expect(await runRow(run.id)).toMatchObject({ state: 'paused' });
+    await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await row(app.id)).toMatchObject({ state: 'needs_policy_decision', reasonCode: 'submit_approval' });
+  });
+
   it('leases a form the applicant approved before roles that have not started', async () => {
     await startPolicy();
     const { worker, run, app } = await prepared();

@@ -343,6 +343,33 @@ async function answerIn(tx: WorkerTx, ownerId: string, id: string, command: Answ
   return result;
 }
 
+/**
+ * A run carried to a newly enabled policy keeps each answered question that policy still allows: it moves to the new
+ * revision, so the application context still passes its answer and Apply submits the form the applicant reviewed. Every
+ * other active question closes, its answer staying bound to the policy it was given under. Returns the applications that
+ * lost one.
+ */
+export async function carryQuestions(tx: WorkerTx, ownerId: string, applicationIds: string[], now: number) {
+  const lost = new Set<string>(), kept: string[] = [], closed: string[] = [];
+  if (!applicationIds.length) return lost;
+  const ctx = await context(tx, ownerId, { now: () => now });
+  for (const { question, answer } of await tx.select({ question: questions, answer: questionAnswers }).from(questions)
+    .leftJoin(questionAnswers, and(eq(questionAnswers.ownerId, questions.ownerId), eq(questionAnswers.id, questions.answerId)))
+    .where(and(eq(questions.ownerId, ownerId), inArray(questions.applicationId, applicationIds), eq(questions.active, true)))) {
+    const moved = { ...question, policyRevision: ctx.policy.revision }, q = question.descriptor;
+    // What lets the question be answered, and its answer (or blank) be given, under the new policy.
+    const keep = question.resolvedAt !== null && fresh(moved, ctx) && permitted(q, ctx) && (answer
+      ? await answerValid(tx, moved, answer.value, ctx)
+      : !q.required && (q.field.allowBlank || q.field.declineValue !== null) && allowOptional(q, ctx));
+    (keep ? kept : closed).push(question.id);
+    if (!keep) lost.add(question.applicationId);
+  }
+  const ids = (list: string[]) => and(eq(questions.ownerId, ownerId), inArray(questions.id, list));
+  if (kept.length) await tx.update(questions).set({ policyRevision: ctx.policy.revision, revision: sql`${questions.revision} + 1` }).where(ids(kept));
+  if (closed.length) await tx.update(questions).set({ active: false, revision: sql`${questions.revision} + 1` }).where(ids(closed));
+  return lost;
+}
+
 async function reusableAnswer(tx: WorkerTx, row: QuestionRow, app: ApplicationRow, ctx: Context) {
   if (!fresh(row, ctx) || !await canAnswer(tx, row, app, ctx)) return;
   // rowid breaks same-millisecond ties by committed insertion order, not random UUID order.

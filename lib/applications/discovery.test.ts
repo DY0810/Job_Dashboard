@@ -513,6 +513,19 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
   });
 
+  it('cancels a queued reapplication once the applicant turns reapplication off', async () => {
+    const { token, run } = await prepared('alice', { countries: ['US'], reapplication: { allowed: true, minimumDays: 1 } });
+    addPostings(1); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    await db.update(applications).set({ state: 'submitted', leaseUntil: null, leaseCheckedAt: null }).where(eq(applications.id, lease.applicationId));
+    const [submitted] = await db.select().from(applications).where(eq(applications.id, lease.applicationId));
+    now += 2 * DAY;
+    const next = await reapplyApplication(db, 'alice', run.id, { ...request(), previousApplicationId: submitted.id, expectedRevision: submitted.revision }, options);
+    await enable({ reapplication: { allowed: false, minimumDays: 1 } });
+    expect((await appRows()).find((a) => a.id === next.id)).toMatchObject({ state: 'cancelled', reasonCode: 'reapplication_disabled' });
+    expect((await poll(token)).lease).toBeNull();
+  });
+
   it('gives an applicant-confirmed unsubmitted application one fresh attempt without reapplication policy', async () => {
     const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
     const lease = (await poll(token)).lease!;
