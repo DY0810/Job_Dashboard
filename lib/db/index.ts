@@ -63,8 +63,13 @@ export async function retryingFetch(request: Request): Promise<Response> {
   }
 }
 
-/** Longest one round trip to Turso may take. Reads here answer in well under a second. */
-export const TURSO_DEADLINE_MS = 10_000;
+/**
+ * Longest one round trip to Turso may take. Reads answer in well under a second until Turso
+ * falls behind; then Engineering's list query took 10-60s. A render that finishes is cached by
+ * the CDN for everyone, while one that fails caches the error page, so the cap is long enough
+ * for those to finish and still ends far short of Vercel's 300s.
+ */
+export const TURSO_DEADLINE_MS = 60_000;
 
 /** Whether a Hrana pipeline only runs SELECTs, so running it twice changes nothing. */
 function readsOnly(body: string): boolean {
