@@ -201,7 +201,7 @@ export const lever: AtsAdapter = {
     const challenge = page.locator('iframe[src*="hcaptcha.com"][src*="frame=challenge"]').first();
     await Promise.race([page.waitForURL(thanks, { timeout: 30_000 }), challenge.waitFor({ state: 'visible', timeout: 30_000 })]).catch(() => {});
     if (!at(page.url(), input, '/thanks') && await challenge.isVisible()) {
-      process.stdout.write(JSON.stringify({ status: 'captcha-required', company: input.company, role: input.role }) + '\n');
+      process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'captcha-required', company: input.company, role: input.role }) + '\n');
       await page.waitForURL(thanks, { timeout: CAPTCHA_WAIT_MS }).catch(() => {});
     }
     if (!at(page.url(), input, '/thanks')) throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT');

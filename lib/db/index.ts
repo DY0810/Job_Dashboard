@@ -64,6 +64,46 @@ export async function retryingFetch(request: Request): Promise<Response> {
 }
 
 /**
+ * Longest one round trip to Turso may take. Reads answer in well under a second until Turso
+ * falls behind; then Engineering's list query took 10-60s. A render that finishes is cached by
+ * the CDN for everyone, while one that fails caches the error page, so the cap is long enough
+ * for those to finish and still ends far short of Vercel's 300s.
+ */
+export const TURSO_DEADLINE_MS = 60_000;
+
+/** Whether a Hrana pipeline only runs SELECTs, so running it twice changes nothing. */
+function readsOnly(body: string): boolean {
+  try {
+    const { requests } = JSON.parse(body) as { requests: { type: string; stmt?: { sql?: string } }[] };
+    return requests.every(({ type, stmt }) => type === 'close' || (type === 'execute' && /^\s*select\b/i.test(stmt?.sql ?? '')));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `fetch` for the app's Turso clients, the board's included. Undici waits 300s for response
+ * headers by default, which is Vercel's whole function budget, so when Turso fell behind (a
+ * crawler walking the board's filter links queues several full scans a second) `/` waited
+ * until the platform killed it. Each request now stops at the deadline instead.
+ *
+ * A socket Turso closes fails fast ("other side closed", EPIPE). Like `retryingFetch`, that
+ * request is resent once on a fresh socket, but only when it only reads: the server may have
+ * run the first attempt, and the app's clients also write notes, comments and claims. A
+ * request that hit the deadline is not resent; that would only queue more work on a database
+ * that is already behind.
+ */
+export async function tursoFetch(request: Request, deadlineMs = TURSO_DEADLINE_MS): Promise<Response> {
+  const retry = readsOnly(await request.clone().text()) ? request.clone() : null;
+  try {
+    return await fetch(request, { signal: AbortSignal.timeout(deadlineMs) });
+  } catch (error) {
+    if (!retry || (error as Error).name === 'TimeoutError') throw error;
+    return fetch(retry, { signal: AbortSignal.timeout(deadlineMs) });
+  }
+}
+
+/**
  * One connection per process. Next's dev server re-evaluates modules on every edit, so the
  * handle is cached on `globalThis` — otherwise each hot reload leaks a file descriptor.
  */
@@ -134,6 +174,7 @@ export function getDb(): ReadDb {
         connection: {
           url: process.env.TURSO_DATABASE_URL!,
           authToken: process.env.TURSO_AUTH_TOKEN,
+          fetch: tursoFetch,
         },
         schema,
       })

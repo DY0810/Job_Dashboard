@@ -173,7 +173,7 @@ export const greenhouse: AtsAdapter = {
       if (page.url().startsWith(confirmation)) return;
       // Greenhouse's human check: the applicant types the emailed code into this visible window and submits.
       if (await prompt.isVisible()) {
-        process.stdout.write(JSON.stringify({ status: 'verification-code-required', company: input.company, role: input.role }) + '\n');
+        process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'verification-code-required', company: input.company, role: input.role }) + '\n');
         try { await page.waitForURL(confirmation, { timeout: VERIFICATION_WAIT_MS }); return; }
         catch { throw new AtsError('VERIFICATION_CODE_TIMEOUT'); }
       }

@@ -197,7 +197,7 @@ export const ashby: AtsAdapter = {
     await success.or(captcha).first().waitFor({ timeout: 30_000 }).catch(() => {});
     if (await success.isVisible()) return;
     if (await captcha.first().isVisible()) {
-      process.stdout.write(JSON.stringify({ status: 'captcha-required', company: input.company, role: input.role }) + '\n');
+      process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'captcha-required', company: input.company, role: input.role }) + '\n');
       try { await success.waitFor({ timeout: VERIFICATION_WAIT_MS }); return; }
       catch { throw new AtsError('CAPTCHA_TIMEOUT'); }
     }

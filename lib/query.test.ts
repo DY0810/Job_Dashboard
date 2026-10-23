@@ -18,6 +18,7 @@ import { REFS, fixtures, refKey } from '../scripts/seed.ts';
 import type { Db } from './db/index.ts';
 import { postings, postingSources } from './db/schema.ts';
 import { GEO_TIER, geoTier } from './geo.ts';
+import { normalizeCompany } from './normalize.ts';
 import {
   countPostings,
   geoTierSql,
@@ -355,6 +356,16 @@ describe('rows that must never render', () => {
 
   it.each(TABS)('%s: nothing delisted', async (tab) => {
     expect(await order(params(tab))).not.toContain(`${tab[0]}-delisted`);
+  });
+
+  // Hussh posts scam roles. However its name is spelled, no listing, count or deep link shows it.
+  it.each(TABS)('%s: nothing from a blocked employer', async (tab) => {
+    const [first] = await listPostings(db, params(tab), NOW);
+    const total = await countPostings(db, params(tab), NOW);
+    db.update(postings).set({ company: 'hussh 🤫', companyNorm: normalizeCompany('hussh 🤫') }).where(eq(postings.id, first.id)).run();
+    expect((await listPostings(db, params(tab), NOW)).map((row) => row.id)).not.toContain(first.id);
+    expect(await countPostings(db, params(tab), NOW)).toBe(total - 1);
+    expect(await getPostingDetail(db, first.id, NOW)).toBeNull();
   });
 
   // The table is not the only way in: `?job=<id>` reaches a posting directly.
@@ -932,5 +943,35 @@ describe('roles auto-apply can fill live in Applications, not on the board', () 
   it('keeps a role whose link the worker cannot fill', async () => {
     db.update(postings).set({ canonicalUrl: 'https://careers.acme.com/jobs/123' }).where(eq(postings.id, idOf('d-sf-3d'))).run();
     expect(await order(params('design'))).toContain('d-sf-3d');
+  });
+});
+
+/**
+ * Every filter column lives after `description` in the row, so a WHERE that reaches the table
+ * reads each live row's ~7 KB of overflow pages. On the 10/23 corpus that was ~4,800 pages per
+ * Engineering count instead of ~120, every render, on Turso. The board's WHERE has to stay
+ * answerable from `postings_board_idx` alone: a new filter column goes into that index too.
+ */
+describe('the board filters from the index, not the rows', () => {
+  async function plans(run: (db: Db) => Promise<unknown>): Promise<string[]> {
+    const sqlite = (db as unknown as { $client: Database.Database }).$client;
+    const seen: { query: string; params: unknown[] }[] = [];
+    await run(drizzle(sqlite, { logger: { logQuery: (query, params) => void seen.push({ query, params }) } }) as unknown as Db);
+    return seen.flatMap(({ query, params }) => sqlite.prepare(`explain query plan ${query}`).all(...params)
+      .map((row) => (row as { detail: string }).detail));
+  }
+
+  it.each([
+    ['engineering', params('engineering', { posted: 'week', type: ['internship'], mode: ['remote'], season: ['summer'], level: ['entry'], pay: ['unknown'], badge: 'voice-ai' })],
+    ['design', params('design', { basis: 'freelance', posted: 'week', mode: ['remote'], pay: ['paid'] })],
+  ] as const)('%s: counting and the empty-tab checks read only a covering index', async (_, p) => {
+    const returned = ['https://jobs.ashbyhq.com/acme/0f6c2c9e-1111-4222-8333-944455556666'];
+    const details = await plans((logged) => Promise.all([
+      countPostings(logged, p, NOW, returned),
+      tabIsEmpty(logged, p, NOW, returned),
+      outsideTargetLocations(logged, p, NOW, returned),
+    ]));
+    expect(details.length).toBeGreaterThan(0);
+    for (const detail of details) expect(detail).toMatch(/USING COVERING INDEX postings_board_idx/);
   });
 });

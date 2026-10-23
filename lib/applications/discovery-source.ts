@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { driver, type ReadDb } from '../db/index.ts';
 import { postings, postingSources } from '../db/schema.ts';
 import { cutoffTimestamp } from '../dedupe.ts';
-import { effectiveAt, userFilters } from '../query.ts';
+import { effectiveAt, notBlockedEmployer, userFilters } from '../query.ts';
 import { PolicySchema, type Policy } from './policy.ts';
 import { resolveApplicationIdentity, type IdentitySource, type OfficialIdentity } from './application-identity.ts';
 
@@ -132,7 +132,7 @@ export async function captureCandidateSnapshot(db: ReadDb, policyInput: unknown,
   const policy = PolicySchema.parse(policyInput);
   z.number().int().min(0).max(8_640_000_000_000_000).parse(now);
   const captured = await capturePostings(db, and(
-    eq(postings.track, policy.filters.tab), isNull(postings.delistedAt),
+    eq(postings.track, policy.filters.tab), isNull(postings.delistedAt), notBlockedEmployer,
     gte(effectiveAt, cutoffTimestamp(now)), ...userFilters(policy.filters, now),
   )!, MAX_SNAPSHOT_POSTINGS);
 
