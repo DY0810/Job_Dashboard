@@ -250,6 +250,25 @@ test('long official questions retain exact wording and fill without a model choo
   assert.equal(observation.fields[0].label, label.trim());
 });
 
+test('a confirmation reached after the worker stopped is still read and handed on to be kept', async () => {
+  const controller = new AbortController(), handed = [];
+  const page = { url: () => 'https://job-boards.greenhouse.io/fixture/jobs/123/confirmation',
+    locator: () => ({ first: () => ({ count: async () => 0 }), innerText: async () => 'Thank you for applying.' }) };
+  const receipt = { identity: { ats: 'greenhouse', tenant: 'fixture', requisition: '123' }, company: 'Fixture Co',
+    role: 'Software Engineering Intern', receiptId: 'gh-1', submittedAt: Date.now() };
+  const result = await runAtsApplication({ runtime: { page: async () => page }, signal: controller.signal, facts, requirements,
+    application: { ...application('https://job-boards.greenhouse.io', 'greenhouse'), manifestHash: 'a'.repeat(64),
+      artifactHashes: ['b'.repeat(64)], submissionIntentId: crypto.randomUUID() },
+    adapter: { observe: async () => ({ fields: [] }), fill: async () => {},
+      // The worker stops (a lost heartbeat) while the applicant types the emailed code; then the employer confirms.
+      submit: async () => { controller.abort(); },
+      receipt: async (_runtime, _input, signal) => { signal?.throwIfAborted(); return receipt; } },
+    submission: { begin: async (value) => ({ intentId: value.intentId }),
+      receipt: async (value) => { handed.push(value.receipt); throw new Error('STOPPED'); } } });
+  assert.deepEqual(handed, [receipt]);
+  assert.deepEqual(result, { state: 'submission_unknown', reasons: ['receipt_persistence_failed'], receipt: null, reconciled: false });
+});
+
 function pageMarkup(ats, wrongRole = false) {
   const role = wrongRole ? 'Other role' : 'Software Engineering Intern';
   const authorized = '<label>Work authorization<select><option value="Yes">Yes</option><option value="No">No</option></select></label>';

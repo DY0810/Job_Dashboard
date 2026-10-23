@@ -219,21 +219,30 @@ const RESTARTABLE = ['failed', 'skipped', 'cancelled', 'retryable_failure', 'blo
 /** A document hold the applicant fixed resumes from its checkpoint instead of starting over. */
 const resumable = (app: App) => app.state === 'needs_document' && !!app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3;
 
-/** A fresh attempt of a role the employer never received: its own run first, then other running runs newest first. */
-async function restart(app: App, runs: Run[], ownerId: string) {
+/** A fresh attempt of a role the employer never received: its own run first, then other running runs newest first.
+ * `retry-unsubmitted` is the applicant saying an unconfirmed submission never went through. */
+async function restart(app: App, runs: Run[], ownerId: string, action: 'restart' | 'retry-unsubmitted' = 'restart') {
   // The server takes only a running run on the current policy.
   const targets = runs.filter((run) => run.state === 'running').sort((a, b) => Number(b.id === app.runId) - Number(a.id === app.runId));
-  if (!targets.length) throw new Error('No run is running. Start auto apply, then retry.');
+  const unsubmitted = action === 'retry-unsubmitted';
+  if (!targets.length && !unsubmitted) throw new Error('No run is running. Start auto apply, then retry.');
   let response: Response | null = null;
   for (const run of targets) {
-    response = await postCommand(`/api/application-runs/${run.id}/restart`, ownerId, app.revision, { previousApplicationId: app.id });
+    response = await postCommand(`/api/application-runs/${run.id}/${action}`, ownerId, app.revision, { previousApplicationId: app.id });
     if (response.ok || !['POLICY_CHANGED', 'DISCOVERY_REQUIRED'].includes(await errorCode(response) ?? '')) break;
+  }
+  // No running run can fill it again (none is running, on the current policy, or has found the role, which a closed
+  // posting never will): the applicant's answer still closes it, and the role can be applied to again later.
+  if (unsubmitted && (!response || ['POLICY_CHANGED', 'DISCOVERY_REQUIRED'].includes(await errorCode(response) ?? ''))) {
+    response = await postCommand(commandPath(app), ownerId, app.revision, { action: 'confirm-not-submitted' });
   }
   if (!response!.ok) {
     const code = await errorCode(response!);
     throw new Error(code === 'POLICY_CHANGED' ? 'The Auto Apply policy changed since the running run started. Start a new run from Settings, then retry.'
       : code === 'DISCOVERY_REQUIRED' ? 'No running run has found this role yet. Retry after its discovery finishes.'
-      : code === 'DUPLICATE_BLOCKED' ? 'This role was already retried or marked applied.' : 'Could not retry. Refresh and try again.');
+      : code === 'DUPLICATE_BLOCKED' ? 'This role was already retried or marked applied.'
+      : code === 'SUBMISSION_MAY_STILL_COMPLETE' ? 'The employer window may still be open, so this could still go through. Try again in half an hour.'
+      : 'Could not retry. Refresh and try again.');
   }
 }
 
@@ -265,6 +274,12 @@ async function approve(app: App, ownerId: string) {
   } catch (e) {
     throw e instanceof PrivateRequestError ? new Error(e.status === 403 ? 'Turn on Submit in the Auto Apply policy first.' : 'Could not apply. Refresh and try again.') : e;
   }
+}
+
+/** The applicant saw the employer confirm a submission Workie could not: it moves to Applied, with no receipt of Workie's. */
+async function confirmSubmitted(app: App, ownerId: string) {
+  const response = await postCommand(commandPath(app), ownerId, app.revision, { action: 'confirm-submitted' });
+  if (!response.ok) throw new Error('Could not save. Refresh and try again.');
 }
 
 /** Archiving hides the row, and cancels it if it is still live. */
@@ -484,6 +499,8 @@ export default function Applications() {
               : app.state === 'skipped' && app.reasonCode === 'skip' ? 'You skipped this role.'
               // Questions arrive with the inbox, a moment after the rows; older ones may sit past the pages loaded here.
               : app.reasonCode === 'question_unresolved' ? questions.view.inbox ? 'Waiting for your answers.' : 'Loading questions...'
+              // Nothing resolves this by itself: only the applicant knows whether the employer got it.
+              : app.state === 'submission_unknown' ? `Workie could not confirm the employer received this${app.reasonCode ? ` (${humanize(app.reasonCode)})` : ''}. Check your email or the job post, then say whether it went through.`
               : (app.reasonCode && !isTerminalState(app.state)) || app.state === 'failed' ? humanize(app.reasonCode ?? 'failed') : null;
             const show = (kind: Dialog['kind']) => () => setDialog({ kind, id: app.id, open: true });
             return <li key={app.id} className={styles.card}>
@@ -506,6 +523,12 @@ export default function Applications() {
                 {live && LIVE_STATES.includes(app.state) && <button className={buttonClass(primary === null)} type="button" onClick={() => showTab('live')}>Watch live</button>}
                 {material && !(live && approval) && <button className={styles.button} type="button" onClick={show('materials')}>Materials</button>}
                 {live && retryable && <Command label="Retry" busyLabel="Retrying..." primary={primary === 'retry'} run={() => retry(app, runs, ownerId)} onDone={reload} />}
+                {live && app.state === 'submission_unknown' && <>
+                  <Command label="It went through" busyLabel="Saving..." confirm="Mark this as applied? Do this only if the employer confirmed it, by email or on its site."
+                    run={() => confirmSubmitted(app, ownerId)} onDone={reload} />
+                  <Command label="It did not go through, try again" busyLabel="Retrying..." confirm="Fill this application again? Nothing is submitted until you press Apply. If no running run has this role, it just closes."
+                    run={() => restart(app, runs, ownerId, 'retry-unsubmitted')} onDone={reload} />
+                </>}
                 {live && approval && <button className={buttonClass(primary === 'approve')} type="button" onClick={show('approve')}>Approve</button>}
                 {live && upload && <button className={buttonClass(primary === 'upload')} type="button" onClick={show('upload')}>Upload</button>}
                 {live && questionsHere.length > 0 && <button className={buttonClass(true)} type="button" onClick={() => {

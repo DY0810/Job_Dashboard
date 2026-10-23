@@ -3,9 +3,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
   HEARTBEAT_MS, WORKER_PROTOCOL_VERSION, EventRequestSchema, EventResponseSchema,
-  PollResponseSchema,
+  PollResponseSchema, ReceiptCommandSchema,
 } from "../lib/applications/worker-protocol.ts";
-import type { Lease, EventRequest } from "../lib/applications/worker-protocol.ts";
+import type { Lease, EventRequest, ReceiptCommand } from "../lib/applications/worker-protocol.ts";
 import { SAFE_STAGES, canTransition } from "../lib/applications/state.ts";
 import { createLeaseGuard, systemClock } from "./guard.ts";
 import type { ClockSample, LeaseGuard } from "./guard.ts";
@@ -44,6 +44,9 @@ const JournalSchema = z.strictObject({
   pending: z.strictObject({ applicationId: z.uuid(), event: EventRequestSchema }).nullable(),
   acknowledged: EventResponseSchema.nullable(),
 });
+/** Verified employer receipts the server did not take, by application, sent again under its next reconcile lease.
+ * An unreadable list is dropped rather than stopping the worker on every reconcile lease. */
+const KeptReceiptsSchema = z.record(z.uuid(), ReceiptCommandSchema).catch({});
 const DispatchResultSchema = z.union([QuestionDispatchSchema, z.strictObject({
   state: z.enum(["screening", "tailoring", "filling", "ready", "needs_answer", "needs_document",
     "needs_policy_decision", "needs_login", "needs_verification", "provider_unavailable",
@@ -60,6 +63,8 @@ export type StageDispatchContext = {
   signal: AbortSignal; generate?: StructuredGenerator;
   /** Record a server transition made under this lease (a submission intent) so heartbeats keep it alive. */
   advance?: (value: Pick<Lease, "revision" | "fence" | "state">) => void;
+  /** Keep a verified receipt whose POST failed; it is written even after the lease is gone, and only ever sent under a fresh lease. */
+  keepReceipt?: (receipt: ReceiptCommand) => Promise<void>;
 };
 export type StageDispatch = (lease: Lease, guard: LeaseGuard, context: StageDispatchContext) => Promise<DispatchResult>;
 export type WorkerSetup = (transport: WorkerTransport, signal: AbortSignal) => Promise<{ generate?: StructuredGenerator; dispatch?: StageDispatch }>;
@@ -94,6 +99,7 @@ export async function runWorker(options: {
   let transport: WorkerTransport;
   let generate = options.generate;
   let dispatch = options.dispatch ?? unsupportedStage;
+  const keptReceipts = async () => KeptReceiptsSchema.parse(await store.read("receipts") ?? {});
   try {
     signal.throwIfAborted();
     transport = typeof options.transport === "function" ? await options.transport() : options.transport;
@@ -205,8 +211,24 @@ export async function runWorker(options: {
       if (!current) { await delay(HEARTBEAT_MS, undefined, { signal }); continue; }
       const { lease, guard } = current;
       if (lease.mode === "reconcile" || ["submitting", "submission_unknown"].includes(lease.state)) {
-        guard.revoke("RECONCILIATION_ONLY");
-        active = null;
+        await exclusive(async () => {
+          // The only write a read-only lease makes: a kept receipt, which the server takes only while the submission is unknown.
+          const kept = await keptReceipts(), receipt = kept[lease.applicationId];
+          if (receipt) {
+            try {
+              await guard.boundary(() => abortable(transport.receipt(lease.applicationId, receipt, signal), signal));
+              delete kept[lease.applicationId];
+            } catch (error) {
+              // Refused for good (the applicant resolved it, or it never matched): drop it. Otherwise try the next lease.
+              if (error instanceof TransportError && (error.status === 400 || (error.status === 409 && error.code !== "LEASE_LOST"))) {
+                delete kept[lease.applicationId];
+              }
+            }
+            await store.write("receipts", kept);
+          }
+          guard.revoke("RECONCILIATION_ONLY");
+          active = null;
+        });
         options.status?.("reconciliation-required");
         await delay(HEARTBEAT_MS, undefined, { signal });
         continue;
@@ -222,6 +244,8 @@ export async function runWorker(options: {
           guard.advance(value);
           submitting = true;
           if (active?.guard === guard) active.lease = { ...active.lease, ...value };
+        }, keepReceipt: async receipt => {
+          await store.write("receipts", { ...await keptReceipts(), [lease.applicationId]: ReceiptCommandSchema.parse(receipt) });
         } }));
         result = DispatchResultSchema.parse(await abortable(stage, signal));
         if (!("kind" in result) && !("durable" in result) &&
@@ -262,10 +286,20 @@ export async function runWorker(options: {
         result = { state: "retryable_failure", reasonCode: refused };
       }
       if ("durable" in result && result.durable) {
-        // Submission intent/receipt already fenced the server-side state. An old lease
-        // cannot emit a second event after that external boundary.
-        guard.revoke("DURABLY_CHECKPOINTED");
-        active = null;
+        // Submission intent/receipt already fenced the server-side state. An unconfirmed one sends a single
+        // fenced event naming why (e.g. verification_code_timeout), best effort; the row goes unknown either way.
+        await exclusive(async () => {
+          const held = active?.guard === guard ? active.lease : null;
+          if (result.state === "submission_unknown" && held) {
+            await guard.boundary(() => abortable(transport.event(lease.applicationId, EventRequestSchema.parse({
+              protocolVersion: WORKER_PROTOCOL_VERSION, eventId: randomUUID(), fence: held.fence, expectedRevision: held.revision,
+              state: result.state, checkpoint: { stage: lease.state, sequence: (held.checkpoint?.sequence ?? 0) + 1 },
+              reasonCode: result.reasonCode,
+            }), signal), signal)).catch(() => {});
+          }
+          guard.revoke("DURABLY_CHECKPOINTED");
+          active = null;
+        });
         options.status?.("waiting");
         continue;
       }

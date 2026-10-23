@@ -75,7 +75,9 @@ export async function runAtsApplication(input: {
     catch { return { state: 'submission_unknown', reasons: [error instanceof AtsError ? error.code : 'submission_response_lost'], receipt: null, reconciled: false }; }
   }
   try {
-    return await persist(await adapter.receipt(runtime, application, signal));
+    // Reading the confirmation is read-only, so a stop during the submit (the applicant may finish it in the open window)
+    // still reads it and hands it to persist, which keeps it for the next lease instead of losing it.
+    return await persist(await adapter.receipt(runtime, application));
   } catch (error) {
     if (error instanceof AtsError && error.code === 'RECEIPT_NOT_VERIFIED') {
       return { state: 'submission_unknown', reasons: ['receipt_not_verified'], receipt: null, reconciled: false };

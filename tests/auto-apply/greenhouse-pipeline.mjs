@@ -125,7 +125,8 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
         phone: '4155550123', phone_country: 'US', us_authorized: 'Yes', posting_authorized: 'Yes', us_sponsorship_ever: 'No', posting_sponsorship_ever: 'No' },
       documents: { resumeMaster: masterRef, resume: masterRef }, tailoredArtifact: null, manifestHash: null, artifactHashes: [], createdAt: Date.now(),
     };
-    let intent;
+    let intent, receiptFails = false;
+    const kept = [];
     const control = {
       applicationContext: async () => structuredClone(context),
       downloadDocument: async (_application, documentId) => stored.get(documentId),
@@ -140,7 +141,11 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
         context.manifestHash = manifestHash; context.artifactHashes = [hash];
       },
       submissionIntent: async (_application, body) => { calls.submission = body; return { intentId: body.intentId, state: 'submitting', revision: 2, fence: 1 }; },
-      receipt: async (_application, body) => { calls.receipt = body; return {}; },
+      receipt: async (_application, body) => {
+        calls.receipt = body;
+        if (receiptFails) throw new Error('NETWORK_UNAVAILABLE');
+        return {};
+      },
       live: async (_application, body) => { (calls.live ??= []).push(body); return { applicationId, stored: true }; },
       letter: async (_application, body) => {
         // Mirrors the server: the first stored letter is kept and comes back in the context.
@@ -165,7 +170,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
         conclusion: 'Thank you for considering my application.', companyParagraph: `${input.company} builds tools that students rely on every day.`,
         confidence: 0.9, model: 'fixture', usage };
     };
-    let submitPage; const submitPageOpened = new Promise(resolve => { submitPage = resolve; });
+    let submitPage, submitPageOpened = new Promise(resolve => { submitPage = resolve; });
     const visible = {};
     const browser = async (options) => {
       visible[stageNow] = options.headless === false;
@@ -185,7 +190,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
     const dispatch = createStageDispatch(control, directory, signal, browser);
     let stageNow, advanced = [];
     const stage = (state) => { stageNow = state; return dispatch({ applicationId, runId, fence: 1, revision: 1, state, checkpoint: null },
-      { check() {} }, { signal, generate, advance: value => advanced.push(value) }); };
+      { check() {} }, { signal, generate, advance: value => advanced.push(value), keepReceipt: async value => { kept.push(value); } }); };
     try {
       assert.deepEqual(await stage('screening'), { state: 'tailoring', reasonCode: 'screened' });
       // No master resume on the profile is a hold the applicant can clear and continue, not a provider failure.
@@ -242,6 +247,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       await page.locator('#security-code').fill('ABCD1234');
       await page.getByRole('button', { name: 'Submit application', exact: true }).click();
       assert.deepEqual(await submitted, { state: 'submitted', reasonCode: 'exact_role_receipt', durable: true });
+      assert.deepEqual(kept, [], 'a receipt the server took is not kept');
       assert.ok(printed.some(line => line.includes('"verification-code-required"') && !Number.isNaN(Date.parse(JSON.parse(line).at))),
         'the worker says, with the time, that a code is needed');
       assert.deepEqual(visible, { filling: true, ready: true }, 'every stage that opens a form shows it to the applicant');
@@ -268,6 +274,16 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
         introduction: 'I am applying for the Software Engineering Intern role at Fixture Co.',
         body: ['I built TypeScript REST APIs for a scheduling product used by students.', 'I reduced dashboard query time by 95 percent with indexed joins.'],
         conclusion: 'Thank you for considering my application.', companyParagraph: 'Fixture Co builds tools that students rely on every day.' } });
+
+      // The employer confirms the next one, but Workie's server does not take the receipt: it is kept for the next reconcile lease.
+      receiptFails = true; submitPageOpened = new Promise(resolve => { submitPage = resolve; });
+      const unconfirmed = stage('ready');
+      const again = await submitPageOpened;
+      await again.getByText('A verification code was sent to', { exact: false }).waitFor();
+      await again.locator('#security-code').fill('ABCD1234');
+      await again.getByRole('button', { name: 'Submit application', exact: true }).click();
+      assert.deepEqual(await unconfirmed, { state: 'submission_unknown', reasonCode: 'receipt_persistence_failed', durable: true });
+      assert.deepEqual(kept, [calls.receipt]);
 
     } finally {
       await rm(directory, { recursive: true, force: true });

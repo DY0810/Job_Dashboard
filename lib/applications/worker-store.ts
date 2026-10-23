@@ -36,7 +36,9 @@ export const appScope = (ownerId: string, id: string) => and(eq(applications.own
 export async function releaseApplication(tx: WorkerTx, row: ApplicationRow, reasonCode: string) {
   return one(await tx.update(applications).set({
     state: row.state === 'submitting' ? 'submission_unknown' : row.state,
-    leaseUntil: null, leaseCheckedAt: null, fence: row.fence + 1, revision: row.revision + 1, reasonCode,
+    leaseUntil: null, leaseCheckedAt: null, fence: row.fence + 1, revision: row.revision + 1,
+    // An unknown submission keeps the reason the worker gave (e.g. verification_code_timeout); the applicant decides from it.
+    reasonCode: row.state === 'submission_unknown' ? row.reasonCode ?? reasonCode : reasonCode,
   }).where(and(appScope(row.ownerId, row.id), eq(applications.revision, row.revision), eq(applications.fence, row.fence))).returning());
 }
 export async function invalidatePairing(tx: WorkerTx, row: typeof workerPairings.$inferSelect, now: number) {

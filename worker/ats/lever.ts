@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { Locator, Page } from 'playwright';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
+import { SUBMIT_WAIT_MS } from '../../lib/applications/worker-protocol.ts';
 import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, type AtsIdentity, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey } from './protocol.ts';
 
-const CAPTCHA_WAIT_MS = 30 * 60_000; // time for the applicant to solve an hCaptcha challenge in the visible window
+const CAPTCHA_WAIT_MS = SUBMIT_WAIT_MS; // time for the applicant to solve an hCaptcha challenge in the visible window
 
 // EU postings carry the host in the tenant ("jobs.eu.lever.co:acme"); the official posting is its host, tenant and lowercase UUID.
 function posting(identity: AtsIdentity) {
