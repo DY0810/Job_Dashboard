@@ -19,13 +19,14 @@ function valueLabel(group: Group, value: string): string {
 /**
  * A filter value, as a link. No client state: the URL is the state. A plain anchor, not
  * `next/link`: ~600 of these per page hydrated as components cost 20–50 ms of main thread at
- * 4x CPU. `AutoApply` routes their clicks through the router (`data-board-nav`).
+ * 4x CPU. `AutoApply` routes their clicks through the router (`data-board-nav`). `nofollow`:
+ * each one is a new view that renders against the database, so crawlers are not invited in.
  */
 function Chip({ href, on, children }: { href: string; on: boolean; children: React.ReactNode }) {
   return (
     // `aria-current`, not `aria-pressed`: this is a link, and aria-pressed is only
     // supported on role="button" — screen readers ignore it here.
-    <a href={href} className="chip" aria-current={on ? 'true' : undefined} data-board-nav>
+    <a href={href} rel="nofollow" className="chip" aria-current={on ? 'true' : undefined} data-board-nav>
       {children}
     </a>
   );

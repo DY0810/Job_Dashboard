@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR, type ReadDb } from '../db/index.ts';
 import * as schema from '../db/schema.ts';
+import { normalizeCompany } from '../normalize.ts';
 import { listPostings } from '../query.ts';
 import { createEmptyPolicy, type Policy } from './policy.ts';
 import { captureCandidateSnapshot, captureLegacyPostings, MAX_SNAPSHOT_POSTINGS } from './discovery-source.ts';
@@ -110,6 +111,15 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
       'blocked', 'needs_question', 'blocked', 'blocked', 'blocked', 'candidate',
     ]);
     expect(result.candidates.slice(0, 5).every((c) => c.reasons.length > 0)).toBe(true);
+  });
+
+  it('never captures a blocked employer, whatever the policy says', async () => {
+    const f = fixture(kind);
+    f.add(1, { company: 'hussh 🤫', companyNorm: normalizeCompany('hussh 🤫') });
+    f.add(2);
+    const snapshot = await captureCandidateSnapshot(f.db, policy(), NOW);
+    expect(snapshot.postingCount).toBe(1);
+    expect(snapshot.candidates.flatMap((c) => c.postings.map((p) => p.company))).toEqual(['Acme']);
   });
 
   it('matches Software Engineering Intern to an approved Software Engineer role', async () => {
@@ -274,7 +284,7 @@ it('a commit during an active WAL SELECT cannot mix old identities with new sour
   });
   // A view invokes the concurrent writer during the real SELECT; no production test hooks.
   f.connection.exec(`create view postings as select id, dedupe_key, canonical_url, posted_at, first_seen_run,
-      company || substr('', 1, capture_barrier()) as company, title, country, location,
+      company || substr('', 1, capture_barrier()) as company, company_norm, title, country, location,
       description, source_fields, track, seniority, delisted_at, paid, pay_rate_min, pay_rate_max, pay_rate_period, pay_currency_symbol
       from postings_data;`);
   const first = await captureCandidateSnapshot(f.db, policy(), NOW);

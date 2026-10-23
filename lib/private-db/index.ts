@@ -5,6 +5,7 @@ import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 import { closeSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tursoFetch } from '../db/index.ts';
 import { PrivateConfigurationError, validatePrivateConfig, type CorpusGuards, type PrivateConfig } from './config.ts';
 import * as schema from './schema.ts';
 
@@ -21,7 +22,7 @@ export function openPrivateDb(config: PrivateConfig, guards?: CorpusGuards): Pri
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
     }
-    return drizzle(createClient(validated), { schema });
+    return drizzle(createClient({ ...validated, fetch: tursoFetch }), { schema });
   } catch {
     throw new PrivateConfigurationError();
   }

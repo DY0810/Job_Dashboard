@@ -8,7 +8,7 @@
  * Neither tab shows a job that is onsite in another country.
  */
 
-import { and, asc, count, desc, eq, gte, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, like, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { cutoffTimestamp } from './dedupe.ts';
 import { driver, type ReadDb } from './db/index.ts';
 import { postings, postingSources } from './db/schema.ts';
@@ -138,11 +138,19 @@ const seniorityRank = sql<number>`(case ${postings.seniority}
   when 'entry' then 0 when 'junior' then 1 when 'mid' then 2 else 3 end)`;
 
 
+/**
+ * Employers whose postings are scams, by `company_norm` (normalizeCompany: "hussh 🤫" -> "hussh").
+ * Never listed, never deep-linked, never discovered for Auto Apply.
+ */
+const BLOCKED_EMPLOYERS = ['hussh'];
+export const notBlockedEmployer: SQL = notInArray(postings.companyNorm, BLOCKED_EMPLOYERS);
+
 /** The rules that hold whatever the tab and whatever the filters. */
 function structural(now: number): SQL[] {
   return [
     gte(effectiveAt, cutoffTimestamp(now)),
     isNull(postings.delistedAt),
+    notBlockedEmployer,
     // Written against the ROW's own track, not the requested tab, so it holds identically on
     // the `?job=<id>` deep-link path where there is no tab: a senior DESIGN posting opens, a
     // senior engineering one still 404s.

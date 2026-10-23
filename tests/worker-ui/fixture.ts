@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import { DiscoveryStatusSchema } from '../../lib/applications/discovery-protocol';
+import { DiscoveryStatusSchema, ReapplyRequestSchema } from '../../lib/applications/discovery-protocol';
 import { createEmptyPolicy, PolicySchema } from '../../lib/applications/policy';
 import { InboxPageSchema } from '../../lib/applications/question-protocol';
 import { isTerminalState } from '../../lib/applications/state';
@@ -112,7 +112,7 @@ export class WorkerFixture {
     assert.ok(body);
     const schema = path === '/api/workers/pairings' ? PairingCreateSchema :
       method === 'DELETE' ? RevisionCommandSchema : method === 'PATCH' ? WorkerScheduleSchema : path === '/api/application-runs' ? RunCreateSchema :
-        path.includes('/applications/') ? ApplicationCommandSchema : RunCommandSchema;
+        path.endsWith('/retry-unsubmitted') ? ReapplyRequestSchema : path.includes('/applications/') ? ApplicationCommandSchema : RunCommandSchema;
     schema.parse(body);
     const input = JSON.stringify([this.owner, path, method, body]);
     const key = `${this.owner}:${body.requestId}`;
@@ -152,12 +152,20 @@ export class WorkerFixture {
       if (!worker) return error(403, 'FORBIDDEN');
       const run = RunSchema.parse({ id: crypto.randomUUID(), workerId: worker.id, revision: 1, state: 'running', createdAt: this.now });
       this.runs.push(run); result = reply(RunSchema, run);
+    } else if (path.endsWith('/retry-unsubmitted')) {
+      // The applicant says an unconfirmed submission never went through: it closes and a fresh attempt queues in a running run.
+      const run = this.runs.find((row) => path === `/api/application-runs/${row.id}/retry-unsubmitted`);
+      const app = this.applications.find((row) => row.id === body.previousApplicationId);
+      if (!run || !app) return error(404, 'NOT_FOUND');
+      if (run.state !== 'running' || app.state !== 'submission_unknown') return error(409, 'CONFLICT');
+      app.state = 'failed'; app.reasonCode = 'applicant_confirmed_not_submitted'; app.revision++;
+      result = reply(ApplicationSummarySchema, this.addApplication('queued', null, run.id));
     } else if (path.includes('/applications/')) {
       const app = this.applications.find((row) => path === `/api/application-runs/${row.runId}/applications/${row.id}/actions`);
       if (!app) return error(404, 'NOT_FOUND');
       if (app.revision !== body.expectedRevision || isTerminalState(app.state)) return error(409, 'CONFLICT');
       const ambiguous = ['submitting', 'submission_unknown'].includes(app.state);
-      if (ambiguous && body.action !== 'emergency-stop') return error(409, 'CONFLICT');
+      if (ambiguous && !['emergency-stop', 'confirm-submitted', 'confirm-not-submitted'].includes(String(body.action))) return error(409, 'CONFLICT');
       if (body.action === 'retry-safe') {
         const retries = this.retries.get(app.id) ?? 0;
         const run = this.runs.find((run) => run.id === app.runId);
@@ -165,6 +173,9 @@ export class WorkerFixture {
             !run || run.state === 'stopped' || retries >= 3) return error(409, 'CONFLICT');
         this.retries.set(app.id, retries + 1);
         app.state = app.checkpoint.stage;
+      } else if (body.action === 'confirm-submitted' || body.action === 'confirm-not-submitted') {
+        if (app.state !== 'submission_unknown') return error(409, 'CONFLICT');
+        app.state = body.action === 'confirm-submitted' ? 'submitted' : 'failed';
       } else app.state = ambiguous ? 'submission_unknown' : body.action === 'skip' ? 'skipped' : 'cancelled';
       app.reasonCode = String(body.action); app.revision++;
       result = reply(ApplicationSummarySchema, app);

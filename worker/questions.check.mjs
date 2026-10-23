@@ -191,3 +191,53 @@ test("typed question dispatch durably registers a fenced checkpoint and releases
     assert.equal(await store.read("lock"), null);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("a form too large to register fails its application, not the worker, and is never replayed", async () => {
+  const many = Array.from({ length: 64 }, (_, i) => ({ ...descriptor, key: `q${i}`, meaning: { id: `q${i}`, reviewId: null },
+    originalWording: "x".repeat(4000) }));
+  for (const [questions, refusal, reasonCode] of [
+    // A whole form over the 128 KiB journal and request limit.
+    [many, new Error("must not be sent"), "worker_local_state_limit"],
+    // One question over the server's 64 KiB descriptor limit.
+    [[descriptor], new TransportError("HTTP_413", 413, "INVALID_INPUT"), "worker_http_413_invalid_input"],
+  ]) {
+    const { scope, store, stop } = await fixture();
+    const lease = { applicationId: randomUUID(), runId: randomUUID(), workerId: scope.workerId,
+      ownerId: scope.ownerId, policyRevision: 1, ats: "fixture", tenant: "synthetic", requisition: "role",
+      state: "screening", revision: 1, fence: 1, leaseUntil: Date.now() + 120000, checkpoint: null, mode: "safe" };
+    const events = [];
+    let polled = 0;
+    const outcome = await runWorker({ scope, store, signal: stop.signal,
+      dispatch: async () => ({ kind: "questions", expectedProfileRevision: 0, company: "Synthetic", role: "Engineer", questions }),
+      transport: {
+        poll: async () => { if (++polled > 1) { stop.abort(); return response(); } return response(lease); },
+        heartbeat: async () => response(),
+        questionBatch: async () => { throw refusal; },
+        event: async (applicationId, input) => {
+          events.push([input.state, input.reasonCode, input.checkpoint.sequence]);
+          return { applicationId, eventId: input.eventId, revision: input.expectedRevision + 1,
+            state: input.state, replayed: false, lease: null, serverTime: Date.now() };
+        },
+      },
+    }).then(() => "finished", error => error.message);
+    assert.equal(outcome, "finished");
+    assert.deepEqual(events, [["retryable_failure", reasonCode, 1]]);
+    assert.equal((await store.read("question-checkpoint"))?.pending ?? null, null);
+  }
+  // A batch journaled before the fix is dropped on restart instead of failing every start before the first poll.
+  const { scope, store, stop } = await fixture();
+  const batch = { questionProtocolVersion: 1, eventId: randomUUID(), fence: 1, expectedRevision: 1,
+    checkpoint: { stage: "screening", sequence: 1 }, expectedProfileRevision: 0, company: "Synthetic", role: "Engineer",
+    questions: [descriptor] };
+  await store.write("question-checkpoint", { version: 1, scope, pending: { applicationId: randomUUID(), batch } });
+  let polled = 0;
+  const outcome = await runWorker({ scope, store, signal: stop.signal,
+    transport: {
+      poll: async () => { polled++; stop.abort(); return response(); },
+      heartbeat: async () => response(),
+      questionBatch: async () => { throw new TransportError("HTTP_413", 413, "INVALID_INPUT"); },
+    },
+  }).then(() => "finished", error => error.message);
+  assert.deepEqual([outcome, polled], ["finished", 1]);
+  assert.equal((await store.read("question-checkpoint")).pending, null);
+});

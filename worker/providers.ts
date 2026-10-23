@@ -38,7 +38,8 @@ async function readProviderResponse(response: Response) {
     throw new ProviderError("PROVIDER_RESPONSE_TOO_LARGE");
   }
   if (response.body) {
-    return (await readCapped(response.body, MAX_RESPONSE_BYTES, { overflow: () => new ProviderError("PROVIDER_RESPONSE_TOO_LARGE") })).toString("utf8");
+    return (await readCapped(response.body, MAX_RESPONSE_BYTES, { overflow: () => new ProviderError("PROVIDER_RESPONSE_TOO_LARGE"),
+      timeout: { ms: STRUCTURED_TIMEOUT_MS, error: () => new ProviderError("PROVIDER_NETWORK_UNAVAILABLE") } })).toString("utf8");
   }
   const text = await response.text();
   if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) throw new ProviderError("PROVIDER_RESPONSE_TOO_LARGE");
@@ -366,9 +367,15 @@ export function createStructuredProvider(options: CompatibleProviderOptions): St
       try {
         const signal = requestOptions.signal ? AbortSignal.any([requestOptions.signal, AbortSignal.timeout(STRUCTURED_TIMEOUT_MS)]) : AbortSignal.timeout(STRUCTURED_TIMEOUT_MS);
         let response: Response;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          response = await fetchImpl(endpoint, { method: "POST", redirect: "error", cache: "no-store", headers: { "Content-Type": "application/json", ...(key ? { Authorization: `Bearer ${key}` } : {}) }, body, signal });
+          // A plain timer too: a fetch can be dropped without settling, and its AbortSignal.timeout with it (transport.ts).
+          response = await Promise.race([
+            fetchImpl(endpoint, { method: "POST", redirect: "error", cache: "no-store", headers: { "Content-Type": "application/json", ...(key ? { Authorization: `Bearer ${key}` } : {}) }, body, signal }),
+            new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ProviderError("PROVIDER_NETWORK_UNAVAILABLE")), STRUCTURED_TIMEOUT_MS); }),
+          ]);
         } catch { await options.ledger.settle(reservationId, estimate, "network-error"); settled = true; throw new ProviderError("PROVIDER_NETWORK_UNAVAILABLE"); }
+        finally { clearTimeout(timer); }
         if (!response.ok) {
           await options.ledger.settle(reservationId, estimate, `http-${response.status}`); settled = true;
           if (response.status === 401 || response.status === 403) throw new ProviderError("PROVIDER_AUTH_UNAVAILABLE");
@@ -378,7 +385,7 @@ export function createStructuredProvider(options: CompatibleProviderOptions): St
         let raw: unknown;
         try { raw = JSON.parse(await readProviderResponse(response)); } catch (error) {
           await options.ledger.settle(reservationId, estimate, "invalid-json"); settled = true;
-          if (error instanceof ProviderError && error.code === "PROVIDER_RESPONSE_TOO_LARGE") throw error;
+          if (error instanceof ProviderError) throw error; // too large, or the body never ended
           throw new ProviderError("PROVIDER_INVALID_RESPONSE");
         }
         let model: string, content: string, usage: { input_tokens: number; output_tokens: number } | null;

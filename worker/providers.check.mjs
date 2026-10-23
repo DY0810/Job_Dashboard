@@ -3,6 +3,7 @@ import { after, test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { PDFDocument } from 'pdf-lib';
 import { privateStore } from "./storage.ts";
 import { renderCoverLetter } from './documents/cover-letter.ts';
@@ -208,4 +209,21 @@ test("structured reservations enforce request, run, and day limits atomically", 
   const reservation = results.find((item) => item.status === "fulfilled").value;
   await ledger.settle(reservation, 5, "synthetic");
   await assert.rejects(ledger.reserve(1, limits, "run"), /PROVIDER_BUDGET_EXCEEDED/);
+});
+
+test("a provider that never answers fails at its deadline instead of holding the stage", async t => {
+  // The 2026-10-22 freeze model (transport.check): a fetch that ignores its abort signal and never settles,
+  // and a reply whose body never ends.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const fetchImpl of [() => new Promise(() => {}), async () => new Response(new ReadableStream({}), { status: 200 })]) {
+    const provider = createStructuredProvider({ scope, approvedOwnerId: scope.ownerId, providerId: LOCAL_OLLAMA_PROVIDER_ID,
+      protocol: "ollama_native", locality: "local", endpoint: LOCAL_OLLAMA_ENDPOINT, model: "synthetic-local", policy: structuredLocalPolicy,
+      pricing: structuredLocalPricing, ledger: await structuredLedgerFor("stalled"), fetchImpl });
+    let outcome = "still pending";
+    const call = provider.generate(classifyTask).then(() => "resolved", error => error.code ?? error.message);
+    void call.then(value => { outcome = value; });
+    // Mock seconds pass while the real ledger write and the request get going; 200 is far past the 15-second deadline.
+    for (let second = 0; second < 200 && outcome === "still pending"; second++) { await sleep(10); t.mock.timers.tick(1000); }
+    assert.equal(outcome, "PROVIDER_NETWORK_UNAVAILABLE");
+  }
 });
