@@ -335,6 +335,31 @@ test('Apply and Archive ask on the page, never through a browser prompt', async 
   expect(writes()[0].path).toBe(`/api/application-runs/${app.runId}/applications/${app.id}/actions`);
 });
 
+// An unconfirmed submission (the worker could not confirm the employer got it) has no way out but the applicant's word.
+test('an unconfirmed submission says why, and the applicant says whether it went through', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const sent = fixture.addApplication('submission_unknown', 'verification_code_timeout');
+  await page.goto('/applications');
+  await expect(page.getByText('Workie could not confirm the employer received this (Verification code timeout).', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'It went through', exact: true }).click();
+  await expect(page.getByText('Mark this as applied? Do this only if the employer confirmed it, by email or on its site.', { exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([]);
+  await page.getByRole('button', { name: 'Yes, it went through', exact: true }).click();
+  await expect.poll(() => fixture.writes.map((request) => [request.path, request.body?.action]))
+    .toEqual([[`/api/application-runs/${sent.runId}/applications/${sent.id}/actions`, 'confirm-submitted']]);
+  await expect(page.getByText('Nothing needs action.', { exact: true })).toBeVisible();
+
+  const lost = fixture.addApplication('submission_unknown', 'submission_response_lost');
+  await page.reload();
+  await page.getByRole('button', { name: 'It did not go through, try again', exact: true }).click();
+  await expect(page.getByText('Fill this application again? Nothing is submitted until you press Apply.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Yes, it did not go through, try again', exact: true }).click();
+  await expect.poll(() => fixture.writes.at(-1)?.path).toBe(`/api/application-runs/${lost.runId}/retry-unsubmitted`);
+  expect(fixture.writes.at(-1)?.body).toMatchObject({ previousApplicationId: lost.id, expectedRevision: 1 });
+});
+
 test('dense layout has native labels keyboard focus and no overflow in light and dark', async ({ page }, info) => {
   const fixture = fixtures.get(page)!;
   fixture.addRun();

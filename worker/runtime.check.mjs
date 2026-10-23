@@ -161,6 +161,56 @@ test("submission_unknown has no mutable dispatch or event", async () => {
   assert.equal(dispatches, 0); assert.equal(events, 0);
 });
 
+test("an unknown submission names its reason once, then the worker leaves the row alone", async () => {
+  const s = scope(), store = await storeFor(s), controller = new AbortController(), events = [];
+  const job = { ...assignment(s), state: "ready", checkpoint: { stage: "filling", sequence: 3 } };
+  let polls = 0;
+  await runWorker({ scope: s, store, signal: controller.signal,
+    transport: { poll: async () => { if (++polls > 1) controller.abort(); return clockResponse(polls === 1 ? job : null); },
+      heartbeat: async () => clockResponse(),
+      event: async (id, input) => { events.push(input); return { applicationId: id, eventId: input.eventId,
+        revision: input.expectedRevision + 1, state: input.state, replayed: false, lease: null, serverTime: Date.now() }; } },
+    dispatch: async (_lease, _guard, context) => {
+      context.advance({ revision: 2, fence: 1, state: "submitting" });
+      return { state: "submission_unknown", reasonCode: "verification_code_timeout", durable: true };
+    } });
+  assert.deepEqual(events.map(e => [e.state, e.reasonCode, e.fence, e.expectedRevision, e.checkpoint]),
+    [["submission_unknown", "verification_code_timeout", 1, 2, { stage: "ready", sequence: 4 }]]);
+});
+
+test("a verified receipt the server did not take is sent on the next reconcile lease until it is accepted or refused", async () => {
+  const s = scope(), job = assignment(s);
+  const receipt = { protocolVersion: 1, intentId: job.applicationId, identity: { ats: "fixture", tenant: "tenant", requisition: "role" },
+    company: "Fixture Co", role: "Intern", receiptId: "gh-1", submittedAt: Date.now(),
+    evidence: { source: "confirmation_page", pageUrl: "https://job-boards.greenhouse.io/tenant/jobs/role/confirmation", observedText: "Thank you for applying." } };
+  const reconcile = { ...job, state: "submission_unknown", mode: "reconcile" };
+  // The submit's receipt POST failed: the dispatch keeps the receipt (main.ts), and the next poll is that row read-only.
+  const run = async (store, answer, jobs = [{ ...job, state: "ready" }, reconcile]) => {
+    const controller = new AbortController(), sent = [], stuck = setTimeout(() => controller.abort(), 3000);
+    await runWorker({ scope: s, store, signal: controller.signal,
+      transport: { poll: async () => clockResponse(jobs.shift() ?? null), heartbeat: async () => clockResponse(),
+        event: async (id, input) => ({ applicationId: id, eventId: input.eventId, revision: input.expectedRevision + 1,
+          state: input.state, replayed: false, lease: null, serverTime: Date.now() }),
+        receipt: async (id, input) => { sent.push([id, input]); setTimeout(() => controller.abort(), 20); return answer(id, input); } },
+      dispatch: async (_lease, _guard, context) => {
+        await context.keepReceipt?.(receipt);
+        return { state: "submission_unknown", reasonCode: "receipt_persistence_failed", durable: true };
+      } });
+    clearTimeout(stuck);
+    return sent;
+  };
+  const store = await storeFor(s);
+  // Workie's server is still down: the receipt stays for the next lease.
+  assert.deepEqual(await run(store, () => { throw new TransportError("NETWORK_UNAVAILABLE"); }), [[job.applicationId, receipt]]);
+  assert.deepEqual(await run(store, (id, input) => ({ applicationId: id, intentId: input.intentId, state: "submitted", revision: 9, replayed: false }),
+    [reconcile]), [[job.applicationId, receipt]]);
+  assert.deepEqual(await store.read("receipts"), {});
+  // The applicant already resolved the row: the server refuses it for good, so it is dropped rather than resent forever.
+  const refused = await storeFor(s);
+  await run(refused, () => { throw new TransportError("HTTP_409", 409, "EXECUTION_DISABLED"); });
+  assert.deepEqual(await refused.read("receipts"), {});
+});
+
 test("every safe-stage checkpoint restarts with its exact event ID, sequence and revision", async () => {
   for (const stage of ["screening", "tailoring", "filling", "ready"]) {
     const s = scope(), store = await storeFor(s), job = { ...assignment(s),

@@ -29,14 +29,15 @@ export async function recordWorkerEvent(
     if (!canTransition(app.state, command.state, command.evidence ?? {})) {
       fail(409, 'EXECUTION_DISABLED', 'Transition requires unavailable execution evidence.');
     }
-    const stage = isWaitingState(command.state) || isTerminalState(command.state) ? app.state : command.state;
+    // A submission the worker could not confirm releases like a hold, naming why; it started from ready, so the checkpoint stays there.
+    const release = isWaitingState(command.state) || isTerminalState(command.state) || command.state === 'submission_unknown';
+    const stage = release ? (app.state === 'submitting' ? 'ready' : app.state) : command.state;
     if (command.checkpoint.stage !== stage || command.checkpoint.sequence !== (app.checkpoint?.sequence ?? 0) + 1) {
       fail(409, 'CONFLICT', 'Checkpoint is not the next safe checkpoint.');
     }
-    if ((isWaitingState(command.state) || isTerminalState(command.state)) && !command.reasonCode) {
+    if (release && !command.reasonCode) {
       fail(400, 'INVALID_INPUT', 'A reason code is required.');
     }
-    const release = isWaitingState(command.state) || isTerminalState(command.state);
     const updated = one(await tx.update(applications).set({
       state: command.state, checkpoint: command.checkpoint, reasonCode: command.reasonCode,
       revision: app.revision + 1, ...(release ? { leaseUntil: null, leaseCheckedAt: null, fence: app.fence + 1 } : {}),

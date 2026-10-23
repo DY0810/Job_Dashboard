@@ -418,13 +418,16 @@ export async function retryUnsubmittedApplication(
     // The retry budget carries over to the new attempt, so moving runs cannot reset it.
     const documentHold = previous.state === 'needs_document' && isSafeRetryState(previous.state, previous.reasonCode) &&
       previous.runId !== runId && previous.retries < 3;
-    if (previous.revision !== command.expectedRevision || !(unsubmitted || documentHold) || previous.leaseUntil !== null) fail();
+    // An unknown submission is only ever leased read-only (reconcile), which bumps its revision every cycle; it leaves
+    // unknown only for good, so the applicant's answer is checked against its state and ends that lease.
+    if (!unsubmitted && (previous.revision !== command.expectedRevision || !documentHold || previous.leaseUntil !== null)) fail();
     // Only a run on the current policy can lease the new attempt; an older one would strand it.
-    if (documentHold && !await currentDiscoveryPolicy(tx, run, now)) fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
+    if (!await currentDiscoveryPolicy(tx, run, now)) fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
     const [latest] = await tx.select().from(applications).where(identityMatch(previous)).orderBy(desc(applications.attempt)).limit(1);
     if (latest.id !== previous.id || await manuallySuppressed(tx, previous)) fail(409, 'DUPLICATE_BLOCKED', 'Application is suppressed.');
     one(await tx.update(applications).set({
       state: 'failed', reasonCode: unsubmitted ? 'applicant_confirmed_not_submitted' : 'continued_in_new_run', revision: previous.revision + 1, fence: previous.fence + 1,
+      leaseUntil: null, leaseCheckedAt: null,
     }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, previous.id), eq(applications.revision, previous.revision))).returning());
     const row = await nextAttempt(tx, run, previous, now, unsubmitted ? 0 : previous.retries + 1);
     const acknowledgement = applicationSummary(row);

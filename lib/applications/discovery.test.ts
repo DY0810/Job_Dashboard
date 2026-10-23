@@ -27,7 +27,7 @@ import { ImportConfirmRequestSchema, ImportPreviewRequestSchema, IMPORT_PREVIEW_
 import * as source from './discovery-source.ts';
 import { getDiscoveryCorpus } from './discovery-corpus.ts';
 import type { WorkerOptions } from './worker-store.ts';
-import type { Lease } from './worker-protocol.ts';
+import { LEASE_MS, type Lease } from './worker-protocol.ts';
 
 import { stubHousehold } from '../test-household.ts';
 vi.mock('server-only', () => ({}));
@@ -484,6 +484,29 @@ describe('cap-held backlog and explicit historical attempts', () => {
     }
     now += DAY; // The stuck attempt used today's per-employer start.
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
+  });
+
+  it('retries an unknown submission the applicant says never went through, even while its reconcile lease is held', async () => {
+    const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    await db.update(applications).set({ state: 'submitting' }).where(eq(applications.id, lease.applicationId));
+    now += LEASE_MS;
+    const unknown = (await poll(token)).lease!;
+    expect(unknown).toMatchObject({ applicationId: lease.applicationId, state: 'submission_unknown', mode: 'reconcile' });
+    // The page loaded before this cycle re-leased it, so the revision it sends is already stale.
+    const command = { ...request(), previousApplicationId: unknown.applicationId, expectedRevision: unknown.revision - 1 };
+    // A run that is not on the current policy would never lease the fresh attempt.
+    const [head] = await db.select().from(policyHeads).where(eq(policyHeads.ownerId, 'alice'));
+    await db.update(policyHeads).set({ enabled: false, acceptedPolicyVersion: null, acceptedPolicyHash: null, acceptedAt: null })
+      .where(eq(policyHeads.ownerId, 'alice'));
+    await expect(retryUnsubmittedApplication(db, 'alice', run.id, command, options)).rejects.toMatchObject({ code: 'POLICY_CHANGED' });
+    await db.update(policyHeads).set(head).where(eq(policyHeads.ownerId, 'alice'));
+    const next = await retryUnsubmittedApplication(db, 'alice', run.id, { ...command, ...request() }, options);
+    expect((await appRows()).find((a) => a.id === unknown.applicationId))
+      .toMatchObject({ state: 'failed', reasonCode: 'applicant_confirmed_not_submitted', leaseUntil: null });
+    await expect(heartbeatWorker(db, token, { protocolVersion: 1, lease: ref(unknown) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    now += DAY; // The unknown attempt used today's per-employer start.
+    expect((await poll(token)).lease).toMatchObject({ applicationId: next.id, mode: 'safe' });
   });
 
   it('restarts a live application as a fresh attempt, refuses a submitted one, and deletes by hiding', async () => {

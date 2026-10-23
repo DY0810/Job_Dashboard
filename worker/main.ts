@@ -367,10 +367,13 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
             context.advance?.({ revision: intent.revision, fence: intent.fence, state: intent.state });
             return intent;
           },
-          receipt: async ({ intentId, receipt, evidence }) => control.receipt(lease.applicationId, {
-            protocolVersion: 1, intentId, identity: receipt.identity, company: receipt.company, role: receipt.role,
-            receiptId: receipt.receiptId, submittedAt: receipt.submittedAt, evidence,
-          }, signal),
+          receipt: async ({ intentId, receipt, evidence }) => {
+            const body = { protocolVersion: 1 as const, intentId, identity: receipt.identity, company: receipt.company, role: receipt.role,
+              receiptId: receipt.receiptId, submittedAt: receipt.submittedAt, evidence };
+            // The employer confirmed it: a receipt Workie's server did not take is kept and sent under the next reconcile lease.
+            try { return await control.receipt(lease.applicationId, body, signal); }
+            catch (error) { await context.keepReceipt?.(body); throw error; }
+          },
         } });
       if (result.state === "submitted" && letter && application.documents.cover_letter) {
         // Keep the letter that went out so the applicant can read it; never affects the outcome.
