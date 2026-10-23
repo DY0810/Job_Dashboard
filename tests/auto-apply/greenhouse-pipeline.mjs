@@ -172,6 +172,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
     };
     let submitPage, submitPageOpened = new Promise(resolve => { submitPage = resolve; });
     const visible = {};
+    let loads = 0, failingLoad = 0; // a form load that fails, as a navigation timeout would
     const browser = async (options) => {
       visible[stageNow] = options.headless === false;
       const runtime = await createBrowserRuntime({ ...options, headless: true });
@@ -184,7 +185,10 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
         return route.fulfill({ status: 404, body: '' });
       });
       // The fixture replaces the network, so skip the DNS-backed public-host check for this one origin.
-      return { ...runtime, navigate: async (page, url) => { await page.goto(url, { waitUntil: 'domcontentloaded' }); return page; } };
+      return { ...runtime, navigate: async (page, url) => {
+        if (++loads === failingLoad) throw new Error('NAVIGATION_TIMEOUT');
+        await page.goto(url, { waitUntil: 'domcontentloaded' }); return page;
+      } };
     };
     const signal = new AbortController().signal;
     const dispatch = createStageDispatch(control, directory, signal, browser);
@@ -226,7 +230,23 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       const asked = await stage('filling');
       assert.equal(asked.kind, 'questions');
       assert.deepEqual(asked.questions.map(item => item.originalWording), ['Why are you interested in Fixture Co?']);
+      // The form waiting on the applicant's answers keeps its last picture, so Live shows what they are answering.
+      assert.ok(calls.live.at(-1).image?.length > 1000, 'the form waiting on answers keeps its picture');
+      assert.equal(calls.live.at(-1).step, 'Waiting for your answers');
       context.answers[asked.questions[0].key] = NARRATIVE; // the inbox answer, as the server returns it
+
+      // A profile edit since screening that re-screening cannot settle is asked, not parked with nothing to answer.
+      const authorization = context.facts.workAuthorization;
+      context.facts.workAuthorization = { state: 'unknown', values: [] };
+      const rescreened = await stage('filling');
+      assert.equal(rescreened.kind, 'questions');
+      assert.deepEqual(rescreened.questions.map(item => item.key), ['screening-authorization']);
+      context.facts.workAuthorization = authorization;
+      // A rejected answer whose form then fails to load again is retried, never left waiting on no question.
+      // Loads: the form read, the fill's own read, then the read that would have found the rejected field.
+      context.answers.posting_authorized = 'Maybe'; failingLoad = loads + 3;
+      assert.deepEqual(await stage('filling'), { state: 'retryable_failure', reasonCode: 'ats_answer_option_invalid_question_102' });
+      context.answers.posting_authorized = 'Yes'; calls.letter.length = 0;
 
       // A filled form waits for the applicant's approval; the server moves it to ready only after Approve and submit.
       assert.deepEqual(await stage('filling'), { state: 'needs_policy_decision', reasonCode: 'submit_approval' });

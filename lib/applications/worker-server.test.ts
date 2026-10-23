@@ -5,16 +5,18 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
-import { applications, applicationReceipts, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
-import { createEmptyPolicy } from './policy.ts';
-import { hashValue } from './stores.ts';
-import { APPLICATION_STATES, SAFE_STAGES, canTransition, type ApplicationState } from './state.ts';
+import { applications, applicationLive, applicationReceipts, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
+import { createEmptyPolicy, type Policy } from './policy.ts';
+import { createEmptyProfile } from './profile.ts';
+import { getPolicy, getProfile, hashValue, mutatePolicy, saveProfile } from './stores.ts';
+import { APPLICATION_STATES, SAFE_STAGES, SUBMIT_APPROVAL, canTransition, type ApplicationState } from './state.ts';
 import * as p from './worker-protocol.ts';
 import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing, scheduleWorker } from './pairing.ts';
 import { createRun, listRuns, commandRun, commandApplication, returnedPostingUrls } from './runs.ts';
 import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
+import { listLive } from './live.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { type WorkerOptions } from './worker-store.ts';
 import { stubHousehold } from '../test-household.ts';
@@ -704,6 +706,30 @@ describe('durable owner controls', () => {
     expect(ids).not.toContain(expired);
     expect(ids).toEqual(expect.arrayContaining([archived, submitted, unknown]));
   });
+  it('lists the row being worked, a form awaiting approval and old applied rows behind 100 newer rows', async () => {
+    const { app } = await prepared();
+    const row = (state: ApplicationState, ageDays: number, reasonCode: string | null = null) => ({ id: randomUUID(), ownerId: 'alice',
+      runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state, reasonCode,
+      availableAt: 0, createdAt: now - ageDays * 86_400_000 });
+    const kept = [row('filling', 3), row('needs_policy_decision', 3, SUBMIT_APPROVAL), row('submitted', 90), row('submission_unknown', 90)];
+    const history = Array.from({ length: 120 }, (_, i) => row((['queued', 'skipped', 'cancelled', 'failed'] as const)[i % 4], 1));
+    await db.insert(applications).values([...kept, ...history]);
+    const listed = p.RunListSchema.parse(await listRuns(db, 'alice', options)).applications;
+    expect(listed.map((item) => item.id)).toEqual(expect.arrayContaining(kept.map((item) => item.id)));
+    // Only history is capped: the newest 100 queued, skipped, cancelled or failed rows (the 120 above and the prepared one).
+    expect(listed).toHaveLength(kept.length + 100);
+    expect(listed.map((item) => item.createdAt)).toEqual(listed.map((item) => item.createdAt).sort((a, b) => b - a));
+  });
+  it('lists the row being worked and the forms waiting in Live behind 500 newer rows waiting on the applicant', async () => {
+    const { app } = await prepared();
+    const row = (state: ApplicationState, ageDays: number, reasonCode: string | null = null) => ({ id: randomUUID(), ownerId: 'alice',
+      runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state, reasonCode,
+      availableAt: 0, createdAt: now - ageDays * 86_400_000 });
+    const kept = [row('filling', 10), row('needs_policy_decision', 9, SUBMIT_APPROVAL), row('needs_answer', 8, 'question_unresolved')];
+    await db.insert(applications).values([...kept, ...Array.from({ length: 500 }, () => row('blocked_unsupported', 1))]);
+    const ids = p.RunListSchema.parse(await listRuns(db, 'alice', options)).applications.map((item) => item.id);
+    expect(ids).toEqual(expect.arrayContaining(kept.map((item) => item.id)));
+  });
   it('sends a role that stops again after a retry back to the Jobs board and keeps it in Auto Apply', async () => {
     const { app } = await prepared();
     await db.update(applications).set({ state: 'needs_document', reasonCode: 'document_tailoring_unavailable' }).where(eq(applications.id, app.id));
@@ -743,6 +769,52 @@ describe('durable owner controls', () => {
     expect(outcomes.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect((await listRuns(db, 'alice')).applications[0].state).toBe('submission_unknown');
     expect((await claim(worker.token)).mode).toBe('reconcile');
+  });
+});
+describe('live frames', () => {
+  it('lists frames only for rows in Live, newest first, under Vercel\'s 4.5 MB response cap', async () => {
+    const { app } = await prepared();
+    const bob = (await prepared('bob')).app;
+    await db.update(applications).set({ state: 'filling' }).where(eq(applications.id, bob.id));
+    const row = (state: ApplicationState, reasonCode: string | null = null, hiddenAt: number | null = null) => ({ id: randomUUID(), ownerId: 'alice',
+      runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state, reasonCode, hiddenAt,
+      availableAt: 0, createdAt: now });
+    const parked = Array.from({ length: 45 }, () => row('needs_policy_decision', SUBMIT_APPROVAL));
+    const asking = row('needs_answer', 'question_unresolved'), filling = row('filling');
+    const left = [row('submitted'), row('cancelled'), row('needs_policy_decision', SUBMIT_APPROVAL, now)];
+    const skipped = Array.from({ length: 460 }, () => row('skipped'));
+    await db.insert(applications).values([...parked, asking, filling, ...left, ...skipped]);
+    const image = 'A'.repeat(120_000), fields = [{ label: 'First Name', value: 'Test' }];
+    const frame = (ownerId: string, applicationId: string, updatedAt: number, picture: string | null = image) =>
+      ({ ownerId, applicationId, step: 'Filled. Waiting for your approval', image: picture, fields, updatedAt });
+    await db.insert(applicationLive).values([...parked.map((item, i) => frame('alice', item.id, now - 60_000 - i)),
+      frame('alice', asking.id, now - 30_000), frame('alice', filling.id, now - 1_000), ...left.map((item) => frame('alice', item.id, now)),
+      ...skipped.map((item) => frame('alice', item.id, now, null)), frame('bob', bob.id, now)]);
+    const listed = p.LiveListSchema.parse(await listLive(db, 'alice'));
+    expect(JSON.stringify(listed).length).toBeLessThan(4_500_000);
+    expect(listed.live.map((item) => item.applicationId).sort()).toEqual([...parked, asking, filling].map((item) => item.id).sort());
+    // The form being filled is the newest frame, so it keeps its picture; every form keeps its answers for review.
+    expect(listed.live[0]).toMatchObject({ applicationId: filling.id, state: 'filling', image });
+    expect(listed.live.every((item) => item.fields?.length === 1)).toBe(true);
+  });
+  it('gives the form being filled its picture before older forms\' answers, and skips rows too old to list', async () => {
+    const { app } = await prepared();
+    const row = (state: ApplicationState, reasonCode: string | null = null, createdAt = now) => ({ id: randomUUID(), ownerId: 'alice',
+      runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state, reasonCode,
+      availableAt: 0, createdAt });
+    const parked = Array.from({ length: 300 }, () => row('needs_policy_decision', SUBMIT_APPROVAL));
+    const filling = row('filling'), old = row('needs_policy_decision', SUBMIT_APPROVAL, now - 60 * 86_400_000);
+    await db.insert(applications).values([...parked, filling, old]);
+    const image = 'A'.repeat(120_000), fields = Array.from({ length: 4 }, (_, i) => ({ label: `Essay ${i}`, value: 'B'.repeat(3_500) }));
+    await db.insert(applicationLive).values([
+      ...parked.map((item, i) => ({ ownerId: 'alice', applicationId: item.id, step: p.PARKED_STEPS.approval, image: null, fields, updatedAt: now - 60_000 - i })),
+      { ownerId: 'alice', applicationId: filling.id, step: 'Filling the form', image, fields: null, updatedAt: now - 1_000 },
+      { ownerId: 'alice', applicationId: old.id, step: p.PARKED_STEPS.approval, image, fields, updatedAt: now - 120_000 }]);
+    const listed = p.LiveListSchema.parse(await listLive(db, 'alice', options));
+    expect(JSON.stringify(listed).length).toBeLessThan(4_500_000);
+    expect(listed.live[0]).toMatchObject({ applicationId: filling.id, image });
+    // listRuns does not list a row created 44 or more days ago, so Live has no card to show its frame on.
+    expect(listed.live.map((item) => item.applicationId)).not.toContain(old.id);
   });
 });
 describe('daily start schedule', () => {
@@ -798,5 +870,98 @@ describe('daily start schedule', () => {
     now += 18 * 3_600_000;
     await poll();
     expect(await db.select().from(applicationRuns)).toHaveLength(1);
+  });
+});
+
+describe('a policy change the applicant enables', () => {
+  /** The enabled policy runs start under, with what discovery selects already chosen. */
+  async function startPolicy() {
+    const policy: Policy = { ...createEmptyPolicy(), actions: ['read_jobs', 'fill_forms', 'submit'], destinations: ['boards.greenhouse.io'], countries: ['US'] };
+    const hash = hashValue(policy);
+    await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash, policy, createdAt: now });
+    await db.update(policyHeads).set({ revision: 2, policyVersion: 2, acceptedPolicyVersion: 2, acceptedPolicyHash: hash }).where(eq(policyHeads.ownerId, 'alice'));
+  }
+  /** Saves and enables a policy the way Profile does: a save turns the policy off, Enable turns it back on. */
+  async function changePolicy(changes: Partial<Policy>) {
+    vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+    vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
+    if (!(await getProfile(db, 'alice')).revision) {
+      const profile = createEmptyProfile(), confirmedAt = new Date(now).toISOString();
+      for (const [key, value] of [['legalFirstName', 'Synthetic'], ['legalLastName', 'Applicant'], ['personalEmail', 'alice@example.test']] as const) {
+        Object.assign(profile.identity[key], { value, state: 'confirmed', confirmedAt });
+      }
+      await saveProfile(db, 'alice', { ...revision(0), profile });
+    }
+    const current = await getPolicy(db, 'alice');
+    const saved = await mutatePolicy(db, 'alice', { ...revision(current.revision), policy: { ...current.policy, ...changes } });
+    return mutatePolicy(db, 'alice', { ...revision(saved.revision), action: 'enable', acceptedPolicyHash: saved.policyHash! });
+  }
+  const row = async (id: string) => (await db.select().from(applications).where(eq(applications.id, id)))[0];
+  const runRow = async (id: string) => (await db.select().from(applicationRuns).where(eq(applicationRuns.id, id)))[0];
+  const park = async (token: string, id: string) => recordWorkerEvent(db, token, id, {
+    ...event(await claim(token), 'needs_policy_decision'), reasonCode: 'submit_approval' }, options);
+
+  it('moves the running run to the new policy so its rows lease again, and ends every lease from before', async () => {
+    await startPolicy();
+    const { worker, run } = await prepared();
+    await enqueueApplication(db, 'alice', run.id, { ats: 'fixture', tenant: 'second', requisition: 'two' }, options);
+    const lease = await claim(worker.token);
+    const enabled = await changePolicy({ dailyApplicationCap: 5 });
+    // The run's policy matches again, so only ending the lease keeps the worker from recording, renewing or submitting with it.
+    await expect(recordWorkerEvent(db, worker.token, lease.applicationId, event(lease), options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    await expect(heartbeatWorker(db, worker.token, { protocolVersion: 1, lease: ref(lease) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    expect(await runRow(run.id)).toMatchObject({ state: 'running', policyRevision: enabled.revision,
+      policyVersion: enabled.policyVersion, policyHash: enabled.policyHash });
+    expect(await claim(worker.token)).toMatchObject({ runId: run.id, policyRevision: enabled.revision });
+    expect(await db.select().from(applicationRuns)).toHaveLength(1);
+  });
+
+  it('approves a parked form only on a run bound to the enabled policy, and takes approvals back when Submit is turned off', async () => {
+    await startPolicy();
+    const { worker, run, app } = await prepared();
+    const held = await park(worker.token, app.id);
+    // A run left on an older policy (stale before runs followed the policy) is refused, not stranded at 'ready'.
+    await db.update(policyHeads).set({ revision: 3 }).where(eq(policyHeads.ownerId, 'alice'));
+    await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options))
+      .rejects.toMatchObject({ status: 409, code: 'POLICY_CHANGED' });
+    expect(await row(app.id)).toMatchObject({ state: 'needs_policy_decision', reasonCode: 'submit_approval' });
+    // Enabling the policy again carries the run forward, and the approved form leases.
+    await changePolicy({ dailyApplicationCap: 5 });
+    expect(await commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options))
+      .toMatchObject({ state: 'ready', reasonCode: 'submit_approved' });
+    expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, state: 'ready' });
+    // A policy without Submit takes the approval back; nothing is submitted until the applicant approves under one with it.
+    await changePolicy({ actions: ['read_jobs', 'fill_forms'] });
+    const parked = await row(app.id);
+    expect(parked).toMatchObject({ state: 'needs_policy_decision', reasonCode: 'submit_approval', leaseUntil: null });
+    expect((await pollWorker(db, worker.token, { protocolVersion: 1 }, options)).lease).toBeNull();
+    await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(parked.revision), action: 'approve-submit' }, options))
+      .rejects.toMatchObject({ status: 403 });
+    await changePolicy({ actions: ['read_jobs', 'fill_forms', 'submit'] });
+    await commandApplication(db, 'alice', run.id, app.id, { ...revision(parked.revision), action: 'approve-submit' }, options);
+    expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, state: 'ready' });
+  });
+
+  it('refuses Apply on a run its revoked worker paused, since no worker can lease the approved form there', async () => {
+    await startPolicy();
+    const { worker, run, app } = await prepared();
+    const held = await park(worker.token, app.id);
+    await revokeWorker(db, 'alice', worker.workerId, revision(1), options);
+    expect(await runRow(run.id)).toMatchObject({ state: 'paused' });
+    await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await row(app.id)).toMatchObject({ state: 'needs_policy_decision', reasonCode: 'submit_approval' });
+  });
+
+  it('leases a form the applicant approved before roles that have not started', async () => {
+    await startPolicy();
+    const { worker, run, app } = await prepared();
+    const held = await park(worker.token, app.id);
+    for (const tenant of ['older-a', 'older-b', 'older-c']) {
+      await enqueueApplication(db, 'alice', run.id, { ats: 'fixture', tenant, requisition: tenant }, options);
+    }
+    now += 1000;
+    await commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options);
+    expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, state: 'ready' });
   });
 });

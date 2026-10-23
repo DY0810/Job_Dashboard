@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { dailyStartInstant, formatDailyStart, scheduledWorker } from './schedule.ts';
-import { archivedAt, bucket } from './buckets.ts';
+import { dailyStartInstant, formatDailyStart, offlineNotice, scheduledWorker } from './schedule.ts';
+import { archivedAt, bucket, inLive, isWatching, rowsBehind } from './buckets.ts';
+import { SUBMIT_APPROVAL, type ApplicationState } from './state.ts';
+import { PARKED_STEPS } from './worker-protocol.ts';
 
 const at = (iso: string) => Date.parse(iso);
 const DAY = 86_400_000;
@@ -38,6 +40,56 @@ describe('scheduledWorker', () => {
     expect(scheduledWorker([revoked, idle])).toBe(idle);
     expect(scheduledWorker([revoked])).toBeUndefined();
     expect(scheduledWorker()).toBeUndefined();
+  });
+  it('says on Auto Apply when the applicant\'s worker is offline, and since when', () => {
+    const seen = at('2026-10-22T03:27:00Z');
+    const since = new Date(seen).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    expect(offlineNotice([{ online: false, revokedAt: null, lastSeenAt: seen }])).toBe(
+      `Your worker is offline, last seen ${since}. Nothing is applied until it is back online.`);
+    expect(offlineNotice([{ online: false, revokedAt: null, lastSeenAt: null }])).toBe('Your worker is offline. Nothing is applied until it is back online.');
+    expect(offlineNotice([{ online: false, revokedAt: null, lastSeenAt: seen }, { online: true, revokedAt: null, lastSeenAt: seen }])).toBeNull();
+    // A revoked worker is not the applicant's worker any more; with none paired there is nothing to be offline.
+    expect(offlineNotice([{ online: false, revokedAt: seen, lastSeenAt: seen }])).toBeNull();
+    expect(offlineNotice([])).toBeNull();
+  });
+});
+
+describe('Live', () => {
+  const now = at('2026-10-13T12:00:00Z');
+  const row = (state: ApplicationState, reasonCode: string | null = null) => ({ state, reasonCode, hiddenAt: null });
+  const shot = (age: number, step = 'Filling the form') => ({ updatedAt: now - age, step });
+  it('keeps an approved form in Live, watchable once the worker opens it again to submit it', () => {
+    expect(inLive(row('ready', 'submit_approved'))).toBe(true);
+    expect(isWatching(row('ready', 'submit_approved'), shot(1_000, 'Opening the approved application'), now)).toBe(true);
+  });
+  // Apply or answers move the row on within seconds of the frame the worker posted as it parked the form.
+  it('never shows the frame of a parked form as the worker filling it, however fresh', () => {
+    expect(isWatching(row('ready', 'submit_approved'), shot(1_000, PARKED_STEPS.approval), now)).toBe(false);
+    expect(isWatching(row('screening'), shot(1_000, PARKED_STEPS.answers), now)).toBe(false);
+  });
+  it('shows a fresh frame while the rows still hold the state from before the fill', () => {
+    expect(isWatching(row('tailoring'), shot(1_000), now)).toBe(true);
+    expect(isWatching(row('tailoring'), shot(30_000), now)).toBe(false);
+  });
+  it('never shows a parked, finished or archived row as being worked', () => {
+    expect(isWatching(row('needs_policy_decision', SUBMIT_APPROVAL), shot(1_000), now)).toBe(false);
+    expect(isWatching(row('skipped'), shot(1_000), now)).toBe(false);
+    expect(inLive(row('needs_policy_decision', SUBMIT_APPROVAL))).toBe(true);
+    expect(inLive(row('submitted'))).toBe(false);
+    expect(inLive({ ...row('ready'), hiddenAt: now })).toBe(false);
+  });
+  it('names the rows a frame shows moved since they loaded, so Live reloads them', () => {
+    const frame = { applicationId: 'a', state: 'filling' as ApplicationState };
+    expect(rowsBehind([frame], [{ id: 'a', state: 'filling' }])).toBe('');
+    expect(rowsBehind([frame], [{ id: 'a', state: 'queued' }])).toBe('a filling');
+    expect(rowsBehind([frame, { applicationId: 'b', state: 'needs_policy_decision' }], [{ id: 'a', state: 'filling' }])).toBe('b needs_policy_decision');
+  });
+  // listLive sends frames only for rows in Live, so a submitted or skipped row's frame just stops coming.
+  it('names the rows whose frame left the live list since the last poll', () => {
+    const before = [{ applicationId: 'a', state: 'submitting' as ApplicationState }];
+    expect(rowsBehind([], [{ id: 'a', state: 'submitting' }], before)).toBe('a left');
+    expect(rowsBehind(before, [{ id: 'a', state: 'submitting' }], before)).toBe('');
+    expect(rowsBehind([], [{ id: 'a', state: 'submitted' }], [])).toBe('');
   });
 });
 

@@ -6,9 +6,10 @@ import {
   applicationReceipts, applicationRuns, applications, applicationSubmissions, discoveryManifests, manualApplicationMarks, workers,
 } from '../private-db/schema.ts';
 import { getPolicy } from './stores.ts';
-import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from './state.ts';
+import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState, type ApplicationState } from './state.ts';
 import { postingUrl } from './posting-url.ts';
 import { ARCHIVE_AFTER_MS, ARCHIVE_KEEP_MS, IN_FLIGHT_STATES } from './buckets.ts';
+import { liveRow } from './live.ts';
 import {
   RunCreateSchema, RunCommandSchema, ApplicationCommandSchema, LEASE_MS, SUBMIT_WAIT_MS,
   type RunCreate, type RunCommand, type ApplicationCommand, type Run,
@@ -74,6 +75,8 @@ export async function returnedPostingUrls(db: PrivateDb): Promise<string[]> {
 }
 
 const newer = alias(applications, 'newer');
+/** Waiting or finished rows, which pile up (discovery queues every eligible posting at once); only these are capped. */
+const HISTORY_STATES: ApplicationState[] = ['queued', 'skipped', 'cancelled', 'failed'];
 /** Archived rows (hidden, or 14 days old) stay listed for 30 days after archiving; the same cutoff as `bucket`. */
 export async function listRuns(db: PrivateDb, ownerId: string, options: WorkerOptions = {}): Promise<RunList> {
   return workerTransaction(db, async (tx) => {
@@ -85,24 +88,31 @@ export async function listRuns(db: PrivateDb, ownerId: string, options: WorkerOp
     const cannotRetry = and(inArray(applications.state, ['failed', 'skipped', 'cancelled']), or(
       exists(tx.select({ id: newer.id }).from(newer).where(and(sameRole(newer), gt(newer.attempt, applications.attempt)))),
       exists(tx.select({ id: manualApplicationMarks.id }).from(manualApplicationMarks).where(sameRole(manualApplicationMarks)))));
+    // A role back on the board stays in Needs action too, so a row that leaves Live never just vanishes;
+    // only the attempt a restart replaced is dropped, since its newer attempt is listed.
+    const listed = and(eq(applications.ownerId, ownerId), sql`coalesce(${applications.reasonCode}, '') <> 'restarted'`, not(cannotRetry!),
+      or(and(isNull(applications.hiddenAt), inArray(applications.state, ['submitted', ...IN_FLIGHT_STATES])),
+        sql`coalesce(${applications.hiddenAt}, ${applications.createdAt} + ${ARCHIVE_AFTER_MS}) > ${nowAt(options) - ARCHIVE_KEEP_MS}`));
+    const select = () => tx.select({ app: applications, submission: applicationSubmissions, receipt: applicationReceipts })
+      .from(applications)
+      .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
+      .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)));
+    // The worker takes the oldest row first, so a newest-N list hid the row it was filling or waiting to submit behind newer
+    // history. Rows being worked, waiting on the applicant or applied are listed; past 500, old applied rows drop first, then
+    // old waiting rows. ponytail: rows Live shows come first and are never dropped below 500 of them; query them apart past that.
+    const rows = [
+      ...await select().where(and(listed, not(inArray(applications.state, HISTORY_STATES))))
+        .orderBy(sql`case when ${liveRow} then 0 when ${applications.state} = 'submitted' then 2 else 1 end`, desc(applications.createdAt)).limit(500),
+      ...await select().where(and(listed, inArray(applications.state, HISTORY_STATES))).orderBy(desc(applications.createdAt)).limit(100),
+    ].sort((a, b) => b.app.createdAt - a.app.createdAt);
     return {
       ownerId,
       runs: (await tx.select().from(applicationRuns).where(eq(applicationRuns.ownerId, ownerId))
         .orderBy(desc(applicationRuns.createdAt)).limit(100)).map(runSummary),
-      applications: (await tx.select({ app: applications, submission: applicationSubmissions, receipt: applicationReceipts })
-        .from(applications)
-        .leftJoin(applicationSubmissions, and(eq(applicationSubmissions.ownerId, applications.ownerId), eq(applicationSubmissions.applicationId, applications.id)))
-        .leftJoin(applicationReceipts, and(eq(applicationReceipts.ownerId, applications.ownerId), eq(applicationReceipts.applicationId, applications.id)))
-        // A role back on the board stays in Needs action too, so a row that leaves Live never just vanishes;
-        // only the attempt a restart replaced is dropped, since its newer attempt is listed.
-        .where(and(eq(applications.ownerId, ownerId), sql`coalesce(${applications.reasonCode}, '') <> 'restarted'`, not(cannotRetry!),
-          or(and(isNull(applications.hiddenAt), inArray(applications.state, ['submitted', ...IN_FLIGHT_STATES])),
-            sql`coalesce(${applications.hiddenAt}, ${applications.createdAt} + ${ARCHIVE_AFTER_MS}) > ${nowAt(options) - ARCHIVE_KEEP_MS}`)))
-        .orderBy(desc(applications.createdAt)).limit(100))
-        .map(({ app, submission, receipt }) => applicationSummary(app, {
-          company: submission?.company ?? receipt?.company, role: submission?.role ?? receipt?.role,
-          receiptId: receipt?.receiptId, submittedAt: receipt?.submittedAt,
-        })),
+      applications: rows.map(({ app, submission, receipt }) => applicationSummary(app, {
+        company: submission?.company ?? receipt?.company, role: submission?.role ?? receipt?.role,
+        receiptId: receipt?.receiptId, submittedAt: receipt?.submittedAt,
+      })),
     };
   });
 }
@@ -209,8 +219,14 @@ export async function commandApplication(
       // The worker parks every filled form here; only the applicant's approval lets it submit.
       const [run] = await tx.select().from(applicationRuns).where(and(eq(applicationRuns.id, runId), eq(applicationRuns.ownerId, ownerId)));
       if (!run || run.state === 'stopped' || !isAwaitingSubmitApproval(row.state, row.reasonCode)) fail(409, 'CONFLICT', 'No filled form is awaiting approval.');
+      // Only a running run leases the approved form; on a paused one (its worker revoked) it would wait at 'ready' forever.
+      if (run.state !== 'running') fail(409, 'CONFLICT', 'The run is paused.');
       const policy = await getPolicy(tx, ownerId, now);
       if (!policy.enabled || !policy.policy.actions.includes('submit')) fail(403, 'SUBMIT_DISABLED', 'Submit is not enabled in the policy.');
+      // Only a run bound to the enabled policy leases the approved form; on any other it would wait at 'ready' forever.
+      if (policy.revision !== run.policyRevision || policy.policyVersion !== run.policyVersion || policy.policyHash !== run.policyHash) {
+        fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
+      }
       next = 'ready'; availableAt = now;
     } else if (command.action === 'confirm-submitted' || command.action === 'confirm-not-submitted') {
       // The applicant says whether the employer received it. No receipt is invented: 0009 lets an unknown submission become

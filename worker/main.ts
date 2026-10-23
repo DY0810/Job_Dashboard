@@ -29,6 +29,7 @@ import type { ApplicationContext } from "../lib/applications/application-context
 import type { PrivateStore } from "./storage.ts";
 import { ApplicationArtifactManifestSchema, type ApplicationArtifactManifest, artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { SUBMIT_APPROVAL } from "../lib/applications/state.ts";
+import { PARKED_STEPS } from "../lib/applications/worker-protocol.ts";
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 import { renderCoverLetter } from "./documents/cover-letter.ts";
 
@@ -256,6 +257,8 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
     let live: ReturnType<typeof liveView> | undefined;
     // What the applicant reviews before approving: each field Workie filled and its value.
     let review: { label: string; value: string }[] | undefined;
+    // Set when the form waits on the applicant's answers: like a form waiting on approval, it keeps its last picture.
+    let asking = false;
     try {
       const localDocuments: Record<string, string> = {};
       const applicant = [applicationContext.answers.first_name, applicationContext.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
@@ -299,7 +302,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }
       const missing = observed.fields.filter(field => field.required && field.kind !== 'file' &&
         adapter.answer(currentApplication, field) === undefined);
-      if (missing.length) return formQuestions(applicationContext, missing);
+      if (missing.length) { asking = true; return formQuestions(applicationContext, missing); }
       // A transcript upload takes the applicant's undergraduate transcript.
       for (const field of observed.fields) {
         if (field.kind === 'file' && localDocuments.transcript && undergraduateTranscript(field.label)) currentApplication.documents[field.key] = localDocuments.transcript;
@@ -344,7 +347,8 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       if (lease.state === "filling") {
         const result = await fillAtsApplication({ runtime, adapter, application, facts: applicationContext.facts,
           requirements: applicationContext.requirements, signal, runId: lease.runId });
-        if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
+        // A profile edit since screening can leave a requirement unconfirmed: ask it, as screening does.
+        if (result.state === "needs_answer") return screeningQuestions(applicationContext, result.reasons);
         if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "form_ineligible" };
         if (letter) await control.letter(lease.applicationId, { protocolVersion: 1, introduction: letter.introduction,
           body: letter.body.map(item => item.text), conclusion: letter.conclusion, companyParagraph: letter.companyParagraph }, signal);
@@ -383,28 +387,28 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       if (result.state === "submitted" || result.state === "submission_unknown") {
         return { state: result.state, reasonCode: result.reasons[0]?.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80) || "submission_unknown", durable: true };
       }
-      if (result.state === "needs_answer") return { state: "needs_answer" as const, reasonCode: "form_question" };
+      if (result.state === "needs_answer") return screeningQuestions(applicationContext, result.reasons);
       if (result.state === "skipped") return { state: "skipped" as const, reasonCode: "screening_ineligible" };
       return { state: "retryable_failure" as const, reasonCode: "application_failed" };
     } catch (error) {
       if (signal.aborted) throw error;
       const providerFailure = providerFailureResult(error);
       if (providerFailure) return providerFailure;
-      if (answerError(error)) {
-        if (runtime && application && !submissionStarted) {
-          const observed = await adapter.observe(runtime, application, signal).catch(() => null);
-          const fields = (error instanceof AtsAnswerErrors ? error.errors : [error]).flatMap(item => {
-            const field = observed?.fields.find(candidate => candidate.key === item.message);
-            return field ? [{ ...field, options: item.options ?? field.options }] : [];
-          });
-          if (fields.length) return formQuestions(applicationContext, fields);
-        }
-        return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
+      // An answer the form rejected is asked; one whose field cannot be read again is retried below,
+      // since a needs_answer with no question has nothing to answer and nothing resumes it.
+      if (answerError(error) && runtime && application && !submissionStarted) {
+        const observed = await adapter.observe(runtime, application, signal).catch(() => null);
+        const fields = (error instanceof AtsAnswerErrors ? error.errors : [error]).flatMap(item => {
+          const field = observed?.fields.find(candidate => candidate.key === item.message);
+          return field ? [{ ...field, options: item.options ?? field.options }] : [];
+        });
+        if (fields.length) { asking = true; return formQuestions(applicationContext, fields); }
       }
       if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
       return { state: "retryable_failure" as const, reasonCode: atsFailureReason(error) };
     } finally {
-      await live?.stop(review ? "Filled. Waiting for your approval" : "Workie left this application", review, !!review);
+      await live?.stop(review ? PARKED_STEPS.approval : asking ? PARKED_STEPS.answers : "Workie left this application",
+        review, !!review || asking);
       if (runtime) await runtime.close().catch(() => {});
       await rm(workDirectory, { recursive: true, force: true });
     }

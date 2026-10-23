@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
+import { inLive } from '../../lib/applications/buckets';
 import { DiscoveryStatusSchema, ReapplyRequestSchema } from '../../lib/applications/discovery-protocol';
 import { createEmptyPolicy, PolicySchema } from '../../lib/applications/policy';
 import { InboxPageSchema } from '../../lib/applications/question-protocol';
@@ -33,6 +34,8 @@ export class WorkerFixture {
   discovery = new Map<string, { errorCode?: string; heldQuestions?: Record<string, number> }>();
   /** Discovery status answers only once this settles, like a slow status read. */
   discoveryGate: Promise<void> = Promise.resolve();
+  /** Live frames; as listLive does, each is sent with its row's current state, and only while the row is in Live. */
+  frames: { applicationId: string; step: string; image: string | null; fields: { label: string; value: string }[] | null; updatedAt: number }[] = [];
   policy = {
     revision: 2, policy: PolicySchema.parse({ ...createEmptyPolicy(), actions: ['read_jobs'],
       destinations: ['employer.example.test'], countries: ['US'] }),
@@ -97,7 +100,10 @@ export class WorkerFixture {
       if (path === '/api/auto-apply/policies') return { status: 200, json: structuredClone(this.policy) };
       // The Auto Apply page under the settings drawer reads these too.
       if (path === '/api/applications/materials') return reply(MaterialsSchema, { ownerId: this.owner, materials: [] });
-      if (path === '/api/applications/live') return reply(LiveListSchema, { ownerId: this.owner, live: [] });
+      if (path === '/api/applications/live') return reply(LiveListSchema, { ownerId: this.owner, live: this.frames.flatMap((frame) => {
+        const app = this.applications.find((row) => row.id === frame.applicationId);
+        return app && inLive(app) ? [{ ...frame, state: app.state }] : [];
+      }) });
       const discovery = /^\/api\/application-runs\/([^/]+)\/discovery$/.exec(path);
       if (discovery) await this.discoveryGate;
       if (discovery) return reply(DiscoveryStatusSchema, {
@@ -176,8 +182,8 @@ export class WorkerFixture {
       } else if (body.action === 'confirm-submitted' || body.action === 'confirm-not-submitted') {
         if (app.state !== 'submission_unknown') return error(409, 'CONFLICT');
         app.state = body.action === 'confirm-submitted' ? 'submitted' : 'failed';
-      } else app.state = ambiguous ? 'submission_unknown' : body.action === 'skip' ? 'skipped' : 'cancelled';
-      app.reasonCode = String(body.action); app.revision++;
+      } else app.state = ambiguous ? 'submission_unknown' : body.action === 'approve-submit' ? 'ready' : body.action === 'skip' ? 'skipped' : 'cancelled';
+      app.reasonCode = body.action === 'approve-submit' ? 'submit_approved' : String(body.action); app.revision++;
       result = reply(ApplicationSummarySchema, app);
     } else {
       const run = this.runs.find((row) => path === `/api/application-runs/${row.id}/actions`);
