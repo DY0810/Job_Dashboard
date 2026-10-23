@@ -91,8 +91,9 @@ export const nameKey = (text: string) => text.toLowerCase().replace(/&/g, ' and 
 // Anything ambiguous (negations, combined questions, unrecognized wording) still goes to the inbox.
 export function commonAnswer(input: AtsApplication, field: AtsField) {
   const text = field.label.toLowerCase().replace(/\s+/g, ' ').trim();
-  // The school question's own sentence: a list's instruction after it ("select Other if your school is not listed") is not part of it.
-  const question = text.replace(/\?.*$/, '?'), school = input.answers['school--0'];
+  // A list's instruction after its question ("select Other if your school is not listed") is not part of it;
+  // a text question that asks for more than the school is a combined question and is asked.
+  const question = field.kind === 'select' ? text.replace(/\?.*$/, '?') : text, school = input.answers['school--0'];
   if ((field.kind === 'text' || field.kind === 'select') && typeof school === 'string' &&
       /^((current|most recent) )?(school|university|college)( name)?$|^(what|which) (school|university|college) ((do|did) you (currently )?attend|are you (currently )?attending( or did you (last )?attend)?)\??$/.test(question)) {
     // A list takes only the option that is the profile school (a long one is checked against the live options on fill);

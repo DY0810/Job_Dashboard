@@ -621,7 +621,9 @@ test("the profile school answers a school list only with the option that is that
   const ask = (school, field) => lever.answer(leverApplication({ 'school--0': school }), { key: 'f-1', name: 'cards[c][field0]', required: true, ...field });
   // Too many options to carry: the profile school goes to the fill, which checks it against the live list.
   assert.equal(ask('Stanford University', { label: palantirSchool, kind: 'select' }), 'Stanford University');
-  assert.equal(ask('Stanford University', { label: palantirSchool, kind: 'text' }), 'Stanford University');
+  // Only a list's trailing instruction is dropped: a text question that asks for more than the school is asked.
+  assert.equal(ask('Stanford University', { label: palantirSchool, kind: 'text' }), undefined);
+  assert.equal(ask('Stanford University', { label: 'What school do you attend? Please also list your GPA.', kind: 'text' }), undefined);
   const options = ['Stanford University', 'The University of Texas at Austin', 'Texas A&M University', 'Other (School Not Listed)'];
   assert.equal(ask('University of Texas at Austin', { label: 'School', kind: 'select', options }), 'The University of Texas at Austin');
   assert.equal(ask('texas a and m university', { label: 'School', kind: 'select', options }), 'Texas A&M University');
