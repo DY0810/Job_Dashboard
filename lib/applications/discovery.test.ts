@@ -449,6 +449,22 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect(statements()).toBeLessThan(30);
   }, 20_000);
 
+  it('skips rows held by the per-employer cap, or in a run on an outdated policy, in one query too', async () => {
+    const { token, run } = await prepared('alice', { dailyApplicationCap: 1000, perEmployerCap: 1 }); addPostings(100, 1, true);
+    await complete(token, run.id);
+    await skip((await poll(token)).lease!.applicationId);
+    let statements = countStatements(db);
+    expect((await poll(token)).lease).toBeNull();
+    // Before the fix: about 13 statements for each of the 99 held rows.
+    expect(statements()).toBeLessThan(30);
+    // A policy saved after the run started leaves the run running, but it can lease nothing.
+    now += DAY;
+    await db.update(policyHeads).set({ revision: 2 }).where(eq(policyHeads.ownerId, 'alice'));
+    statements = countStatements(db);
+    expect((await poll(token)).lease).toBeNull();
+    expect(statements()).toBeLessThan(30);
+  }, 20_000);
+
   it("resets the daily cap at the applicant's local midnight, not UTC midnight", async () => {
     now = Date.UTC(2026, 8, 21, 23); // 4 pm in Los Angeles
     const { token, run, worker } = await prepared('alice', { dailyApplicationCap: 1 }); addPostings(2);

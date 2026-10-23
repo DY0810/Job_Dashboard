@@ -258,28 +258,37 @@ function capDay(now: number, timeZone: string | null): [number, number] {
   return [start, dailyStartInstant(start + 36 * 3_600_000, 0, timeZone)];
 }
 
-function capExceeded(policy: Policy, now: number, timeZone: string | null) {
+/**
+ * Whether the policy's caps or an employer's limit hold a row today, as SQL on `applications`. Today's starts load once
+ * and are matched from a JSON list, so checking many rows costs one query, not a scan of the owner's applications each.
+ */
+async function capHeld(tx: WorkerTx, ownerId: string, policy: Policy, now: number, timeZone: string | null) {
   const [day, end] = capDay(now, timeZone);
-  // Qualify the outer row: an unqualified column resolves to the inner `used` table in SQLite.
+  const started = await tx.select({ employerKey: applications.employerKey, ats: applications.ats, tenant: applications.tenant })
+    .from(applications).where(and(eq(applications.ownerId, ownerId), sql`${applications.startedAt} >= ${day} and ${applications.startedAt} < ${end}`));
+  if (started.length >= policy.dailyApplicationCap) return sql<boolean>`1`;
+  // Qualify the outer row: an unqualified column resolves to the inner table in SQLite.
   return sql<boolean>`(
-    (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
-      and used.started_at >= ${day} and used.started_at < ${end}) >= ${policy.dailyApplicationCap}
-    or (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
-      and used.started_at >= ${day} and used.started_at < ${end}
-      and (used.employer_key = ${applications}.employer_key or
-        (used.ats = ${applications}.ats and used.tenant = ${applications}.tenant))) >= ${policy.perEmployerCap}
+    (select count(*) from json_each(${JSON.stringify(started)}) used
+      where json_extract(used.value, '$.employerKey') = ${applications}.employer_key or
+        (json_extract(used.value, '$.ats') = ${applications}.ats and json_extract(used.value, '$.tenant') = ${applications}.tenant)) >= ${policy.perEmployerCap}
     or ${employerLimitReached(now)}
   )`;
 }
-/** Whether the owner's current policy's daily cap is used up, which holds every unstarted discovery row (see `capExceeded`). */
-export async function dailyCapReached(tx: WorkerTx, ownerId: string, now: number, timeZone: string | null) {
-  const policy = await getPolicy(tx, ownerId, now);
-  if (!policy.enabled) return false;
-  const [day, end] = capDay(now, timeZone);
-  const [{ started }] = await tx.select({ started: sql<number>`count(*)` }).from(applications).where(and(
-    eq(applications.ownerId, ownerId), sql`${applications.startedAt} >= ${day} and ${applications.startedAt} < ${end}`,
-  ));
-  return started >= policy.policy.dailyApplicationCap;
+/**
+ * Rows the poll's scan can lease now, as SQL on `applications`, so it does not check one by one (about 13 statements a
+ * row) rows of a run not live on the owner's current policy, or unstarted discovery rows the caps hold.
+ * submission_unknown reconciles in any run. liveRun and discoveryClaimAllowed still check the row the poll picks.
+ */
+export async function claimableNow(tx: WorkerTx, ownerId: string, now: number, timeZone: string | null) {
+  const head = await getPolicy(tx, ownerId, now);
+  if (!head.enabled) return sql`${applications.state} = 'submission_unknown'`;
+  const held = head.policy.actions.includes('read_jobs') ? await capHeld(tx, ownerId, head.policy, now, timeZone) : sql`1`;
+  return sql`(${applications.state} = 'submission_unknown' or (
+    exists (select 1 from ${applicationRuns} run where run.owner_id = ${applications}.owner_id and run.id = ${applications}.run_id
+      and run.state = 'running' and run.policy_revision = ${head.revision} and run.policy_version = ${head.policyVersion}
+      and run.policy_hash = ${head.policyHash})
+    and (${applications.startedAt} is not null or ${applications.snapshotManifestId} is null or not coalesce(${held}, 0))))`;
 }
 export async function discoveryClaimAllowed(tx: WorkerTx, app: ApplicationRow, now: number, timeZone: string | null): Promise<boolean> {
   if (!app.snapshotManifestId) return true; // Phase 3's private synthetic enqueue has no public route.
@@ -290,7 +299,7 @@ export async function discoveryClaimAllowed(tx: WorkerTx, app: ApplicationRow, n
   const policy = run && await currentDiscoveryPolicy(tx, run, now);
   if (!policy) return false;
   if (app.startedAt !== null) return true;
-  const [{ held }] = await tx.select({ held: capExceeded(policy, now, timeZone) }).from(applications)
+  const [{ held }] = await tx.select({ held: await capHeld(tx, app.ownerId, policy, now, timeZone) }).from(applications)
     .where(and(eq(applications.ownerId, app.ownerId), eq(applications.id, app.id)));
   await tx.update(discoveryTargets).set({ disposition: held ? 'held_cap' : 'eligible' }).where(and(
     eq(discoveryTargets.ownerId, app.ownerId), eq(discoveryTargets.runId, app.runId),
@@ -312,7 +321,7 @@ export async function getDiscoveryStatus(db: PrivateDb, ownerId: string, runId: 
     const disposition = sql<TargetDisposition>`case
       when ${discoveryTargets.disposition} in ('eligible','held_cap') and ${applications.startedAt} is null
         and ${applications.state} = 'queued' then
-        ${policy ? sql`case when ${capExceeded(policy, now, timeZone)} then 'held_cap' else 'eligible' end` : sql`'held_policy'`}
+        ${policy ? sql`case when ${await capHeld(tx, ownerId, policy, now, timeZone)} then 'held_cap' else 'eligible' end` : sql`'held_policy'`}
       else ${discoveryTargets.disposition} end`;
     const groups = await tx.select({ disposition, count: sql<number>`count(*)` })
       .from(discoveryTargets).leftJoin(applications, and(
