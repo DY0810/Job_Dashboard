@@ -35,6 +35,7 @@ describe('discovery on the Applications page', () => {
     expect(discoveryProblem({ ...fine, state: 'failed', errorCode: 'CAPTURE_FAILED' })).toMatch(/could not finish looking for new roles \(capture failed\)/);
     expect(heldForDecision(fine)).toBeNull();
     expect(heldForDecision({ ...fine, heldQuestions: { pay_undisclosed: 12, pay_currency_or_period_unverified: 3 } }))
-      .toMatch(/^Held until you decide: pay not listed \(12\), pay in another currency or period than your floor \(3\)\./);
+      .toBe('Not started under your current policy: pay not listed (12), pay in another currency or period than your floor (3). ' +
+        'To include roles like these, change the policy.');
   });
 });

@@ -52,10 +52,11 @@ const HELD_REASONS: Record<string, string> = {
   pay_undisclosed: 'pay not listed', pay_currency_or_period_unverified: 'pay in another currency or period than your floor',
   pay_floor_unverified: 'pay may be under your floor', pay_evidence_invalid: 'pay unreadable', country_unknown: 'country not listed',
 };
-/** Roles discovery holds until the applicant changes the policy, and why; null when none are held. */
+/** Roles discovery holds until the applicant changes the policy, and why; null when none are held. Nothing asks about
+ * each role, so the note promises no per-role decision, only the policy change that includes them. */
 export function heldForDecision(status: Discovery) {
   const held = Object.entries(status.heldQuestions);
   if (!held.length) return null;
-  return `Held until you decide: ${held.map(([code, count]) => `${HELD_REASONS[code] ?? words(code)} (${count})`).join(', ')}. ` +
-    'Auto Apply does not start these roles under your current policy. To include them, change it in Profile.';
+  return `Not started under your current policy: ${held.map(([code, count]) => `${HELD_REASONS[code] ?? words(code)} (${count})`).join(', ')}. ` +
+    'To include roles like these, change the policy.';
 }
