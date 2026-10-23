@@ -60,9 +60,24 @@ export function workerTransport(options: {
   if (options.token !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(options.token)) throw new Error("INVALID_CREDENTIAL");
   const timeout = options.timeoutMs ?? 8000;
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 8000) throw new Error("INVALID_TIMEOUT");
+  // A fetch can be dropped without ever settling, and its AbortSignal.timeout (an unref'd timer) goes with it;
+  // both live workers froze for good that way on 2026-10-22. A plain timer is the backstop the event loop keeps.
+  const bounded = <T>(ms: number, work: () => Promise<T>): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new TransportError("NETWORK_UNAVAILABLE")), ms);
+    });
+    return Promise.race([work(), expired]).finally(() => clearTimeout(timer));
+  };
   async function post<T>(
     path: string, body: unknown, schema: z.ZodType<T>, signal?: AbortSignal, checkpoint = false,
     requestTimeoutMs = timeout,
+  ): Promise<T> {
+    return bounded(requestTimeoutMs, () => send(path, body, schema, signal, checkpoint, requestTimeoutMs));
+  }
+  async function send<T>(
+    path: string, body: unknown, schema: z.ZodType<T>, signal: AbortSignal | undefined, checkpoint: boolean,
+    requestTimeoutMs: number,
   ): Promise<T> {
     const payload = JSON.stringify(body);
     if (Buffer.byteLength(payload) > 128 * 1024) throw new TransportError("REQUEST_LIMIT");
@@ -127,8 +142,8 @@ export function workerTransport(options: {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       return post(`/api/worker/applications/${applicationId}/artifacts`, ArtifactIntentSchema.parse(input), ArtifactIntentResponseSchema, signal);
     },
-    uploadArtifact: async (applicationId: string, artifactId: string, path: string, input: z.input<typeof ArtifactUploadHeaderSchema>,
-      bytes: Uint8Array, mime: string, signal?: AbortSignal) => {
+    uploadArtifact: (applicationId: string, artifactId: string, path: string, input: z.input<typeof ArtifactUploadHeaderSchema>,
+      bytes: Uint8Array, mime: string, signal?: AbortSignal) => bounded(timeout, async () => {
       if (!z.uuid().safeParse(applicationId).success || !z.uuid().safeParse(artifactId).success ||
           path !== `/api/worker/applications/${applicationId}/artifacts/${artifactId}/upload` || bytes.length > 10 * 1024 * 1024) {
         throw new TransportError("INVALID_ARTIFACT");
@@ -150,8 +165,8 @@ export function workerTransport(options: {
       try { parsed = ArtifactUploadResponseSchema.safeParse(JSON.parse(body)); } catch { parsed = { success: false } as const; }
       if (!parsed.success) throw new TransportError("INVALID_RESPONSE");
       return parsed.data;
-    },
-    downloadDocument: async (applicationId: string, documentId: string, path: string, signal?: AbortSignal) => {
+    }),
+    downloadDocument: (applicationId: string, documentId: string, path: string, signal?: AbortSignal) => bounded(timeout, async () => {
       if (!z.uuid().safeParse(applicationId).success || !z.uuid().safeParse(documentId).success) {
         throw new TransportError("INVALID_DOCUMENT");
       }
@@ -168,7 +183,7 @@ export function workerTransport(options: {
       const bytes = await readCapped(response.body, 10 * 1024 * 1024, { overflow: () => new TransportError("RESPONSE_LIMIT") });
       if (bytes.length !== length) throw new TransportError("INVALID_DOCUMENT");
       return bytes;
-    },
+    }),
     event: (applicationId: string, input: EventRequest, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       return post(`/api/worker/applications/${applicationId}/events`,

@@ -247,3 +247,18 @@ test("stale pending checkpoint is retained diagnostically and re-polled without 
   assert.equal((await store.read("checkpoint")).pending, null);
   assert.deepEqual(await store.read("rejected-checkpoint"), journal);
 });
+
+test("a screening skip for several requirements reports them all instead of crashing the worker", async () => {
+  const s = scope(), store = await storeFor(s), controller = new AbortController();
+  const events = [];
+  // DY's worker crash-looped on this on 2026-10-23: the comma list the skipped card reads failed the result schema.
+  await runWorker({ scope: s, store, signal: controller.signal,
+    transport: { poll: async () => clockResponse(assignment(s)), heartbeat: async () => clockResponse(),
+      event: async (id, input) => {
+        events.push(input); controller.abort();
+        return { applicationId: id, eventId: input.eventId, revision: input.expectedRevision + 1,
+          state: input.state, replayed: false, lease: null, serverTime: Date.now() };
+      } },
+    dispatch: async () => ({ state: "skipped", reasonCode: "graduation_ineligible,term_ineligible" }) });
+  assert.deepEqual(events.map(e => [e.state, e.reasonCode]), [["skipped", "graduation_ineligible,term_ineligible"]]);
+});

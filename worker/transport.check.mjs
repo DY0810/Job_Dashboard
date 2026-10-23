@@ -211,3 +211,17 @@ test("checkpoint retries have a finite total deadline and do not retry authoriza
     assert.equal(calls, before + 1);
   }
 });
+
+test("a request that never settles still ends at its deadline instead of freezing the worker", { timeout: 5000 }, async t => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  const client = workerTransport({ origin: "https://workie.example", token, timeoutMs: 50 });
+  // Both live workers froze this way on 2026-10-22: a fetch that ignored its abort signal and never settled.
+  globalThis.fetch = () => new Promise(() => {});
+  await assert.rejects(client.poll(), { message: "NETWORK_UNAVAILABLE" });
+  const id = randomUUID();
+  await assert.rejects(client.downloadDocument(id, id, `/api/worker/applications/${id}/documents/${id}`), { message: "NETWORK_UNAVAILABLE" });
+  // Headers arrive, then the body never ends.
+  globalThis.fetch = async () => new Response(new ReadableStream({}), { headers: { "Content-Type": "application/json", "Content-Length": "10" } });
+  await assert.rejects(client.heartbeat(null), { message: "NETWORK_UNAVAILABLE" });
+});
