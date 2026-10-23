@@ -31,6 +31,8 @@ export class WorkerFixture {
   applications: ApplicationSummary[] = [];
   /** Per run: a discovery error, or roles held for the applicant's decision. */
   discovery = new Map<string, { errorCode?: string; heldQuestions?: Record<string, number> }>();
+  /** Discovery status answers only once this settles, like a slow status read. */
+  discoveryGate: Promise<void> = Promise.resolve();
   policy = {
     revision: 2, policy: PolicySchema.parse({ ...createEmptyPolicy(), actions: ['read_jobs'],
       destinations: ['employer.example.test'], countries: ['US'] }),
@@ -97,6 +99,7 @@ export class WorkerFixture {
       if (path === '/api/applications/materials') return reply(MaterialsSchema, { ownerId: this.owner, materials: [] });
       if (path === '/api/applications/live') return reply(LiveListSchema, { ownerId: this.owner, live: [] });
       const discovery = /^\/api\/application-runs\/([^/]+)\/discovery$/.exec(path);
+      if (discovery) await this.discoveryGate;
       if (discovery) return reply(DiscoveryStatusSchema, {
         ownerId: this.owner, runId: discovery[1], state: 'ready', lastAttemptAt: null, lastScanAt: null, errorCode: null,
         manifestId: null, manifestHash: null, capturedAt: null, candidateCount: 0, stagedCount: 0,

@@ -342,11 +342,15 @@ export default function Applications() {
           (materials && materials.ownerId !== account.ownerId) || (live && live.ownerId !== account.ownerId)) {
         throw new Error('Account changed. Refresh the current applicant.');
       }
-      const discovery = (await Promise.all(runs.runs.filter((run) => run.state === 'running').map((run) =>
+      const running = runs.runs.filter((run) => run.state === 'running');
+      // Discovery status follows the list, so a slow status read never holds the page back.
+      setView((current) => ({ account, workers, runs, policy, materials: materials?.materials ?? [], live: live?.live ?? [],
+        discovery: current.discovery.filter((status) => status.ownerId === account.ownerId && running.some((run) => run.id === status.runId)),
+        loading: false, locked: false, error: '', loadedAt: Date.now() }));
+      const discovery = (await Promise.all(running.map((run) =>
         request(`/api/application-runs/${run.id}/discovery`, account.ownerId).then((body) => DiscoveryStatusSchema.parse(body)).catch(() => null))))
         .flatMap((status) => status?.ownerId === account.ownerId ? [status] : []);
-      setView({ account, workers, runs, discovery, policy, materials: materials?.materials ?? [], live: live?.live ?? [],
-        loading: false, locked: false, error: '', loadedAt: Date.now() });
+      setView((current) => current.account?.ownerId === account.ownerId ? { ...current, discovery } : current);
     } catch (error) {
       setView((current) => ({ ...current, loading: false, locked: true,
         error: error instanceof z.ZodError ? 'Private service returned an incompatible response.' :

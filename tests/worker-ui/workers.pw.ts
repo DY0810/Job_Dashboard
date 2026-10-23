@@ -335,6 +335,19 @@ test('Apply and Archive ask on the page, never through a browser prompt', async 
   expect(writes()[0].path).toBe(`/api/application-runs/${app.runId}/applications/${app.id}/actions`);
 });
 
+test('the applications list shows without waiting for a slow discovery status', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  const run = fixture.addRun();
+  fixture.addApplication('queued');
+  fixture.discovery.set(run.id, { errorCode: 'POLICY_STALE' });
+  let release = () => {};
+  fixture.discoveryGate = new Promise((resolve) => { release = resolve; });
+  await page.goto('/applications');
+  await expect(page.getByText(/^Waiting its turn/)).toBeVisible();
+  release();
+  await expect(page.getByText(/^It will not start: your Auto Apply policy changed after its run started\./)).toBeVisible();
+});
+
 test('a run that starts nothing and roles held for a decision are named, not shown as waiting', async ({ page }) => {
   const fixture = fixtures.get(page)!;
   const stale = fixture.addRun(), current = fixture.addRun();
