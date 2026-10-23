@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { SUBMIT_APPROVAL } from '../../lib/applications/state';
-import { PAIRING_TTL_MS } from '../../lib/applications/worker-protocol';
+import { PAIRING_TTL_MS, PARKED_STEPS } from '../../lib/applications/worker-protocol';
 import { WorkerFixture, syntheticGrant, workerId } from './fixture';
 
 // Real Next UI, strict synthetic APIs. No keychain, real clipboard, browser profile,
@@ -296,6 +296,8 @@ test('offline unpaired disabled-policy configuration and unknown-protocol states
   fixture.policy.enabled = false;
   await ready(page);
   await expect(page.getByText('Offline', { exact: true })).toBeVisible();
+  // Auto Apply itself says so too, not only Settings.
+  await expect(page.getByText(/^Your worker is offline, last seen .+\. Nothing is applied until it is back online\.$/)).toBeVisible();
   await page.getByRole('combobox', { name: 'Run worker', exact: true }).selectOption(workerId);
   await expect(page.getByRole('button', { name: 'Create run', exact: true })).toBeDisabled();
   fixture.workers = [];
@@ -368,6 +370,54 @@ test('an unconfirmed submission says why, and the applicant says whether it went
   await expect.poll(() => fixture.writes.at(-1)?.body?.action).toBe('confirm-not-submitted');
   expect(fixture.writes.at(-1)?.path).toBe(`/api/application-runs/${closed.runId}/applications/${closed.id}/actions`);
   await expect(page.getByRole('button', { name: 'It did not go through, try again', exact: true })).toHaveCount(0);
+});
+
+/** A 1x1 PNG: the browser shows it under the page's image/jpeg data URL like the worker's screenshot. */
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+// Apply moves the row to 'ready' while the worker fills the form again and submits it; Live used to drop it, closing full screen.
+test('Apply in Live full screen keeps the form on screen while the worker submits it', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const app = fixture.addApplication('needs_policy_decision', SUBMIT_APPROVAL);
+  // Fresh, as when the applicant presses Apply right after the fill: the frame the worker parked the form with is not the refill.
+  fixture.frames = [{ applicationId: app.id, step: PARKED_STEPS.approval, image: PIXEL,
+    fields: [{ label: 'First Name', value: 'Test' }], updatedAt: Date.now() }];
+  await page.goto('/applications?view=live');
+  await page.getByRole('button', { name: 'Full screen', exact: true }).click();
+  const full = page.getByRole('dialog', { name: 'fixture-employer application, full screen', exact: true });
+  await full.getByRole('button', { name: 'Apply', exact: true }).click();
+  await full.getByRole('button', { name: 'Yes, apply', exact: true }).click();
+  await expect(full.getByText(/^Approved\. Waiting for the worker to submit it/)).toBeVisible();
+  await expect(full.getByRole('img', { name: 'Workie\'s browser filling the fixture-employer application', exact: true })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Live', exact: true }).getByRole('listitem')).toHaveCount(1);
+  expect(fixture.writes.map((request) => request.body?.action)).toEqual(['approve-submit']);
+});
+
+// listLive stops sending a row's frame once it leaves Live; the card used to stay, saying the form had not gone out, until the minute's refresh.
+test('Live drops a form the worker submitted at its next frame poll', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const app = fixture.addApplication('submitting');
+  fixture.frames = [{ applicationId: app.id, step: 'Filling the form again and submitting it', image: PIXEL, fields: null, updatedAt: Date.now() }];
+  await page.goto('/applications?view=live');
+  await expect(page.getByRole('list', { name: 'Live', exact: true }).getByText(/^Filling the form again and submitting it · updated/)).toBeVisible();
+  app.state = 'submitted';
+  await expect(page.getByText(/^Nothing is being applied right now\./)).toBeVisible({ timeout: 10_000 });
+});
+
+// Rows reload once a minute and frames every 3 s; Live used to wait for the rows to show a form the worker had started filling.
+test('Live shows a form the worker starts filling after the page loaded, at its next frame', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const app = fixture.addApplication('queued');
+  await page.goto('/applications?view=live');
+  await expect(page.getByText(/^Nothing is being applied right now\./)).toBeVisible();
+  app.state = 'filling';
+  fixture.frames = [{ applicationId: app.id, step: 'Filling the form', image: PIXEL, fields: null, updatedAt: Date.now() }];
+  const live = page.getByRole('list', { name: 'Live', exact: true });
+  await expect(live.getByText(/^Filling the form · updated/)).toBeVisible({ timeout: 10_000 });
+  await expect(live.getByRole('img', { name: 'Workie\'s browser filling the fixture-employer application', exact: true })).toBeVisible();
 });
 
 test('dense layout has native labels keyboard focus and no overflow in light and dark', async ({ page }, info) => {

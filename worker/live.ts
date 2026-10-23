@@ -33,7 +33,7 @@ export function liveView(post: (frame: Frame) => Promise<unknown>, runtime: Brow
   timer.unref?.();
   return {
     step(next: string) { step = next; void send(true); },
-    /** Ends the view. The last picture stays only for a form waiting on the applicant's approval. */
+    /** Ends the view. The last picture stays only for a form waiting on the applicant's answers or approval. */
     async stop(last: string, fields?: Frame['fields'], keepImage = false) {
       clearInterval(timer);
       // Frames still sending, including a queued step, land before the last one so they never replace it.

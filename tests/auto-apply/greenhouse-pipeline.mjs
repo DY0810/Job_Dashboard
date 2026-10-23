@@ -230,6 +230,9 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       const asked = await stage('filling');
       assert.equal(asked.kind, 'questions');
       assert.deepEqual(asked.questions.map(item => item.originalWording), ['Why are you interested in Fixture Co?']);
+      // The form waiting on the applicant's answers keeps its last picture, so Live shows what they are answering.
+      assert.ok(calls.live.at(-1).image?.length > 1000, 'the form waiting on answers keeps its picture');
+      assert.equal(calls.live.at(-1).step, 'Waiting for your answers');
       context.answers[asked.questions[0].key] = NARRATIVE; // the inbox answer, as the server returns it
 
       // A profile edit since screening that re-screening cannot settle is asked, not parked with nothing to answer.
