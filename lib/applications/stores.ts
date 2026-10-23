@@ -1,13 +1,20 @@
 import 'server-only';
-import { createHash } from 'node:crypto';
-import { and, eq, gte, isNull, sql } from 'drizzle-orm';
+import { createHash, randomUUID } from 'node:crypto';
+import { and, eq, gte, inArray, isNotNull, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
-import { documents, profileHeads, profileVersions, policyHeads, policyVersions, policyCommands, workers } from '../private-db/schema.ts';
+import {
+  applicationRuns, applications, discoveryManifests, documents, profileHeads, profileVersions, policyHeads, policyVersions, policyCommands,
+  questions, workers,
+} from '../private-db/schema.ts';
 import { createEmptyProfile, ProfileSchema, ProfileSaveSchema, profileEnablementIssues, type Profile, type ProfileResponse, type ProfileSave } from './profile.ts';
-import { createEmptyPolicy, PolicySchema, PolicySaveSchema, PolicyCommandSchema, type PolicyResponse, type PolicySave, type PolicyCommand } from './policy.ts';
+import {
+  createEmptyPolicy, PolicySchema, PolicySaveSchema, PolicyCommandSchema, type Policy, type PolicyResponse, type PolicySave, type PolicyCommand,
+} from './policy.ts';
 import { readDraftKeyConfig } from './draft-key.ts';
 import { PrivateInputError } from './private-http.ts';
 import { HEARTBEAT_MS } from './worker-protocol.ts';
+import { isAwaitingSubmitApproval, isWaitingState, SUBMIT_APPROVAL } from './state.ts';
+import { carryQuestions } from './questions.ts';
 
 type Db = Pick<PrivateDb, 'select' | 'insert' | 'update'>;
 type Tx = Parameters<Parameters<PrivateDb['transaction']>[0]>[0];
@@ -228,7 +235,97 @@ export async function mutatePolicy(
       if (!rows.length) conflict();
     }
     const acknowledgement = await getPolicy(tx, ownerId, now);
+    if (acknowledgement.enabled) await carryRunsForward(tx, ownerId, acknowledgement, now);
     await tx.insert(policyCommands).values({ ownerId, requestId: command.requestId, requestHash, revision, acknowledgement, createdAt: now });
     return acknowledgement;
   });
+}
+
+/** The policy fields discovery selects roles with; a run's rows were selected under its policy's. */
+const selection = (policy: Policy) => [policy.filters, policy.destinations, policy.countries, policy.sourceRestrictions,
+  policy.targetRoles, policy.employerBlocklist, policy.payFloor, policy.undisclosedPay];
+/** What fills and screens a form: everything but pacing, budget and expiry. Submit and recruiter email leave the form as it is. */
+const form = (policy: Policy) => ({ ...policy, dailyApplicationCap: null, perEmployerCap: null, budget: null, expiresAt: null,
+  reapplication: null, actions: policy.actions.filter((action) => action === 'tailor_documents' || action === 'fill_forms') });
+
+/**
+ * Runs follow the policy their applicant enables, so their rows lease again. Fail closed: every lease from before ends (a
+ * submitting one becomes submission_unknown), so its worker can do nothing more with it. A run whose rows the new policy
+ * might not select (what discovery selects with changed) ends as Stop ends it, so nothing selected under the old policy
+ * goes on, and a running one is replaced by a run on the new policy that discovers again. Any other run moves to the new
+ * policy. An approved form waits for a new approval when Submit is off, and a reapplication ends when reapplication is.
+ * Each answer the new policy still allows moves to it, so an approved form submits with the answers the applicant
+ * reviewed; any other question closes. A row waiting on questions, or a filled form that lost an answer, screens again:
+ * the worker asks again under the new policy, and a question it no longer asks cannot block the row.
+ * ponytail: any change to what discovery selects ends the run, widening too; re-screen each row's frozen candidate if
+ * losing in-progress rows on a widened policy hurts.
+ */
+async function carryRunsForward(tx: Tx, ownerId: string, policy: PolicyResponse, now: number) {
+  const bump = { revision: sql`${applications.revision} + 1`, fence: sql`${applications.fence} + 1` };
+  const unfinished = notInArray(applications.state, ['submitting', 'submission_unknown', 'submitted', 'failed', 'skipped', 'cancelled']);
+  await tx.update(applications).set({
+    ...bump, leaseUntil: null, leaseCheckedAt: null, reasonCode: 'policy_changed',
+    state: sql`case when ${applications.state} = 'submitting' then 'submission_unknown' else ${applications.state} end`,
+  }).where(and(eq(applications.ownerId, ownerId), or(isNotNull(applications.leaseUntil), eq(applications.state, 'submitting'))));
+  const binding = { policyRevision: policy.revision, policyVersion: policy.policyVersion, policyHash: policy.policyHash! };
+  const carried: string[] = [], refill: string[] = [];
+  for (const { run, bound } of await tx.select({ run: applicationRuns, bound: policyVersions.policy }).from(applicationRuns)
+    .innerJoin(policyVersions, and(eq(policyVersions.ownerId, applicationRuns.ownerId), eq(policyVersions.version, applicationRuns.policyVersion)))
+    .where(and(eq(applicationRuns.ownerId, ownerId), ne(applicationRuns.state, 'stopped')))) {
+    const scope = and(eq(applicationRuns.ownerId, ownerId), eq(applicationRuns.id, run.id));
+    const before = PolicySchema.parse(bound);
+    if (hashValue(selection(before)) === hashValue(selection(policy.policy))) {
+      await tx.update(applicationRuns).set({ ...binding, revision: sql`${applicationRuns.revision} + 1` }).where(scope);
+      carried.push(run.id);
+      if (hashValue(form(before)) !== hashValue(form(policy.policy))) refill.push(run.id);
+      continue;
+    }
+    // Stop's steps (commandRun): discovery ends, and what never reached the employer is cancelled.
+    await tx.update(applicationRuns).set({
+      state: 'stopped', revision: sql`${applicationRuns.revision} + 1`, captureToken: null, captureUntil: null,
+      ...(run.discoveryState === 'capturing' || run.discoveryState === 'staging' ? { discoveryState: 'abandoned' as const } : {}),
+    }).where(scope);
+    if (run.discoveryState === 'staging' && run.currentManifestId) {
+      await tx.update(discoveryManifests).set({ state: 'abandoned', revision: sql`${discoveryManifests.revision} + 1` }).where(and(
+        eq(discoveryManifests.ownerId, ownerId), eq(discoveryManifests.id, run.currentManifestId), eq(discoveryManifests.state, 'staging')));
+    }
+    await tx.update(applications).set({ ...bump, state: 'cancelled', reasonCode: 'run_stopped' })
+      .where(and(eq(applications.ownerId, ownerId), eq(applications.runId, run.id), unfinished));
+    if (run.state === 'running') await tx.insert(applicationRuns).values({ id: randomUUID(), ownerId, workerId: run.workerId, ...binding, createdAt: now });
+  }
+  if (!policy.policy.actions.includes('submit')) {
+    await tx.update(applications).set({ ...bump, state: 'needs_policy_decision', reasonCode: 'submit_approval' })
+      .where(and(eq(applications.ownerId, ownerId), eq(applications.state, 'ready')));
+  }
+  if (!carried.length) return;
+  if (!policy.policy.reapplication.allowed) {
+    // Reapplying to a role the employer already received needs the policy's permission to go on, not only to start.
+    await tx.update(applications).set({ ...bump, state: 'cancelled', reasonCode: 'reapplication_disabled' }).where(and(
+      eq(applications.ownerId, ownerId), inArray(applications.runId, carried), unfinished,
+      sql`exists (select 1 from ${applications} p where p.owner_id = ${applications.ownerId} and p.ats = ${applications.ats}
+        and p.tenant = ${applications.tenant} and p.requisition = ${applications.requisition} and p.state = 'submitted')`));
+  }
+  const asked = await tx.selectDistinct({ app: applications }).from(applications).innerJoin(questions, and(
+    eq(questions.ownerId, applications.ownerId), eq(questions.applicationId, applications.id), eq(questions.active, true),
+  )).where(and(eq(applications.ownerId, ownerId), inArray(applications.runId, carried), unfinished));
+  const lost = await carryQuestions(tx, ownerId, asked.map(({ app }) => app.id), now);
+  for (const { app } of asked) {
+    // A form refilled at submit without an answer it lost would go out unlike the one the applicant reviewed.
+    const filled = !isWaitingState(app.state) || isAwaitingSubmitApproval(app.state, app.reasonCode);
+    if ((isWaitingState(app.state) && ['question_unresolved', 'run_paused'].includes(app.reasonCode ?? '')) || (lost.has(app.id) && filled)) {
+      await tx.update(applications).set({
+        ...bump, state: 'screening', reasonCode: 'policy_changed',
+        checkpoint: { stage: 'screening', sequence: (app.checkpoint?.sequence ?? 0) + 1 },
+      }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, app.id)));
+    }
+  }
+  if (!refill.length) return;
+  // An approval covers the form the applicant reviewed. A change to what fills or screens it needs a new fill and review.
+  for (const app of await tx.select().from(applications).where(and(eq(applications.ownerId, ownerId), inArray(applications.runId, refill),
+    or(eq(applications.state, 'ready'), and(eq(applications.state, 'needs_policy_decision'), eq(applications.reasonCode, SUBMIT_APPROVAL)))))) {
+    await tx.update(applications).set({
+      ...bump, state: 'screening', reasonCode: 'policy_changed',
+      checkpoint: { stage: 'screening', sequence: (app.checkpoint?.sequence ?? 0) + 1 },
+    }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, app.id)));
+  }
 }

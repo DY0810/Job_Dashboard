@@ -24,7 +24,7 @@ it('migrates private storage twice while retaining prior assignment and terminal
     'private_application_artifact_no_update', 'private_application_artifact_no_delete',
   ]) expect(triggers.map((row) => row.name)).toContain(name);
   expect(await db.all(sql`pragma foreign_key_check`)).toEqual([]);
-  expect(await db.all(sql`select * from __drizzle_migrations`)).toHaveLength(13);
+  expect(await db.all(sql`select * from __drizzle_migrations`)).toHaveLength(14);
   await db.run(sql`insert into private_user (id,name,email,email_verified,created_at,updated_at)
     values ('alice','Synthetic','alice@example.test',1,1,1)`);
   await db.run(sql`insert into private_policy_version (owner_id,version,hash,policy,created_at)
@@ -36,6 +36,11 @@ it('migrates private storage twice while retaining prior assignment and terminal
     values ('worker','alice','pair',${'c'.repeat(64)},${'b'.repeat(64)},'reg','hash','fixture',1,'0.1','["control-v1"]',1)`);
   await db.run(sql`insert into private_application_run (id,owner_id,worker_id,policy_revision,policy_version,policy_hash,created_at)
     values ('run','alice','worker',1,1,${'a'.repeat(64)},1)`);
+  // A run's policy moves only forward, to a newer revision; its worker never changes.
+  await db.run(sql`update private_application_run set policy_revision = 3 where id = 'run'`);
+  for (const change of [sql`policy_revision = 2`, sql`policy_hash = ${'f'.repeat(64)}`, sql`worker_id = 'other'`]) {
+    await expect(db.run(sql`update private_application_run set ${change} where id = 'run'`)).rejects.toThrow();
+  }
   await db.run(sql`insert into private_application (id,owner_id,run_id,worker_id,ats,tenant,requisition,state,available_at,created_at)
     values ('app','alice','run','worker','greenhouse','fixture','123','submission_unknown',1,1)`);
   // An unknown submission leaves only as submitted, or as failed on the applicant's confirmation that it never arrived.

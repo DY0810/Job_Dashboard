@@ -1,5 +1,5 @@
-// Client-safe: which Auto Apply list a row belongs in. Archiving only hides; it never changes the application.
-import { isAwaitingSubmitApproval, type ApplicationState } from './state.ts';
+// Client-safe: which Auto Apply list a row belongs in, and what its card asks. Archiving only hides; it never changes the application.
+import { isAwaitingSubmitApproval, isTerminalState, type ApplicationState } from './state.ts';
 import { PARKED_STEPS } from './worker-protocol.ts';
 
 const DAY_MS = 86_400_000;
@@ -48,4 +48,23 @@ export function rowsBehind(frames: { applicationId: string; state: ApplicationSt
   const now = new Set(frames.map((frame) => frame.applicationId));
   return [...frames.filter((frame) => states.get(frame.applicationId) !== frame.state).map((frame) => `${frame.applicationId} ${frame.state}`),
     ...before.filter((frame) => !now.has(frame.applicationId)).map((frame) => `${frame.applicationId} left`)].sort().join('\n');
+}
+
+/** Open questions by application, each once: a reopened question has one notification per time it was asked. */
+export function openQuestions<Q extends { id: string; resolved: boolean }>(items: { applicationId: string; question: Q | null }[]) {
+  const asked = new Map<string, Q[]>();
+  for (const { applicationId, question } of items) {
+    const here = asked.get(applicationId) ?? [];
+    if (question && !question.resolved && !here.some((item) => item.id === question.id)) asked.set(applicationId, [...here, question]);
+  }
+  return asked;
+}
+
+/** The questions a row's card asks, and whether it restarts instead. A stopped row takes no answers (its form is
+ * read-only), and a needs_answer the worker parked with no question has nothing to answer and nothing resumes it.
+ * A row waiting on its questions (still loading) or on its paused run is not parked. */
+export function rowAsks<Q>(app: { state: ApplicationState; reasonCode: string | null }, open: Q[] = []) {
+  const questions = isTerminalState(app.state) ? [] : open;
+  return { questions, restart: app.state === 'needs_answer' && !questions.length &&
+    !['question_unresolved', 'run_paused'].includes(app.reasonCode ?? '') };
 }

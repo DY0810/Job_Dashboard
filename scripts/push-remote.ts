@@ -32,7 +32,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { createClient } from '@libsql/client';
+import { createClient, type Client } from '@libsql/client';
 import { getTableColumns, getTableName, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
@@ -194,12 +194,28 @@ export async function mirrorTable(
   return changed.length;
 }
 
+/**
+ * Apply pending migrations on a client of their own, over plain `fetch` rather than
+ * `retryingFetch`. A migration batch whose response is lost may have committed anyway (on 10/23,
+ * building postings_board_idx over 370k rows outlasted the wait), and resending the same request
+ * re-runs its statements: `DROP INDEX` failed on the index it had just dropped. Running `migrate`
+ * again instead re-reads `__drizzle_migrations` and skips whatever the first attempt committed.
+ */
+export async function migrateRemote(client: Client): Promise<void> {
+  const db = drizzle(client);
+  try {
+    await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+  } catch {
+    await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+  }
+}
+
 export async function pushRemote(
   url: string,
   authToken: string | undefined,
 ): Promise<{ rows: number; deleted: number }[]> {
+  await migrateRemote(createClient({ url, authToken }));
   const remote = drizzle(createClient({ url, authToken, fetch: retryingFetch }), { schema });
-  await migrate(remote, { migrationsFolder: MIGRATIONS_DIR });
 
   const local = openDb();
 

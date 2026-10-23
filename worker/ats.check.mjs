@@ -633,3 +633,33 @@ test('a long Lever list takes the one option a typed name matches', () => {
   assert.equal(matchOption(schools, 'University of'), undefined);
   assert.equal(matchOption(schools, ''), undefined);
 });
+
+// Palantir's live label (2026-10): a long university list with an instruction after the question.
+const palantirSchool = 'Which university are you currently attending or did you last attend? Please select "Other (School Not Listed)" if your school is not listed.';
+test("the profile school answers a school list only with the option that is that school", () => {
+  const ask = (school, field) => lever.answer(leverApplication({ 'school--0': school }), { key: 'f-1', name: 'cards[c][field0]', required: true, ...field });
+  // Too many options to carry: the profile school goes to the fill, which checks it against the live list.
+  assert.equal(ask('Stanford University', { label: palantirSchool, kind: 'select' }), 'Stanford University');
+  // Only a list's trailing instruction is dropped: a text question that asks for more than the school is asked.
+  assert.equal(ask('Stanford University', { label: palantirSchool, kind: 'text' }), undefined);
+  assert.equal(ask('Stanford University', { label: 'What school do you attend? Please also list your GPA.', kind: 'text' }), undefined);
+  const options = ['Stanford University', 'The University of Texas at Austin', 'Texas A&M University', 'Other (School Not Listed)'];
+  assert.equal(ask('University of Texas at Austin', { label: 'School', kind: 'select', options }), 'The University of Texas at Austin');
+  assert.equal(ask('texas a and m university', { label: 'School', kind: 'select', options }), 'Texas A&M University');
+  assert.equal(ask('Stanford', { label: 'School', kind: 'select', options }), undefined); // close is not the same school
+  assert.equal(matchOption(options, 'stanford university.', false), 'Stanford University');
+  assert.equal(matchOption(options, 'Stanford', false), undefined);
+});
+test('a long Lever list takes the profile school only when it is one option exactly', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const schools = ['Stanford University', ...Array.from({ length: 120 }, (_, i) => `College ${i}`), 'Other (School Not Listed)'];
+    await page.setContent(`<select name="cards[c][field0]"><option value="">Select ...</option>${schools.map(school => `<option value="${school}">${school}</option>`).join('')}</select>`);
+    const field = { key: 'f-1', name: 'cards[c][field0]', label: palantirSchool, kind: 'select', required: true };
+    const fill = school => lever.fill({ page: async () => page }, leverApplication({ 'school--0': school }), { fields: [field] });
+    await assert.rejects(fill('Stanford'), error => error.code === 'ANSWER_OPTION_INVALID'); // asked, not guessed
+    await fill('stanford university');
+    assert.equal(await page.locator('select').evaluate(node => node.selectedOptions[0].label), 'Stanford University');
+  } finally { await browser.close(); }
+});

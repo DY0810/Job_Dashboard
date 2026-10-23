@@ -6,8 +6,9 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
 import { applications, applicationLive, applicationReceipts, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
-import { createEmptyPolicy } from './policy.ts';
-import { hashValue } from './stores.ts';
+import { createEmptyPolicy, type Policy } from './policy.ts';
+import { createEmptyProfile } from './profile.ts';
+import { getPolicy, getProfile, hashValue, mutatePolicy, saveProfile } from './stores.ts';
 import { APPLICATION_STATES, SAFE_STAGES, SUBMIT_APPROVAL, canTransition, type ApplicationState } from './state.ts';
 import * as p from './worker-protocol.ts';
 import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing, scheduleWorker } from './pairing.ts';
@@ -869,5 +870,98 @@ describe('daily start schedule', () => {
     now += 18 * 3_600_000;
     await poll();
     expect(await db.select().from(applicationRuns)).toHaveLength(1);
+  });
+});
+
+describe('a policy change the applicant enables', () => {
+  /** The enabled policy runs start under, with what discovery selects already chosen. */
+  async function startPolicy() {
+    const policy: Policy = { ...createEmptyPolicy(), actions: ['read_jobs', 'fill_forms', 'submit'], destinations: ['boards.greenhouse.io'], countries: ['US'] };
+    const hash = hashValue(policy);
+    await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash, policy, createdAt: now });
+    await db.update(policyHeads).set({ revision: 2, policyVersion: 2, acceptedPolicyVersion: 2, acceptedPolicyHash: hash }).where(eq(policyHeads.ownerId, 'alice'));
+  }
+  /** Saves and enables a policy the way Profile does: a save turns the policy off, Enable turns it back on. */
+  async function changePolicy(changes: Partial<Policy>) {
+    vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+    vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
+    if (!(await getProfile(db, 'alice')).revision) {
+      const profile = createEmptyProfile(), confirmedAt = new Date(now).toISOString();
+      for (const [key, value] of [['legalFirstName', 'Synthetic'], ['legalLastName', 'Applicant'], ['personalEmail', 'alice@example.test']] as const) {
+        Object.assign(profile.identity[key], { value, state: 'confirmed', confirmedAt });
+      }
+      await saveProfile(db, 'alice', { ...revision(0), profile });
+    }
+    const current = await getPolicy(db, 'alice');
+    const saved = await mutatePolicy(db, 'alice', { ...revision(current.revision), policy: { ...current.policy, ...changes } });
+    return mutatePolicy(db, 'alice', { ...revision(saved.revision), action: 'enable', acceptedPolicyHash: saved.policyHash! });
+  }
+  const row = async (id: string) => (await db.select().from(applications).where(eq(applications.id, id)))[0];
+  const runRow = async (id: string) => (await db.select().from(applicationRuns).where(eq(applicationRuns.id, id)))[0];
+  const park = async (token: string, id: string) => recordWorkerEvent(db, token, id, {
+    ...event(await claim(token), 'needs_policy_decision'), reasonCode: 'submit_approval' }, options);
+
+  it('moves the running run to the new policy so its rows lease again, and ends every lease from before', async () => {
+    await startPolicy();
+    const { worker, run } = await prepared();
+    await enqueueApplication(db, 'alice', run.id, { ats: 'fixture', tenant: 'second', requisition: 'two' }, options);
+    const lease = await claim(worker.token);
+    const enabled = await changePolicy({ dailyApplicationCap: 5 });
+    // The run's policy matches again, so only ending the lease keeps the worker from recording, renewing or submitting with it.
+    await expect(recordWorkerEvent(db, worker.token, lease.applicationId, event(lease), options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    await expect(heartbeatWorker(db, worker.token, { protocolVersion: 1, lease: ref(lease) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    expect(await runRow(run.id)).toMatchObject({ state: 'running', policyRevision: enabled.revision,
+      policyVersion: enabled.policyVersion, policyHash: enabled.policyHash });
+    expect(await claim(worker.token)).toMatchObject({ runId: run.id, policyRevision: enabled.revision });
+    expect(await db.select().from(applicationRuns)).toHaveLength(1);
+  });
+
+  it('approves a parked form only on a run bound to the enabled policy, and takes approvals back when Submit is turned off', async () => {
+    await startPolicy();
+    const { worker, run, app } = await prepared();
+    const held = await park(worker.token, app.id);
+    // A run left on an older policy (stale before runs followed the policy) is refused, not stranded at 'ready'.
+    await db.update(policyHeads).set({ revision: 3 }).where(eq(policyHeads.ownerId, 'alice'));
+    await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options))
+      .rejects.toMatchObject({ status: 409, code: 'POLICY_CHANGED' });
+    expect(await row(app.id)).toMatchObject({ state: 'needs_policy_decision', reasonCode: 'submit_approval' });
+    // Enabling the policy again carries the run forward, and the approved form leases.
+    await changePolicy({ dailyApplicationCap: 5 });
+    expect(await commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options))
+      .toMatchObject({ state: 'ready', reasonCode: 'submit_approved' });
+    expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, state: 'ready' });
+    // A policy without Submit takes the approval back; nothing is submitted until the applicant approves under one with it.
+    await changePolicy({ actions: ['read_jobs', 'fill_forms'] });
+    const parked = await row(app.id);
+    expect(parked).toMatchObject({ state: 'needs_policy_decision', reasonCode: 'submit_approval', leaseUntil: null });
+    expect((await pollWorker(db, worker.token, { protocolVersion: 1 }, options)).lease).toBeNull();
+    await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(parked.revision), action: 'approve-submit' }, options))
+      .rejects.toMatchObject({ status: 403 });
+    await changePolicy({ actions: ['read_jobs', 'fill_forms', 'submit'] });
+    await commandApplication(db, 'alice', run.id, app.id, { ...revision(parked.revision), action: 'approve-submit' }, options);
+    expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, state: 'ready' });
+  });
+
+  it('refuses Apply on a run its revoked worker paused, since no worker can lease the approved form there', async () => {
+    await startPolicy();
+    const { worker, run, app } = await prepared();
+    const held = await park(worker.token, app.id);
+    await revokeWorker(db, 'alice', worker.workerId, revision(1), options);
+    expect(await runRow(run.id)).toMatchObject({ state: 'paused' });
+    await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await row(app.id)).toMatchObject({ state: 'needs_policy_decision', reasonCode: 'submit_approval' });
+  });
+
+  it('leases a form the applicant approved before roles that have not started', async () => {
+    await startPolicy();
+    const { worker, run, app } = await prepared();
+    const held = await park(worker.token, app.id);
+    for (const tenant of ['older-a', 'older-b', 'older-c']) {
+      await enqueueApplication(db, 'alice', run.id, { ats: 'fixture', tenant, requisition: tenant }, options);
+    }
+    now += 1000;
+    await commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'approve-submit' }, options);
+    expect(await claim(worker.token)).toMatchObject({ applicationId: app.id, state: 'ready' });
   });
 });

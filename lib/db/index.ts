@@ -49,8 +49,9 @@ export const TURSO_ENV = ['TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN'] as const;
  * pool is global. The failed socket is discarded, so the retry opens a fresh one.
  *
  * The server may still have run the first attempt (a half-closed socket reads it), so this is
- * only for statements that tolerate running twice: the mirror's upserts and deletes, the
- * guarded `finishRequest`, migrations (atomic, and skipped once recorded). A replayed
+ * only for statements that tolerate running twice: the mirror's upserts and deletes and the
+ * guarded `finishRequest`. Not migrations: a replayed batch re-runs DDL the first attempt may
+ * have committed, so `migrateRemote` sends them over plain `fetch`. A replayed
  * `claimRequest` finds its own claim and reports nobody waiting; the row is reclaimed after
  * CLAIM_TIMEOUT_MS. Never pass this to a client that sends a plain INSERT.
  */

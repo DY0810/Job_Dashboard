@@ -13,7 +13,8 @@ import {
   discoveryManifests, discoveryTargets, manualApplicationMarks, legacyImportPreviews,
 } from '../private-db/schema.ts';
 import { createEmptyPolicy, type Policy } from './policy.ts';
-import { hashValue } from './stores.ts';
+import { createEmptyProfile } from './profile.ts';
+import { getPolicy, getProfile, hashValue, mutatePolicy, saveProfile } from './stores.ts';
 import { createPairing, pairWorker, revokeWorker } from './pairing.ts';
 import { createRun, commandRun, commandApplication, listRuns } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
@@ -24,6 +25,10 @@ import {
   DISCOVERY_INTERVAL_MS,
 } from './discovery.ts';
 import { previewLegacyImport, confirmLegacyImport } from './imports.ts';
+import { applicationContext } from './application-context.ts';
+import { answerQuestion, getQuestion, registerQuestionBatch } from './questions.ts';
+import { formQuestions } from '../../worker/screening.ts';
+import { formQuestionKey } from '../../worker/ats/protocol.ts';
 import { ImportConfirmRequestSchema, ImportPreviewRequestSchema, IMPORT_PREVIEW_TTL_MS } from './discovery-protocol.ts';
 import * as source from './discovery-source.ts';
 import { getDiscoveryCorpus } from './discovery-corpus.ts';
@@ -66,6 +71,21 @@ async function prepared(ownerId = 'alice', overrides: Partial<Policy> = {}) {
   }, options);
   const run = await createRun(db, ownerId, { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
   return { run, worker, token };
+}
+/** Saves and enables the policy with these changes, the way Profile does. */
+async function enable(changes: Partial<Policy>) {
+  vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+  vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
+  if (!(await getProfile(db, 'alice')).revision) {
+    const profile = createEmptyProfile(), confirmedAt = new Date(now).toISOString();
+    for (const [key, value] of [['legalFirstName', 'Synthetic'], ['legalLastName', 'Applicant'], ['personalEmail', 'alice@example.test']] as const) {
+      Object.assign(profile.identity[key], { value, state: 'confirmed', confirmedAt });
+    }
+    await saveProfile(db, 'alice', { ...request(), expectedRevision: 0, profile });
+  }
+  const current = await getPolicy(db, 'alice');
+  const saved = await mutatePolicy(db, 'alice', { ...request(), expectedRevision: current.revision, policy: { ...current.policy, ...changes } });
+  return mutatePolicy(db, 'alice', { ...request(), expectedRevision: saved.revision, action: 'enable', acceptedPolicyHash: saved.policyHash! });
 }
 async function complete(token: string, runId: string) {
   for (let i = 0; i < 60; i++) {
@@ -210,6 +230,41 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect(retry).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: previous.id });
     expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts.duplicate).toBe(1);
     expect((await poll(token)).lease?.applicationId).toBe(retry.id);
+  });
+
+  it('keeps discovering and leasing in the same run after a policy change that selects the same roles', async () => {
+    const { token, run } = await prepared('alice', { countries: ['US'] }); addPostings(2); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    const enabled = await enable({ dailyApplicationCap: 5 });
+    await expect(heartbeatWorker(db, token, { protocolVersion: 1, lease: ref(lease) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    expect((await poll(token)).lease).toMatchObject({ runId: run.id, policyRevision: enabled.revision });
+    now += DISCOVERY_INTERVAL_MS + 1; addPostings(1, 3);
+    await discoverWorkerRuns(db, token, provider, options);
+    expect(await getDiscoveryStatus(db, 'alice', run.id, options)).toMatchObject({ errorCode: null, counts: { eligible: 3 } });
+  });
+
+  it('discovers again under a policy change that narrows what discovery selects, in a new run', async () => {
+    const { token, run } = await prepared('alice', { countries: ['US'] }); addPostings(3); await complete(token, run.id);
+    const enabled = await enable({ employerBlocklist: ['Employer 1'] });
+    expect((await db.select().from(applicationRuns).where(eq(applicationRuns.id, run.id)))[0].state).toBe('stopped');
+    const [replacement] = await db.select().from(applicationRuns).where(eq(applicationRuns.state, 'running'));
+    expect(replacement).toMatchObject({ policyRevision: enabled.revision });
+    await complete(token, replacement.id);
+    // The blocked employer's role stays cancelled; the other two queue again in the new run.
+    expect((await appRows()).filter((row) => row.runId === replacement.id).map((row) => row.tenant).sort()).toEqual(['tenant2', 'tenant3']);
+    expect((await poll(token)).lease).toMatchObject({ runId: replacement.id });
+  });
+
+  it('queues roles a replacement run marked duplicate once the run holding them stops', async () => {
+    const { token, run, worker } = await prepared(); addPostings(3); await complete(token, run.id);
+    const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
+    await complete(token, replacement.id);
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 0, duplicate: 3 });
+    await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'stop' }, options);
+    now += DISCOVERY_INTERVAL_MS + 1;
+    await discoverWorkerRuns(db, token, provider, options);
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 3, duplicate: 0 });
+    expect((await poll(token)).lease).toMatchObject({ runId: replacement.id });
   });
 
   it.each(['DELETE', 'WAL'])('reconciles a replaced %s corpus instead of advancing the scan clock on a cached old inode', async (journal) => {
@@ -463,6 +518,19 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
   });
 
+  it('cancels a queued reapplication once the applicant turns reapplication off', async () => {
+    const { token, run } = await prepared('alice', { countries: ['US'], reapplication: { allowed: true, minimumDays: 1 } });
+    addPostings(1); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    await db.update(applications).set({ state: 'submitted', leaseUntil: null, leaseCheckedAt: null }).where(eq(applications.id, lease.applicationId));
+    const [submitted] = await db.select().from(applications).where(eq(applications.id, lease.applicationId));
+    now += 2 * DAY;
+    const next = await reapplyApplication(db, 'alice', run.id, { ...request(), previousApplicationId: submitted.id, expectedRevision: submitted.revision }, options);
+    await enable({ reapplication: { allowed: false, minimumDays: 1 } });
+    expect((await appRows()).find((a) => a.id === next.id)).toMatchObject({ state: 'cancelled', reasonCode: 'reapplication_disabled' });
+    expect((await poll(token)).lease).toBeNull();
+  });
+
   it('gives an applicant-confirmed unsubmitted application one fresh attempt without reapplication policy', async () => {
     const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
     const lease = (await poll(token)).lease!;
@@ -554,6 +622,31 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await listRuns(db, 'alice', options)).applications.map((a) => [a.id, a.hiddenAt])).toEqual([[fresh.id, now]]);
     expect((await listRuns(db, 'alice', { now: () => now + 30 * 86_400_000 })).applications).toEqual([]);
     expect((await appRows()).find((a) => a.id === fresh.id)?.hiddenAt).toBe(now);
+  });
+
+  it('hands a restarted role the answers given to its earlier attempt, so the worker fills them instead of asking again', async () => {
+    const { token, run } = await prepared('alice', { actions: ['read_jobs', 'fill_forms'] }); addPostings(1); await complete(token, run.id);
+    const field = { key: 'question_1', label: 'Which university do you attend?', kind: 'text' as const, required: true };
+    const contextFor = async (lease: Lease) => applicationContext(db, token, lease.applicationId,
+      { protocolVersion: 1, ...ref(lease) }, { ...options, corpus: provider });
+    const ask = async (lease: Lease) => {
+      const { expectedProfileRevision, company, role, questions } = formQuestions(await contextFor(lease), [field]);
+      return registerQuestionBatch(db, token, lease.applicationId, { expectedProfileRevision, company, role, questions, questionProtocolVersion: 1, eventId: randomUUID(),
+        fence: lease.fence, expectedRevision: lease.revision, checkpoint: { stage: lease.state as 'screening', sequence: (lease.checkpoint?.sequence ?? 0) + 1 } }, options);
+    };
+    const first = (await poll(token)).lease!;
+    const [id] = (await ask(first)).questionIds, q = await getQuestion(db, 'alice', id, options);
+    await answerQuestion(db, 'alice', id, { ...request(), expectedRevision: q.revision, expectedProfileRevision: q.expectedProfileRevision,
+      expectedPolicyRevision: q.expectedPolicyRevision, expectedScopeHash: q.expectedScopeHash, factVersions: q.factVersions,
+      reuse: 'application', answer: { type: 'text', value: 'Stanford University' } }, options);
+    const previous = (await appRows()).find((a) => a.id === first.applicationId)!;
+    const next = await restartApplication(db, 'alice', run.id, { ...request(), previousApplicationId: previous.id, expectedRevision: previous.revision }, options);
+    now += DAY; // The first attempt used today's per-employer start.
+    const retry = (await poll(token)).lease!;
+    expect(retry.applicationId).toBe(next.id);
+    await ask(retry); // Resolved from the earlier attempt's answer.
+    expect((await appRows()).find((a) => a.id === next.id)).toMatchObject({ state: 'screening', reasonCode: null });
+    expect((await contextFor((await poll(token)).lease!)).answers[formQuestionKey(field)]).toBe('Stanford University');
   });
 
   it('resumes a document hold the applicant fixed: in its own run, or after a policy change in a run started under it', async () => {
