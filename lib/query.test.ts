@@ -18,6 +18,7 @@ import { REFS, fixtures, refKey } from '../scripts/seed.ts';
 import type { Db } from './db/index.ts';
 import { postings, postingSources } from './db/schema.ts';
 import { GEO_TIER, geoTier } from './geo.ts';
+import { normalizeCompany } from './normalize.ts';
 import {
   countPostings,
   geoTierSql,
@@ -355,6 +356,16 @@ describe('rows that must never render', () => {
 
   it.each(TABS)('%s: nothing delisted', async (tab) => {
     expect(await order(params(tab))).not.toContain(`${tab[0]}-delisted`);
+  });
+
+  // Hussh posts scam roles. However its name is spelled, no listing, count or deep link shows it.
+  it.each(TABS)('%s: nothing from a blocked employer', async (tab) => {
+    const [first] = await listPostings(db, params(tab), NOW);
+    const total = await countPostings(db, params(tab), NOW);
+    db.update(postings).set({ company: 'hussh 🤫', companyNorm: normalizeCompany('hussh 🤫') }).where(eq(postings.id, first.id)).run();
+    expect((await listPostings(db, params(tab), NOW)).map((row) => row.id)).not.toContain(first.id);
+    expect(await countPostings(db, params(tab), NOW)).toBe(total - 1);
+    expect(await getPostingDetail(db, first.id, NOW)).toBeNull();
   });
 
   // The table is not the only way in: `?job=<id>` reaches a posting directly.
