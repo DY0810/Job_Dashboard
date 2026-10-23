@@ -1,11 +1,18 @@
+import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, rmdir, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, realpath, rename, rmdir, unlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
+import { promisify } from "node:util";
 import type { WorkerScope } from "./credentials.ts";
 
 const MAX_BYTES = 128 * 1024;
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
+// This boot's ID, or "" when unknown (then only the pid check applies).
+let thisBoot: Promise<string> | undefined;
+export const bootId = () => thisBoot ??= (process.platform === "darwin"
+  ? promisify(execFile)("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], { encoding: "utf8", timeout: 5_000 }).then(result => result.stdout)
+  : readFile("/proc/sys/kernel/random/boot_id", "utf8")).then(id => id.trim(), () => "");
 
 export async function privateStore(directory: string, scope: WorkerScope) {
   if (!isAbsolute(directory) || process.platform === "win32") throw new Error("PRIVATE_DIRECTORY_REQUIRED");
@@ -66,10 +73,10 @@ export async function privateStore(directory: string, scope: WorkerScope) {
   }
   async function lock() {
     const filename = path("lock");
-    const nonce = randomUUID();
+    const nonce = randomUUID(), boot = await bootId();
     async function acquire() {
       const file = await open(filename, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-      try { await file.writeFile(JSON.stringify({ pid: process.pid, nonce })); await file.sync(); }
+      try { await file.writeFile(JSON.stringify({ pid: process.pid, nonce, boot })); await file.sync(); }
       finally { await file.close(); }
       return async () => {
         const current = await read("lock") as { nonce?: string } | null;
@@ -83,12 +90,15 @@ export async function privateStore(directory: string, scope: WorkerScope) {
       // ponytail: an abandoned recovery mutex needs manual inspection, never unsafe lock stealing.
       try { await mkdir(recovery, { mode: 0o700 }); } catch { throw new Error("WORKER_LOCKED"); }
       try {
-        const current = await read("lock") as { pid?: number } | null;
+        const current = await read("lock") as { pid?: number; boot?: string } | null;
         if (current) {
           if (!Number.isSafeInteger(current.pid) || current.pid! <= 0) throw new Error("WORKER_LOCKED");
-          let dead = false;
-          try { process.kill(current.pid!, 0); }
-          catch (probe) { dead = (probe as NodeJS.ErrnoException).code === "ESRCH"; }
+          // No process outlives a reboot: an owner from an earlier boot is dead, whatever now runs under its pid.
+          let dead = !!boot && !!current.boot && current.boot !== boot;
+          if (!dead) {
+            try { process.kill(current.pid!, 0); }
+            catch (probe) { dead = (probe as NodeJS.ErrnoException).code === "ESRCH"; }
+          }
           if (!dead) throw new Error("WORKER_LOCKED");
           await remove("lock");
         }

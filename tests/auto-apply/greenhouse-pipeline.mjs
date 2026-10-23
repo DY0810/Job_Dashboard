@@ -242,7 +242,8 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       await page.locator('#security-code').fill('ABCD1234');
       await page.getByRole('button', { name: 'Submit application', exact: true }).click();
       assert.deepEqual(await submitted, { state: 'submitted', reasonCode: 'exact_role_receipt', durable: true });
-      assert.ok(printed.some(line => line.includes('"verification-code-required"')), 'the worker says a code is needed');
+      assert.ok(printed.some(line => line.includes('"verification-code-required"') && !Number.isNaN(Date.parse(JSON.parse(line).at))),
+        'the worker says, with the time, that a code is needed');
       assert.deepEqual(visible, { filling: true, ready: true }, 'every stage that opens a form shows it to the applicant');
       assert.deepEqual(advanced, [{ revision: 2, fence: 1, state: 'submitting' }], 'heartbeats move to the revision the intent created');
 

@@ -15,10 +15,29 @@ import type { PrivateStore } from "./storage.ts";
 import { TransportError } from "./transport.ts";
 import type { WorkerTransport } from "./transport.ts";
 import { QuestionBatchSchema } from "../lib/applications/question-protocol.ts";
-import { questionClient, QuestionDispatchSchema, abortable } from "./question-client.ts";
+import { questionClient, QuestionDispatchSchema, abortable, oversized } from "./question-client.ts";
 import type { StructuredGenerationResult, StructuredTaskInput } from "./providers.ts";
 
 const transient = (error: unknown) => error instanceof TransportError && (error.message === "NETWORK_UNAVAILABLE" || error.status >= 500);
+// Worker-wide: offline, revoked or refused, a server answering in a shape this worker does not know (deployed ahead
+// of it), a lost lease (or application), or the local disk. Any other stage error is its application's.
+const workerWide = (error: unknown) => transient(error) || (error instanceof Error && "syscall" in error) ||
+  (error instanceof TransportError && ([401, 403, 404, 426, 429].includes(error.status) || error.code === "LEASE_LOST" ||
+    error.message === "INVALID_RESPONSE"));
+/** A bounded reason that never carries a private value: Workie's own UPPER_SNAKE codes, else the error's type. */
+const failureReason = (error: unknown) => `worker_${error instanceof TransportError ? `${error.message}${error.code ? `_${error.code}` : ""}`
+  : error instanceof z.ZodError ? "schema_invalid"
+  : error instanceof Error ? /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(error.message) ? error.message : error.name : "failed"}`
+  .toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 80);
+// ponytail: one budget for every stage, well past fill plus the 30-minute code or captcha wait at submit.
+const STAGE_MS = 60 * 60_000;
+// The adapters' wait for the applicant to type a verification code or solve a captcha in the window.
+const VERIFICATION_MS = 30 * 60_000;
+// ponytail: applications failing one after another for the same reason are not bad postings but the worker (a code
+// bug every posting hits). Past this many in a row it stops, as before containment, and the rest of the queue waits.
+// The count is kept on disk so a restart does not fail more; any other outcome resets it.
+const CONTAINED_LIMIT = 3;
+const StreakSchema = z.strictObject({ reasonCode: z.string().nullable(), count: z.number().int().min(0) });
 
 const JournalSchema = z.strictObject({
   version: z.literal(1), scope: ScopeSchema,
@@ -71,6 +90,7 @@ export async function runWorker(options: {
   const unlock = await store.lock();
   signal.addEventListener("abort", stop);
   let journal: z.infer<typeof JournalSchema>;
+  let streak: z.infer<typeof StreakSchema>;
   let transport: WorkerTransport;
   let generate = options.generate;
   let dispatch = options.dispatch ?? unsupportedStage;
@@ -87,6 +107,7 @@ export async function runWorker(options: {
       version: 1, scope, pending: null, acknowledged: null,
     });
     sameScope(scope, journal.scope);
+    streak = StreakSchema.parse(await store.read("contained-streak") ?? { reasonCode: null, count: 0 });
   } catch (error) {
     await unlock();
     signal.removeEventListener("abort", stop);
@@ -121,12 +142,13 @@ export async function runWorker(options: {
         const started = clock();
         const lease = active?.lease;
         let response;
-        // Idle, a missed beat changes nothing; holding a lease, losing contact still stops work (fail closed).
+        // A missed beat is retried on the next one. Holding a lease, the watchdog still stops work once the
+        // last renewed deadline passes (fail closed); a refused beat (revoked, lease lost) stops it now.
         try {
           response = PollResponseSchema.parse(await abortable(transport.heartbeat(lease ? {
             applicationId: lease.applicationId, fence: lease.fence, expectedRevision: lease.revision,
           } : null, signal), signal));
-        } catch (error) { if (!lease && transient(error)) return; throw error; }
+        } catch (error) { if (transient(error)) return; throw error; }
         if (!active) {
           if (response.lease) throw new Error("UNEXPECTED_ASSIGNMENT");
           return;
@@ -141,6 +163,7 @@ export async function runWorker(options: {
   })().catch(error => { if (!signal.aborted) fail(error); });
   const questions = questionClient({ scope, store, transport, signal });
   let interventions = Promise.resolve();
+  let stage: Promise<unknown> | undefined, submitting = false;
   try {
     await questions.recoverBatch();
     await questions.recoverIntervention();
@@ -190,29 +213,53 @@ export async function runWorker(options: {
       }
       if (!SAFE_STAGES.includes(lease.state as typeof SAFE_STAGES[number])) throw new Error("INVALID_STAGE");
       options.status?.("active");
-      const result = DispatchResultSchema.parse(await abortable(
-        guard.boundary(() => dispatch(lease, guard, { signal, generate, advance: value => {
+      // A wedged stage would otherwise hold the only lease forever while heartbeats keep the worker Online.
+      const budget = setTimeout(() => fail(new Error("STAGE_TIMEOUT")), STAGE_MS);
+      let result: DispatchResult, contained: string | null = null;
+      submitting = false;
+      try {
+        stage = guard.boundary(() => dispatch(lease, guard, { signal, generate, advance: value => {
           guard.advance(value);
+          submitting = true;
           if (active?.guard === guard) active.lease = { ...active.lease, ...value };
-        } })), signal,
-      ));
+        } }));
+        result = DispatchResultSchema.parse(await abortable(stage, signal));
+        if (!("kind" in result) && !("durable" in result) &&
+          !canTransition(lease.state, result.state, "evidence" in result ? result.evidence ?? {} : {})) throw new Error("EXECUTION_DISABLED");
+      } catch (error) {
+        // The server hands a restarted worker this same lease first, so a crash here would stop every application.
+        // Past a submission intent (a newer revision) only reconciliation may touch the application.
+        const reasonCode = failureReason(error);
+        if (signal.aborted || workerWide(error) || (active as { lease: Lease; guard: LeaseGuard } | null)?.lease.revision !== lease.revision ||
+          (streak.reasonCode === reasonCode && streak.count >= CONTAINED_LIMIT)) throw error;
+        result = { state: "retryable_failure", reasonCode };
+        contained = reasonCode;
+      } finally { clearTimeout(budget); }
+      if (!contained && streak.count) {
+        streak = { reasonCode: null, count: 0 };
+        await store.write("contained-streak", streak);
+      }
       guard.check();
       if ("kind" in result) {
-        await exclusive(async () => {
+        const ask = result;
+        const refused = await exclusive(async () => {
           guard.check();
           const batch = QuestionBatchSchema.parse({
-            expectedProfileRevision: result.expectedProfileRevision, company: result.company,
-            role: result.role, questions: result.questions,
+            expectedProfileRevision: ask.expectedProfileRevision, company: ask.company,
+            role: ask.role, questions: ask.questions,
             questionProtocolVersion: 1, eventId: randomUUID(), fence: lease.fence,
             expectedRevision: lease.revision,
             checkpoint: { stage: lease.state, sequence: (lease.checkpoint?.sequence ?? 0) + 1 },
           });
-          await questions.register(lease.applicationId, batch, () => guard.check());
+          // A form too large to journal or register is this application's alone, and nothing reached the server.
+          try { await questions.register(lease.applicationId, batch, () => guard.check()); }
+          catch (error) { if (oversized(error)) return failureReason(error); throw error; }
           guard.revoke("CHECKPOINTED");
           active = null;
           options.status?.("waiting");
         });
-        continue;
+        if (!refused) continue;
+        result = { state: "retryable_failure", reasonCode: refused };
       }
       if ("durable" in result && result.durable) {
         // Submission intent/receipt already fenced the server-side state. An old lease
@@ -222,7 +269,6 @@ export async function runWorker(options: {
         options.status?.("waiting");
         continue;
       }
-      if (!canTransition(lease.state, result.state, "evidence" in result ? result.evidence ?? {} : {})) throw new Error("EXECUTION_DISABLED");
       await exclusive(async () => {
         guard.check();
         const stage = SAFE_STAGES.includes(result.state as typeof SAFE_STAGES[number]) ? result.state : lease.state;
@@ -235,6 +281,10 @@ export async function runWorker(options: {
         journal = { ...journal, pending: { applicationId: lease.applicationId, event } };
         await guard.boundary(() => store.write("checkpoint", journal));
         await acknowledge(lease.applicationId, event);
+        if (contained) {
+          streak = { reasonCode: contained, count: streak.reasonCode === contained ? streak.count + 1 : 1 };
+          await store.write("contained-streak", streak);
+        }
         options.status?.("waiting");
       });
     }
@@ -247,6 +297,9 @@ export async function runWorker(options: {
     await heartbeats;
     await interventions;
     await queue;
+    // Past a submission intent the applicant may still be typing a verification code or solving a captcha in the
+    // window, and main exits (closing it) once this returns. That wait ignores the signal, so let it end first.
+    if (submitting) await Promise.race([stage?.catch(() => {}), delay(VERIFICATION_MS, undefined, { ref: false })]);
     await unlock();
     signal.removeEventListener("abort", stop);
     options.status?.("stopped");

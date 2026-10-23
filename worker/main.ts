@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { credentials, nativeCredentialBackend, type CredentialBackend, type WorkerScope } from "./credentials.ts";
-import { privateStore } from "./storage.ts";
+import { bootId, privateStore } from "./storage.ts";
 import { controlOrigin, workerTransport, TransportError, type WorkerTransport } from "./transport.ts";
 import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, ScopeSchema } from "./pairing.ts";
 import { readMaskedGrant, readMaskedSecret } from "./input.ts";
@@ -47,7 +47,7 @@ const ERROR_CODES = new Set([
   "PROVIDER_RESERVATION_MISSING", "PROVIDER_LOW_CONFIDENCE", "PROVIDER_POLICY_INVALID", "PROVIDER_CAPABILITY_MISMATCH", "INVALID_PROVIDER_ENDPOINT", "FETCH_UNAVAILABLE",
   "PROVIDER_FALLBACK_UNSUPPORTED", "PROVIDER_UNKNOWN_COST", "PROVIDER_AUTH_UNAVAILABLE", "PROVIDER_QUOTA_EXCEEDED",
   "PROVIDER_CREDENTIAL_INVALID", "PROVIDER_MODEL_INVALID", "PROVIDER_ID_INVALID", "LOCAL_PROVIDER_POLICY_INVALID", "LOCAL_PROVIDER_ENDPOINT_REQUIRED",
-  "REMOTE_PROVIDER_ENDPOINT_INVALID",
+  "REMOTE_PROVIDER_ENDPOINT_INVALID", "STAGE_TIMEOUT",
 ]);
 
 const PROVIDER_CAPABILITY_CACHE = "provider-capability";
@@ -453,8 +453,10 @@ export async function main(args = process.argv.slice(2)) {
       return;
     }
     if (args[0] === "stop") {
-      const lock = await store.read("lock") as { pid?: number } | null;
-      if (!lock) {
+      const lock = await store.read("lock") as { pid?: number; boot?: string } | null;
+      const boot = await bootId();
+      // A lock from an earlier boot is stale, and its pid may now be some other process: never signal it.
+      if (!lock || (boot && lock.boot && lock.boot !== boot)) {
         process.stdout.write(JSON.stringify({ ...scope, status: "not-running" }) + "\n");
         return;
       }
@@ -530,7 +532,7 @@ export async function main(args = process.argv.slice(2)) {
       return { generate, dispatch };
     };
     await runWorker({ scope, store, transport, configure: setup,
-      signal: controller.signal, status: status => process.stdout.write(JSON.stringify({ status }) + "\n") });
+      signal: controller.signal, status: status => process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status }) + "\n") });
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
@@ -545,7 +547,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const detail = code !== "WORKER_FAILED" ? undefined : error instanceof z.ZodError
       ? `ZodError ${error.issues.slice(0, 5).map(issue => `${issue.path.join(".")}:${issue.code}`).join(" ")}`
       : error instanceof Error ? `${error.name}${error instanceof AtsError ? ` ${error.code}` : ""}: ${error.message.split("\n")[0].slice(0, 160)}` : typeof error;
-    process.stderr.write(JSON.stringify({ error: code, ...(detail ? { detail } : {}) }) + "\n");
+    process.stderr.write(JSON.stringify({ at: new Date().toISOString(), error: code, ...(detail ? { detail } : {}) }) + "\n");
     process.exitCode = 1;
+  }).finally(() => {
+    // The shared Chromium window keeps the event loop busy, so after a stop or an error the process would linger
+    // and launchd would never restart it. Give the abandoned stage a moment to clean up, then exit (the window
+    // closes with the process).
+    setTimeout(() => process.exit(), 5000).unref();
   });
 }
