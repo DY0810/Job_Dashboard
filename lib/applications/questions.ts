@@ -123,7 +123,7 @@ const sameApplication = (answer: Pick<AnswerRow, 'reuse' | 'applicationId'>, row
   answer.reuse === 'application' && answer.applicationId === row.applicationId;
 // A retry is a new attempt of the same role: the same question asked there reuses the answer given to an earlier attempt.
 const roleHash = (q: QuestionDescriptor) => semanticHash({ ...q, scope: { ...q.scope, applicationId: null } });
-async function attemptIds(tx: WorkerTx, app: ApplicationRow) {
+export async function attemptIds(tx: WorkerTx, app: ApplicationRow) {
   const ids = [app.id];
   for (let previous = app.previousApplicationId; previous && ids.length < 50;) {
     const [row] = await tx.select().from(applications).where(appScope(app.ownerId, previous));

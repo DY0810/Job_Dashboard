@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
 import { statusBadge, type BadgeTone } from '../../lib/applications/badges';
-import { archivedAt, bucket } from '../../lib/applications/buckets';
+import { archivedAt, bucket, openQuestions, rowAsks } from '../../lib/applications/buckets';
 import { postingUrl } from '../../lib/applications/posting-url';
 import type { QuestionDetail } from '../../lib/applications/question-protocol';
 import { formatDailyStart, scheduledWorker } from '../../lib/applications/schedule';
@@ -397,10 +397,7 @@ export default function Applications() {
   const scheduled = scheduledWorker(view.workers?.workers);
   const caps = view.policy?.policy;
   const materials = new Map(view.materials.map((item) => [item.applicationId, item]));
-  const asked = new Map<string, QuestionDetail[]>();
-  for (const item of questions.view.inbox?.items ?? []) {
-    if (item.question && !item.question.resolved) asked.set(item.applicationId, [...asked.get(item.applicationId) ?? [], item.question]);
-  }
+  const asked = openQuestions(questions.view.inbox?.items ?? []);
   const questionRole = new Map((questions.view.inbox?.items ?? []).flatMap((item) => item.question ? [[item.applicationId, item.question.application.role] as const] : []));
 
   const open = dialog && applications.find((app) => app.id === dialog.id);
@@ -461,10 +458,10 @@ export default function Applications() {
             // Auto-archiving only hides: the worker can still finish the row, so it keeps its actions. The applicant's own archive is read-only.
             const archived = tab === 'archived';
             const live = !archived || app.hiddenAt === null;
-            const questionsHere = asked.get(app.id) ?? [];
+            const { questions: questionsHere, restart } = rowAsks(app, asked.get(app.id));
             const approval = isAwaitingSubmitApproval(app.state, app.reasonCode);
             const upload = app.state === 'needs_document' && !!uploadKind[app.reasonCode ?? ''];
-            const retryable = resumable(app) || RESTARTABLE.includes(app.state);
+            const retryable = resumable(app) || RESTARTABLE.includes(app.state) || restart;
             const material = materials.get(app.id);
             const href = postingUrl(app.ats, app.tenant, app.requisition);
             const company = app.company ?? app.tenant;

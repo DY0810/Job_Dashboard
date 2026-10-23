@@ -84,19 +84,29 @@ export type AtsAdapter = {
   receipt(runtime: BrowserRuntime, input: AtsApplication, signal?: AbortSignal): Promise<AtsReceipt>;
 };
 
+/** A name as people write it: case, punctuation, a leading "The" and "&" for "and" do not matter. */
+export const nameKey = (text: string) => text.toLowerCase().replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/^the /, '');
+
 // Questions most employers ask in their own words, answered only from confirmed profile facts.
 // Anything ambiguous (negations, combined questions, unrecognized wording) still goes to the inbox.
 export function commonAnswer(input: AtsApplication, field: AtsField) {
   const text = field.label.toLowerCase().replace(/\s+/g, ' ').trim();
+  // The school question's own sentence: a list's instruction after it ("select Other if your school is not listed") is not part of it.
+  const question = text.replace(/\?.*$/, '?'), school = input.answers['school--0'];
+  if ((field.kind === 'text' || field.kind === 'select') && typeof school === 'string' &&
+      /^((current|most recent) )?(school|university|college)( name)?$|^(what|which) (school|university|college) ((do|did) you (currently )?attend|are you (currently )?attending( or did you (last )?attend)?)\??$/.test(question)) {
+    // A list takes only the option that is the profile school (a long one is checked against the live options on fill);
+    // a near match is asked, never guessed.
+    if (field.kind === 'text' || !field.options) return school;
+    const matches = field.options.filter(option => nameKey(option) === nameKey(school));
+    return matches.length === 1 ? matches[0] : undefined;
+  }
   // A follow-up ("If yes, what type of sponsorship?") is not the yes/no question it follows.
   if (/\bnot\b|\bhear\b|^if (yes|so)\b/.test(text)) return undefined;
   if (field.kind === 'text') {
     if (/^linkedin\b|\blinkedin (profile|url|link)\b/.test(text)) return input.answers.linkedin;
     if (/^github\b|\bgithub (profile|url|link|username)\b/.test(text)) return input.answers.github;
     if (/^(personal |other )?(website|portfolio)( url| link)?( \(optional\))?$/.test(text)) return input.answers.portfolio;
-    if (/^((current|most recent) )?(school|university|college)( name)?$|^(what|which) (school|university|college) (do|did) you (currently )?attend\??$/.test(text)) {
-      return input.answers['school--0'];
-    }
   }
   const authorization = /\bauthori[sz]ed to work\b/.test(text), sponsorship = /\bsponsorship\b/.test(text);
   if (authorization === sponsorship) return undefined;

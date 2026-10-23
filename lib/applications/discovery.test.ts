@@ -23,6 +23,10 @@ import {
   DISCOVERY_INTERVAL_MS,
 } from './discovery.ts';
 import { previewLegacyImport, confirmLegacyImport } from './imports.ts';
+import { applicationContext } from './application-context.ts';
+import { answerQuestion, getQuestion, registerQuestionBatch } from './questions.ts';
+import { formQuestions } from '../../worker/screening.ts';
+import { formQuestionKey } from '../../worker/ats/protocol.ts';
 import { ImportConfirmRequestSchema, ImportPreviewRequestSchema, IMPORT_PREVIEW_TTL_MS } from './discovery-protocol.ts';
 import * as source from './discovery-source.ts';
 import { getDiscoveryCorpus } from './discovery-corpus.ts';
@@ -507,6 +511,31 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await listRuns(db, 'alice', options)).applications.map((a) => [a.id, a.hiddenAt])).toEqual([[fresh.id, now]]);
     expect((await listRuns(db, 'alice', { now: () => now + 30 * 86_400_000 })).applications).toEqual([]);
     expect((await appRows()).find((a) => a.id === fresh.id)?.hiddenAt).toBe(now);
+  });
+
+  it('hands a restarted role the answers given to its earlier attempt, so the worker fills them instead of asking again', async () => {
+    const { token, run } = await prepared('alice', { actions: ['read_jobs', 'fill_forms'] }); addPostings(1); await complete(token, run.id);
+    const field = { key: 'question_1', label: 'Which university do you attend?', kind: 'text' as const, required: true };
+    const contextFor = async (lease: Lease) => applicationContext(db, token, lease.applicationId,
+      { protocolVersion: 1, ...ref(lease) }, { ...options, corpus: provider });
+    const ask = async (lease: Lease) => {
+      const { expectedProfileRevision, company, role, questions } = formQuestions(await contextFor(lease), [field]);
+      return registerQuestionBatch(db, token, lease.applicationId, { expectedProfileRevision, company, role, questions, questionProtocolVersion: 1, eventId: randomUUID(),
+        fence: lease.fence, expectedRevision: lease.revision, checkpoint: { stage: lease.state as 'screening', sequence: (lease.checkpoint?.sequence ?? 0) + 1 } }, options);
+    };
+    const first = (await poll(token)).lease!;
+    const [id] = (await ask(first)).questionIds, q = await getQuestion(db, 'alice', id, options);
+    await answerQuestion(db, 'alice', id, { ...request(), expectedRevision: q.revision, expectedProfileRevision: q.expectedProfileRevision,
+      expectedPolicyRevision: q.expectedPolicyRevision, expectedScopeHash: q.expectedScopeHash, factVersions: q.factVersions,
+      reuse: 'application', answer: { type: 'text', value: 'Stanford University' } }, options);
+    const previous = (await appRows()).find((a) => a.id === first.applicationId)!;
+    const next = await restartApplication(db, 'alice', run.id, { ...request(), previousApplicationId: previous.id, expectedRevision: previous.revision }, options);
+    now += DAY; // The first attempt used today's per-employer start.
+    const retry = (await poll(token)).lease!;
+    expect(retry.applicationId).toBe(next.id);
+    await ask(retry); // Resolved from the earlier attempt's answer.
+    expect((await appRows()).find((a) => a.id === next.id)).toMatchObject({ state: 'screening', reasonCode: null });
+    expect((await contextFor((await poll(token)).lease!)).answers[formQuestionKey(field)]).toBe('Stanford University');
   });
 
   it('resumes a document hold the applicant fixed: in its own run, or after a policy change in a run started under it', async () => {

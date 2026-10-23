@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Locator, Page } from 'playwright';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
-import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, type AtsIdentity, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey } from './protocol.ts';
+import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, type AtsIdentity, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey, nameKey } from './protocol.ts';
 
 const CAPTCHA_WAIT_MS = 30 * 60_000; // time for the applicant to solve an hCaptcha challenge in the visible window
 
@@ -73,13 +73,14 @@ export async function leverFields(form: Locator): Promise<AtsField[]> {
 }
 
 // A long list (Palantir's universities) is asked as text: the exact option, or the one option the typed name matches
-// ignoring case, or the one that contains it ("Stanford" picks "Stanford University"). Anything ambiguous is asked again.
-export function matchOption(options: string[], value: string) {
-  const norm = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim(), typed = norm(value);
-  if (options.includes(value) || !typed) return options.includes(value) ? value : undefined;
-  const equal = options.filter(option => norm(option) === typed);
-  if (equal.length) return equal.length === 1 ? equal[0] : undefined;
-  const containing = options.filter(option => norm(option).includes(typed));
+// written another way (nameKey), or, when loose, the one that contains it ("Stanford" picks "Stanford University").
+// Anything ambiguous is asked again.
+export function matchOption(options: string[], value: string, loose = true) {
+  const key = nameKey(value);
+  if (options.includes(value) || !key) return options.includes(value) ? value : undefined;
+  const equal = options.filter(option => nameKey(option) === key);
+  if (equal.length || !loose) return equal.length === 1 ? equal[0] : undefined;
+  const containing = options.filter(option => nameKey(option).includes(key));
   return containing.length === 1 ? containing[0] : undefined;
 }
 
@@ -96,7 +97,7 @@ async function suggestions(page: Page, input: Locator, text: string) {
   return items;
 }
 
-async function fillLever(page: Page, field: AtsField, value: AtsValue | undefined, documents: Record<string, string>) {
+async function fillLever(page: Page, field: AtsField, value: AtsValue | undefined, documents: Record<string, string>, loose: boolean) {
   if (field.required && value === undefined && field.kind !== 'file') throw new AtsError('REQUIRED_ANSWER_MISSING', field.key);
   const locator = named(page, field).first();
   if (!await locator.count()) throw new AtsError('FIELD_NOT_FOUND', field.key);
@@ -114,7 +115,7 @@ async function fillLever(page: Page, field: AtsField, value: AtsValue | undefine
     if (!picks.length || !picks.every(pick => field.options?.includes(pick))) throw new AtsError('ANSWER_OPTION_INVALID', field.key, field.options);
     for (const pick of picks) await page.locator(`[name="${field.name}"][value="${pick.replace(/["\\]/g, '\\$&')}"]`).check();
   } else if (field.kind === 'select') {
-    const options = await liveOptions(locator), pick = typeof value === 'string' ? matchOption(options, value) : undefined;
+    const options = await liveOptions(locator), pick = typeof value === 'string' ? matchOption(options, value, loose) : undefined;
     if (!pick) throw new AtsError('ANSWER_OPTION_INVALID', field.key, options.length <= 100 ? options : undefined);
     await locator.selectOption({ label: pick });
   } else if (typeof value !== 'string') {
@@ -184,7 +185,8 @@ export const lever: AtsAdapter = {
     await fillEach([...observation.fields].sort((a, b) => Number(b.kind === 'file') - Number(a.kind === 'file')), async field => {
       const value = leverAnswer(input, field);
       if (field.kind === 'file' ? field.required || input.documents[field.key] : value !== undefined || field.required) {
-        await fillLever(page, field, value, input.documents);
+        // A long list the applicant never saw (the profile school on Palantir's) takes only the one option that is the answer.
+        await fillLever(page, field, value, input.documents, !!field.options || input.answers[formQuestionKey(field)] !== undefined);
         if (!await verifyLever(page, field, value)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
       }
     });
