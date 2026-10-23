@@ -18,6 +18,7 @@ import { createPairing, pairWorker, revokeWorker } from './pairing.ts';
 import { createRun, commandRun, commandApplication, listRuns } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
+import { beginSubmission } from './submissions.ts';
 import {
   discoverWorkerRuns, stageDiscoveryManifest, getDiscoveryStatus, abandonDiscovery, reapplyApplication, retryUnsubmittedApplication, restartApplication,
   DISCOVERY_INTERVAL_MS,
@@ -31,7 +32,7 @@ import { ImportConfirmRequestSchema, ImportPreviewRequestSchema, IMPORT_PREVIEW_
 import * as source from './discovery-source.ts';
 import { getDiscoveryCorpus } from './discovery-corpus.ts';
 import type { WorkerOptions } from './worker-store.ts';
-import type { Lease } from './worker-protocol.ts';
+import { LEASE_MS, SUBMIT_WAIT_MS, type Lease } from './worker-protocol.ts';
 
 import { stubHousehold } from '../test-household.ts';
 vi.mock('server-only', () => ({}));
@@ -488,6 +489,52 @@ describe('cap-held backlog and explicit historical attempts', () => {
     }
     now += DAY; // The stuck attempt used today's per-employer start.
     expect((await poll(token)).lease?.applicationId).toBe(next.id);
+  });
+
+  it('retries an unknown submission the applicant says never went through, even while its reconcile lease is held', async () => {
+    const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    await db.update(applications).set({ state: 'submitting' }).where(eq(applications.id, lease.applicationId));
+    now += LEASE_MS;
+    const unknown = (await poll(token)).lease!;
+    expect(unknown).toMatchObject({ applicationId: lease.applicationId, state: 'submission_unknown', mode: 'reconcile' });
+    // The page loaded before this cycle re-leased it, so the revision it sends is already stale.
+    const command = { ...request(), previousApplicationId: unknown.applicationId, expectedRevision: unknown.revision - 1 };
+    // A run that is not on the current policy would never lease the fresh attempt.
+    const [head] = await db.select().from(policyHeads).where(eq(policyHeads.ownerId, 'alice'));
+    await db.update(policyHeads).set({ enabled: false, acceptedPolicyVersion: null, acceptedPolicyHash: null, acceptedAt: null })
+      .where(eq(policyHeads.ownerId, 'alice'));
+    await expect(retryUnsubmittedApplication(db, 'alice', run.id, command, options)).rejects.toMatchObject({ code: 'POLICY_CHANGED' });
+    await db.update(policyHeads).set(head).where(eq(policyHeads.ownerId, 'alice'));
+    const next = await retryUnsubmittedApplication(db, 'alice', run.id, { ...command, ...request() }, options);
+    expect((await appRows()).find((a) => a.id === unknown.applicationId))
+      .toMatchObject({ state: 'failed', reasonCode: 'applicant_confirmed_not_submitted', leaseUntil: null });
+    await expect(heartbeatWorker(db, token, { protocolVersion: 1, lease: ref(unknown) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    now += DAY; // The unknown attempt used today's per-employer start.
+    expect((await poll(token)).lease).toMatchObject({ applicationId: next.id, mode: 'safe' });
+  });
+
+  it('refuses "it did not go through" while the employer window may still be open, so a late finish is never sent twice', async () => {
+    const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    await db.update(applications).set({ state: 'ready' }).where(eq(applications.id, lease.applicationId));
+    const intent = await beginSubmission(db, token, lease.applicationId, {
+      protocolVersion: 1, intentId: randomUUID(), fence: lease.fence, expectedRevision: lease.revision,
+      identity: { ats: lease.ats, tenant: lease.tenant, requisition: lease.requisition }, company: 'Employer 1', role: 'Software Engineer',
+      manifestHash: 'a'.repeat(64), artifactHashes: ['b'.repeat(64)],
+    }, options);
+    // Stopped during Greenhouse's emailed-code wait: the worker's window stays open, and the applicant can still finish it there.
+    now += 5000;
+    const stopped = await commandApplication(db, 'alice', run.id, lease.applicationId, { ...request(), expectedRevision: intent.revision, action: 'emergency-stop' }, options);
+    expect(stopped.state).toBe('submission_unknown');
+    const retry = () => retryUnsubmittedApplication(db, 'alice', run.id, { ...request(), previousApplicationId: stopped.id, expectedRevision: stopped.revision }, options);
+    await expect(retry()).rejects.toMatchObject({ code: 'SUBMISSION_MAY_STILL_COMPLETE' });
+    await expect(commandApplication(db, 'alice', run.id, stopped.id, { ...request(), expectedRevision: stopped.revision, action: 'confirm-not-submitted' }, options))
+      .rejects.toMatchObject({ code: 'SUBMISSION_MAY_STILL_COMPLETE' });
+    expect((await appRows()).map((a) => a.state)).toEqual(['submission_unknown']);
+    // Every adapter gives up and closes its window SUBMIT_WAIT_MS after the intent; after that the answer is taken.
+    now += SUBMIT_WAIT_MS + LEASE_MS;
+    expect(await retry()).toMatchObject({ state: 'queued' });
   });
 
   it('restarts a live application as a fresh attempt, refuses a submitted one, and deletes by hiding', async () => {

@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { Locator, Page } from 'playwright';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
+import { SUBMIT_WAIT_MS } from '../../lib/applications/worker-protocol.ts';
 import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey } from './protocol.ts';
 
-const VERIFICATION_WAIT_MS = 30 * 60_000; // time for the applicant to pass the captcha in the visible window
+const VERIFICATION_WAIT_MS = SUBMIT_WAIT_MS; // time for the applicant to pass the captcha in the visible window
 
 // The hosted form lives at /<tenant>/<posting uuid>/application on the posting's own origin.
 const formPath = (input: AtsApplication) => `/${input.identity.tenant}/${input.identity.requisition}/application`;
@@ -196,7 +197,7 @@ export const ashby: AtsAdapter = {
     await success.or(captcha).first().waitFor({ timeout: 30_000 }).catch(() => {});
     if (await success.isVisible()) return;
     if (await captcha.first().isVisible()) {
-      process.stdout.write(JSON.stringify({ status: 'captcha-required', company: input.company, role: input.role }) + '\n');
+      process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'captcha-required', company: input.company, role: input.role }) + '\n');
       try { await success.waitFor({ timeout: VERIFICATION_WAIT_MS }); return; }
       catch { throw new AtsError('CAPTCHA_TIMEOUT'); }
     }

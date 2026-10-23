@@ -1,0 +1,2 @@
+DROP INDEX `postings_track_live_posted_idx`;--> statement-breakpoint
+CREATE INDEX `postings_board_idx` ON `postings` (`track`,`delisted_at`,`posted_at`,`first_seen_run`,`seniority`,`company_norm`,`country`,`city_norm`,`state`,`work_mode`,`is_remote`,`employment_type`,`internship_season`,`paid`,`badges`,`canonical_url`);

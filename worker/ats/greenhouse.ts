@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
+import { SUBMIT_WAIT_MS } from '../../lib/applications/worker-protocol.ts';
 import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, atsFieldKey, commonAnswer, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
 
-const VERIFICATION_WAIT_MS = 30 * 60_000; // time for the applicant to find the emailed code
+const VERIFICATION_WAIT_MS = SUBMIT_WAIT_MS; // time for the applicant to find the emailed code
 
 const fields: AtsField[] = [
   { key: 'first_name', label: 'First name', kind: 'text', required: true },
@@ -172,7 +173,7 @@ export const greenhouse: AtsAdapter = {
       if (page.url().startsWith(confirmation)) return;
       // Greenhouse's human check: the applicant types the emailed code into this visible window and submits.
       if (await prompt.isVisible()) {
-        process.stdout.write(JSON.stringify({ status: 'verification-code-required', company: input.company, role: input.role }) + '\n');
+        process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'verification-code-required', company: input.company, role: input.role }) + '\n');
         try { await page.waitForURL(confirmation, { timeout: VERIFICATION_WAIT_MS }); return; }
         catch { throw new AtsError('VERIFICATION_CODE_TIMEOUT'); }
       }
