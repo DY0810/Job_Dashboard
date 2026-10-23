@@ -29,7 +29,8 @@ const DispatchResultSchema = z.union([QuestionDispatchSchema, z.strictObject({
   state: z.enum(["screening", "tailoring", "filling", "ready", "needs_answer", "needs_document",
     "needs_policy_decision", "needs_login", "needs_verification", "provider_unavailable",
     "retryable_failure", "blocked_unsupported", "failed", "skipped"]),
-  reasonCode: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/).nullable(),
+  // A screening skip lists every failed requirement, comma-separated, for the skipped card.
+  reasonCode: z.string().max(80).regex(/^[a-z][a-z0-9_]*(?:,[a-z][a-z0-9_]*)*$/).nullable(),
   evidence: z.strictObject({ artifactVerified: z.boolean().optional(), formVerified: z.boolean().optional(), submitPermit: z.boolean().optional() }).optional(),
 }), z.strictObject({
   state: z.enum(["submitted", "submission_unknown"]), reasonCode: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/), durable: z.literal(true),
