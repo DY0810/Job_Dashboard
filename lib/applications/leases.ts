@@ -1,10 +1,10 @@
 import 'server-only';
-import { and, asc, eq, gte, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, notInArray, or, sql } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationRuns, applications, workers } from '../private-db/schema.ts';
 import { insertRun } from './runs.ts';
 import { dailyStartInstant } from './schedule.ts';
-import { isTerminalState, isWaitingState } from './state.ts';
+import { isTerminalState, isWaitingState, SAFE_STAGES, type SafeStage } from './state.ts';
 import { discoverWorkerRuns, discoveryClaimAllowed, type CorpusProvider } from './discovery.ts';
 import {
   PollRequestSchema, HeartbeatRequestSchema, LEASE_MS,
@@ -58,16 +58,18 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
         or(eq(applicationRuns.state, 'running'), gte(applicationRuns.createdAt, start)),
       )).limit(1)).length) await insertRun(tx, worker.ownerId, worker.id, now);
     }
-    // Resume safe assignments first, then oldest availability so deferred checks cannot starve ready work.
+    // Resume safe assignments first, then work already under way (an approved form, a row resumed after answers) before
+    // roles not yet started, then oldest availability so deferred checks cannot starve ready work.
+    const notUnderWay = notInArray(applications.state, [...SAFE_STAGES]);
     let cursor: ApplicationRow | undefined;
     while (true) {
       const candidates: ApplicationRow[] = await tx.select().from(applications).where(and(
         eq(applications.ownerId, worker.ownerId), eq(applications.workerId, worker.id), sql`${applications.availableAt} <= ${now}`,
         assigned && eq(applications.id, assigned.id),
         sql`${applications.state} in ('queued','screening','tailoring','filling','ready','submitting','submission_unknown')`,
-        cursor && sql`(${applications.leaseUntil} is null, ${applications.availableAt}, ${applications.createdAt}, ${applications.id}) >
-          (${cursor.leaseUntil === null ? 1 : 0}, ${cursor.availableAt}, ${cursor.createdAt}, ${cursor.id})`,
-      )).orderBy(sql`${applications.leaseUntil} is null`, asc(applications.availableAt), asc(applications.createdAt), asc(applications.id)).limit(100);
+        cursor && sql`(${applications.leaseUntil} is null, ${notUnderWay}, ${applications.availableAt}, ${applications.createdAt}, ${applications.id}) >
+          (${cursor.leaseUntil === null ? 1 : 0}, ${SAFE_STAGES.includes(cursor.state as SafeStage) ? 0 : 1}, ${cursor.availableAt}, ${cursor.createdAt}, ${cursor.id})`,
+      )).orderBy(sql`${applications.leaseUntil} is null`, notUnderWay, asc(applications.availableAt), asc(applications.createdAt), asc(applications.id)).limit(100);
       for (const app of candidates) {
         if (!await liveRun(tx, app, now)) continue;
         const [busy] = await tx.select({ id: applications.id }).from(applications).where(and(

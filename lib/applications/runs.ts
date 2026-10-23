@@ -198,6 +198,10 @@ export async function commandApplication(
       if (!run || run.state === 'stopped' || !isAwaitingSubmitApproval(row.state, row.reasonCode)) fail(409, 'CONFLICT', 'No filled form is awaiting approval.');
       const policy = await getPolicy(tx, ownerId, now);
       if (!policy.enabled || !policy.policy.actions.includes('submit')) fail(403, 'SUBMIT_DISABLED', 'Submit is not enabled in the policy.');
+      // Only a run bound to the enabled policy leases the approved form; on any other it would wait at 'ready' forever.
+      if (policy.revision !== run.policyRevision || policy.policyVersion !== run.policyVersion || policy.policyHash !== run.policyHash) {
+        fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
+      }
       next = 'ready'; availableAt = now;
     } else next = ambiguous ? 'submission_unknown' : command.action === 'skip' ? 'skipped' : 'cancelled';
     const updated = one(await tx.update(applications).set({

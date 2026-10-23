@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { TransactionMode } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migratePrivateDb, openPrivateDb, type PrivateDb } from '../private-db/index.ts';
@@ -14,7 +14,7 @@ import {
 } from '../private-db/schema.ts';
 import { createEmptyProfile, type Profile } from './profile.ts';
 import { createEmptyPolicy, PolicySchema, type Policy } from './policy.ts';
-import { hashValue, saveProfile } from './stores.ts';
+import { hashValue, mutatePolicy, saveProfile } from './stores.ts';
 import { createPairing, pairWorker, revokeWorker } from './pairing.ts';
 import { createRun, commandRun } from './runs.ts';
 import { enqueueApplication } from './test-enqueue.ts';
@@ -431,6 +431,36 @@ describe('question DAL atomic answers, one application each', () => {
     expect((await appRow(a.app.id)).fence).toBeGreaterThan(lease.fence);
     expect(await qRow(second.id)).toEqual(historical);
     expect((await db.select().from(questionAnswers).where(eq(questionAnswers.id, original.answerId)))[0]).toEqual(oldAnswer);
+  });
+
+  it('asks again under a newly enabled policy: a row waiting on answers goes back to screening and its new questions can be answered', async () => {
+    vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+    vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
+    const confirmedAt = new Date(now).toISOString(), applicant = structuredClone(profile);
+    for (const [key, value] of [['legalFirstName', 'Synthetic'], ['legalLastName', 'Applicant'], ['personalEmail', 'alice@example.test']] as const) {
+      Object.assign(applicant.identity[key], { value, state: 'confirmed', confirmedAt });
+    }
+    await setProfile(applicant);
+    await setPolicy({ destinations: ['boards.greenhouse.io'], countries: ['US'] });
+    const f = await prepared();
+    const optional = descriptor({ key: 'note', originalWording: 'Anything else?', meaning: { id: 'note', reviewId: null },
+      required: false, field: { ...field, allowBlank: true } });
+    const first = await batch(f, [descriptor(), optional]);
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'needs_answer', reasonCode: 'question_unresolved' });
+    // Profile's save turns the policy off and Enable turns it on: two new policy revisions.
+    const [bound] = await db.select().from(policyVersions).where(and(eq(policyVersions.ownerId, 'alice'), eq(policyVersions.version, 2)));
+    const saved = await mutatePolicy(db, 'alice', { ...request(), expectedRevision: 2,
+      policy: { ...PolicySchema.parse(bound.policy), documentKinds: ['resume'] } });
+    await mutatePolicy(db, 'alice', { ...request(), expectedRevision: saved.revision, action: 'enable', acceptedPolicyHash: saved.policyHash! });
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'screening', reasonCode: 'policy_changed', leaseUntil: null });
+    expect((await qRow(first.result.questionIds[1])).active).toBe(false);
+    // The worker screens again and asks only what it still needs; nothing from the old policy blocks the row.
+    const again = await batch(f);
+    expect(again.id).toBe(first.id);
+    expect((await getQuestion(db, 'alice', again.id, options)).canAnswer).toBe(true);
+    const answer = await answerQuestion(db, 'alice', again.id, await answerInput(again.id), options);
+    expect(answer.resumedApplicationIds).toEqual([f.app.id]);
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'screening', reasonCode: null });
   });
 });
 

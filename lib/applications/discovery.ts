@@ -145,6 +145,13 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
     }
     const chunk = manifest.artifact.candidates.slice(manifest.stagedCount, manifest.stagedCount + STAGING_CHUNK_SIZE);
     if (chunk.length) {
+      // A role another run held is evaluated afresh once that run released it unstarted (stopped before it began).
+      await tx.update(discoveryTargets).set({ applicationId: null }).where(and(
+        eq(discoveryTargets.ownerId, worker.ownerId), eq(discoveryTargets.runId, run.id), eq(discoveryTargets.disposition, 'duplicate'),
+        inArray(discoveryTargets.targetKey, chunk.map((candidate) => candidate.targetKey)),
+        sql`exists (select 1 from ${applications} a where a.owner_id = ${discoveryTargets.ownerId} and a.id = ${discoveryTargets.applicationId}
+          and a.started_at is null and a.state = 'cancelled' and a.reason_code = 'run_stopped')`,
+      ));
       await tx.insert(discoveryTargets).values(chunk.map((candidate, index) => ({
         id: randomUUID(), ownerId: worker.ownerId, runId: run.id, manifestId: id, targetKey: candidate.targetKey,
         candidateIndex: manifest.stagedCount + index, candidateHash: hashValue(candidate),

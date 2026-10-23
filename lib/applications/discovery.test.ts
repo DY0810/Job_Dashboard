@@ -13,7 +13,8 @@ import {
   discoveryManifests, discoveryTargets, manualApplicationMarks, legacyImportPreviews,
 } from '../private-db/schema.ts';
 import { createEmptyPolicy, type Policy } from './policy.ts';
-import { hashValue } from './stores.ts';
+import { createEmptyProfile } from './profile.ts';
+import { getPolicy, getProfile, hashValue, mutatePolicy, saveProfile } from './stores.ts';
 import { createPairing, pairWorker, revokeWorker } from './pairing.ts';
 import { createRun, commandRun, commandApplication, listRuns } from './runs.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
@@ -65,6 +66,21 @@ async function prepared(ownerId = 'alice', overrides: Partial<Policy> = {}) {
   }, options);
   const run = await createRun(db, ownerId, { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
   return { run, worker, token };
+}
+/** Saves and enables the policy with these changes, the way Profile does. */
+async function enable(changes: Partial<Policy>) {
+  vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+  vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
+  if (!(await getProfile(db, 'alice')).revision) {
+    const profile = createEmptyProfile(), confirmedAt = new Date(now).toISOString();
+    for (const [key, value] of [['legalFirstName', 'Synthetic'], ['legalLastName', 'Applicant'], ['personalEmail', 'alice@example.test']] as const) {
+      Object.assign(profile.identity[key], { value, state: 'confirmed', confirmedAt });
+    }
+    await saveProfile(db, 'alice', { ...request(), expectedRevision: 0, profile });
+  }
+  const current = await getPolicy(db, 'alice');
+  const saved = await mutatePolicy(db, 'alice', { ...request(), expectedRevision: current.revision, policy: { ...current.policy, ...changes } });
+  return mutatePolicy(db, 'alice', { ...request(), expectedRevision: saved.revision, action: 'enable', acceptedPolicyHash: saved.policyHash! });
 }
 async function complete(token: string, runId: string) {
   for (let i = 0; i < 60; i++) {
@@ -209,6 +225,41 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect(retry).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: previous.id });
     expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts.duplicate).toBe(1);
     expect((await poll(token)).lease?.applicationId).toBe(retry.id);
+  });
+
+  it('keeps discovering and leasing in the same run after a policy change that selects the same roles', async () => {
+    const { token, run } = await prepared('alice', { countries: ['US'] }); addPostings(2); await complete(token, run.id);
+    const lease = (await poll(token)).lease!;
+    const enabled = await enable({ dailyApplicationCap: 5 });
+    await expect(heartbeatWorker(db, token, { protocolVersion: 1, lease: ref(lease) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    expect((await poll(token)).lease).toMatchObject({ runId: run.id, policyRevision: enabled.revision });
+    now += DISCOVERY_INTERVAL_MS + 1; addPostings(1, 3);
+    await discoverWorkerRuns(db, token, provider, options);
+    expect(await getDiscoveryStatus(db, 'alice', run.id, options)).toMatchObject({ errorCode: null, counts: { eligible: 3 } });
+  });
+
+  it('discovers again under a policy change that narrows what discovery selects, in a new run', async () => {
+    const { token, run } = await prepared('alice', { countries: ['US'] }); addPostings(3); await complete(token, run.id);
+    const enabled = await enable({ employerBlocklist: ['Employer 1'] });
+    expect((await db.select().from(applicationRuns).where(eq(applicationRuns.id, run.id)))[0].state).toBe('stopped');
+    const [replacement] = await db.select().from(applicationRuns).where(eq(applicationRuns.state, 'running'));
+    expect(replacement).toMatchObject({ policyRevision: enabled.revision });
+    await complete(token, replacement.id);
+    // The blocked employer's role stays cancelled; the other two queue again in the new run.
+    expect((await appRows()).filter((row) => row.runId === replacement.id).map((row) => row.tenant).sort()).toEqual(['tenant2', 'tenant3']);
+    expect((await poll(token)).lease).toMatchObject({ runId: replacement.id });
+  });
+
+  it('queues roles a replacement run marked duplicate once the run holding them stops', async () => {
+    const { token, run, worker } = await prepared(); addPostings(3); await complete(token, run.id);
+    const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
+    await complete(token, replacement.id);
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 0, duplicate: 3 });
+    await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'stop' }, options);
+    now += DISCOVERY_INTERVAL_MS + 1;
+    await discoverWorkerRuns(db, token, provider, options);
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 3, duplicate: 0 });
+    expect((await poll(token)).lease).toMatchObject({ runId: replacement.id });
   });
 
   it.each(['DELETE', 'WAL'])('reconciles a replaced %s corpus instead of advancing the scan clock on a cached old inode', async (journal) => {
