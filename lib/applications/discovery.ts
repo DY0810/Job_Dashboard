@@ -10,6 +10,7 @@ import { getPolicy, hashValue } from './stores.ts';
 import { isSafeRetryState, isTerminalState } from './state.ts';
 import type { Policy } from './policy.ts';
 import { applicationSummary, refuseOpenSubmission, releaseRunApplications } from './runs.ts';
+import { dailyStartInstant } from './schedule.ts';
 import {
   AbandonDiscoverySchema, AbandonDiscoveryResponseSchema, DiscoveryStatusSchema, ReapplyRequestSchema,
   type DiscoveryStatus, type ReapplyRequest, type TargetDisposition,
@@ -229,7 +230,10 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
 /**
  * Limits an employer's ATS enforces per candidate and only reveals at submit, after the whole form
  * is filled. They bind every applicant, whatever their policy, and count applications the
- * applicant reported as made by hand (manual marks) as well as Workie's own.
+ * applicant reported as made by hand (manual marks) as well as Workie's own. Of Workie's, every started attempt
+ * counts while it may still reach the employer, waiting ones too (an answer or Apply resumes them), so a third is
+ * never filled only to be rejected. Skipped, cancelled (deleted, restarted, stopped) and failed attempts never had a
+ * submission accepted or in flight: a submitting one only ends submitted, or failed when the applicant confirms it was not.
  * ponytail: Ramp's cap is on Software Engineering roles only; this counts every Ramp role. Add a
  * title match here if Workie ever applies to non-engineering Ramp roles.
  */
@@ -243,26 +247,59 @@ function employerLimitReached(now: number) {
     const since = now - days * DAY_MS;
     return sql`(${applications}.ats = ${ats} and lower(${applications}.tenant) = ${tenant} and (
       (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
-        and used.ats = ${ats} and lower(used.tenant) = ${tenant} and used.started_at >= ${since})
+        and used.ats = ${ats} and lower(used.tenant) = ${tenant} and used.started_at >= ${since}
+        and used.state not in ('skipped', 'cancelled', 'failed'))
       + (select count(*) from ${manualApplicationMarks} m where m.owner_id = ${applications}.owner_id
         and m.ats = ${ats} and lower(m.tenant) = ${tenant} and m.created_at >= ${since})) >= ${max})`;
   }), sql` or `);
 }
 
-function capExceeded(policy: Policy, now: number) {
-  const day = Math.floor(now / DAY_MS) * DAY_MS;
-  // Qualify the outer row: an unqualified column resolves to the inner `used` table in SQLite.
+/** The day caps count in: the applicant's local day in the worker's time zone (the daily start's), else the UTC day. */
+function capDay(now: number, timeZone: string | null): [number, number] {
+  if (!timeZone) {
+    const day = Math.floor(now / DAY_MS) * DAY_MS;
+    return [day, day + DAY_MS];
+  }
+  // A local day is 23 to 25 hours long, so 36 hours after its midnight is always inside the next one.
+  const next = (start: number) => dailyStartInstant(start + 36 * 3_600_000, 0, timeZone);
+  const start = dailyStartInstant(now, 0, timeZone), end = next(start);
+  // A midnight in a spring-forward gap resolves an hour early, so the hour before it opens the next day's window.
+  return end > now ? [start, end] : [end, next(end)];
+}
+
+/**
+ * Whether the policy's caps or an employer's limit hold a row today, as SQL on `applications`. Today's starts load once
+ * and are matched from a JSON list, so checking many rows costs one query, not a scan of the owner's applications each.
+ */
+async function capHeld(tx: WorkerTx, ownerId: string, policy: Policy, now: number, timeZone: string | null) {
+  const [day, end] = capDay(now, timeZone);
+  const started = await tx.select({ employerKey: applications.employerKey, ats: applications.ats, tenant: applications.tenant })
+    .from(applications).where(and(eq(applications.ownerId, ownerId), sql`${applications.startedAt} >= ${day} and ${applications.startedAt} < ${end}`));
+  if (started.length >= policy.dailyApplicationCap) return sql<boolean>`1`;
+  // Qualify the outer row: an unqualified column resolves to the inner table in SQLite.
   return sql<boolean>`(
-    (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
-      and used.started_at >= ${day} and used.started_at < ${day + DAY_MS}) >= ${policy.dailyApplicationCap}
-    or (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
-      and used.started_at >= ${day} and used.started_at < ${day + DAY_MS}
-      and (used.employer_key = ${applications}.employer_key or
-        (used.ats = ${applications}.ats and used.tenant = ${applications}.tenant))) >= ${policy.perEmployerCap}
+    (select count(*) from json_each(${JSON.stringify(started)}) used
+      where json_extract(used.value, '$.employerKey') = ${applications}.employer_key or
+        (json_extract(used.value, '$.ats') = ${applications}.ats and json_extract(used.value, '$.tenant') = ${applications}.tenant)) >= ${policy.perEmployerCap}
     or ${employerLimitReached(now)}
   )`;
 }
-export async function discoveryClaimAllowed(tx: WorkerTx, app: ApplicationRow, now: number): Promise<boolean> {
+/**
+ * Rows the poll's scan can lease now, as SQL on `applications`, so it does not check one by one (about 13 statements a
+ * row) rows of a run not live on the owner's current policy, or unstarted discovery rows the caps hold.
+ * submission_unknown reconciles in any run. liveRun and discoveryClaimAllowed still check the row the poll picks.
+ */
+export async function claimableNow(tx: WorkerTx, ownerId: string, now: number, timeZone: string | null) {
+  const head = await getPolicy(tx, ownerId, now);
+  if (!head.enabled) return sql`${applications.state} = 'submission_unknown'`;
+  const held = head.policy.actions.includes('read_jobs') ? await capHeld(tx, ownerId, head.policy, now, timeZone) : sql`1`;
+  return sql`(${applications.state} = 'submission_unknown' or (
+    exists (select 1 from ${applicationRuns} run where run.owner_id = ${applications}.owner_id and run.id = ${applications}.run_id
+      and run.state = 'running' and run.policy_revision = ${head.revision} and run.policy_version = ${head.policyVersion}
+      and run.policy_hash = ${head.policyHash})
+    and (${applications.startedAt} is not null or ${applications.snapshotManifestId} is null or not coalesce(${held}, 0))))`;
+}
+export async function discoveryClaimAllowed(tx: WorkerTx, app: ApplicationRow, now: number, timeZone: string | null): Promise<boolean> {
   if (!app.snapshotManifestId) return true; // Phase 3's private synthetic enqueue has no public route.
   const [manifest] = await tx.select({ state: discoveryManifests.state }).from(discoveryManifests)
     .where(manifestScope(app.ownerId, app.snapshotManifestId));
@@ -271,7 +308,7 @@ export async function discoveryClaimAllowed(tx: WorkerTx, app: ApplicationRow, n
   const policy = run && await currentDiscoveryPolicy(tx, run, now);
   if (!policy) return false;
   if (app.startedAt !== null) return true;
-  const [{ held }] = await tx.select({ held: capExceeded(policy, now) }).from(applications)
+  const [{ held }] = await tx.select({ held: await capHeld(tx, app.ownerId, policy, now, timeZone) }).from(applications)
     .where(and(eq(applications.ownerId, app.ownerId), eq(applications.id, app.id)));
   await tx.update(discoveryTargets).set({ disposition: held ? 'held_cap' : 'eligible' }).where(and(
     eq(discoveryTargets.ownerId, app.ownerId), eq(discoveryTargets.runId, app.runId),
@@ -287,10 +324,13 @@ export async function getDiscoveryStatus(db: PrivateDb, ownerId: string, runId: 
     const [manifest] = run.currentManifestId
       ? await tx.select().from(discoveryManifests).where(manifestScope(ownerId, run.currentManifestId)) : [];
     const now = nowAt(options), policy = await currentDiscoveryPolicy(tx, run, now);
+    const [worker] = await tx.select({ timeZone: workers.timeZone }).from(workers)
+      .where(and(eq(workers.ownerId, ownerId), eq(workers.id, run.workerId)));
+    const timeZone = worker?.timeZone ?? null;
     const disposition = sql<TargetDisposition>`case
       when ${discoveryTargets.disposition} in ('eligible','held_cap') and ${applications.startedAt} is null
         and ${applications.state} = 'queued' then
-        ${policy ? sql`case when ${capExceeded(policy, now)} then 'held_cap' else 'eligible' end` : sql`'held_policy'`}
+        ${policy ? sql`case when ${await capHeld(tx, ownerId, policy, now, timeZone)} then 'held_cap' else 'eligible' end` : sql`'held_policy'`}
       else ${discoveryTargets.disposition} end`;
     const groups = await tx.select({ disposition, count: sql<number>`count(*)` })
       .from(discoveryTargets).leftJoin(applications, and(
@@ -299,11 +339,24 @@ export async function getDiscoveryStatus(db: PrivateDb, ownerId: string, runId: 
       .groupBy(disposition);
     const counts = { eligible: 0, duplicate: 0, unresolved: 0, held_policy: 0, held_cap: 0, manual_reported: 0 };
     for (const group of groups) counts[group.disposition] = group.count;
+    // Held roles that wait on the applicant (not ones the policy excludes), by reason, from the current snapshot.
+    const heldQuestions: Record<string, number> = {};
+    if (manifest) {
+      for (const { index } of await tx.select({ index: discoveryTargets.candidateIndex }).from(discoveryTargets).where(and(
+        eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.runId, runId), eq(discoveryTargets.manifestId, manifest.id),
+        eq(discoveryTargets.disposition, 'held_policy'),
+      ))) {
+        const candidate = manifest.artifact.candidates[index];
+        if (candidate?.disposition !== 'needs_question') continue;
+        for (const reason of candidate.reasons) heldQuestions[reason] = (heldQuestions[reason] ?? 0) + 1;
+      }
+    }
     return DiscoveryStatusSchema.parse({
       ownerId, runId, state: run.discoveryState, lastAttemptAt: run.lastAttemptAt, lastScanAt: run.lastScanAt,
       errorCode: run.discoveryError, manifestId: manifest?.id ?? null, manifestHash: manifest?.hash ?? null,
       capturedAt: manifest?.capturedAt ?? null, candidateCount: manifest?.candidateCount ?? 0,
-      stagedCount: manifest?.stagedCount ?? 0, counts, capAccounting: 'started_per_utc_day',
+      stagedCount: manifest?.stagedCount ?? 0, counts, heldQuestions,
+      capAccounting: timeZone ? 'started_per_local_day' : 'started_per_utc_day',
     });
   });
 }

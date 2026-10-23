@@ -186,7 +186,7 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
     expect(result.candidates[1]).toMatchObject({ identityStatus: 'unresolved', disposition: 'needs_question' });
   });
 
-  it('does not infer GBP from a bare pound symbol', async () => {
+  it('does not infer GBP from a pound symbol on a US posting', async () => {
     const f = fixture(kind);
     f.add(1, { payRateMin: 30, payRatePeriod: 'hour', payCurrencySymbol: '£' });
     const result = await captureCandidateSnapshot(f.db, policy({
@@ -194,6 +194,21 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
     }), NOW);
     expect(result.candidates[0].disposition).toBe('needs_question');
     expect(result.candidates[0].reasons).toContain('pay_currency_or_period_unverified');
+  });
+
+  it('reads a dollar floor only on US postings and a pound floor only on GB postings', async () => {
+    const f = fixture(kind);
+    f.add(1, { payRateMin: 40, payRateMax: 60, payRatePeriod: 'hour', payCurrencySymbol: '$' });
+    f.add(2, { payRateMin: 40, payRatePeriod: 'hour', payCurrencySymbol: '$', country: 'CA' });
+    f.add(3, { payRateMin: 40, payRatePeriod: 'hour', payCurrencySymbol: '$', country: null });
+    f.add(4, { payRateMin: 10, payRateMax: 15, payRatePeriod: 'hour', payCurrencySymbol: '$' });
+    const usd = await captureCandidateSnapshot(f.db, policy({ payFloor: { amount: 20, currency: 'USD', period: 'hour' } }), NOW);
+    expect(usd.candidates.map((c) => c.disposition)).toEqual(['candidate', 'needs_question', 'needs_question', 'blocked']);
+    expect(usd.candidates[1].reasons).toEqual(['pay_currency_or_period_unverified']);
+    const g = fixture(kind);
+    g.add(1, { payRateMin: 30, payRatePeriod: 'hour', payCurrencySymbol: '£', country: 'GB' });
+    const gbp = await captureCandidateSnapshot(g.db, policy({ payFloor: { amount: 20, currency: 'GBP', period: 'hour' } }), NOW);
+    expect(gbp.candidates[0].disposition).toBe('candidate');
   });
 
   it('rejects malformed filters before touching the database, including pagination and cross-tab values', async () => {

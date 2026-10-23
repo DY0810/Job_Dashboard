@@ -114,8 +114,10 @@ function screen(candidate: DiscoveryCandidate, policy: Policy) {
       continue;
     }
     const min = p.payRateMin, max = p.payRateMax;
-    // Bare dollar/pound symbols are ambiguous; never infer currency from country.
-    const currency = p.payCurrencySymbol === '€' ? 'EUR' : null;
+    // The corpus keeps only the symbol, and every dollar (CA$, A$, S$...) is stored as '$'. So '$' is USD only on a
+    // US posting and '£' is GBP only on a GB one; anywhere else the currency stays unverified.
+    const currency = p.payCurrencySymbol === '€' ? 'EUR' : p.payCurrencySymbol === '$' && p.country === 'US' ? 'USD'
+      : p.payCurrencySymbol === '£' && p.country === 'GB' ? 'GBP' : null;
     if ((min !== null && (!Number.isFinite(min) || min < 0)) ||
         (max !== null && (!Number.isFinite(max) || max < 0)) || (min !== null && max !== null && min > max)) {
       questions.add('pay_evidence_invalid');

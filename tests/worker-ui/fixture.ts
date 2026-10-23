@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { inLive } from '../../lib/applications/buckets';
-import { ReapplyRequestSchema } from '../../lib/applications/discovery-protocol';
+import { DiscoveryStatusSchema, ReapplyRequestSchema } from '../../lib/applications/discovery-protocol';
 import { createEmptyPolicy, PolicySchema } from '../../lib/applications/policy';
 import { InboxPageSchema } from '../../lib/applications/question-protocol';
 import { isTerminalState } from '../../lib/applications/state';
@@ -30,6 +30,10 @@ export class WorkerFixture {
   pairings: PairingSummary[] = [];
   runs: Run[] = [];
   applications: ApplicationSummary[] = [];
+  /** Per run: a discovery error, or roles held for the applicant's decision. */
+  discovery = new Map<string, { errorCode?: string; heldQuestions?: Record<string, number> }>();
+  /** Discovery status answers only once this settles, like a slow status read. */
+  discoveryGate: Promise<void> = Promise.resolve();
   /** Live frames; as listLive does, each is sent with its row's current state, and only while the row is in Live. */
   frames: { applicationId: string; step: string; image: string | null; fields: { label: string; value: string }[] | null; updatedAt: number }[] = [];
   policy = {
@@ -100,6 +104,14 @@ export class WorkerFixture {
         const app = this.applications.find((row) => row.id === frame.applicationId);
         return app && inLive(app) ? [{ ...frame, state: app.state }] : [];
       }) });
+      const discovery = /^\/api\/application-runs\/([^/]+)\/discovery$/.exec(path);
+      if (discovery) await this.discoveryGate;
+      if (discovery) return reply(DiscoveryStatusSchema, {
+        ownerId: this.owner, runId: discovery[1], state: 'ready', lastAttemptAt: null, lastScanAt: null, errorCode: null,
+        manifestId: null, manifestHash: null, capturedAt: null, candidateCount: 0, stagedCount: 0,
+        counts: { eligible: 0, duplicate: 0, unresolved: 0, held_policy: 0, held_cap: 0, manual_reported: 0 },
+        heldQuestions: {}, capAccounting: 'started_per_utc_day', ...this.discovery.get(discovery[1]),
+      });
       throw new Error(`Unexpected synthetic GET: ${path}`);
     }
     assert.equal(headers.get('content-type'), 'application/json');

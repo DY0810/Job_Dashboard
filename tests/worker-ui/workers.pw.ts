@@ -337,6 +337,32 @@ test('Apply and Archive ask on the page, never through a browser prompt', async 
   expect(writes()[0].path).toBe(`/api/application-runs/${app.runId}/applications/${app.id}/actions`);
 });
 
+test('the applications list shows without waiting for a slow discovery status', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  const run = fixture.addRun();
+  fixture.addApplication('queued');
+  fixture.discovery.set(run.id, { errorCode: 'POLICY_STALE' });
+  let release = () => {};
+  fixture.discoveryGate = new Promise((resolve) => { release = resolve; });
+  await page.goto('/applications');
+  await expect(page.getByText(/^Waiting its turn/)).toBeVisible();
+  release();
+  await expect(page.getByText(/^It will not start: your Auto Apply policy changed after its run started\./)).toBeVisible();
+});
+
+test('a run that starts nothing and roles held for a decision are named, not shown as waiting', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  const stale = fixture.addRun(), current = fixture.addRun();
+  fixture.addApplication('queued');
+  fixture.discovery.set(stale.id, { errorCode: 'POLICY_STALE' });
+  fixture.discovery.set(current.id, { heldQuestions: { pay_undisclosed: 2 } });
+  await page.goto('/applications');
+  await expect(page.getByText(/^It will not start: your Auto Apply policy changed after its run started\./)).toBeVisible();
+  await expect(page.getByText(/^Waiting its turn/)).toHaveCount(0);
+  await expect(page.getByText(/^A run started before your last Auto Apply policy change finds and starts nothing\./)).toBeVisible();
+  await expect(page.getByText(/^Not started under your current policy: pay not listed \(2\)\./)).toBeVisible();
+});
+
 // An unconfirmed submission (the worker could not confirm the employer got it) has no way out but the applicant's word.
 test('an unconfirmed submission says why, and the applicant says whether it went through', async ({ page }) => {
   const fixture = fixtures.get(page)!;

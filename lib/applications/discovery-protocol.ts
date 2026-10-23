@@ -30,7 +30,10 @@ export const DiscoveryStatusSchema = z.strictObject({
   counts: z.strictObject({
     eligible: count, duplicate: count, unresolved: count, held_policy: count, held_cap: count, manual_reported: count,
   }),
-  capAccounting: z.literal('started_per_utc_day'),
+  /** Roles held until the applicant changes the policy, by reason; a role with two reasons counts under both. */
+  heldQuestions: z.record(z.string(), count),
+  /** Caps count the worker's local day once it has a daily start time zone, else the UTC day. */
+  capAccounting: z.enum(['started_per_utc_day', 'started_per_local_day']),
 });
 export const AbandonDiscoverySchema = z.strictObject({ requestId: uuid, manifestId: uuid });
 export const AbandonDiscoveryResponseSchema = z.strictObject({ runId: uuid, manifestId: uuid, state: z.literal('abandoned') });
