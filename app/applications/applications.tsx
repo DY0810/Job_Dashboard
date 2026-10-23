@@ -6,7 +6,8 @@ import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
-import { statusBadge, type BadgeTone } from '../../lib/applications/badges';
+import { discoveryProblem, heldForDecision, queuedDetail, statusBadge, type BadgeTone } from '../../lib/applications/badges';
+import { DiscoveryStatusSchema, type DiscoveryStatus } from '../../lib/applications/discovery-protocol';
 import { archivedAt, bucket } from '../../lib/applications/buckets';
 import { postingUrl } from '../../lib/applications/posting-url';
 import type { QuestionDetail } from '../../lib/applications/question-protocol';
@@ -36,6 +37,8 @@ type View = {
   account: z.infer<typeof ApplicantSchema> | null;
   workers: z.infer<typeof WorkerListSchema> | null;
   runs: z.infer<typeof RunListSchema> | null;
+  /** Discovery of each running run: why it finds or starts nothing, and the roles it holds for the applicant. */
+  discovery: DiscoveryStatus[];
   policy: z.infer<typeof PolicyResponseSchema> | null;
   materials: Material[];
   live: Frame[];
@@ -47,7 +50,7 @@ type View = {
 
 type Material = z.infer<typeof MaterialsSchema>['materials'][number];
 type Frame = z.infer<typeof LiveListSchema>['live'][number];
-const initialView: View = { account: null, workers: null, runs: null, policy: null, materials: [], live: [], loading: true, locked: true, error: '', loadedAt: 0 };
+const initialView: View = { account: null, workers: null, runs: null, discovery: [], policy: null, materials: [], live: [], loading: true, locked: true, error: '', loadedAt: 0 };
 
 async function request(path: string, owner?: string) {
   try {
@@ -339,7 +342,10 @@ export default function Applications() {
           (materials && materials.ownerId !== account.ownerId) || (live && live.ownerId !== account.ownerId)) {
         throw new Error('Account changed. Refresh the current applicant.');
       }
-      setView({ account, workers, runs, policy, materials: materials?.materials ?? [], live: live?.live ?? [],
+      const discovery = (await Promise.all(runs.runs.filter((run) => run.state === 'running').map((run) =>
+        request(`/api/application-runs/${run.id}/discovery`, account.ownerId).then((body) => DiscoveryStatusSchema.parse(body)).catch(() => null))))
+        .flatMap((status) => status?.ownerId === account.ownerId ? [status] : []);
+      setView({ account, workers, runs, discovery, policy, materials: materials?.materials ?? [], live: live?.live ?? [],
         loading: false, locked: false, error: '', loadedAt: Date.now() });
     } catch (error) {
       setView((current) => ({ ...current, loading: false, locked: true,
@@ -395,6 +401,8 @@ export default function Applications() {
     counts.set(label, { tone, count: (counts.get(label)?.count ?? 0) + 1 });
   }
   const scheduled = scheduledWorker(view.workers?.workers);
+  const discovery = new Map(view.discovery.map((status) => [status.runId, status]));
+  const openSettings = (event: { preventDefault(): void }) => { event.preventDefault(); setSettingsOpen(true); };
   const caps = view.policy?.policy;
   const materials = new Map(view.materials.map((item) => [item.applicationId, item]));
   const asked = new Map<string, QuestionDetail[]>();
@@ -428,8 +436,15 @@ export default function Applications() {
     </div>
     {!view.locked && <p className={`${styles.muted} ${styles.schedule}`}>
       {scheduled?.dailyStartMinute != null ? `Starts daily at ${formatDailyStart(scheduled.dailyStartMinute)}${zone(scheduled.timeZone)}` : <>
-        No daily start set. <a href="?settings=1" onClick={(event) => { event.preventDefault(); setSettingsOpen(true); }}>Set one in Settings</a></>}
+        No daily start set. <a href="?settings=1" onClick={openSettings}>Set one in Settings</a></>}
     </p>}
+    {!view.locked && view.discovery.flatMap((status) => {
+      const problem = discoveryProblem(status), held = !problem && heldForDecision(status);
+      return [
+        problem && <p key={`${status.runId}:problem`} role="status" className={styles.message}>{problem} <a href="?settings=1" onClick={openSettings}>Open Settings</a></p>,
+        held && <p key={`${status.runId}:held`} role="status" className={styles.message}>{held} <Link href="/profile#auto-apply-policy" prefetch={false}>Edit policy</Link></p>,
+      ];
+    })}
     {view.error && <p role="alert" className={styles.message}>{view.error}</p>}
     {questions.view.error && !answering && <p role="alert" className={styles.message}>{questions.view.error}</p>}
     {questions.view.notice && <p role="status" className={styles.message}>{questions.view.notice}</p>}
@@ -472,8 +487,7 @@ export default function Applications() {
             // Screening skips again until the profile changes, so Retry is not the suggested next step there.
             const primary = !live ? null : questionsHere.length ? 'answer' : upload ? 'upload' : approval ? 'approve'
               : retryable && !skipReasons(app).length ? 'retry' : null;
-            const detail = app.state === 'queued' && caps
-              ? `Waiting its turn. It starts on its own, up to ${caps.perEmployerCap} per employer and ${caps.dailyApplicationCap} a day.`
+            const detail = app.state === 'queued' && caps ? queuedDetail(runs.find((run) => run.id === app.runId), discovery.get(app.runId), caps)
               : approval ? 'Form filled. Review the answers, resume and cover letter, then approve to submit.'
               : app.state === 'needs_document' && documentHelp[app.reasonCode ?? ''] ? documentHelp[app.reasonCode!]
               : skipReasons(app).length ? `Skipped: ${skipReasons(app).join('; ')}. If your profile is wrong, fix it, then retry.`

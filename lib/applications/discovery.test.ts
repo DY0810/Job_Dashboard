@@ -9,7 +9,7 @@ import { openDb, type Db } from '../db/index.ts';
 import { postings } from '../db/schema.ts';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
 import {
-  applications, applicationRuns, applicationEvents, policyHeads, policyVersions, user,
+  applications, applicationRuns, applicationEvents, policyHeads, policyVersions, user, workers,
   discoveryManifests, discoveryTargets, manualApplicationMarks, legacyImportPreviews,
 } from '../private-db/schema.ts';
 import { createEmptyPolicy, type Policy } from './policy.ts';
@@ -27,7 +27,7 @@ import { ImportConfirmRequestSchema, ImportPreviewRequestSchema, IMPORT_PREVIEW_
 import * as source from './discovery-source.ts';
 import { getDiscoveryCorpus } from './discovery-corpus.ts';
 import type { WorkerOptions } from './worker-store.ts';
-import type { Lease } from './worker-protocol.ts';
+import { LEASE_MS, type Lease } from './worker-protocol.ts';
 
 import { stubHousehold } from '../test-household.ts';
 vi.mock('server-only', () => ({}));
@@ -82,6 +82,19 @@ async function skip(id: string) {
 }
 async function preview(ids: number[], ownerId = 'alice') {
   return previewLegacyImport(db, ownerId, provider, { ...request(), postingIds: ids }, options);
+}
+/** How many statements `d` runs inside transactions from now on. */
+function countStatements(d: PrivateDb) {
+  type Tx = { execute: (...args: unknown[]) => unknown };
+  const client = d.$client as unknown as { transaction: (...args: unknown[]) => Promise<Tx> };
+  const begin = client.transaction.bind(client);
+  let count = 0;
+  client.transaction = async (...args) => {
+    const tx = await begin(...args), execute = tx.execute.bind(tx);
+    tx.execute = (...rest) => { count++; return execute(...rest); };
+    return tx;
+  };
+  return () => count;
 }
 const confirmInput = (p: Awaited<ReturnType<typeof preview>>, ids = p.rows.map((r) => r.postingId)) => ({
   ...request(), previewToken: p.previewToken, previewHash: p.previewHash, postingIds: ids, confirmOwnership: true as const,
@@ -191,6 +204,15 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     await discoverWorkerRuns(db, token, provider, options);
     expect(await appRows()).toHaveLength(1);
     expect((await manifests()).find((m) => m.id === first.id)?.artifact).toEqual(first.artifact);
+  });
+
+  it('reports roles held for an applicant decision, and why, apart from roles the policy excludes', async () => {
+    const { token, run } = await prepared('alice', { undisclosedPay: 'ask', employerBlocklist: ['Employer 2'] }); addPostings(3);
+    corpus.update(postings).set({ paid: null }).where(eq(postings.id, 1)).run();
+    await complete(token, run.id);
+    expect(await getDiscoveryStatus(db, 'alice', run.id, options)).toMatchObject({
+      counts: { held_policy: 2, eligible: 1 }, heldQuestions: { pay_undisclosed: 1 },
+    });
   });
 
   it('retries a stopped, unstarted target in a new run without reopening started applications', async () => {
@@ -413,6 +435,35 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await poll(token)).lease).not.toBeNull();
   }, 20_000);
 
+  it('skips held rows in one query once the daily cap is used up, and still resumes a started one', async () => {
+    const { token, run } = await prepared('alice', { dailyApplicationCap: 1 }); addPostings(100); await complete(token, run.id);
+    const first = (await poll(token)).lease!;
+    now += LEASE_MS + 1;
+    let statements = countStatements(db);
+    expect((await poll(token)).lease?.applicationId).toBe(first.applicationId);
+    // Before the fix: 1293 statements here, about 13 for each of the 99 held rows.
+    expect(statements()).toBeLessThan(30);
+    await skip(first.applicationId);
+    statements = countStatements(db);
+    expect((await poll(token)).lease).toBeNull();
+    expect(statements()).toBeLessThan(30);
+  }, 20_000);
+
+  it("resets the daily cap at the applicant's local midnight, not UTC midnight", async () => {
+    now = Date.UTC(2026, 8, 21, 23); // 4 pm in Los Angeles
+    const { token, run, worker } = await prepared('alice', { dailyApplicationCap: 1 }); addPostings(2);
+    await db.update(workers).set({ dailyStartMinute: 1, timeZone: 'America/Los_Angeles' }).where(eq(workers.id, worker.workerId));
+    await complete(token, run.id);
+    await skip((await poll(token)).lease!.applicationId);
+    now = Date.UTC(2026, 8, 22, 0, 30); // 5:30 pm, the same local day
+    expect((await poll(token)).lease).toBeNull();
+    expect(await getDiscoveryStatus(db, 'alice', run.id, options)).toMatchObject({
+      counts: { held_cap: 1 }, capAccounting: 'started_per_local_day',
+    });
+    now = Date.UTC(2026, 8, 22, 7, 1); // 12:01 am the next local day
+    expect((await poll(token)).lease).not.toBeNull();
+  });
+
   it('enforces per-employer caps across runs while never charging a resumed lease twice', async () => {
     const { token, run } = await prepared('alice', { perEmployerCap: 1 }); addPostings(3, 1, true); await complete(token, run.id);
     const first = (await poll(token)).lease!;
@@ -433,12 +484,33 @@ describe('cap-held backlog and explicit historical attempts', () => {
     const { token, run } = await prepared('alice', { destinations: ['jobs.ashbyhq.com'], perEmployerCap: 10 });
     await complete(token, run.id);
     const second = (await poll(token)).lease!;
-    await skip(second.applicationId);
+    await db.update(applications).set({ state: 'submitted', leaseUntil: null, leaseCheckedAt: null })
+      .where(eq(applications.id, second.applicationId));
     now += DAY;
     expect((await poll(token)).lease).toBeNull();
     expect((await getDiscoveryStatus(db, 'alice', run.id, options)).counts.held_cap).toBe(1);
     now += 60 * DAY;
     expect((await poll(token)).lease).not.toBeNull();
+  });
+
+  it('does not count Ramp attempts that never reached Ramp: skipped, stuck before submit, or deleted', async () => {
+    addPostings(5);
+    corpus.update(postings).set({ company: 'Ramp', canonicalUrl: sql`'https://jobs.ashbyhq.com/ramp/0000000' || ${postings.id} || '-0000-4000-8000-000000000000'` }).run();
+    const { token, run } = await prepared('alice', { destinations: ['jobs.ashbyhq.com'], perEmployerCap: 10 });
+    await complete(token, run.id);
+    const next = async () => {
+      const { lease } = await poll(token);
+      expect(lease).not.toBeNull();
+      return lease!.applicationId;
+    };
+    const park = (id: string, state: 'needs_answer' | 'blocked_unsupported', reasonCode: string) => db.update(applications)
+      .set({ state, reasonCode, leaseUntil: null, leaseCheckedAt: null }).where(eq(applications.id, id));
+    await skip(await next());
+    await park(await next(), 'needs_answer', 'question_unresolved');
+    await park(await next(), 'blocked_unsupported', 'adapter_unavailable');
+    const deleted = await next(), [row] = await db.select().from(applications).where(eq(applications.id, deleted));
+    await commandApplication(db, 'alice', row.runId, deleted, { ...request(), expectedRevision: row.revision, action: 'delete' }, options);
+    await next();
   });
 
   it('allows only explicit policy-approved reapplication after cooldown measured from the terminal command', async () => {

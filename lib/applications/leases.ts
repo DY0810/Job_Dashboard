@@ -5,7 +5,7 @@ import { applicationRuns, applications, workers } from '../private-db/schema.ts'
 import { insertRun } from './runs.ts';
 import { dailyStartInstant } from './schedule.ts';
 import { isTerminalState, isWaitingState } from './state.ts';
-import { discoverWorkerRuns, discoveryClaimAllowed, type CorpusProvider } from './discovery.ts';
+import { dailyCapReached, discoverWorkerRuns, discoveryClaimAllowed, type CorpusProvider } from './discovery.ts';
 import {
   PollRequestSchema, HeartbeatRequestSchema, LEASE_MS,
   type PollRequest, type HeartbeatRequest, type PollResponse, type LeaseRef,
@@ -59,12 +59,15 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
       )).limit(1)).length) await insertRun(tx, worker.ownerId, worker.id, now);
     }
     // Resume safe assignments first, then oldest availability so deferred checks cannot starve ready work.
+    // Once today's cap is used up, discoveryClaimAllowed holds every unstarted discovery row: leave them out instead of checking each.
+    const capped = await dailyCapReached(tx, worker.ownerId, now, worker.timeZone);
     let cursor: ApplicationRow | undefined;
     while (true) {
       const candidates: ApplicationRow[] = await tx.select().from(applications).where(and(
         eq(applications.ownerId, worker.ownerId), eq(applications.workerId, worker.id), sql`${applications.availableAt} <= ${now}`,
         assigned && eq(applications.id, assigned.id),
         sql`${applications.state} in ('queued','screening','tailoring','filling','ready','submitting','submission_unknown')`,
+        capped ? sql`(${applications.startedAt} is not null or ${applications.snapshotManifestId} is null or ${applications.state} = 'submission_unknown')` : undefined,
         cursor && sql`(${applications.leaseUntil} is null, ${applications.availableAt}, ${applications.createdAt}, ${applications.id}) >
           (${cursor.leaseUntil === null ? 1 : 0}, ${cursor.availableAt}, ${cursor.createdAt}, ${cursor.id})`,
       )).orderBy(sql`${applications.leaseUntil} is null`, asc(applications.availableAt), asc(applications.createdAt), asc(applications.id)).limit(100);
@@ -75,7 +78,7 @@ export async function pollWorker(db: PrivateDb, token: string, input: PollReques
           sql`${applications.id} != ${app.id}`, sql`${applications.leaseUntil} is not null`,
         )).limit(1);
         if (busy) continue;
-        if (app.state !== 'submission_unknown' && !await discoveryClaimAllowed(tx, app, now)) continue;
+        if (app.state !== 'submission_unknown' && !await discoveryClaimAllowed(tx, app, now, worker.timeZone)) continue;
         const state = app.state === 'queued' ? 'screening' : app.state === 'submitting' ? 'submission_unknown' : app.state;
         const claimed = one(await tx.update(applications).set({
           state, revision: app.revision + 1, fence: app.fence + 1, leaseUntil: now + LEASE_MS, leaseCheckedAt: now,

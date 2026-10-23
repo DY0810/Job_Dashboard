@@ -335,6 +335,19 @@ test('Apply and Archive ask on the page, never through a browser prompt', async 
   expect(writes()[0].path).toBe(`/api/application-runs/${app.runId}/applications/${app.id}/actions`);
 });
 
+test('a run that starts nothing and roles held for a decision are named, not shown as waiting', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  const stale = fixture.addRun(), current = fixture.addRun();
+  fixture.addApplication('queued');
+  fixture.discovery.set(stale.id, { errorCode: 'POLICY_STALE' });
+  fixture.discovery.set(current.id, { heldQuestions: { pay_undisclosed: 2 } });
+  await page.goto('/applications');
+  await expect(page.getByText(/^It will not start: your Auto Apply policy changed after its run started\./)).toBeVisible();
+  await expect(page.getByText(/^Waiting its turn/)).toHaveCount(0);
+  await expect(page.getByText(/^A run started before your last Auto Apply policy change finds and starts nothing\./)).toBeVisible();
+  await expect(page.getByText(/^Held until you decide: pay not listed \(2\)\./)).toBeVisible();
+});
+
 test('dense layout has native labels keyboard focus and no overflow in light and dark', async ({ page }, info) => {
   const fixture = fixtures.get(page)!;
   fixture.addRun();
