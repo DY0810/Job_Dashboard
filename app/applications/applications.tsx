@@ -3,14 +3,14 @@
 import { Archive } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { EXPECTED_APPLICANT_HEADER } from '../../lib/applications/applicant-precondition';
 import { statusBadge, type BadgeTone } from '../../lib/applications/badges';
-import { archivedAt, bucket } from '../../lib/applications/buckets';
+import { archivedAt, bucket, inLive, isWatching, LIVE_STATES, rowsBehind } from '../../lib/applications/buckets';
 import { postingUrl } from '../../lib/applications/posting-url';
 import type { QuestionDetail } from '../../lib/applications/question-protocol';
-import { formatDailyStart, scheduledWorker } from '../../lib/applications/schedule';
+import { formatDailyStart, offlineNotice, scheduledWorker } from '../../lib/applications/schedule';
 import { HEARTBEAT_MS, LiveListSchema, MaterialsSchema, RunListSchema, WorkerListSchema, type ApplicationSummary, type Run } from '../../lib/applications/worker-protocol';
 import { PolicySchema } from '../../lib/applications/policy';
 import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from '../../lib/applications/state';
@@ -60,11 +60,8 @@ async function request(path: string, owner?: string) {
 }
 
 type Tab = 'action' | 'live' | 'applied' | 'archived';
-/** States in which the worker is working a row (or about to): the Live tab shows them. */
-const LIVE_STATES: readonly string[] = ['screening', 'tailoring', 'filling', 'submitting'];
-/** Live also keeps a form that is waiting on the applicant's answers or approval, so it can be finished from there. */
-const inLive = (app: ApplicationSummary) => app.hiddenAt === null &&
-  (LIVE_STATES.includes(app.state) || app.reasonCode === 'question_unresolved' || isAwaitingSubmitApproval(app.state, app.reasonCode));
+/** States in which the worker has the form open: filling it, or filling it again to submit it after Apply. */
+const FORM_STATES: readonly string[] = ['filling', 'ready', 'submitting'];
 const LIVE_POLL_MS = 3_000;
 /** `?view=` on the current URL, other params kept. Native pushState: Next syncs useSearchParams without a server round trip. */
 function showTab(tab: Tab) {
@@ -120,13 +117,12 @@ function LiveCard({ app, frame, role, asked, questions, ownerId, onAnswer, onDon
   const company = app.company ?? app.tenant;
   const href = postingUrl(app.ats, app.tenant, app.requisition);
   const approval = isAwaitingSubmitApproval(app.state, app.reasonCode);
-  // A frame older than this means the worker is not on the page right now (between stages, or stopped).
-  const watching = !!frame && Date.now() - frame.updatedAt < 20_000 && ['filling', 'submitting'].includes(app.state);
+  const watching = isWatching(app, frame, Date.now());
   const step = watching ? frame!.step : asked.length ? 'Waiting for your answers' : approval ? 'Filled. Waiting for your approval'
-    : app.state === 'screening' ? 'Checking the posting against your profile'
+    : app.state === 'ready' ? 'Approved. Waiting for the worker to submit it' : app.state === 'screening' ? 'Checking the posting against your profile'
     : app.state === 'tailoring' ? 'Tailoring your resume' : 'Waiting for the worker to open the form';
-  // A form waiting on the applicant keeps its last picture so they can see what they are answering or approving.
-  const image = (watching || approval || asked.length > 0) ? frame?.image : undefined;
+  // A form waiting on the applicant keeps its last picture so they can see what they are answering or approving, or approved.
+  const image = (watching || approval || app.state === 'ready' || asked.length > 0) ? frame?.image : undefined;
   // Full screen is a fixed overlay rather than the Fullscreen API, which iPhone Safari does not offer for images.
   const [full, setFull] = useState(false);
   useEffect(() => {
@@ -139,7 +135,8 @@ function LiveCard({ app, frame, role, asked, questions, ownerId, onAnswer, onDon
     ? <Command label="Apply" busyLabel="Applying..." primary confirm="Submit this application to the employer now? This cannot be undone."
       run={() => approve(app, ownerId)} onDone={onDone} />
     : <button className={styles.button} type="button" disabled
-      title={asked.length ? 'Answer the questions first.' : 'Apply opens once Workie has filled the form.'}>Apply</button>;
+      title={asked.length ? 'Answer the questions first.' : ['ready', 'submitting'].includes(app.state) ? 'Approved. Workie is submitting it.'
+        : 'Apply opens once Workie has filled the form.'}>Apply</button>;
   return <li className={`${styles.card} ${styles.liveCard}`}>
     <div className={styles.cardTitle}>
       <h2 title={role ? `${company} / ${role}` : company}>{company}{role && <><span className={styles.slash}> / </span>{role}</>}</h2>
@@ -155,7 +152,7 @@ function LiveCard({ app, frame, role, asked, questions, ownerId, onAnswer, onDon
           // eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset
           ? <img className={styles.screen} src={`data:image/jpeg;base64,${image}`} alt={`Workie's browser filling the ${company} application`}
             onClick={() => setFull(!full)} />
-          : <div className={styles.screenEmpty}>{app.state === 'filling' || app.state === 'submitting'
+          : <div className={styles.screenEmpty}>{FORM_STATES.includes(app.state)
             ? 'The form appears here as soon as the worker opens it.' : 'The form appears here when filling starts.'}</div>}
         {full && <div className={styles.fullPanel}>
           {asked.length > 0 && <>
@@ -358,15 +355,23 @@ export default function Applications() {
   }, [load]);
   const reload = useCallback(() => void load(true), [load]);
   const ownerKey = view.account?.ownerId ?? '';
-  // The Live tab refreshes the screenshots on their own; rows and states follow the slower page refresh.
+  const rows = useRef<App[]>([]);
+  useEffect(() => { rows.current = view.runs?.applications ?? []; }, [view.runs]);
+  // The Live tab refreshes the screenshots on their own, and the rows as soon as a frame shows a row moved.
   useEffect(() => {
     if (tab !== 'live' || !ownerKey) return;
-    let alive = true;
+    let alive = true, tried = '';
     const poll = async () => {
       if (document.visibilityState !== 'visible') return;
       try {
         const live = LiveListSchema.parse(await privateJson('/api/applications/live', { owner: ownerKey, timeout: 10_000 }));
-        if (alive && live.ownerId === ownerKey) setView((current) => ({ ...current, live: live.live }));
+        // A row joined Live or changed state since the rows loaded: fetch them now instead of at the next minute's refresh.
+        const behind = rowsBehind(live.live, rows.current);
+        const runs = behind && behind !== tried
+          ? RunListSchema.parse(await privateJson('/api/application-runs', { owner: ownerKey, timeout: 10_000 })) : null;
+        if (!alive || live.ownerId !== ownerKey || (runs && runs.ownerId !== ownerKey)) return;
+        tried = behind;
+        setView((current) => ({ ...current, live: live.live, ...(runs ? { runs } : {}) }));
       } catch { /* The next poll retries; the page keeps the last picture. */ }
     };
     void poll();
@@ -386,7 +391,7 @@ export default function Applications() {
     if (inLive(app)) lists.live.push(app);
   }
   // The row being filled right now first.
-  lists.live.sort((a, b) => Number(['filling', 'submitting'].includes(b.state)) - Number(['filling', 'submitting'].includes(a.state)));
+  lists.live.sort((a, b) => Number(FORM_STATES.includes(b.state)) - Number(FORM_STATES.includes(a.state)));
   const frames = new Map(view.live.map((frame) => [frame.applicationId, frame]));
   lists.action.sort((a, b) => waitRank(a) - waitRank(b));
   const counts = new Map<string, { tone: BadgeTone; count: number }>();
@@ -395,6 +400,7 @@ export default function Applications() {
     counts.set(label, { tone, count: (counts.get(label)?.count ?? 0) + 1 });
   }
   const scheduled = scheduledWorker(view.workers?.workers);
+  const offline = offlineNotice(view.workers?.workers);
   const caps = view.policy?.policy;
   const materials = new Map(view.materials.map((item) => [item.applicationId, item]));
   const asked = new Map<string, QuestionDetail[]>();
@@ -430,6 +436,7 @@ export default function Applications() {
       {scheduled?.dailyStartMinute != null ? `Starts daily at ${formatDailyStart(scheduled.dailyStartMinute)}${zone(scheduled.timeZone)}` : <>
         No daily start set. <a href="?settings=1" onClick={(event) => { event.preventDefault(); setSettingsOpen(true); }}>Set one in Settings</a></>}
     </p>}
+    {!view.locked && offline && <p role="status" className={styles.message}>{offline}</p>}
     {view.error && <p role="alert" className={styles.message}>{view.error}</p>}
     {questions.view.error && !answering && <p role="alert" className={styles.message}>{questions.view.error}</p>}
     {questions.view.notice && <p role="status" className={styles.message}>{questions.view.notice}</p>}

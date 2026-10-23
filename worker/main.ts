@@ -256,6 +256,8 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
     let live: ReturnType<typeof liveView> | undefined;
     // What the applicant reviews before approving: each field Workie filled and its value.
     let review: { label: string; value: string }[] | undefined;
+    // Set when the form waits on the applicant's answers: like a form waiting on approval, it keeps its last picture.
+    let asking = false;
     try {
       const localDocuments: Record<string, string> = {};
       const applicant = [applicationContext.answers.first_name, applicationContext.answers.last_name].filter((item): item is string => typeof item === 'string').join(' ');
@@ -299,7 +301,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
       }
       const missing = observed.fields.filter(field => field.required && field.kind !== 'file' &&
         adapter.answer(currentApplication, field) === undefined);
-      if (missing.length) return formQuestions(applicationContext, missing);
+      if (missing.length) { asking = true; return formQuestions(applicationContext, missing); }
       // A transcript upload takes the applicant's undergraduate transcript.
       for (const field of observed.fields) {
         if (field.kind === 'file' && localDocuments.transcript && undergraduateTranscript(field.label)) currentApplication.documents[field.key] = localDocuments.transcript;
@@ -394,14 +396,15 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
             const field = observed?.fields.find(candidate => candidate.key === item.message);
             return field ? [{ ...field, options: item.options ?? field.options }] : [];
           });
-          if (fields.length) return formQuestions(applicationContext, fields);
+          if (fields.length) { asking = true; return formQuestions(applicationContext, fields); }
         }
         return { state: "needs_answer" as const, reasonCode: "profile_answer_required" };
       }
       if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
       return { state: "retryable_failure" as const, reasonCode: atsFailureReason(error) };
     } finally {
-      await live?.stop(review ? "Filled. Waiting for your approval" : "Workie left this application", review, !!review);
+      await live?.stop(review ? "Filled. Waiting for your approval" : asking ? "Waiting for your answers" : "Workie left this application",
+        review, !!review || asking);
       if (runtime) await runtime.close().catch(() => {});
       await rm(workDirectory, { recursive: true, force: true });
     }

@@ -296,6 +296,8 @@ test('offline unpaired disabled-policy configuration and unknown-protocol states
   fixture.policy.enabled = false;
   await ready(page);
   await expect(page.getByText('Offline', { exact: true })).toBeVisible();
+  // Auto Apply itself says so too, not only Settings.
+  await expect(page.getByText(/^Your worker is offline, last seen .+\. Nothing is applied until it is back online\.$/)).toBeVisible();
   await page.getByRole('combobox', { name: 'Run worker', exact: true }).selectOption(workerId);
   await expect(page.getByRole('button', { name: 'Create run', exact: true })).toBeDisabled();
   fixture.workers = [];
@@ -333,6 +335,41 @@ test('Apply and Archive ask on the page, never through a browser prompt', async 
   await review.getByRole('button', { name: 'Yes, apply', exact: true }).click();
   await expect.poll(() => writes().map((request) => request.body?.action)).toEqual(['approve-submit']);
   expect(writes()[0].path).toBe(`/api/application-runs/${app.runId}/applications/${app.id}/actions`);
+});
+
+/** A 1x1 PNG: the browser shows it under the page's image/jpeg data URL like the worker's screenshot. */
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+// Apply moves the row to 'ready' while the worker fills the form again and submits it; Live used to drop it, closing full screen.
+test('Apply in Live full screen keeps the form on screen while the worker submits it', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const app = fixture.addApplication('needs_policy_decision', SUBMIT_APPROVAL);
+  fixture.frames = [{ applicationId: app.id, step: 'Filled. Waiting for your approval', image: PIXEL,
+    fields: [{ label: 'First Name', value: 'Test' }], updatedAt: fixture.now - 60_000 }];
+  await page.goto('/applications?view=live');
+  await page.getByRole('button', { name: 'Full screen', exact: true }).click();
+  const full = page.getByRole('dialog', { name: 'fixture-employer application, full screen', exact: true });
+  await full.getByRole('button', { name: 'Apply', exact: true }).click();
+  await full.getByRole('button', { name: 'Yes, apply', exact: true }).click();
+  await expect(full.getByText(/^Approved\. Waiting for the worker to submit it/)).toBeVisible();
+  await expect(full.getByRole('img', { name: 'Workie\'s browser filling the fixture-employer application', exact: true })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Live', exact: true }).getByRole('listitem')).toHaveCount(1);
+  expect(fixture.writes.map((request) => request.body?.action)).toEqual(['approve-submit']);
+});
+
+// Rows reload once a minute and frames every 3 s; Live used to wait for the rows to show a form the worker had started filling.
+test('Live shows a form the worker starts filling after the page loaded, at its next frame', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const app = fixture.addApplication('queued');
+  await page.goto('/applications?view=live');
+  await expect(page.getByText(/^Nothing is being applied right now\./)).toBeVisible();
+  app.state = 'filling';
+  fixture.frames = [{ applicationId: app.id, step: 'Filling the form', image: PIXEL, fields: null, updatedAt: Date.now() }];
+  const live = page.getByRole('list', { name: 'Live', exact: true });
+  await expect(live.getByText(/^Filling the form · updated/)).toBeVisible({ timeout: 10_000 });
+  await expect(live.getByRole('img', { name: 'Workie\'s browser filling the fixture-employer application', exact: true })).toBeVisible();
 });
 
 test('dense layout has native labels keyboard focus and no overflow in light and dark', async ({ page }, info) => {

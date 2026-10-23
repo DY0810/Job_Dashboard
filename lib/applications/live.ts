@@ -1,9 +1,11 @@
 import 'server-only';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationLive, applications } from '../private-db/schema.ts';
 import { appScope, fail, withWorker, type WorkerOptions } from './worker-store.ts';
 import { LiveFrameSchema } from './worker-protocol.ts';
+import { LIVE_STATES } from './buckets.ts';
+import { SUBMIT_APPROVAL } from './state.ts';
 
 /** Worker call while it works an application: the newest screenshot and step, and what it filled once it has. */
 export async function recordLiveFrame(db: PrivateDb, token: string, applicationId: string, input: unknown, options: WorkerOptions = {}) {
@@ -20,7 +22,25 @@ export async function recordLiveFrame(db: PrivateDb, token: string, applicationI
   });
 }
 
+/**
+ * Frames of the rows Live shows (see `inLive`), newest first, with each row's current state so the page sees it move.
+ * A row that left Live keeps its frame row but is not sent.
+ * ponytail: a 3 MB budget keeps the reply under Vercel's 4.5 MB cap; past it the older frames go without their picture.
+ */
 export async function listLive(db: PrivateDb, ownerId: string) {
-  const rows = await db.select().from(applicationLive).where(eq(applicationLive.ownerId, ownerId));
-  return { ownerId, live: rows.map(({ applicationId, step, image, fields, updatedAt }) => ({ applicationId, step, image, fields, updatedAt })) };
+  const rows = await db.select({ applicationId: applicationLive.applicationId, state: applications.state, step: applicationLive.step,
+    image: applicationLive.image, fields: applicationLive.fields, updatedAt: applicationLive.updatedAt }).from(applicationLive)
+    .innerJoin(applications, and(eq(applications.ownerId, applicationLive.ownerId), eq(applications.id, applicationLive.applicationId)))
+    .where(and(eq(applicationLive.ownerId, ownerId), isNull(applications.hiddenAt), or(inArray(applications.state, [...LIVE_STATES]),
+      eq(applications.reasonCode, 'question_unresolved'), and(eq(applications.state, 'needs_policy_decision'), eq(applications.reasonCode, SUBMIT_APPROVAL)))))
+    .orderBy(desc(applicationLive.updatedAt)).limit(500);
+  let budget = 3_000_000;
+  const fit = <T>(value: T | null, size: number) => {
+    if (value === null || size > budget) return null;
+    budget -= size;
+    return value;
+  };
+  // Answers first: they are what the applicant reviews before Apply.
+  const live = rows.map((row) => ({ ...row, fields: fit(row.fields, JSON.stringify(row.fields).length) }));
+  return { ownerId, live: live.map((row) => ({ ...row, image: fit(row.image, row.image?.length ?? 0) })) };
 }

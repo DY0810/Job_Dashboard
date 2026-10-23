@@ -1,5 +1,5 @@
 // Client-safe: which Auto Apply list a row belongs in. Archiving only hides; it never changes the application.
-import type { ApplicationState } from './state.ts';
+import { isAwaitingSubmitApproval, type ApplicationState } from './state.ts';
 
 const DAY_MS = 86_400_000;
 export const ARCHIVE_AFTER_MS = 14 * DAY_MS;
@@ -19,4 +19,27 @@ export function bucket(app: Row, now: number): 'action' | 'applied' | 'archived'
   const at = archivedAt(app);
   if (at > now) return 'action';
   return now - at < ARCHIVE_KEEP_MS ? 'archived' : null;
+}
+
+/** States in which the worker is working a row (or about to): the Live tab shows them. 'ready' is an approved form it fills again and submits. */
+export const LIVE_STATES: readonly ApplicationState[] = ['screening', 'tailoring', 'filling', 'ready', 'submitting'];
+/** Live also keeps a form that is waiting on the applicant's answers or approval, so it can be finished from there. */
+export const inLive = (app: { state: ApplicationState; reasonCode: string | null; hiddenAt: number | null }) => app.hiddenAt === null &&
+  (LIVE_STATES.includes(app.state) || app.reasonCode === 'question_unresolved' || isAwaitingSubmitApproval(app.state, app.reasonCode));
+/** A frame older than this means the worker is not on the page right now (between stages, or stopped). */
+export const FRESH_MS = 20_000;
+/**
+ * The worker is on this row's form right now, so its card shows the newest step and picture. Any state the worker works will
+ * do: rows reload less often than frames, so a row may still read 'tailoring' while its form is being filled.
+ */
+export const isWatching = (app: { state: ApplicationState }, frame: { updatedAt: number } | undefined, now: number) =>
+  !!frame && now - frame.updatedAt < FRESH_MS && LIVE_STATES.includes(app.state);
+/**
+ * The frames whose row the page holds in another state, or not at all, as one key ('' for none): those rows moved since they
+ * loaded, so the Live tab reloads them. Once per key: a row listRuns leaves out never catches up.
+ */
+export function rowsBehind(frames: { applicationId: string; state: ApplicationState }[], rows: { id: string; state: ApplicationState }[]) {
+  const states = new Map(rows.map((row) => [row.id, row.state]));
+  return frames.filter((frame) => states.get(frame.applicationId) !== frame.state)
+    .map((frame) => `${frame.applicationId} ${frame.state}`).sort().join('\n');
 }

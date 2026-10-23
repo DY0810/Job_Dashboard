@@ -23,3 +23,12 @@ export const formatDailyStart = (minute: number) =>
 /** The worker whose daily start Settings edits and Auto Apply shows: the first online one, else the first not revoked. */
 export const scheduledWorker = <T extends { online: boolean; revokedAt: number | null }>(workers: T[] = []) =>
   workers.find((worker) => worker.online && worker.revokedAt === null) ?? workers.find((worker) => worker.revokedAt === null);
+
+/** Auto Apply's line when the applicant's worker is offline, or null while one is online or none is paired. */
+export function offlineNotice(workers: { online: boolean; revokedAt: number | null; lastSeenAt: number | null }[] = []) {
+  const worker = scheduledWorker(workers);
+  if (!worker || worker.online) return null;
+  const seen = worker.lastSeenAt === null ? ''
+    : `, last seen ${new Date(worker.lastSeenAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+  return `Your worker is offline${seen}. Nothing is applied until it is back online.`;
+}

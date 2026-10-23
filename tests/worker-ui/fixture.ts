@@ -28,6 +28,8 @@ export class WorkerFixture {
   pairings: PairingSummary[] = [];
   runs: Run[] = [];
   applications: ApplicationSummary[] = [];
+  /** Live frames; each is sent with its row's current state, as listLive does. */
+  frames: { applicationId: string; step: string; image: string | null; fields: { label: string; value: string }[] | null; updatedAt: number }[] = [];
   policy = {
     revision: 2, policy: PolicySchema.parse({ ...createEmptyPolicy(), actions: ['read_jobs'],
       destinations: ['employer.example.test'], countries: ['US'] }),
@@ -92,7 +94,10 @@ export class WorkerFixture {
       if (path === '/api/auto-apply/policies') return { status: 200, json: structuredClone(this.policy) };
       // The Auto Apply page under the settings drawer reads these too.
       if (path === '/api/applications/materials') return reply(MaterialsSchema, { ownerId: this.owner, materials: [] });
-      if (path === '/api/applications/live') return reply(LiveListSchema, { ownerId: this.owner, live: [] });
+      if (path === '/api/applications/live') return reply(LiveListSchema, { ownerId: this.owner, live: this.frames.flatMap((frame) => {
+        const app = this.applications.find((row) => row.id === frame.applicationId);
+        return app ? [{ ...frame, state: app.state }] : [];
+      }) });
       throw new Error(`Unexpected synthetic GET: ${path}`);
     }
     assert.equal(headers.get('content-type'), 'application/json');
@@ -152,8 +157,8 @@ export class WorkerFixture {
             !run || run.state === 'stopped' || retries >= 3) return error(409, 'CONFLICT');
         this.retries.set(app.id, retries + 1);
         app.state = app.checkpoint.stage;
-      } else app.state = ambiguous ? 'submission_unknown' : body.action === 'skip' ? 'skipped' : 'cancelled';
-      app.reasonCode = String(body.action); app.revision++;
+      } else app.state = ambiguous ? 'submission_unknown' : body.action === 'approve-submit' ? 'ready' : body.action === 'skip' ? 'skipped' : 'cancelled';
+      app.reasonCode = body.action === 'approve-submit' ? 'submit_approved' : String(body.action); app.revision++;
       result = reply(ApplicationSummarySchema, app);
     } else {
       const run = this.runs.find((row) => path === `/api/application-runs/${row.id}/actions`);

@@ -89,8 +89,9 @@ export const ApplicationSummarySchema = z.strictObject({
   provider: z.string().trim().min(1).max(100).nullable().optional(), costUsd: z.number().finite().nonnegative().nullable().optional(),
   createdAt: timestamp, hiddenAt: timestamp.nullable(),
 });
+// listRuns sends at most 100 runs, and 500 rows being worked, waiting or applied plus the newest 100 history rows.
 export const RunListSchema = z.strictObject({
-  ownerId: z.string(), runs: z.array(RunSchema), applications: z.array(ApplicationSummarySchema),
+  ownerId: z.string(), runs: z.array(RunSchema).max(100), applications: z.array(ApplicationSummarySchema).max(600),
 });
 export const ApplicationIdentitySchema = z.strictObject({ ats: identity, tenant: identity, requisition: identity });
 const role = z.string().trim().min(1).max(300);
@@ -122,7 +123,7 @@ export const LiveFrameSchema = z.strictObject({ ...protocol, step: z.string().tr
   image: liveImage.nullable().optional(), fields: liveFields.optional() });
 export const LiveFrameAckSchema = z.strictObject({ applicationId: uuid, stored: z.literal(true) });
 export const LiveListSchema = z.strictObject({ ownerId: z.string().min(1), live: z.array(z.strictObject({
-  applicationId: uuid, step: z.string(), image: liveImage.nullable(), fields: liveFields.nullable(), updatedAt: timestamp,
+  applicationId: uuid, state: ApplicationStateSchema, step: z.string(), image: liveImage.nullable(), fields: liveFields.nullable(), updatedAt: timestamp,
 })).max(500) });
 export const MaterialsSchema = z.strictObject({ ownerId: z.string().min(1), materials: z.array(z.strictObject({
   applicationId: uuid,

@@ -5,16 +5,17 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
-import { applications, applicationReceipts, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
+import { applications, applicationLive, applicationReceipts, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workerPairings, workers, workerCommands } from '../private-db/schema.ts';
 import { createEmptyPolicy } from './policy.ts';
 import { hashValue } from './stores.ts';
-import { APPLICATION_STATES, SAFE_STAGES, canTransition, type ApplicationState } from './state.ts';
+import { APPLICATION_STATES, SAFE_STAGES, SUBMIT_APPROVAL, canTransition, type ApplicationState } from './state.ts';
 import * as p from './worker-protocol.ts';
 import { createPairing, pairWorker, listWorkers, revokeWorker, revokePairing, scheduleWorker } from './pairing.ts';
 import { createRun, listRuns, commandRun, commandApplication, returnedPostingUrls } from './runs.ts';
 import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
+import { listLive } from './live.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { type WorkerOptions } from './worker-store.ts';
 import { stubHousehold } from '../test-household.ts';
@@ -624,6 +625,20 @@ describe('durable owner controls', () => {
     expect(ids).not.toContain(expired);
     expect(ids).toEqual(expect.arrayContaining([archived, submitted, unknown]));
   });
+  it('lists the row being worked, a form awaiting approval and old applied rows behind 100 newer rows', async () => {
+    const { app } = await prepared();
+    const row = (state: ApplicationState, ageDays: number, reasonCode: string | null = null) => ({ id: randomUUID(), ownerId: 'alice',
+      runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state, reasonCode,
+      availableAt: 0, createdAt: now - ageDays * 86_400_000 });
+    const kept = [row('filling', 3), row('needs_policy_decision', 3, SUBMIT_APPROVAL), row('submitted', 90), row('submission_unknown', 90)];
+    const history = Array.from({ length: 120 }, (_, i) => row((['queued', 'skipped', 'cancelled', 'failed'] as const)[i % 4], 1));
+    await db.insert(applications).values([...kept, ...history]);
+    const listed = p.RunListSchema.parse(await listRuns(db, 'alice', options)).applications;
+    expect(listed.map((item) => item.id)).toEqual(expect.arrayContaining(kept.map((item) => item.id)));
+    // Only history is capped: the newest 100 queued, skipped, cancelled or failed rows (the 120 above and the prepared one).
+    expect(listed).toHaveLength(kept.length + 100);
+    expect(listed.map((item) => item.createdAt)).toEqual(listed.map((item) => item.createdAt).sort((a, b) => b - a));
+  });
   it('sends a role that stops again after a retry back to the Jobs board and keeps it in Auto Apply', async () => {
     const { app } = await prepared();
     await db.update(applications).set({ state: 'needs_document', reasonCode: 'document_tailoring_unavailable' }).where(eq(applications.id, app.id));
@@ -663,6 +678,33 @@ describe('durable owner controls', () => {
     expect(outcomes.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect((await listRuns(db, 'alice')).applications[0].state).toBe('submission_unknown');
     expect((await claim(worker.token)).mode).toBe('reconcile');
+  });
+});
+describe('live frames', () => {
+  it('lists frames only for rows in Live, newest first, under Vercel\'s 4.5 MB response cap', async () => {
+    const { app } = await prepared();
+    const bob = (await prepared('bob')).app;
+    await db.update(applications).set({ state: 'filling' }).where(eq(applications.id, bob.id));
+    const row = (state: ApplicationState, reasonCode: string | null = null, hiddenAt: number | null = null) => ({ id: randomUUID(), ownerId: 'alice',
+      runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state, reasonCode, hiddenAt,
+      availableAt: 0, createdAt: now });
+    const parked = Array.from({ length: 45 }, () => row('needs_policy_decision', SUBMIT_APPROVAL));
+    const asking = row('needs_answer', 'question_unresolved'), filling = row('filling');
+    const left = [row('submitted'), row('cancelled'), row('needs_policy_decision', SUBMIT_APPROVAL, now)];
+    const skipped = Array.from({ length: 460 }, () => row('skipped'));
+    await db.insert(applications).values([...parked, asking, filling, ...left, ...skipped]);
+    const image = 'A'.repeat(120_000), fields = [{ label: 'First Name', value: 'Test' }];
+    const frame = (ownerId: string, applicationId: string, updatedAt: number, picture: string | null = image) =>
+      ({ ownerId, applicationId, step: 'Filled. Waiting for your approval', image: picture, fields, updatedAt });
+    await db.insert(applicationLive).values([...parked.map((item, i) => frame('alice', item.id, now - 60_000 - i)),
+      frame('alice', asking.id, now - 30_000), frame('alice', filling.id, now - 1_000), ...left.map((item) => frame('alice', item.id, now)),
+      ...skipped.map((item) => frame('alice', item.id, now, null)), frame('bob', bob.id, now)]);
+    const listed = p.LiveListSchema.parse(await listLive(db, 'alice'));
+    expect(JSON.stringify(listed).length).toBeLessThan(4_500_000);
+    expect(listed.live.map((item) => item.applicationId).sort()).toEqual([...parked, asking, filling].map((item) => item.id).sort());
+    // The form being filled is the newest frame, so it keeps its picture; every form keeps its answers for review.
+    expect(listed.live[0]).toMatchObject({ applicationId: filling.id, state: 'filling', image });
+    expect(listed.live.every((item) => item.fields?.length === 1)).toBe(true);
   });
 });
 describe('daily start schedule', () => {

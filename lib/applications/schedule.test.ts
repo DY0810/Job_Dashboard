@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { dailyStartInstant, formatDailyStart, scheduledWorker } from './schedule.ts';
-import { archivedAt, bucket } from './buckets.ts';
+import { dailyStartInstant, formatDailyStart, offlineNotice, scheduledWorker } from './schedule.ts';
+import { archivedAt, bucket, inLive, isWatching, rowsBehind } from './buckets.ts';
+import { SUBMIT_APPROVAL, type ApplicationState } from './state.ts';
 
 const at = (iso: string) => Date.parse(iso);
 const DAY = 86_400_000;
@@ -38,6 +39,43 @@ describe('scheduledWorker', () => {
     expect(scheduledWorker([revoked, idle])).toBe(idle);
     expect(scheduledWorker([revoked])).toBeUndefined();
     expect(scheduledWorker()).toBeUndefined();
+  });
+  it('says on Auto Apply when the applicant\'s worker is offline, and since when', () => {
+    const seen = at('2026-10-22T03:27:00Z');
+    const since = new Date(seen).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    expect(offlineNotice([{ online: false, revokedAt: null, lastSeenAt: seen }])).toBe(
+      `Your worker is offline, last seen ${since}. Nothing is applied until it is back online.`);
+    expect(offlineNotice([{ online: false, revokedAt: null, lastSeenAt: null }])).toBe('Your worker is offline. Nothing is applied until it is back online.');
+    expect(offlineNotice([{ online: false, revokedAt: null, lastSeenAt: seen }, { online: true, revokedAt: null, lastSeenAt: seen }])).toBeNull();
+    // A revoked worker is not the applicant's worker any more; with none paired there is nothing to be offline.
+    expect(offlineNotice([{ online: false, revokedAt: seen, lastSeenAt: seen }])).toBeNull();
+    expect(offlineNotice([])).toBeNull();
+  });
+});
+
+describe('Live', () => {
+  const now = at('2026-10-13T12:00:00Z');
+  const row = (state: ApplicationState, reasonCode: string | null = null) => ({ state, reasonCode, hiddenAt: null });
+  it('keeps an approved form in Live, watchable, while the worker fills it again and submits it', () => {
+    expect(inLive(row('ready', 'submit_approved'))).toBe(true);
+    expect(isWatching(row('ready', 'submit_approved'), { updatedAt: now - 1_000 }, now)).toBe(true);
+  });
+  it('shows a fresh frame while the rows still hold the state from before the fill', () => {
+    expect(isWatching(row('tailoring'), { updatedAt: now - 1_000 }, now)).toBe(true);
+    expect(isWatching(row('tailoring'), { updatedAt: now - 30_000 }, now)).toBe(false);
+  });
+  it('never shows a parked, finished or archived row as being worked', () => {
+    expect(isWatching(row('needs_policy_decision', SUBMIT_APPROVAL), { updatedAt: now - 1_000 }, now)).toBe(false);
+    expect(isWatching(row('skipped'), { updatedAt: now - 1_000 }, now)).toBe(false);
+    expect(inLive(row('needs_policy_decision', SUBMIT_APPROVAL))).toBe(true);
+    expect(inLive(row('submitted'))).toBe(false);
+    expect(inLive({ ...row('ready'), hiddenAt: now })).toBe(false);
+  });
+  it('names the rows a frame shows moved since they loaded, so Live reloads them', () => {
+    const frame = { applicationId: 'a', state: 'filling' as ApplicationState };
+    expect(rowsBehind([frame], [{ id: 'a', state: 'filling' }])).toBe('');
+    expect(rowsBehind([frame], [{ id: 'a', state: 'queued' }])).toBe('a filling');
+    expect(rowsBehind([frame, { applicationId: 'b', state: 'needs_policy_decision' }], [{ id: 'a', state: 'filling' }])).toBe('b needs_policy_decision');
   });
 });
 
