@@ -11,7 +11,7 @@
  * A `file:` URL needs no Turso account, which is also how `push:remote` is rehearsed.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,12 +21,12 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { fixtures } from '../../scripts/seed.ts';
-import { pushRemote } from '../../scripts/push-remote.ts';
+import { migrateRemote, pushRemote } from '../../scripts/push-remote.ts';
 import {
   DEFAULT_BASIS, bare, type Params, type Tab
 } from '../params.ts';
 import { getPostingDetail, listPostings, outsideTargetLocations, tabIsEmpty } from '../query.ts';
-import { needsTurso, openDb, prefersTurso, type Db, type ReadDb, type TursoDb } from './index.ts';
+import { MIGRATIONS_DIR, needsTurso, openDb, prefersTurso, type Db, type ReadDb, type TursoDb } from './index.ts';
 import * as schema from './schema.ts';
 import { postings } from './schema.ts';
 import { claimRequest, finishRequest, getRefreshRequest, pendingRequest, requestRefresh } from '../refresh-queue.ts';
@@ -226,5 +226,25 @@ describe('prefersTurso', () => {
 
   it('WORKIE_DB_DRIVER=turso is an explicit override for remote previews', () => {
     expect(prefersTurso({ ...TURSO, WORKIE_DB_DRIVER: 'turso' }, true)).toBe(true);
+  });
+});
+
+describe('migrating Turso', () => {
+  it('re-reads the journal after a lost response instead of re-running the batch', async () => {
+    const client = createClient({ url: `file:${join(dir, 'lossy.db')}` });
+    // The batch commits and its response never arrives: what building postings_board_idx over
+    // 370k rows did on 10/23. Resending that same batch re-ran `DROP INDEX` on an index it had
+    // already dropped.
+    const commit = client.migrate.bind(client);
+    let lost = false;
+    client.migrate = async (stmts) => {
+      const results = await commit(stmts);
+      if (lost) return results;
+      lost = true;
+      throw new TypeError('fetch failed');
+    };
+    await migrateRemote(client);
+    const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta', '_journal.json'), 'utf8')).entries;
+    expect((await client.execute('select count(*) as n from __drizzle_migrations')).rows[0].n).toBe(journal.length);
   });
 });

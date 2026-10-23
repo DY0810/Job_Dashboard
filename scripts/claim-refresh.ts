@@ -12,12 +12,13 @@
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
 
 import * as schema from '../lib/db/schema.ts';
 import { claimRequest, finishRequest } from '../lib/refresh-queue.ts';
-import { MIGRATIONS_DIR, openDb, retryingFetch, type Db, type ReadDb, type TursoDb } from '../lib/db/index.ts';
+import { openDb, retryingFetch, type Db, type ReadDb } from '../lib/db/index.ts';
+import { migrateRemote } from './push-remote.ts';
 import { readCheckpoints } from './ingest.ts';
 import { connectors } from './connectors/index.ts';
 
@@ -58,7 +59,7 @@ export async function claimAndRun(run: () => number, db?: ReadDb): Promise<numbe
   // row could not be updated. Treated as "nobody was waiting", which is the honest reading.
   let claimed: Awaited<ReturnType<typeof claimRequest>> = null;
   try {
-    if (!db) await migrate(remote as TursoDb, { migrationsFolder: MIGRATIONS_DIR });
+    if (!db) await migrateRemote(createClient({ url: url!, authToken: process.env.TURSO_AUTH_TOKEN }));
     claimed = await claimRequest(remote);
   } catch (error) {
     console.log(
