@@ -10,7 +10,7 @@ import { isAwaitingSubmitApproval, isSafeRetryState, isTerminalState } from './s
 import { postingUrl } from './posting-url.ts';
 import { ARCHIVE_AFTER_MS, ARCHIVE_KEEP_MS, IN_FLIGHT_STATES } from './buckets.ts';
 import {
-  RunCreateSchema, RunCommandSchema, ApplicationCommandSchema,
+  RunCreateSchema, RunCommandSchema, ApplicationCommandSchema, LEASE_MS, SUBMIT_WAIT_MS,
   type RunCreate, type RunCommand, type ApplicationCommand, type Run,
   type RunList, type ApplicationSummary,
 } from './worker-protocol.ts';
@@ -156,6 +156,16 @@ export async function commandRun(db: PrivateDb, ownerId: string, id: string, inp
   if (result instanceof WorkerError) throw result;
   return result;
 }
+/** Every ATS adapter keeps the employer's window open up to SUBMIT_WAIT_MS after the submission intent, even after the lease
+ * is gone, and the applicant can still finish it there. Until it closes nobody can say it never went through: closing the row
+ * would refuse that late receipt, and one more Apply would send the application twice. */
+export async function refuseOpenSubmission(tx: WorkerTx, ownerId: string, applicationId: string, now: number) {
+  const [open] = await tx.select({ intentId: applicationSubmissions.intentId }).from(applicationSubmissions).where(and(
+    eq(applicationSubmissions.ownerId, ownerId), eq(applicationSubmissions.applicationId, applicationId),
+    gt(applicationSubmissions.createdAt, now - SUBMIT_WAIT_MS - LEASE_MS),
+  )).limit(1);
+  if (open) fail(409, 'SUBMISSION_MAY_STILL_COMPLETE', 'The employer window may still be open. Try again once it closes.');
+}
 export async function commandApplication(
   db: PrivateDb, ownerId: string, runId: string, id: string, input: ApplicationCommand, options: WorkerOptions = {},
 ): Promise<ApplicationSummary> {
@@ -206,6 +216,7 @@ export async function commandApplication(
       // The applicant says whether the employer received it. No receipt is invented: 0009 lets an unknown submission become
       // submitted, or failed as applicant_confirmed_not_submitted, which needs no running run, so it closes even when none can retry it.
       if (row.state !== 'submission_unknown') fail(409, 'CONFLICT', 'Only an unconfirmed submission can be answered.');
+      if (command.action === 'confirm-not-submitted') await refuseOpenSubmission(tx, ownerId, id, now);
       next = command.action === 'confirm-submitted' ? 'submitted' : 'failed';
     } else next = ambiguous ? 'submission_unknown' : command.action === 'skip' ? 'skipped' : 'cancelled';
     const updated = one(await tx.update(applications).set({

@@ -9,7 +9,7 @@ import { captureCandidateSnapshot, type DiscoveryCandidate } from './discovery-s
 import { getPolicy, hashValue } from './stores.ts';
 import { isSafeRetryState, isTerminalState } from './state.ts';
 import type { Policy } from './policy.ts';
-import { applicationSummary, releaseRunApplications } from './runs.ts';
+import { applicationSummary, refuseOpenSubmission, releaseRunApplications } from './runs.ts';
 import {
   AbandonDiscoverySchema, AbandonDiscoveryResponseSchema, DiscoveryStatusSchema, ReapplyRequestSchema,
   type DiscoveryStatus, type ReapplyRequest, type TargetDisposition,
@@ -421,6 +421,7 @@ export async function retryUnsubmittedApplication(
     // An unknown submission is only ever leased read-only (reconcile), which bumps its revision every cycle; it leaves
     // unknown only for good, so the applicant's answer is checked against its state and ends that lease.
     if (!unsubmitted && (previous.revision !== command.expectedRevision || !documentHold || previous.leaseUntil !== null)) fail();
+    if (unsubmitted) await refuseOpenSubmission(tx, ownerId, previous.id, now);
     // Only a run on the current policy can lease the new attempt; an older one would strand it.
     if (!await currentDiscoveryPolicy(tx, run, now)) fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
     const [latest] = await tx.select().from(applications).where(identityMatch(previous)).orderBy(desc(applications.attempt)).limit(1);

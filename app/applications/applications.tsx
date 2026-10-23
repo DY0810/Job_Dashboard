@@ -240,7 +240,9 @@ async function restart(app: App, runs: Run[], ownerId: string, action: 'restart'
     const code = await errorCode(response!);
     throw new Error(code === 'POLICY_CHANGED' ? 'The Auto Apply policy changed since the running run started. Start a new run from Settings, then retry.'
       : code === 'DISCOVERY_REQUIRED' ? 'No running run has found this role yet. Retry after its discovery finishes.'
-      : code === 'DUPLICATE_BLOCKED' ? 'This role was already retried or marked applied.' : 'Could not retry. Refresh and try again.');
+      : code === 'DUPLICATE_BLOCKED' ? 'This role was already retried or marked applied.'
+      : code === 'SUBMISSION_MAY_STILL_COMPLETE' ? 'The employer window may still be open, so this could still go through. Try again in half an hour.'
+      : 'Could not retry. Refresh and try again.');
   }
 }
 

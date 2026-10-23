@@ -4,6 +4,8 @@ import { APPLICATION_STATES, SAFE_STAGES } from './state.ts';
 export const WORKER_PROTOCOL_VERSION = 1;
 export const LEASE_MS = 120_000;
 export const HEARTBEAT_MS = 20_000;
+// Longest an ATS adapter keeps the employer's window open after submit, for the applicant's emailed code or captcha.
+export const SUBMIT_WAIT_MS = 30 * 60_000;
 // A poll may run a discovery scan before it assigns a lease.
 export const POLL_TIMEOUT_MS = 30_000;
 export const PAIRING_TTL_MS = 600_000;
