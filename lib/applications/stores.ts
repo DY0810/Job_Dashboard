@@ -13,7 +13,7 @@ import {
 import { readDraftKeyConfig } from './draft-key.ts';
 import { PrivateInputError } from './private-http.ts';
 import { HEARTBEAT_MS } from './worker-protocol.ts';
-import { isAwaitingSubmitApproval, isWaitingState } from './state.ts';
+import { isAwaitingSubmitApproval, isWaitingState, SUBMIT_APPROVAL } from './state.ts';
 import { carryQuestions } from './questions.ts';
 
 type Db = Pick<PrivateDb, 'select' | 'insert' | 'update'>;
@@ -244,6 +244,9 @@ export async function mutatePolicy(
 /** The policy fields discovery selects roles with; a run's rows were selected under its policy's. */
 const selection = (policy: Policy) => [policy.filters, policy.destinations, policy.countries, policy.sourceRestrictions,
   policy.targetRoles, policy.employerBlocklist, policy.payFloor, policy.undisclosedPay];
+/** What fills and screens a form: everything but pacing, budget and expiry. Submit and recruiter email leave the form as it is. */
+const form = (policy: Policy) => ({ ...policy, dailyApplicationCap: null, perEmployerCap: null, budget: null, expiresAt: null,
+  reapplication: null, actions: policy.actions.filter((action) => action === 'tailor_documents' || action === 'fill_forms') });
 
 /**
  * Runs follow the policy their applicant enables, so their rows lease again. Fail closed: every lease from before ends (a
@@ -265,14 +268,16 @@ async function carryRunsForward(tx: Tx, ownerId: string, policy: PolicyResponse,
     state: sql`case when ${applications.state} = 'submitting' then 'submission_unknown' else ${applications.state} end`,
   }).where(and(eq(applications.ownerId, ownerId), or(isNotNull(applications.leaseUntil), eq(applications.state, 'submitting'))));
   const binding = { policyRevision: policy.revision, policyVersion: policy.policyVersion, policyHash: policy.policyHash! };
-  const carried: string[] = [];
+  const carried: string[] = [], refill: string[] = [];
   for (const { run, bound } of await tx.select({ run: applicationRuns, bound: policyVersions.policy }).from(applicationRuns)
     .innerJoin(policyVersions, and(eq(policyVersions.ownerId, applicationRuns.ownerId), eq(policyVersions.version, applicationRuns.policyVersion)))
     .where(and(eq(applicationRuns.ownerId, ownerId), ne(applicationRuns.state, 'stopped')))) {
     const scope = and(eq(applicationRuns.ownerId, ownerId), eq(applicationRuns.id, run.id));
-    if (hashValue(selection(PolicySchema.parse(bound))) === hashValue(selection(policy.policy))) {
+    const before = PolicySchema.parse(bound);
+    if (hashValue(selection(before)) === hashValue(selection(policy.policy))) {
       await tx.update(applicationRuns).set({ ...binding, revision: sql`${applicationRuns.revision} + 1` }).where(scope);
       carried.push(run.id);
+      if (hashValue(form(before)) !== hashValue(form(policy.policy))) refill.push(run.id);
       continue;
     }
     // Stop's steps (commandRun): discovery ends, and what never reached the employer is cancelled.
@@ -313,5 +318,14 @@ async function carryRunsForward(tx: Tx, ownerId: string, policy: PolicyResponse,
         checkpoint: { stage: 'screening', sequence: (app.checkpoint?.sequence ?? 0) + 1 },
       }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, app.id)));
     }
+  }
+  if (!refill.length) return;
+  // An approval covers the form the applicant reviewed. A change to what fills or screens it needs a new fill and review.
+  for (const app of await tx.select().from(applications).where(and(eq(applications.ownerId, ownerId), inArray(applications.runId, refill),
+    or(eq(applications.state, 'ready'), and(eq(applications.state, 'needs_policy_decision'), eq(applications.reasonCode, SUBMIT_APPROVAL)))))) {
+    await tx.update(applications).set({
+      ...bump, state: 'screening', reasonCode: 'policy_changed',
+      checkpoint: { stage: 'screening', sequence: (app.checkpoint?.sequence ?? 0) + 1 },
+    }).where(and(eq(applications.ownerId, ownerId), eq(applications.id, app.id)));
   }
 }
