@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { TransactionMode } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migratePrivateDb, openPrivateDb, type PrivateDb } from '../private-db/index.ts';
@@ -14,9 +14,9 @@ import {
 } from '../private-db/schema.ts';
 import { createEmptyProfile, type Profile } from './profile.ts';
 import { createEmptyPolicy, PolicySchema, type Policy } from './policy.ts';
-import { hashValue, saveProfile } from './stores.ts';
+import { hashValue, mutatePolicy, saveProfile } from './stores.ts';
 import { createPairing, pairWorker, revokeWorker } from './pairing.ts';
-import { createRun, commandRun } from './runs.ts';
+import { createRun, commandRun, commandApplication } from './runs.ts';
 import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
@@ -431,6 +431,119 @@ describe('question DAL atomic answers, one application each', () => {
     expect((await appRow(a.app.id)).fence).toBeGreaterThan(lease.fence);
     expect(await qRow(second.id)).toEqual(historical);
     expect((await db.select().from(questionAnswers).where(eq(questionAnswers.id, original.answerId)))[0]).toEqual(oldAnswer);
+  });
+
+  it('asks again under a newly enabled policy: a row waiting on answers goes back to screening and its new questions can be answered', async () => {
+    vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+    vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
+    const confirmedAt = new Date(now).toISOString(), applicant = structuredClone(profile);
+    for (const [key, value] of [['legalFirstName', 'Synthetic'], ['legalLastName', 'Applicant'], ['personalEmail', 'alice@example.test']] as const) {
+      Object.assign(applicant.identity[key], { value, state: 'confirmed', confirmedAt });
+    }
+    await setProfile(applicant);
+    await setPolicy({ destinations: ['boards.greenhouse.io'], countries: ['US'] });
+    const f = await prepared();
+    const optional = descriptor({ key: 'note', originalWording: 'Anything else?', meaning: { id: 'note', reviewId: null },
+      required: false, field: { ...field, allowBlank: true } });
+    const first = await batch(f, [descriptor(), optional]);
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'needs_answer', reasonCode: 'question_unresolved' });
+    // Profile's save turns the policy off and Enable turns it on: two new policy revisions.
+    const [bound] = await db.select().from(policyVersions).where(and(eq(policyVersions.ownerId, 'alice'), eq(policyVersions.version, 2)));
+    const saved = await mutatePolicy(db, 'alice', { ...request(), expectedRevision: 2,
+      policy: { ...PolicySchema.parse(bound.policy), documentKinds: ['resume'] } });
+    await mutatePolicy(db, 'alice', { ...request(), expectedRevision: saved.revision, action: 'enable', acceptedPolicyHash: saved.policyHash! });
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'screening', reasonCode: 'policy_changed', leaseUntil: null });
+    // The open question closes; the optional one left blank, which the new policy still allows, stays answered.
+    expect((await qRow(first.id)).active).toBe(false);
+    expect(await qRow(first.result.questionIds[1])).toMatchObject({ active: true, policyRevision: 4 });
+    // The worker screens again and asks only what it still needs; nothing from the old policy blocks the row.
+    const again = await batch(f);
+    expect(again.id).toBe(first.id);
+    expect((await getQuestion(db, 'alice', again.id, options)).canAnswer).toBe(true);
+    const answer = await answerQuestion(db, 'alice', again.id, await answerInput(again.id), options);
+    expect(answer.resumedApplicationIds).toEqual([f.app.id]);
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'screening', reasonCode: null });
+  });
+
+  it('keeps the answers a newly enabled policy still allows, so Apply submits the form the applicant reviewed', async () => {
+    vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+    vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
+    const confirmedAt = new Date(now).toISOString(), applicant = structuredClone(profile);
+    for (const [key, value] of [['legalFirstName', 'Synthetic'], ['legalLastName', 'Applicant'], ['personalEmail', 'alice@example.test']] as const) {
+      Object.assign(applicant.identity[key], { value, state: 'confirmed', confirmedAt });
+    }
+    await setProfile(applicant);
+    await setPolicy({ destinations: ['boards.greenhouse.io'], countries: ['US'], actions: ['read_jobs', 'fill_forms', 'submit'] });
+    const change = async (changes: Partial<Policy>) => {
+      const [head] = await db.select().from(policyHeads).where(eq(policyHeads.ownerId, 'alice'));
+      const [bound] = await db.select().from(policyVersions).where(and(eq(policyVersions.ownerId, 'alice'), eq(policyVersions.version, head.policyVersion)));
+      const saved = await mutatePolicy(db, 'alice', { ...request(), expectedRevision: head.revision, policy: { ...PolicySchema.parse(bound.policy), ...changes } });
+      await mutatePolicy(db, 'alice', { ...request(), expectedRevision: saved.revision, action: 'enable', acceptedPolicyHash: saved.policyHash! });
+    };
+    const f = await prepared();
+    // A sensitive optional question is left blank on its own under confirmed_only disclosure.
+    const sensitive = descriptor({ key: 'note', originalWording: 'Anything else?', meaning: { id: 'note', reviewId: null },
+      required: false, sensitive: true, field: { ...field, allowBlank: true } });
+    const first = await batch(f, [descriptor(), sensitive]);
+    const answer = await answerQuestion(db, 'alice', first.id, await answerInput(first.id), options);
+    // The worker fills the form with that answer and parks it for approval.
+    const lease = (await pollWorker(db, f.token, { protocolVersion: 1 }, options)).lease!;
+    await recordWorkerEvent(db, f.token, f.app.id, { protocolVersion: 1, eventId: randomUUID(), fence: lease.fence,
+      expectedRevision: lease.revision, state: 'needs_policy_decision', reasonCode: 'submit_approval',
+      checkpoint: { stage: 'screening', sequence: (lease.checkpoint?.sequence ?? 0) + 1 } }, options);
+    await change({ dailyApplicationCap: 5 });
+    const parked = await appRow(f.app.id);
+    expect(parked).toMatchObject({ state: 'needs_policy_decision', reasonCode: 'submit_approval' });
+    await commandApplication(db, 'alice', f.run.id, f.app.id, { ...request(), expectedRevision: parked.revision, action: 'approve-submit' }, options);
+    const submit = (await pollWorker(db, f.token, { protocolVersion: 1 }, options)).lease!;
+    expect(submit).toMatchObject({ applicationId: f.app.id, state: 'ready' });
+    // The application context passes the worker each active answer bound to the lease's policy revision.
+    expect(await qRow(first.id)).toMatchObject({ active: true, answerId: answer.answerId, policyRevision: submit.policyRevision });
+    // A policy that asks about each sensitive question cannot keep the one left blank: the form is filled and reviewed again.
+    await change({ disclosure: 'ask_each_sensitive' });
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'screening', reasonCode: 'policy_changed', leaseUntil: null });
+    expect(await qRow(first.result.questionIds[1])).toMatchObject({ active: false });
+    expect(await qRow(first.id)).toMatchObject({ active: true, answerId: answer.answerId });
+  });
+
+  it('sends an approved form back to be filled and reviewed when the newly enabled policy changes what fills or screens it', async () => {
+    vi.stubEnv('WORKIE_DRAFT_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+    vi.stubEnv('WORKIE_DRAFT_KEY_VERSION', '1');
+    const confirmedAt = new Date(now).toISOString(), applicant = structuredClone(profile);
+    for (const [key, value] of [['legalFirstName', 'Synthetic'], ['legalLastName', 'Applicant'], ['personalEmail', 'alice@example.test']] as const) {
+      Object.assign(applicant.identity[key], { value, state: 'confirmed', confirmedAt });
+    }
+    await setProfile(applicant);
+    await setPolicy({ destinations: ['boards.greenhouse.io'], countries: ['US'], actions: ['read_jobs', 'tailor_documents', 'fill_forms', 'submit'],
+      documentKinds: ['resume', 'cover_letter'] });
+    const change = async (changes: Partial<Policy>) => {
+      const [head] = await db.select().from(policyHeads).where(eq(policyHeads.ownerId, 'alice'));
+      const [bound] = await db.select().from(policyVersions).where(and(eq(policyVersions.ownerId, 'alice'), eq(policyVersions.version, head.policyVersion)));
+      const saved = await mutatePolicy(db, 'alice', { ...request(), expectedRevision: head.revision, policy: { ...PolicySchema.parse(bound.policy), ...changes } });
+      await mutatePolicy(db, 'alice', { ...request(), expectedRevision: saved.revision, action: 'enable', acceptedPolicyHash: saved.policyHash! });
+    };
+    const f = await prepared();
+    const lease = (await pollWorker(db, f.token, { protocolVersion: 1 }, options)).lease!;
+    await recordWorkerEvent(db, f.token, f.app.id, { protocolVersion: 1, eventId: randomUUID(), fence: lease.fence,
+      expectedRevision: lease.revision, state: 'needs_policy_decision', reasonCode: 'submit_approval',
+      checkpoint: { stage: 'screening', sequence: (lease.checkpoint?.sequence ?? 0) + 1 } }, options);
+    const parked = await appRow(f.app.id);
+    await commandApplication(db, 'alice', f.run.id, f.app.id, { ...request(), expectedRevision: parked.revision, action: 'approve-submit' }, options);
+    // Pacing changes leave the reviewed form as it is: the approval stands.
+    await change({ dailyApplicationCap: 5 });
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'ready' });
+    // Dropping the cover letter changes what the refill at submit would send, so the approval cannot cover it.
+    await change({ documentKinds: ['resume'] });
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'screening', reasonCode: 'policy_changed', leaseUntil: null });
+    // So does a change to who is eligible, for a form waiting for its approval.
+    const g = await appRow(f.app.id);
+    const again = (await pollWorker(db, f.token, { protocolVersion: 1 }, options)).lease!;
+    expect(again).toMatchObject({ applicationId: g.id });
+    await recordWorkerEvent(db, f.token, f.app.id, { protocolVersion: 1, eventId: randomUUID(), fence: again.fence,
+      expectedRevision: again.revision, state: 'needs_policy_decision', reasonCode: 'submit_approval',
+      checkpoint: { stage: 'screening', sequence: (again.checkpoint?.sequence ?? 0) + 1 } }, options);
+    await change({ degreeEligibility: ['Bachelor of Science'] });
+    expect(await appRow(f.app.id)).toMatchObject({ state: 'screening', reasonCode: 'policy_changed' });
   });
 });
 

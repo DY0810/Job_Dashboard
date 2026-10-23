@@ -209,8 +209,14 @@ export async function commandApplication(
       // The worker parks every filled form here; only the applicant's approval lets it submit.
       const [run] = await tx.select().from(applicationRuns).where(and(eq(applicationRuns.id, runId), eq(applicationRuns.ownerId, ownerId)));
       if (!run || run.state === 'stopped' || !isAwaitingSubmitApproval(row.state, row.reasonCode)) fail(409, 'CONFLICT', 'No filled form is awaiting approval.');
+      // Only a running run leases the approved form; on a paused one (its worker revoked) it would wait at 'ready' forever.
+      if (run.state !== 'running') fail(409, 'CONFLICT', 'The run is paused.');
       const policy = await getPolicy(tx, ownerId, now);
       if (!policy.enabled || !policy.policy.actions.includes('submit')) fail(403, 'SUBMIT_DISABLED', 'Submit is not enabled in the policy.');
+      // Only a run bound to the enabled policy leases the approved form; on any other it would wait at 'ready' forever.
+      if (policy.revision !== run.policyRevision || policy.policyVersion !== run.policyVersion || policy.policyHash !== run.policyHash) {
+        fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
+      }
       next = 'ready'; availableAt = now;
     } else if (command.action === 'confirm-submitted' || command.action === 'confirm-not-submitted') {
       // The applicant says whether the employer received it. No receipt is invented: 0009 lets an unknown submission become
