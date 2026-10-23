@@ -945,3 +945,33 @@ describe('roles auto-apply can fill live in Applications, not on the board', () 
     expect(await order(params('design'))).toContain('d-sf-3d');
   });
 });
+
+/**
+ * Every filter column lives after `description` in the row, so a WHERE that reaches the table
+ * reads each live row's ~7 KB of overflow pages. On the 10/23 corpus that was ~4,800 pages per
+ * Engineering count instead of ~120, every render, on Turso. The board's WHERE has to stay
+ * answerable from `postings_board_idx` alone: a new filter column goes into that index too.
+ */
+describe('the board filters from the index, not the rows', () => {
+  async function plans(run: (db: Db) => Promise<unknown>): Promise<string[]> {
+    const sqlite = (db as unknown as { $client: Database.Database }).$client;
+    const seen: { query: string; params: unknown[] }[] = [];
+    await run(drizzle(sqlite, { logger: { logQuery: (query, params) => void seen.push({ query, params }) } }) as unknown as Db);
+    return seen.flatMap(({ query, params }) => sqlite.prepare(`explain query plan ${query}`).all(...params)
+      .map((row) => (row as { detail: string }).detail));
+  }
+
+  it.each([
+    ['engineering', params('engineering', { posted: 'week', type: ['internship'], mode: ['remote'], season: ['summer'], level: ['entry'], pay: ['unknown'], badge: 'voice-ai' })],
+    ['design', params('design', { basis: 'freelance', posted: 'week', mode: ['remote'], pay: ['paid'] })],
+  ] as const)('%s: counting and the empty-tab checks read only a covering index', async (_, p) => {
+    const returned = ['https://jobs.ashbyhq.com/acme/0f6c2c9e-1111-4222-8333-944455556666'];
+    const details = await plans((logged) => Promise.all([
+      countPostings(logged, p, NOW, returned),
+      tabIsEmpty(logged, p, NOW, returned),
+      outsideTargetLocations(logged, p, NOW, returned),
+    ]));
+    expect(details.length).toBeGreaterThan(0);
+    for (const detail of details) expect(detail).toMatch(/USING COVERING INDEX postings_board_idx/);
+  });
+});
