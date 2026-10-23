@@ -181,9 +181,9 @@ export async function commandApplication(
     }
     // The worker's read-only reconcile lease bumps an unknown row's revision every cycle, and the row leaves unknown
     // only for good, so the applicant's answer to it is checked against its state instead.
-    const answer = command.action === 'confirm-submitted' && row.state === 'submission_unknown';
+    const answer = ['confirm-submitted', 'confirm-not-submitted'].includes(command.action) && row.state === 'submission_unknown';
     if ((row.revision !== command.expectedRevision && !answer) || isTerminalState(row.state)) fail();
-    if (ambiguous && !['emergency-stop', 'confirm-submitted'].includes(command.action)) fail(409, 'CONFLICT', 'Submission requires read-only reconciliation.');
+    if (ambiguous && !['emergency-stop', 'confirm-submitted', 'confirm-not-submitted'].includes(command.action)) fail(409, 'CONFLICT', 'Submission requires read-only reconciliation.');
     let next = row.state, availableAt = row.availableAt, retries = row.retries;
     if (command.action === 'retry-safe') {
       const [run] = await tx.select().from(applicationRuns).where(and(eq(applicationRuns.id, runId), eq(applicationRuns.ownerId, ownerId)));
@@ -202,14 +202,16 @@ export async function commandApplication(
       const policy = await getPolicy(tx, ownerId, now);
       if (!policy.enabled || !policy.policy.actions.includes('submit')) fail(403, 'SUBMIT_DISABLED', 'Submit is not enabled in the policy.');
       next = 'ready'; availableAt = now;
-    } else if (command.action === 'confirm-submitted') {
-      // The applicant says the employer received it. No receipt is invented: 0009 lets an unknown submission become submitted.
-      if (row.state !== 'submission_unknown') fail(409, 'CONFLICT', 'Only an unconfirmed submission can be marked applied.');
-      next = 'submitted';
+    } else if (command.action === 'confirm-submitted' || command.action === 'confirm-not-submitted') {
+      // The applicant says whether the employer received it. No receipt is invented: 0009 lets an unknown submission become
+      // submitted, or failed as applicant_confirmed_not_submitted, which needs no running run, so it closes even when none can retry it.
+      if (row.state !== 'submission_unknown') fail(409, 'CONFLICT', 'Only an unconfirmed submission can be answered.');
+      next = command.action === 'confirm-submitted' ? 'submitted' : 'failed';
     } else next = ambiguous ? 'submission_unknown' : command.action === 'skip' ? 'skipped' : 'cancelled';
     const updated = one(await tx.update(applications).set({
       state: next, revision: row.revision + 1, fence: row.fence + 1, leaseUntil: null, leaseCheckedAt: null,
-      reasonCode: command.action === 'approve-submit' ? 'submit_approved' : command.action === 'confirm-submitted' ? 'applicant_confirmed_submitted' : command.action,
+      reasonCode: command.action === 'approve-submit' ? 'submit_approved' : command.action === 'confirm-submitted' ? 'applicant_confirmed_submitted'
+        : command.action === 'confirm-not-submitted' ? 'applicant_confirmed_not_submitted' : command.action,
       availableAt, retries,
     }).where(and(appScope(ownerId, id), eq(applications.revision, row.revision), eq(applications.fence, row.fence))).returning());
     const acknowledgement = applicationSummary(updated);

@@ -354,10 +354,20 @@ test('an unconfirmed submission says why, and the applicant says whether it went
   const lost = fixture.addApplication('submission_unknown', 'submission_response_lost');
   await page.reload();
   await page.getByRole('button', { name: 'It did not go through, try again', exact: true }).click();
-  await expect(page.getByText('Fill this application again? Nothing is submitted until you press Apply.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Fill this application again? Nothing is submitted until you press Apply. If no running run has this role, it just closes.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Yes, it did not go through, try again', exact: true }).click();
   await expect.poll(() => fixture.writes.at(-1)?.path).toBe(`/api/application-runs/${lost.runId}/retry-unsubmitted`);
   expect(fixture.writes.at(-1)?.body).toMatchObject({ previousApplicationId: lost.id, expectedRevision: 1 });
+
+  // With no running run to fill it again (its posting closed, or Auto Apply is off), the answer still closes it.
+  fixture.runs[0].state = 'stopped';
+  const closed = fixture.addApplication('submission_unknown', 'verification_code_timeout');
+  await page.reload();
+  await page.getByRole('button', { name: 'It did not go through, try again', exact: true }).click();
+  await page.getByRole('button', { name: 'Yes, it did not go through, try again', exact: true }).click();
+  await expect.poll(() => fixture.writes.at(-1)?.body?.action).toBe('confirm-not-submitted');
+  expect(fixture.writes.at(-1)?.path).toBe(`/api/application-runs/${closed.runId}/applications/${closed.id}/actions`);
+  await expect(page.getByRole('button', { name: 'It did not go through, try again', exact: true })).toHaveCount(0);
 });
 
 test('dense layout has native labels keyboard focus and no overflow in light and dark', async ({ page }, info) => {

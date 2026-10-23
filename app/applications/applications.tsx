@@ -224,11 +224,17 @@ const resumable = (app: App) => app.state === 'needs_document' && !!app.checkpoi
 async function restart(app: App, runs: Run[], ownerId: string, action: 'restart' | 'retry-unsubmitted' = 'restart') {
   // The server takes only a running run on the current policy.
   const targets = runs.filter((run) => run.state === 'running').sort((a, b) => Number(b.id === app.runId) - Number(a.id === app.runId));
-  if (!targets.length) throw new Error('No run is running. Start auto apply, then retry.');
+  const unsubmitted = action === 'retry-unsubmitted';
+  if (!targets.length && !unsubmitted) throw new Error('No run is running. Start auto apply, then retry.');
   let response: Response | null = null;
   for (const run of targets) {
     response = await postCommand(`/api/application-runs/${run.id}/${action}`, ownerId, app.revision, { previousApplicationId: app.id });
     if (response.ok || !['POLICY_CHANGED', 'DISCOVERY_REQUIRED'].includes(await errorCode(response) ?? '')) break;
+  }
+  // No running run can fill it again (none is running, on the current policy, or has found the role, which a closed
+  // posting never will): the applicant's answer still closes it, and the role can be applied to again later.
+  if (unsubmitted && (!response || ['POLICY_CHANGED', 'DISCOVERY_REQUIRED'].includes(await errorCode(response) ?? ''))) {
+    response = await postCommand(commandPath(app), ownerId, app.revision, { action: 'confirm-not-submitted' });
   }
   if (!response!.ok) {
     const code = await errorCode(response!);
@@ -518,7 +524,7 @@ export default function Applications() {
                 {live && app.state === 'submission_unknown' && <>
                   <Command label="It went through" busyLabel="Saving..." confirm="Mark this as applied? Do this only if the employer confirmed it, by email or on its site."
                     run={() => confirmSubmitted(app, ownerId)} onDone={reload} />
-                  <Command label="It did not go through, try again" busyLabel="Retrying..." confirm="Fill this application again? Nothing is submitted until you press Apply."
+                  <Command label="It did not go through, try again" busyLabel="Retrying..." confirm="Fill this application again? Nothing is submitted until you press Apply. If no running run has this role, it just closes."
                     run={() => restart(app, runs, ownerId, 'retry-unsubmitted')} onDone={reload} />
                 </>}
                 {live && approval && <button className={buttonClass(primary === 'approve')} type="button" onClick={show('approve')}>Approve</button>}

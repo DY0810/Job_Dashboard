@@ -153,7 +153,7 @@ export class WorkerFixture {
       if (!app) return error(404, 'NOT_FOUND');
       if (app.revision !== body.expectedRevision || isTerminalState(app.state)) return error(409, 'CONFLICT');
       const ambiguous = ['submitting', 'submission_unknown'].includes(app.state);
-      if (ambiguous && !['emergency-stop', 'confirm-submitted'].includes(String(body.action))) return error(409, 'CONFLICT');
+      if (ambiguous && !['emergency-stop', 'confirm-submitted', 'confirm-not-submitted'].includes(String(body.action))) return error(409, 'CONFLICT');
       if (body.action === 'retry-safe') {
         const retries = this.retries.get(app.id) ?? 0;
         const run = this.runs.find((run) => run.id === app.runId);
@@ -161,9 +161,9 @@ export class WorkerFixture {
             !run || run.state === 'stopped' || retries >= 3) return error(409, 'CONFLICT');
         this.retries.set(app.id, retries + 1);
         app.state = app.checkpoint.stage;
-      } else if (body.action === 'confirm-submitted') {
+      } else if (body.action === 'confirm-submitted' || body.action === 'confirm-not-submitted') {
         if (app.state !== 'submission_unknown') return error(409, 'CONFLICT');
-        app.state = 'submitted';
+        app.state = body.action === 'confirm-submitted' ? 'submitted' : 'failed';
       } else app.state = ambiguous ? 'submission_unknown' : body.action === 'skip' ? 'skipped' : 'cancelled';
       app.reasonCode = String(body.action); app.revision++;
       result = reply(ApplicationSummarySchema, app);

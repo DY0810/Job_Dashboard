@@ -499,6 +499,8 @@ describe('async leases, checkpoints and stable identity', () => {
     await db.update(applications).set({ state: 'submitting' }).where(eq(applications.id, inFlight.id));
     await expect(commandApplication(db, 'alice', run.id, inFlight.id, { ...revision(inFlight.revision), action: 'confirm-submitted' }, options))
       .rejects.toMatchObject({ status: 409 });
+    await expect(commandApplication(db, 'alice', run.id, inFlight.id, { ...revision(inFlight.revision), action: 'confirm-not-submitted' }, options))
+      .rejects.toMatchObject({ status: 409 });
   });
   it('keeps the worker\'s reason for an unknown submission through every reconcile cycle', async () => {
     const { worker, app } = await prepared();
@@ -549,6 +551,26 @@ describe('async leases, checkpoints and stable identity', () => {
     expect(await db.select().from(applicationEvents)).toHaveLength(0);
     expect((await db.select().from(applications).where(eq(applications.id, app.id)))[0])
       .toMatchObject({ state: 'submission_unknown', revision: lease.revision, fence: lease.fence });
+  });
+  it('the applicant says an unknown submission never went through: it closes with no running run to retry it, never re-leased', async () => {
+    const { worker, app, run } = await prepared();
+    await claim(worker.token);
+    await db.update(applications).set({ state: 'submitting' }).where(eq(applications.id, app.id));
+    // Its run stopped and Auto Apply is off, so no run can queue it again; only the applicant's answer can close it.
+    await commandRun(db, 'alice', run.id, { ...revision(run.revision), action: 'stop' }, options);
+    await db.update(policyHeads).set({ enabled: false, revision: 2, acceptedPolicyHash: null,
+      acceptedPolicyVersion: null, acceptedAt: null }).where(eq(policyHeads.ownerId, 'alice'));
+    const unknown = await claim(worker.token);
+    expect(unknown).toMatchObject({ state: 'submission_unknown', mode: 'reconcile' });
+    const answer = { ...revision(unknown.revision - 1), action: 'confirm-not-submitted' as const };
+    await expect(commandApplication(db, 'bob', run.id, app.id, answer, options)).rejects.toMatchObject({ status: 404 });
+    expect(await commandApplication(db, 'alice', run.id, app.id, answer, options))
+      .toMatchObject({ state: 'failed', reasonCode: 'applicant_confirmed_not_submitted' });
+    for (let cycle = 0; cycle < 3; cycle++) {
+      now += p.LEASE_MS;
+      expect((await pollWorker(db, worker.token, { protocolVersion: 1 }, options)).lease).toBeNull();
+    }
+    await expect(heartbeatWorker(db, worker.token, { protocolVersion: 1, lease: ref(unknown) }, options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
   });
   it('rejects unsupported future evidence paths and stale zero-row checkpoints', async () => {
     const { worker, app } = await prepared();
