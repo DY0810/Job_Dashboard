@@ -42,7 +42,9 @@ describe('tursoFetch', () => {
     vi.stubGlobal('fetch', vi.fn((_: Request, init: RequestInit) => new Promise((_, reject) => {
       init.signal!.addEventListener('abort', () => reject(init.signal!.reason));
     })));
-    await expect(tursoFetch(pipeline('insert into notes (id) values (1)'), 20)).rejects.toThrow(/timeout/i);
+    await expect(tursoFetch(pipeline('select 1'), 20)).rejects.toThrow(/timeout/i);
+    // A database too slow to answer gets no second copy of the query.
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('never resends a write, which the server may already have run', async () => {

@@ -78,20 +78,22 @@ function readsOnly(body: string): boolean {
 
 /**
  * `fetch` for the app's Turso clients, the board's included. Undici waits 300s for response
- * headers by default, which is Vercel's whole function budget, so a request on a socket Turso
- * dropped without closing it held `/` until the platform killed it. Each attempt now stops at
- * the deadline.
+ * headers by default, which is Vercel's whole function budget, so when Turso fell behind (a
+ * crawler walking the board's filter links queues several full scans a second) `/` waited
+ * until the platform killed it. Each request now stops at the deadline instead.
  *
- * A dropped socket also fails fast ("other side closed", EPIPE). Like `retryingFetch`, the
- * request is then resent once on a fresh socket, but only when it only reads: the server may
- * have run the first attempt, and the app's clients also write notes, comments and claims.
+ * A socket Turso closes fails fast ("other side closed", EPIPE). Like `retryingFetch`, that
+ * request is resent once on a fresh socket, but only when it only reads: the server may have
+ * run the first attempt, and the app's clients also write notes, comments and claims. A
+ * request that hit the deadline is not resent; that would only queue more work on a database
+ * that is already behind.
  */
 export async function tursoFetch(request: Request, deadlineMs = TURSO_DEADLINE_MS): Promise<Response> {
   const retry = readsOnly(await request.clone().text()) ? request.clone() : null;
   try {
     return await fetch(request, { signal: AbortSignal.timeout(deadlineMs) });
   } catch (error) {
-    if (!retry) throw error;
+    if (!retry || (error as Error).name === 'TimeoutError') throw error;
     return fetch(retry, { signal: AbortSignal.timeout(deadlineMs) });
   }
 }
