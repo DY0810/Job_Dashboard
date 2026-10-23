@@ -223,11 +223,10 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
 /**
  * Limits an employer's ATS enforces per candidate and only reveals at submit, after the whole form
  * is filled. They bind every applicant, whatever their policy, and count applications the
- * applicant reported as made by hand (manual marks) as well as Workie's own. Of Workie's, only an attempt
- * that reached the employer or may have (submitted, submitting, submission_unknown) counts: one skipped,
- * stuck before submit, or deleted never did.
- * ponytail: a second attempt still waiting for Apply is not counted, so a third may be filled and then
- * rejected at submit. Count waiting attempts here if that wasted fill matters more than stale ones holding the cap.
+ * applicant reported as made by hand (manual marks) as well as Workie's own. Of Workie's, every started attempt
+ * counts while it may still reach the employer, waiting ones too (an answer or Apply resumes them), so a third is
+ * never filled only to be rejected. Skipped, cancelled (deleted, restarted, stopped) and failed attempts never had a
+ * submission accepted or in flight: a submitting one only ends submitted, or failed when the applicant confirms it was not.
  * ponytail: Ramp's cap is on Software Engineering roles only; this counts every Ramp role. Add a
  * title match here if Workie ever applies to non-engineering Ramp roles.
  */
@@ -242,7 +241,7 @@ function employerLimitReached(now: number) {
     return sql`(${applications}.ats = ${ats} and lower(${applications}.tenant) = ${tenant} and (
       (select count(*) from ${applications} used where used.owner_id = ${applications}.owner_id
         and used.ats = ${ats} and lower(used.tenant) = ${tenant} and used.started_at >= ${since}
-        and used.state in ('submitted', 'submitting', 'submission_unknown'))
+        and used.state not in ('skipped', 'cancelled', 'failed'))
       + (select count(*) from ${manualApplicationMarks} m where m.owner_id = ${applications}.owner_id
         and m.ats = ${ats} and lower(m.tenant) = ${tenant} and m.created_at >= ${since})) >= ${max})`;
   }), sql` or `);

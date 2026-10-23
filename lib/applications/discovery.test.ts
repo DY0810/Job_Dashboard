@@ -493,8 +493,8 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await poll(token)).lease).not.toBeNull();
   });
 
-  it('does not count Ramp attempts that never reached Ramp: skipped, stuck before submit, or deleted', async () => {
-    addPostings(5);
+  it('counts Ramp attempts that may still reach Ramp, such as one waiting for Apply, but not skipped, deleted or failed ones', async () => {
+    addPostings(6);
     corpus.update(postings).set({ company: 'Ramp', canonicalUrl: sql`'https://jobs.ashbyhq.com/ramp/0000000' || ${postings.id} || '-0000-4000-8000-000000000000'` }).run();
     const { token, run } = await prepared('alice', { destinations: ['jobs.ashbyhq.com'], perEmployerCap: 10 });
     await complete(token, run.id);
@@ -503,13 +503,19 @@ describe('cap-held backlog and explicit historical attempts', () => {
       expect(lease).not.toBeNull();
       return lease!.applicationId;
     };
-    const park = (id: string, state: 'needs_answer' | 'blocked_unsupported', reasonCode: string) => db.update(applications)
+    const park = (id: string, state: 'needs_answer' | 'needs_policy_decision' | 'failed', reasonCode: string) => db.update(applications)
       .set({ state, reasonCode, leaseUntil: null, leaseCheckedAt: null }).where(eq(applications.id, id));
     await skip(await next());
-    await park(await next(), 'needs_answer', 'question_unresolved');
-    await park(await next(), 'blocked_unsupported', 'adapter_unavailable');
     const deleted = await next(), [row] = await db.select().from(applications).where(eq(applications.id, deleted));
     await commandApplication(db, 'alice', row.runId, deleted, { ...request(), expectedRevision: row.revision, action: 'delete' }, options);
+    await park(await next(), 'failed', 'applicant_confirmed_not_submitted');
+    const answering = await next();
+    await park(answering, 'needs_answer', 'form_question');
+    await park(await next(), 'needs_policy_decision', 'submit_approval');
+    now += DAY;
+    // Two attempts can still reach Ramp once the applicant answers or presses Apply, so a third is not filled.
+    expect((await poll(token)).lease).toBeNull();
+    await skip(answering);
     await next();
   });
 
