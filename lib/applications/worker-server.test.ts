@@ -646,6 +646,28 @@ describe('async leases, checkpoints and stable identity', () => {
       .toMatchObject({ state: 'ready', reasonCode: 'submit_approved' });
     expect((await pollWorker(db, alice.worker.token, { protocolVersion: 1 }, options)).lease).toMatchObject({ applicationId: alice.app.id, state: 'ready' });
   });
+  it('never submits on Retry: an approved form held for a document fills again and waits for Apply', async () => {
+    const policy = { ...createEmptyPolicy(), actions: ['fill_forms', 'submit'] as ['fill_forms', 'submit'] }, hash = hashValue(policy);
+    await db.insert(policyVersions).values({ ownerId: 'alice', version: 2, hash, policy, createdAt: now });
+    await db.update(policyHeads).set({ revision: 2, policyVersion: 2, acceptedPolicyVersion: 2, acceptedPolicyHash: hash }).where(eq(policyHeads.ownerId, 'alice'));
+    const { worker, run, app } = await prepared();
+    const parked = await recordWorkerEvent(db, worker.token, app.id, {
+      ...event(await claim(worker.token), 'needs_policy_decision'), reasonCode: SUBMIT_APPROVAL }, options);
+    await commandApplication(db, 'alice', run.id, app.id, { ...revision(parked.revision), action: 'approve-submit' }, options);
+    const ready = await claim(worker.token);
+    expect(ready.state).toBe('ready');
+    // The worker stops before the submission intent, so the row's checkpoint stays at 'ready'.
+    const held = await recordWorkerEvent(db, worker.token, app.id, { ...event(ready, 'needs_document'), reasonCode: 'resume_required' }, options);
+    const retried = await commandApplication(db, 'alice', run.id, app.id, { ...revision(held.revision), action: 'retry-safe' }, options);
+    expect(retried.state).toBe('filling');
+    now += 5000;
+    const refill = await claim(worker.token);
+    expect(refill).toMatchObject({ applicationId: app.id, state: 'filling' });
+    // The refilled form parks for review like any other, and only a new Apply sends it.
+    const again = await recordWorkerEvent(db, worker.token, app.id, { ...event(refill, 'needs_policy_decision'), reasonCode: SUBMIT_APPROVAL }, options);
+    expect(await commandApplication(db, 'alice', run.id, app.id, { ...revision(again.revision), action: 'approve-submit' }, options))
+      .toMatchObject({ state: 'ready', reasonCode: 'submit_approved' });
+  });
   it('revocation commits unknown submission and permanently rejects all subsequent token operations', async () => {
     const { worker, app, run } = await prepared();
     const lease = await claim(worker.token);
@@ -721,6 +743,18 @@ describe('durable owner controls', () => {
     // Only history is capped: the newest 100 queued, skipped, cancelled or failed rows (the 120 above and the prepared one).
     expect(listed).toHaveLength(kept.length + 100);
     expect(listed.map((item) => item.createdAt)).toEqual(listed.map((item) => item.createdAt).sort((a, b) => b - a));
+  });
+  it('lists a row waiting in Live however old it is, so Needs action and Live both show it', async () => {
+    const { app } = await prepared();
+    const row = (state: ApplicationState, reasonCode: string | null) => ({ id: randomUUID(), ownerId: 'alice', runId: app.runId,
+      workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state, reasonCode,
+      availableAt: 0, createdAt: now - 60 * 86_400_000 });
+    const kept = [row('needs_answer', 'question_unresolved'), row('needs_policy_decision', SUBMIT_APPROVAL), row('filling', null)];
+    const gone = row('needs_document', 'resume_required');
+    await db.insert(applications).values([...kept, gone]);
+    const ids = (await listRuns(db, 'alice', options)).applications.map((item) => item.id);
+    expect(ids).toEqual(expect.arrayContaining(kept.map((item) => item.id)));
+    expect(ids).not.toContain(gone.id);
   });
   it('lists the row being worked and the forms waiting in Live behind 500 newer rows waiting on the applicant', async () => {
     const { app } = await prepared();
@@ -799,7 +833,7 @@ describe('live frames', () => {
     expect(listed.live[0]).toMatchObject({ applicationId: filling.id, state: 'filling', image });
     expect(listed.live.every((item) => item.fields?.length === 1)).toBe(true);
   });
-  it('gives the form being filled its picture before older forms\' answers, and skips rows too old to list', async () => {
+  it('gives the form being filled its picture before older forms\' answers, and sends an old form still waiting', async () => {
     const { app } = await prepared();
     const row = (state: ApplicationState, reasonCode: string | null = null, createdAt = now) => ({ id: randomUUID(), ownerId: 'alice',
       runId: app.runId, workerId: app.workerId, ats: 'fixture', tenant: 'fixture', requisition: randomUUID(), state, reasonCode,
@@ -812,11 +846,11 @@ describe('live frames', () => {
       ...parked.map((item, i) => ({ ownerId: 'alice', applicationId: item.id, step: p.PARKED_STEPS.approval, image: null, fields, updatedAt: now - 60_000 - i })),
       { ownerId: 'alice', applicationId: filling.id, step: 'Filling the form', image, fields: null, updatedAt: now - 1_000 },
       { ownerId: 'alice', applicationId: old.id, step: p.PARKED_STEPS.approval, image, fields, updatedAt: now - 120_000 }]);
-    const listed = p.LiveListSchema.parse(await listLive(db, 'alice', options));
+    const listed = p.LiveListSchema.parse(await listLive(db, 'alice'));
     expect(JSON.stringify(listed).length).toBeLessThan(4_500_000);
     expect(listed.live[0]).toMatchObject({ applicationId: filling.id, image });
-    // listRuns does not list a row created 44 or more days ago, so Live has no card to show its frame on.
-    expect(listed.live.map((item) => item.applicationId)).not.toContain(old.id);
+    // A form waiting on the applicant never ages out of Live or listRuns, so its card shows its frame.
+    expect(listed.live.map((item) => item.applicationId)).toContain(old.id);
   });
 });
 describe('daily start schedule', () => {

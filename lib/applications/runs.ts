@@ -102,7 +102,7 @@ export async function listRuns(db: PrivateDb, ownerId: string, options: WorkerOp
     // A role back on the board stays in Needs action too, so a row that leaves Live never just vanishes;
     // only the attempt a restart replaced is dropped, since its newer attempt is listed.
     const listed = and(eq(applications.ownerId, ownerId), sql`coalesce(${applications.reasonCode}, '') <> 'restarted'`, not(cannotRetry!),
-      or(and(isNull(applications.hiddenAt), inArray(applications.state, ['submitted', ...IN_FLIGHT_STATES])),
+      or(and(isNull(applications.hiddenAt), inArray(applications.state, ['submitted', ...IN_FLIGHT_STATES])), liveRow,
         sql`coalesce(${applications.hiddenAt}, ${applications.createdAt} + ${ARCHIVE_AFTER_MS}) > ${nowAt(options) - ARCHIVE_KEEP_MS}`));
     const select = () => tx.select({ app: applications, submission: applicationSubmissions, receipt: applicationReceipts })
       .from(applications)
@@ -226,7 +226,8 @@ export async function commandApplication(
       if (!policy.enabled || policy.revision !== run.policyRevision || policy.policyVersion !== run.policyVersion || policy.policyHash !== run.policyHash) {
         fail(409, 'POLICY_CHANGED', 'The policy changed after this run started.');
       }
-      next = row.checkpoint.stage; retries += 1; availableAt = now + 5000 * 2 ** row.retries;
+      // Only Apply sends a form: a hold after approval fills it again for a new review, since Submit or the form may have changed.
+      next = row.checkpoint.stage === 'ready' ? 'filling' : row.checkpoint.stage; retries += 1; availableAt = now + 5000 * 2 ** row.retries;
     } else if (command.action === 'approve-submit') {
       // The worker parks every filled form here; only the applicant's approval lets it submit.
       const [run] = await tx.select().from(applicationRuns).where(and(eq(applicationRuns.id, runId), eq(applicationRuns.ownerId, ownerId)));

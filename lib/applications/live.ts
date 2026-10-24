@@ -1,10 +1,10 @@
 import 'server-only';
-import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationLive, applications } from '../private-db/schema.ts';
-import { appScope, fail, nowAt, withWorker, type WorkerOptions } from './worker-store.ts';
+import { appScope, fail, withWorker, type WorkerOptions } from './worker-store.ts';
 import { LiveFrameSchema } from './worker-protocol.ts';
-import { ARCHIVE_AFTER_MS, ARCHIVE_KEEP_MS, IN_FLIGHT_STATES, LIVE_STATES } from './buckets.ts';
+import { LIVE_STATES } from './buckets.ts';
 import { SUBMIT_APPROVAL } from './state.ts';
 
 /** Worker call while it works an application: the newest screenshot and step, and what it filled once it has. */
@@ -31,12 +31,11 @@ export const liveRow = and(isNull(applications.hiddenAt), or(inArray(application
  * sees it move. A row that left Live keeps its frame row but is not sent.
  * ponytail: a 3 MB budget keeps the reply under Vercel's 4.5 MB cap; past it the older frames go without their picture.
  */
-export async function listLive(db: PrivateDb, ownerId: string, options: WorkerOptions = {}) {
+export async function listLive(db: PrivateDb, ownerId: string) {
   const rows = await db.select({ applicationId: applicationLive.applicationId, state: applications.state, step: applicationLive.step,
     image: applicationLive.image, fields: applicationLive.fields, updatedAt: applicationLive.updatedAt }).from(applicationLive)
     .innerJoin(applications, and(eq(applications.ownerId, applicationLive.ownerId), eq(applications.id, applicationLive.applicationId)))
-    .where(and(eq(applicationLive.ownerId, ownerId), liveRow, or(inArray(applications.state, IN_FLIGHT_STATES),
-      gt(applications.createdAt, nowAt(options) - ARCHIVE_AFTER_MS - ARCHIVE_KEEP_MS))))
+    .where(and(eq(applicationLive.ownerId, ownerId), liveRow))
     .orderBy(desc(applicationLive.updatedAt)).limit(500);
   let budget = 3_000_000;
   const fit = <T>(value: T | null, size: number) => {

@@ -178,7 +178,7 @@ export class WorkerFixture {
         if (!['provider_unavailable', 'retryable_failure'].includes(app.state) || !app.checkpoint ||
             !run || run.state === 'stopped' || retries >= 3) return error(409, 'CONFLICT');
         this.retries.set(app.id, retries + 1);
-        app.state = app.checkpoint.stage;
+        app.state = app.checkpoint.stage === 'ready' ? 'filling' : app.checkpoint.stage;
       } else if (body.action === 'confirm-submitted' || body.action === 'confirm-not-submitted') {
         if (app.state !== 'submission_unknown') return error(409, 'CONFLICT');
         app.state = body.action === 'confirm-submitted' ? 'submitted' : 'failed';

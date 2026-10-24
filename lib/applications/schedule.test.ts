@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dailyStartInstant, formatDailyStart, offlineNotice, scheduledWorker } from './schedule.ts';
 import { archivedAt, bucket, inLive, isWatching, rowsBehind } from './buckets.ts';
-import { SUBMIT_APPROVAL, type ApplicationState } from './state.ts';
+import { APPLICATION_STATES, SUBMIT_APPROVAL, type ApplicationState } from './state.ts';
 import { PARKED_STEPS } from './worker-protocol.ts';
 
 const at = (iso: string) => Date.parse(iso);
@@ -109,5 +109,14 @@ describe('bucket', () => {
     expect(bucket({ state: 'submission_unknown', hiddenAt: now - DAY, createdAt: now - 400 * DAY }, now)).toBe('archived');
     expect(archivedAt({ state: 'queued', hiddenAt: null, createdAt: now })).toBe(now + 14 * DAY);
     expect(archivedAt({ state: 'queued', hiddenAt: now, createdAt: 0 })).toBe(now);
+  });
+  // Live keeps a row the worker is on or the applicant must finish however old it is; Needs action used to drop it at 14 days.
+  it('never archives a row Live shows, however old', () => {
+    for (const state of APPLICATION_STATES) for (const reasonCode of [null, 'question_unresolved', SUBMIT_APPROVAL]) for (const age of [0, 20, 60]) {
+      const app = { state, reasonCode, hiddenAt: null, createdAt: now - age * DAY };
+      if (inLive(app)) expect(['action', 'applied'], `${state} ${reasonCode} ${age}d`).toContain(bucket(app, now));
+    }
+    expect(bucket({ state: 'needs_answer', reasonCode: 'question_unresolved', hiddenAt: null, createdAt: now - 60 * DAY }, now)).toBe('action');
+    expect(bucket({ state: 'needs_answer', reasonCode: 'question_unresolved', hiddenAt: now - DAY, createdAt: now - 60 * DAY }, now)).toBe('archived');
   });
 });
