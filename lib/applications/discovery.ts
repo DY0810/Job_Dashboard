@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { ReadDb } from '../db/index.ts';
 import type { PrivateDb } from '../private-db/index.ts';
 import {
-  applicationEvents, applicationRuns, applications, discoveryManifests, discoveryTargets, manualApplicationMarks, workers, workerCommands,
+  applicationEvents, applicationRuns, applications, applicationSubmissions, discoveryManifests, discoveryTargets, manualApplicationMarks, workers, workerCommands,
 } from '../private-db/schema.ts';
 import { captureCandidateSnapshot, type CandidateSnapshot, type DiscoveryCandidate } from './discovery-source.ts';
 import { getPolicy, hashValue } from './stores.ts';
@@ -100,7 +100,7 @@ export async function discoverWorkerRuns(db: PrivateDb, token: string, corpus: C
           hash: discoveryManifests.hash, capturedAt: discoveryManifests.capturedAt, state: discoveryManifests.state,
         }).from(discoveryManifests).where(manifestScope(run.ownerId, run.currentManifestId)) : [];
         // An unchanged corpus keeps the current snapshot: no new manifest and no restaging, only the scan clock moves.
-        // ponytail: a role another run releases unstarted is reconsidered at the next changed snapshot, not on a rescan.
+        // ponytail: a role another run releases unsubmitted is reconsidered at the next changed snapshot, not on a rescan.
         if (current?.state === 'ready' && hashValue(capturedAtTime(snapshot, current.capturedAt)) === current.hash) {
           one(await tx.update(applicationRuns).set({
             discoveryState: 'ready', captureToken: null, captureUntil: now + DISCOVERY_INTERVAL_MS, lastScanAt: now, discoveryError: null,
@@ -143,6 +143,9 @@ export async function discoverWorkerRuns(db: PrivateDb, token: string, corpus: C
   }
 }
 
+/** On an `applications a` row: no submission intent was ever recorded for it. */
+const noSubmission = sql`not exists (select 1 from ${applicationSubmissions} s where s.owner_id = a.owner_id and s.application_id = a.id)`;
+
 /** Each committed chunk is resumable. Only the final transaction makes any member claimable. */
 export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: string, options: WorkerOptions = {}) {
   return withWorker(db, token, options, async (tx, worker, now) => {
@@ -163,12 +166,13 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
     }
     const chunk = manifest.artifact.candidates.slice(manifest.stagedCount, manifest.stagedCount + STAGING_CHUNK_SIZE);
     if (chunk.length) {
-      // A role another run held is evaluated afresh once that run released it unstarted (stopped before it began).
+      // A role another run held is evaluated afresh once that run stopped and released it with nothing submitted,
+      // even if it had started (screened, tailored, waiting on answers).
       await tx.update(discoveryTargets).set({ applicationId: null }).where(and(
         eq(discoveryTargets.ownerId, worker.ownerId), eq(discoveryTargets.runId, run.id), eq(discoveryTargets.disposition, 'duplicate'),
         inArray(discoveryTargets.targetKey, chunk.map((candidate) => candidate.targetKey)),
         sql`exists (select 1 from ${applications} a where a.owner_id = ${discoveryTargets.ownerId} and a.id = ${discoveryTargets.applicationId}
-          and a.started_at is null and a.state = 'cancelled' and a.reason_code = 'run_stopped')`,
+          and a.state = 'cancelled' and a.reason_code = 'run_stopped' and ${noSubmission})`,
       ));
       await tx.insert(discoveryTargets).values(chunk.map((candidate, index) => ({
         id: randomUUID(), ownerId: worker.ownerId, runId: run.id, manifestId: id, targetKey: candidate.targetKey,
@@ -218,7 +222,7 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
         and t.disposition = 'eligible'
         and not exists (select 1 from ${applications} a where a.owner_id = t.owner_id
           and a.ats = t.ats and a.tenant = t.tenant and a.requisition = t.requisition
-          and (a.started_at is not null or a.state != 'cancelled' or coalesce(a.reason_code, '') != 'run_stopped'))
+          and (a.state != 'cancelled' or coalesce(a.reason_code, '') != 'run_stopped' or not ${noSubmission}))
       on conflict (owner_id, ats, tenant, requisition, attempt) do nothing`);
     const appId = sql<string>`(select a.id from ${applications} a where a.owner_id = ${discoveryTargets.ownerId}
       and a.ats = ${discoveryTargets.ats} and a.tenant = ${discoveryTargets.tenant}
