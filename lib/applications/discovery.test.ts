@@ -9,7 +9,7 @@ import { openDb, type Db } from '../db/index.ts';
 import { postings } from '../db/schema.ts';
 import { openPrivateDb, migratePrivateDb, type PrivateDb } from '../private-db/index.ts';
 import {
-  applications, applicationRuns, applicationEvents, policyHeads, policyVersions, user, workers,
+  applications, applicationRuns, applicationEvents, applicationSubmissions, policyHeads, policyVersions, user, workers,
   discoveryManifests, discoveryTargets, manualApplicationMarks, legacyImportPreviews,
 } from '../private-db/schema.ts';
 import { createEmptyPolicy, type Policy } from './policy.ts';
@@ -260,7 +260,7 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     });
   });
 
-  it('retries a stopped, unstarted target in a new run without reopening started applications', async () => {
+  it('retries stopped targets in a new run, started or not, as the next attempt of each role', async () => {
     const { token, run, worker } = await prepared(); addPostings(2); await complete(token, run.id);
     const started = (await poll(token)).lease!;
     const startedApp = (await appRows()).find((app) => app.id === started.applicationId)!;
@@ -269,13 +269,34 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
     await complete(token, replacement.id);
     const history = await appRows();
-    expect(history.filter((app) => app.requisition === startedApp.requisition)).toHaveLength(1);
-    const retry = history.find((app) => app.requisition === unstartedRequisition && app.runId === replacement.id)!;
-    const previous = history.find((app) => app.requisition === unstartedRequisition && app.runId === run.id)!;
-    expect(previous).toMatchObject({ state: 'cancelled', startedAt: null, reasonCode: 'run_stopped' });
-    expect(retry).toMatchObject({ state: 'queued', attempt: 2, previousApplicationId: previous.id });
-    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts.duplicate).toBe(1);
-    expect((await poll(token)).lease?.applicationId).toBe(retry.id);
+    const attempts = (requisition: string) => history.filter((app) => app.requisition === requisition).sort((a, b) => a.attempt - b.attempt);
+    for (const [previous, retry] of [attempts(startedApp.requisition), attempts(unstartedRequisition)]) {
+      expect(previous).toMatchObject({ runId: run.id, state: 'cancelled', reasonCode: 'run_stopped' });
+      expect(retry).toMatchObject({ runId: replacement.id, state: 'queued', attempt: 2, previousApplicationId: previous.id });
+    }
+    expect(attempts(startedApp.requisition)[0].startedAt).not.toBeNull();
+    expect(attempts(unstartedRequisition)[0].startedAt).toBeNull();
+    expect((await targets()).filter((t) => t.runId === replacement.id).map((t) => t.disposition)).toEqual(['eligible', 'eligible']);
+    // The stopped attempt started today, so the per-employer cap (1) holds its retry until tomorrow.
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 1, held_cap: 1, duplicate: 0 });
+    expect((await poll(token)).lease?.applicationId).toBe(attempts(unstartedRequisition)[1].id);
+  });
+
+  it('never retries a stopped target that recorded a submission intent', async () => {
+    const { token, run, worker } = await prepared(); addPostings(1); await complete(token, run.id);
+    const app = (await appRows())[0]; await poll(token);
+    await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'stop' }, options);
+    // No command leaves an intent on a cancelled row (stop turns submitting into submission_unknown); guard it anyway.
+    await db.insert(applicationSubmissions).values({
+      intentId: randomUUID(), ownerId: 'alice', applicationId: app.id, workerId: app.workerId, ats: app.ats, tenant: app.tenant,
+      requisition: app.requisition, company: 'Employer 1', role: 'Software Engineer', manifestHash: hashValue('manifest'),
+      artifactHashes: [], requestHash: hashValue('request'), createdAt: now,
+    });
+    now += DAY;
+    const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
+    await complete(token, replacement.id);
+    expect(await appRows()).toHaveLength(1);
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 0, duplicate: 1 });
   });
 
   it('keeps discovering and leasing in the same run after a policy change that selects the same roles', async () => {
@@ -307,10 +328,11 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: second.worker.workerId }, options);
     await complete(second.token, replacement.id);
     expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 0, duplicate: 3 });
+    await poll(token); // One role had started in the stopped run; it comes back too, held by today's per-employer cap.
     await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'stop' }, options);
     now += DISCOVERY_INTERVAL_MS + 1; addPostings(1, 4);
     await discoverWorkerRuns(db, second.token, provider, options);
-    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 4, duplicate: 0 });
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 3, held_cap: 1, duplicate: 0 });
     expect((await poll(second.token)).lease).toMatchObject({ runId: replacement.id });
   });
 
@@ -845,7 +867,8 @@ describe('cap-held backlog and explicit historical attempts', () => {
   it('counts an explicit abandonment as the terminal time when reapplying into a replacement run', async () => {
     const { token, run, worker } = await prepared('alice', { reapplication: { allowed: true, minimumDays: 1 } });
     addPostings(1); await complete(token, run.id);
-    const first = (await poll(token)).lease!;
+    // Skipped, so the replacement run's discovery leaves it alone (a stopped, unsubmitted row would come back on its own).
+    const first = (await poll(token)).lease!; await skip(first.applicationId);
     now += 2 * DAY; addPostings(201, 2);
     await discoverWorkerRuns(db, token, provider, options);
     const status = await getDiscoveryStatus(db, 'alice', run.id, options);
@@ -858,7 +881,7 @@ describe('cap-held backlog and explicit historical attempts', () => {
     now += DAY;
     const next = await reapplyApplication(db, 'alice', replacement.id, command, options);
     expect(next.runId).toBe(replacement.id);
-    expect((await appRows()).find((a) => a.id === first.applicationId)).toMatchObject({ state: 'cancelled', runId: run.id });
+    expect((await appRows()).find((a) => a.id === first.applicationId)).toMatchObject({ state: 'skipped', runId: run.id });
   });
 });
 
