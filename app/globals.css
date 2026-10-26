@@ -916,6 +916,13 @@ body:has(#side) { padding-left: var(--side); transition: padding-left .18s ease;
   background-size: 16px 16px;
 }
 .board[data-readonly] { cursor: default; }
+/* Beside the sidebar a note past the right edge scrolls the board, not the page. Touch keeps
+   page scroll: the board's touch-action: none would leave nothing to pan it with.
+   shortcut: overflow-x forces overflow-y, so a note dragged below 72vh scrolls inside the board
+   and grips at its top/left edge clip; size the board to its notes if that starts to bite. */
+@media (min-width: 761px) and (pointer: fine) {
+  .board { overflow-x: auto; background-attachment: local; }
+}
 .note {
   position: absolute;
   display: flex;

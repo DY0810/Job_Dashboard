@@ -83,8 +83,13 @@ export function Board({ notes: initial, canWrite, week }: { notes: NoteWithComme
   }, [canWrite, week]);
 
   const point = (e: React.PointerEvent<HTMLDivElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    return { x: Math.max(0, Math.round(e.clientX - r.left)), y: Math.max(0, Math.round(e.clientY - r.top)) };
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    // The board can scroll sideways, so add what is scrolled out of view.
+    return {
+      x: Math.max(0, Math.round(e.clientX - r.left + el.scrollLeft)),
+      y: Math.max(0, Math.round(e.clientY - r.top + el.scrollTop)),
+    };
   };
   const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!canWrite || pending || e.target !== e.currentTarget || e.button !== 0) return;
