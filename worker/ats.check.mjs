@@ -79,6 +79,27 @@ test('a renamed Greenhouse board passes on the exact role and job URL; a wrong r
     await assert.rejects(observe(`Job Application for ${role} at SpaceXAI`, 'https://job-boards.greenhouse.io/xai/jobs/1'), /ATS_IDENTITY_MISMATCH/);
   } finally { await browser.close(); }
 });
+test('a hosted Remix form is filled only after React hydrates it, so typed text is not reset', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    const role = 'Spring 2027 Software Engineering Internship/Co-op', job = 'https://job-boards.greenhouse.io/xai/jobs/5252108007';
+    // xAI's live form (2026-10-26) is a Remix page; text typed before React hydrated it was reset and failed the field check.
+    await context.route(job, route => route.fulfill({ contentType: 'text/html', body: `<title>Job Application for ${role} at SpaceXAI</title>
+      <form id="application-form"><label for="first_name">First Name*</label><input id="first_name" aria-required="true">
+      <label for="email">Email*</label><input id="email" aria-required="true"></form><script>
+      window.__remixContext = {};
+      addEventListener('load', () => setTimeout(() => { for (const input of document.querySelectorAll('input')) { input.value = ''; input.__reactProps$x = {}; } }, 800));
+    </script>` }));
+    const runtime = { context, page: async () => context.pages()[0] ?? context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } };
+    const input = { identity: { ats: 'greenhouse', tenant: 'xai', requisition: '5252108007' }, company: 'xAI', role, applicationUrl: job,
+      answers: { first_name: 'Test', email: 'test@example.com' }, documents: {} };
+    await greenhouse.fill(runtime, input, await greenhouse.observe(runtime, input));
+    const page = context.pages()[0];
+    await page.waitForTimeout(1_000);
+    assert.deepEqual([await page.inputValue('#first_name'), await page.inputValue('#email')], ['Test', 'test@example.com']);
+  } finally { await browser.close(); }
+});
 test('an unanswered required Greenhouse dropdown reaches the inbox as a choice of the options its menu lists', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -414,9 +435,14 @@ function ashbyMarkup(title) {
       document.querySelectorAll('.ashby-application-form-input-yesno button').forEach(button => button.onclick = () => {
         for (const other of button.parentElement.querySelectorAll('button')) other.setAttribute('aria-pressed', String(other === button));
       });
-      document.getElementById('_systemfield_resume').onchange = (event) => event.target.insertAdjacentHTML('afterend',
+      // Like Harvey's live form (2026-10-26), attaching a resume autofills the form and clears what the resume does not hold.
+      document.getElementById('_systemfield_resume').onchange = (event) => { event.target.insertAdjacentHTML('afterend',
         '<p class="ashby-application-form-input-file-item-name"><span>' + event.target.files[0].name + '</span></p>');
-      document.querySelector('.ashby-application-form-submit-button').onclick = () => { document.querySelector('.ashby-application-form-container').outerHTML =
+        document.getElementById('_systemfield_email').value = ''; };
+      document.querySelector('.ashby-application-form-submit-button').onclick = () => {
+        if (!document.getElementById('_systemfield_email').value) return document.querySelector('.ashby-application-form-container').insertAdjacentHTML('afterbegin',
+          '<div class="ashby-application-form-failure-container" role="alert">Your form needs corrections. Missing entry for required field: Email</div>');
+        document.querySelector('.ashby-application-form-container').outerHTML =
         '<div class="ashby-application-form-success-container" role="status"><h2>Success</h2><p>Your application was successfully submitted. We\\'ll contact you if there are next steps.</p></div>'; };
     </script>`;
 }
