@@ -28,8 +28,8 @@ export default defineConfig({
     trace: 'off',
     screenshot: 'only-on-failure',
   },
-  projects: [
-    { name: 'mobile390', use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
-    { name: 'desktop1440', use: { viewport: { width: 1440, height: 1000 } } },
-  ],
+  projects: ['light', 'dark'].flatMap((colorScheme) => [
+    { name: `mobile390-${colorScheme}`, use: { colorScheme: colorScheme as 'light' | 'dark', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
+    { name: `desktop1440-${colorScheme}`, use: { colorScheme: colorScheme as 'light' | 'dark', viewport: { width: 1440, height: 1000 } } },
+  ]),
 });
