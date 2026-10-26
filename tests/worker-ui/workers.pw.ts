@@ -507,7 +507,8 @@ test('dense layout has native labels keyboard focus and no overflow in light and
   await expect(input).toHaveCSS('outline-width', '2px');
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Create pairing grant', exact: true })).toBeFocused();
-  await expect(page.getByRole('link', { name: 'Profile', exact: true })).toHaveAttribute('href', '/profile');
+  // Phones keep the sidebar hidden until "Open sidebar", which the modal drawer makes inert.
+  await expect(page.getByRole('link', { name: 'Profile', exact: true, includeHidden: true })).toHaveAttribute('href', '/profile');
   await expect(page.getByRole('heading', { name: 'Workers', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   // The shared header has its own layout; this checks the page and the drawer.
