@@ -406,6 +406,9 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         if (fields.length) { asking = true; return formQuestions(applicationContext, fields); }
       }
       if (submissionStarted) return { state: "submission_unknown" as const, reasonCode: "submission_response_lost", durable: true };
+      // Only this computer's log: a timeout's first line names the step that waited, which the bounded reason cannot.
+      process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: "application-failed", company: application?.company ?? null,
+        reason: atsFailureReason(error), detail: error instanceof Error ? error.message.split("\n")[0].slice(0, 300) : null }) + "\n");
       return { state: "retryable_failure" as const, reasonCode: atsFailureReason(error) };
     } finally {
       await live?.stop(review ? PARKED_STEPS.approval : asking ? PARKED_STEPS.answers : "Workie left this application",
