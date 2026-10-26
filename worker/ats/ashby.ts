@@ -118,7 +118,7 @@ async function fillOne(page: Page, box: Locator, field: AtsField, value: AtsValu
     await page.waitForFunction(([node, text]) => (node as HTMLInputElement).value === text, [await input.elementHandle(), text] as const, { timeout: 5_000 }).catch(() => {});
   } else {
     const input = box.locator('input.ashby-application-form-input-text, textarea, input.ashby-application-form-input-date').first();
-    await input.fill(value);
+    await input.fill(field.kind === 'date' ? pickerDate(value) : value);
     // The date picker stays open over the next question until dismissed.
     if (field.kind === 'date') await input.press('Escape');
   }
@@ -141,7 +141,16 @@ async function verifyOne(box: Locator, field: AtsField, value: AtsValue) {
     const shown = (await box.locator('input[role=combobox]').inputValue()).trim();
     return shown === value || shown.startsWith(`${value}, `);
   }
-  return await box.locator('input.ashby-application-form-input-text, textarea, input.ashby-application-form-input-date').first().inputValue() === value;
+  return await box.locator('input.ashby-application-form-input-text, textarea, input.ashby-application-form-input-date').first().inputValue() ===
+    (field.kind === 'date' && typeof value === 'string' ? pickerDate(value) : value);
+}
+
+/** Ashby's date picker shows the day it parsed as MM/DD/YYYY ("December 2028" -> 12/01/2028); an ISO date is that calendar day. */
+export function pickerDate(value: string) {
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = iso ? new Date(+iso[1], +iso[2] - 1, +iso[3]) : new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}/${date.getFullYear()}`;
 }
 
 export const ashby: AtsAdapter = {

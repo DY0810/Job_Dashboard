@@ -394,7 +394,7 @@ test('persistent browser egress rejects unapproved origins before navigation', {
 });
 
 // Ashby: the hosted form's own markup (observed on OpenAI, Ramp and Notion postings, 2026-10-12), served on loopback.
-const { ashby } = await import('./ats/ashby.ts');
+const { ashby, pickerDate } = await import('./ats/ashby.ts');
 const { formQuestionKey } = await import('./ats/protocol.ts');
 const ashbyPosting = '3813977e-5940-456d-bf5a-16efcdc3a6dc';
 const ashbyEntry = (path, label, input, required = true) => `<div class="ashby-application-form-field-entry"><label class="ashby-application-form-question-title${required ? ' _required_f7cvd_91' : ''}" for="${path}">${label}</label>${input}</div>`;
@@ -433,6 +433,15 @@ async function ashbyFixture(title = 'Product Designer @ Fixture Co') {
   return { server, origin, input };
 }
 
+test('an Ashby date is filled and checked the way its picker shows it', () => {
+  // Harvey's Graduation Date showed "December 2028" as 12/01/2028, and the check against the typed text failed the fill.
+  assert.equal(pickerDate('December 2028'), '12/01/2028');
+  assert.equal(pickerDate('Dec 15, 2028'), '12/15/2028');
+  assert.equal(pickerDate('12/15/2028'), '12/15/2028');
+  // A calendar day, not UTC midnight: the picker showed 2028-12-15 as 12/14/2028 west of UTC.
+  assert.equal(pickerDate('2028-12-15'), '12/15/2028');
+  assert.equal(pickerDate('not a date'), 'not a date');
+});
 test('the Ashby fixture is observed, answered from the profile and the inbox, filled, submitted and receipted', { skip: !browserReady }, async () => {
   const { server, origin, input } = await ashbyFixture();
   const directory = await mkdtemp(join(tmpdir(), 'workie-ats-ashby-'));
