@@ -151,7 +151,7 @@ function LiveCard({ app, frame, role, asked, questions, ownerId, onAnswer, onDon
       <p className={styles.step} aria-live="polite">{watching && <span className={styles.pulse} aria-hidden="true" />}{step}
         {frame && <span className={styles.muted}> · updated {ago(frame.updatedAt)}</span>}
         {full && <button className={styles.button} type="button" autoFocus onClick={() => setFull(false)}>Exit full screen</button>}</p>
-      {app.state === 'submitting' && <p className={styles.muted}>If {company} emails you a verification code or asks for a captcha, enter it in Workie&apos;s browser window on your computer within 30 minutes.</p>}
+      {app.state === 'submitting' && <CodeBox app={app} company={company} ownerId={ownerId} />}
       <div className={full ? styles.fullBody : undefined}>
         {image
           // eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset
@@ -218,7 +218,7 @@ const errorCode = async (response: Response) => (await response.clone().json().c
 
 /** A submit the employer held for the applicant, who never finished it in the worker's window (see worker/ats). */
 const UNSENT: Record<string, string> = {
-  verification_code_timeout: 'The employer emailed you a verification code that was not entered in Workie\'s browser window within 30 minutes, so it most likely was not sent.',
+  verification_code_timeout: 'The employer emailed you a security code that was not entered on Workie or in Workie\'s browser window within 30 minutes, so it most likely was not sent.',
   captcha_timeout: 'The employer asked for a captcha that was not solved in Workie\'s browser window within 30 minutes, so it most likely was not sent.',
 };
 
@@ -276,6 +276,29 @@ async function retrySafe(app: App, runs: Run[], ownerId: string) {
 }
 
 const retry = (app: App, runs: Run[], ownerId: string) => resumable(app, runs) ? retrySafe(app, runs, ownerId) : restart(app, runs, ownerId);
+
+/** The security code an employer emails at submit: sent to Workie, the worker types it into the form within seconds. */
+function CodeBox({ app, company, ownerId }: { app: App; company: string; ownerId: string }) {
+  const [code, setCode] = useState('');
+  const [status, setStatus] = useState('');
+  const send = async () => {
+    setStatus('Sending...');
+    try {
+      await privateJson(`/api/applications/${app.id}/verification-code`, { method: 'POST', owner: ownerId, body: JSON.stringify({ code: code.trim() }) });
+      setCode(''); setStatus('Sent. Workie enters it in the form within a few seconds.');
+    } catch { setStatus('Could not send that code. Check it and try again.'); }
+  };
+  return <form onSubmit={(event) => { event.preventDefault(); void send(); }}>
+    <label className={styles.muted} htmlFor={`code-${app.id}`}>If {company} emailed you a security code, paste it here within 30 minutes.
+      A captcha has to be solved in Workie&apos;s browser window on your computer.</label>
+    <div className={styles.actions}>
+      <input id={`code-${app.id}`} value={code} onChange={(event) => setCode(event.target.value)} autoComplete="one-time-code"
+        pattern="\s*[A-Za-z0-9]{4,16}\s*" required />
+      <button className={styles.button} type="submit">Send code</button>
+    </div>
+    {status && <p role="status" className={styles.muted}>{status}</p>}
+  </form>;
+}
 
 async function approve(app: App, ownerId: string) {
   try {

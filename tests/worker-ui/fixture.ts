@@ -8,7 +8,8 @@ import { isTerminalState } from '../../lib/applications/state';
 import {
   ApplicationCommandSchema, ApplicationSummarySchema, LiveListSchema, MaterialsSchema, PairingCreateSchema, PairingGrantSchema,
   PAIRING_TTL_MS, RevisionCommandSchema, RevocationSchema, RunCommandSchema, RunCreateSchema,
-  RunListSchema, RunSchema, WorkerListSchema, WorkerScheduleAckSchema, WorkerScheduleSchema, WorkerSummarySchema,
+  RunListSchema, RunSchema, VerificationCodeAckSchema, VerificationCodeSchema, WorkerListSchema, WorkerScheduleAckSchema,
+  WorkerScheduleSchema, WorkerSummarySchema,
   type ApplicationSummary, type PairingSummary, type Run, type WorkerSummary,
 } from '../../lib/applications/worker-protocol';
 
@@ -118,6 +119,8 @@ export class WorkerFixture {
     }
     assert.equal(headers.get('content-type'), 'application/json');
     assert.ok(body);
+    const code = /^\/api\/applications\/([^/]+)\/verification-code$/.exec(path);
+    if (code) { VerificationCodeSchema.parse(body); return reply(VerificationCodeAckSchema, { applicationId: code[1], stored: true }); }
     const schema = path === '/api/workers/pairings' ? PairingCreateSchema :
       method === 'DELETE' ? RevisionCommandSchema : method === 'PATCH' ? WorkerScheduleSchema : path === '/api/application-runs' ? RunCreateSchema :
         path.endsWith('/retry-unsubmitted') || path.endsWith('/restart') ? ReapplyRequestSchema : path.includes('/applications/') ? ApplicationCommandSchema : RunCommandSchema;

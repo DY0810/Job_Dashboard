@@ -77,15 +77,16 @@ document.getElementById('phone').addEventListener('input', event => {
 });
 document.getElementById('submit').onclick = async () => {
   // Like Greenhouse's human check: the first submit emails a code that the applicant must type in.
-  const code = document.getElementById('security-code');
-  if (!code) {
+  // Eight one-character boxes, #security-input-0 to #security-input-7, like the live form.
+  const boxes = [...document.querySelectorAll('input[id^="security-input-"]')];
+  if (!boxes.length) {
     const prompt = document.createElement('p');
     prompt.textContent = 'A verification code was sent to test@example.com. To submit your application, enter the 8-character code to confirm you are a human.';
-    const input = document.createElement('input'); input.id = 'security-code';
-    document.body.append(prompt, input);
+    document.body.append(prompt);
+    for (let i = 0; i < 8; i++) { const input = document.createElement('input'); input.id = 'security-input-' + i; input.maxLength = 1; document.body.append(input); }
     return;
   }
-  if (code.value !== 'ABCD1234') return;
+  if (boxes.map(box => box.value).join('') !== 'ABCD1234') return;
   const base64 = async file => { let out = ''; for (const byte of new Uint8Array(await file.arrayBuffer())) out += String.fromCharCode(byte); return btoa(out); };
   const files = {}, fields = {};
   for (const input of document.querySelectorAll('input[type=file]')) if (input.files.length) files[input.id] = { name: input.files[0].name, base64: await base64(input.files[0]) };
@@ -125,7 +126,7 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
         phone: '4155550123', phone_country: 'US', us_authorized: 'Yes', posting_authorized: 'Yes', us_sponsorship_ever: 'No', posting_sponsorship_ever: 'No' },
       documents: { resumeMaster: masterRef, resume: masterRef }, tailoredArtifact: null, manifestHash: null, artifactHashes: [], createdAt: Date.now(),
     };
-    let intent, receiptFails = false;
+    let intent, receiptFails = false, codes = [];
     const kept = [];
     const control = {
       applicationContext: async () => structuredClone(context),
@@ -147,6 +148,8 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
         return {};
       },
       live: async (_application, body) => { (calls.live ??= []).push(body); return { applicationId, stored: true }; },
+      // Codes the applicant entered on Workie, each taken once.
+      verificationCode: async () => ({ code: codes.shift() ?? null }),
       letter: async (_application, body) => {
         // Mirrors the server: the first stored letter is kept and comes back in the context.
         calls.storedLetter ??= { body, afterReceipt: calls.receipt !== null };
@@ -260,13 +263,11 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       assert.ok(calls.live.findLast(frame => frame.image !== undefined)?.image, 'the filled form stays for review');
       const printed = [], write = process.stdout.write;
       process.stdout.write = (chunk, ...rest) => { printed.push(String(chunk)); return write.call(process.stdout, chunk, ...rest); };
+      // The applicant enters the emailed code on Workie, mistyped first; the worker types each into the form and submits again.
+      codes = ['ABCD9999', 'ABCD1234'];
       const submitted = stage('ready').finally(() => { process.stdout.write = write; });
-      // The applicant types the emailed code into the visible window and submits again.
-      const page = await submitPageOpened;
-      await page.getByText('A verification code was sent to', { exact: false }).waitFor();
-      await page.locator('#security-code').fill('ABCD1234');
-      await page.getByRole('button', { name: 'Submit application', exact: true }).click();
       assert.deepEqual(await submitted, { state: 'submitted', reasonCode: 'exact_role_receipt', durable: true });
+      assert.deepEqual(codes, [], 'the worker took both codes');
       assert.deepEqual(kept, [], 'a receipt the server took is not kept');
       assert.ok(printed.some(line => line.includes('"verification-code-required"') && !Number.isNaN(Date.parse(JSON.parse(line).at))),
         'the worker says, with the time, that a code is needed');
@@ -300,7 +301,8 @@ test('Greenhouse pipeline tailors the resume, asks only the new question, writes
       const unconfirmed = stage('ready');
       const again = await submitPageOpened;
       await again.getByText('A verification code was sent to', { exact: false }).waitFor();
-      await again.locator('#security-code').fill('ABCD1234');
+      // With no code on Workie, the applicant can still type it into the visible window.
+      for (const [index, character] of [...'ABCD1234'].entries()) await again.locator(`#security-input-${index}`).fill(character);
       await again.getByRole('button', { name: 'Submit application', exact: true }).click();
       assert.deepEqual(await unconfirmed, { state: 'submission_unknown', reasonCode: 'receipt_persistence_failed', durable: true });
       assert.deepEqual(kept, [calls.receipt]);

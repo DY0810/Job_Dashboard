@@ -106,6 +106,13 @@
       "when": 1792792168634,
       "tag": "0014_manifest_prune",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1792997004743,
+      "tag": "0015_live_verification_code",
+      "breakpoints": true
     }
   ]
 }

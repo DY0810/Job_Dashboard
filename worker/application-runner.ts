@@ -32,6 +32,7 @@ export async function runAtsApplication(input: {
   submission?: {
     begin: (value: { intentId: string; identity: AtsApplication['identity']; company: string; role: string; manifestHash: string; artifactHashes: string[] }) => Promise<{ intentId: string }>;
     receipt: (value: { intentId: string; receipt: AtsReceipt; evidence: { source: 'confirmation_page'; pageUrl: string; observedText: string } }) => Promise<unknown>;
+    code?: () => Promise<string | null>;
   };
 }): Promise<ApplicationRunResult> {
   const { runtime, adapter, application, signal } = input;
@@ -64,7 +65,7 @@ export async function runAtsApplication(input: {
     return { state: 'submitted' as const, reasons: ['exact_role_receipt'], receipt, reconciled: false };
   };
   try {
-    await adapter.submit(runtime, application, signal);
+    await adapter.submit(runtime, application, signal, input.submission?.code);
   } catch (error) {
     if (signal?.aborted) throw error;
     try {

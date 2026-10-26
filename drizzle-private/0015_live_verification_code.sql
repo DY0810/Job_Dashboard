@@ -1,0 +1,1 @@
+ALTER TABLE `private_application_live` ADD `verification_code` text;

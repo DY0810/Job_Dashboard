@@ -369,7 +369,7 @@ test('an unconfirmed submission says why, and the applicant says whether it went
   fixture.addRun();
   const sent = fixture.addApplication('submission_unknown', 'verification_code_timeout');
   await page.goto('/applications');
-  await expect(page.getByText('The employer emailed you a verification code that was not entered in Workie\'s browser window within 30 minutes', { exact: false })).toBeVisible();
+  await expect(page.getByText('The employer emailed you a security code that was not entered on Workie or in Workie\'s browser window within 30 minutes', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'It went through', exact: true }).click();
   await expect(page.getByText('Mark this as applied? Do this only if the employer confirmed it, by email or on its site.', { exact: true })).toBeVisible();
@@ -477,6 +477,19 @@ test('Live drops a form the worker submitted at its next frame poll', async ({ p
   await expect(page.getByRole('list', { name: 'Live', exact: true }).getByText(/^Filling the form again and submitting it · updated/)).toBeVisible();
   app.state = 'submitted';
   await expect(page.getByText(/^Nothing is being applied right now\./)).toBeVisible({ timeout: 10_000 });
+});
+
+// Greenhouse emails a security code at submit: the applicant pastes it on the Live card and the worker types it into the form.
+test('Live sends the security code for a form being submitted', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const app = fixture.addApplication('submitting');
+  fixture.frames = [{ applicationId: app.id, step: 'Filling the form again and submitting it', image: PIXEL, fields: null, updatedAt: Date.now() }];
+  await page.goto('/applications?view=live');
+  await page.getByLabel(/emailed you a security code/).fill(' ja5oTXoY ');
+  await page.getByRole('button', { name: 'Send code', exact: true }).click();
+  await expect(page.getByText('Sent. Workie enters it in the form within a few seconds.', { exact: true })).toBeVisible();
+  expect(fixture.writes.map((request) => [request.path, request.body])).toEqual([[`/api/applications/${app.id}/verification-code`, { code: 'ja5oTXoY' }]]);
 });
 
 // Rows reload once a minute and frames every 3 s; Live used to wait for the rows to show a form the worker had started filling.

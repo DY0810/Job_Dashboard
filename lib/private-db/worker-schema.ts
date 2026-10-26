@@ -146,6 +146,8 @@ export const applicationLive = sqliteTable('private_application_live', {
   // A JPEG screenshot, base64; dropped when the worker leaves the application.
   image: text('image'),
   fields: text('fields', { mode: 'json' }).$type<{ label: string; value: string }[]>(),
+  // An emailed security code the applicant entered on Workie; the worker takes it once and types it into the form.
+  verificationCode: text('verification_code'),
   updatedAt: integer('updated_at').notNull(),
 }, (t) => [
   primaryKey({ columns: [t.ownerId, t.applicationId] }),
