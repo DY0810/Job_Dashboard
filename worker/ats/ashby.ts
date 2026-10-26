@@ -210,6 +210,11 @@ export const ashby: AtsAdapter = {
       try { await success.waitFor({ timeout: VERIFICATION_WAIT_MS }); return; }
       catch { throw new AtsError('CAPTCHA_TIMEOUT'); }
     }
+    // Neither outcome showed: log what the page does show (a rejection, field errors, a dead button) to tell them apart.
+    const shown = await form.locator('.ashby-application-form-failure-container, [role="alert"]').allInnerTexts().catch(() => []);
+    process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'submit-unconfirmed', company: input.company, role: input.role,
+      url: form.url(), shown: shown.map((text) => text.trim().slice(0, 300)).filter(Boolean).slice(0, 10),
+      buttonEnabled: await button.isEnabled().catch(() => null) }) + '\n');
     throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT');
   },
   async receipt(runtime, input, signal) {
