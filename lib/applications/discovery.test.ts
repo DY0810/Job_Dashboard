@@ -282,6 +282,19 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect((await poll(token)).lease?.applicationId).toBe(attempts(unstartedRequisition)[1].id);
   });
 
+  it('retries a stopped target in a new run even after an earlier attempt of it was restarted', async () => {
+    const { token, run, worker } = await prepared(); addPostings(1); await complete(token, run.id);
+    const first = (await appRows())[0];
+    await restartApplication(db, 'alice', run.id, { ...request(), previousApplicationId: first.id, expectedRevision: first.revision }, options);
+    await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'stop' }, options);
+    now += DAY;
+    const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: worker.workerId }, options);
+    await complete(token, replacement.id);
+    expect((await appRows()).sort((a, b) => a.attempt - b.attempt).map((a) => [a.attempt, a.state, a.reasonCode])).toEqual([
+      [1, 'cancelled', 'restarted'], [2, 'cancelled', 'run_stopped'], [3, 'queued', null],
+    ]);
+  });
+
   it('never retries a stopped target that recorded a submission intent', async () => {
     const { token, run, worker } = await prepared(); addPostings(1); await complete(token, run.id);
     const app = (await appRows())[0]; await poll(token);
