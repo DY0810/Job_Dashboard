@@ -122,6 +122,10 @@ export const greenhouse: AtsAdapter = {
     const live = hosted(input) && await form.getAttribute('id') === 'application-form';
     if (!live && await form.getAttribute('id') === 'application-form') throw new AtsError('ATS_IDENTITY_MISMATCH');
     if (live) await page.waitForLoadState('load', { timeout: 5_000 });
+    // The page is Remix: React hydrates the form after load, and text typed before then is reset (xAI, 2026-10-26).
+    // Hydration covers the form at once, so the first input stands for it (the phone widget's search box is never React's).
+    if (live) await page.waitForFunction(() => { const input = document.querySelector('#application-form input');
+      return !('__remixContext' in window) || !input || Object.keys(input).some(key => key.startsWith('__reactProps')); }, null, { timeout: 30_000 }).catch(() => {});
     // The loaded page must still be this job's own URL; that, not the title's company, pins tenant and requisition.
     if (live && !hosted(input, page.url())) throw new AtsError('ATS_IDENTITY_MISMATCH');
     // The title can lag the load event (seen in the visible submit window); a real mismatch still fails. Boards get renamed
