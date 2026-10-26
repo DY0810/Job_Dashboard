@@ -618,6 +618,12 @@ test('applications open as tabs of one window, each reaching only its own origin
     assert.equal(first.context.pages().length, 1, 'the last tab stays so the window stays up');
     const third = await open(a);
     assert.equal(await third.page(), pageA, 'the idle tab is reused');
+    await third.close();
+    // The applicant closes the blank window between applications: the next one opens a fresh tab.
+    await pageA.close();
+    const fourth = await open(a);
+    const pageD = await fourth.navigate(await fourth.page(), `${origin(a)}/`);
+    assert.equal(await pageD.title(), 'ok', 'a closed idle tab is never handed out');
   } finally {
     await first?.context.close(); a.close(); b.close();
     await rm(userDataDir, { recursive: true, force: true });
