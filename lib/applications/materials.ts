@@ -1,18 +1,18 @@
 import 'server-only';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { PrivateDb } from '../private-db/index.ts';
-import { applicationArtifacts, applicationEvents, applicationReceipts, applications, documents } from '../private-db/schema.ts';
+import { applicationArtifacts, applicationEvents, applicationLive, applicationReceipts, applications, documents } from '../private-db/schema.ts';
 import { artifactRequestId, type ApplicationArtifactManifest } from './artifact-protocol.ts';
 import { hashValue } from './stores.ts';
 import { appScope, fail, withWorker, type WorkerOptions } from './worker-store.ts';
 import { SubmittedLetterSchema } from './worker-protocol.ts';
 
-/** What each application sent: its tailored resume (with the lines that changed) and its cover letter. */
+/** What each application sent: its tailored resume (with the lines that changed), its cover letter and, once submitted, its filled answers. */
 type Letter = { letter: 'submitted'; introduction: string; body: string[]; conclusion: string; companyParagraph: string };
 type Material = { applicationId: string;
   resume: { documentId: string; mime: string; createdAt: number; changes: { before: string; after: string }[] } | null;
-  letter: Omit<Letter, 'letter'> | null };
+  letter: Omit<Letter, 'letter'> | null; answers: { label: string; value: string }[] | null };
 
 /** Worker call when the form is filled (or after a verified receipt): keeps the cover letter, once, in the event log. */
 export async function recordSubmittedLetter(db: PrivateDb, token: string, applicationId: string, input: unknown, options: WorkerOptions = {}) {
@@ -44,7 +44,7 @@ function resumeChanges(manifest: ApplicationArtifactManifest) {
 export async function listMaterials(db: PrivateDb, ownerId: string) {
   const byApplication = new Map<string, Material>();
   const material = (applicationId: string) => byApplication.get(applicationId) ??
-    byApplication.set(applicationId, { applicationId, resume: null, letter: null }).get(applicationId)!;
+    byApplication.set(applicationId, { applicationId, resume: null, letter: null, answers: null }).get(applicationId)!;
   const artifacts = await db.select({ applicationId: applicationArtifacts.applicationId, documentId: applicationArtifacts.documentId,
     manifest: applicationArtifacts.manifest, createdAt: applicationArtifacts.createdAt, mime: documents.mime })
     .from(applicationArtifacts).innerJoin(documents, and(eq(documents.ownerId, applicationArtifacts.ownerId),
@@ -60,6 +60,11 @@ export async function listMaterials(db: PrivateDb, ownerId: string) {
     const { introduction, body, conclusion, companyParagraph } = row.acknowledgement as Letter;
     material(row.applicationId).letter = { introduction, body, conclusion, companyParagraph };
   }
+  // The Live tab stops sending a form once it is submitted; its last frame still holds what the worker typed.
+  const sent = await db.select({ applicationId: applicationLive.applicationId, fields: applicationLive.fields }).from(applicationLive)
+    .innerJoin(applications, and(eq(applications.ownerId, applicationLive.ownerId), eq(applications.id, applicationLive.applicationId)))
+    .where(and(eq(applicationLive.ownerId, ownerId), eq(applications.state, 'submitted'), isNotNull(applicationLive.fields)));
+  for (const row of sent) material(row.applicationId).answers = row.fields;
   return { ownerId, materials: [...byApplication.values()] };
 }
 

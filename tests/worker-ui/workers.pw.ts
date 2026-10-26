@@ -369,7 +369,7 @@ test('an unconfirmed submission says why, and the applicant says whether it went
   fixture.addRun();
   const sent = fixture.addApplication('submission_unknown', 'verification_code_timeout');
   await page.goto('/applications');
-  await expect(page.getByText('Workie could not confirm the employer received this (Verification code timeout).', { exact: false })).toBeVisible();
+  await expect(page.getByText('The employer emailed you a verification code that was not entered in Workie\'s browser window within 30 minutes', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'It went through', exact: true }).click();
   await expect(page.getByText('Mark this as applied? Do this only if the employer confirmed it, by email or on its site.', { exact: true })).toBeVisible();
@@ -396,6 +396,24 @@ test('an unconfirmed submission says why, and the applicant says whether it went
   await expect.poll(() => fixture.writes.at(-1)?.body?.action).toBe('confirm-not-submitted');
   expect(fixture.writes.at(-1)?.path).toBe(`/api/application-runs/${closed.runId}/applications/${closed.id}/actions`);
   await expect(page.getByRole('button', { name: 'It did not go through, try again', exact: true })).toHaveCount(0);
+});
+
+test('Applied shows the resume, cover letter and answers each application sent', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  const sent = fixture.addApplication('submitted');
+  const documentId = crypto.randomUUID();
+  fixture.materials = [{ applicationId: sent.id, resume: { documentId, mime: 'application/pdf', createdAt: fixture.now, changes: [] },
+    letter: { introduction: 'I am applying.', body: ['I build things.'], conclusion: 'Thank you.', companyParagraph: 'Your work matters.' },
+    answers: [{ label: 'First Name', value: 'Dong Yeop' }, { label: 'Resume/CV', value: 'DongYeopLee_Resume.pdf' }] }];
+  await page.goto('/applications');
+  await page.getByRole('button', { name: /^Applied/ }).click();
+  await page.getByText('What you sent', { exact: true }).click();
+  await expect(page.getByRole('link', { name: 'Download' })).toHaveAttribute('href', `/api/documents/${documentId}/download`);
+  await expect(page.getByText('Dong Yeop', { exact: true })).toBeVisible();
+  await expect(page.getByText('DongYeopLee_Resume.pdf', { exact: true })).toBeVisible();
+  await page.getByText('Cover letter', { exact: true }).click();
+  await expect(page.getByText('Your work matters.')).toBeVisible();
 });
 
 // A fresh attempt counts against the daily and per-employer caps and loses the attempt's answers, so a failed fill resumes.

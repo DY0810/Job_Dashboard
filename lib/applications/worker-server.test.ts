@@ -17,6 +17,7 @@ import { enqueueApplication } from './test-enqueue.ts';
 import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
 import { listLive } from './live.ts';
+import { listMaterials } from './materials.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { type WorkerOptions } from './worker-store.ts';
 import { stubHousehold } from '../test-household.ts';
@@ -851,6 +852,22 @@ describe('live frames', () => {
     expect(listed.live[0]).toMatchObject({ applicationId: filling.id, image });
     // A form waiting on the applicant never ages out of Live or listRuns, so its card shows its frame.
     expect(listed.live.map((item) => item.applicationId)).toContain(old.id);
+  });
+});
+describe('materials', () => {
+  it('sends the answers a submitted application filled in, not those of a form still being worked or another owner\'s', async () => {
+    const { app } = await prepared();
+    const bob = (await prepared('bob')).app;
+    await db.update(applications).set({ state: 'submitted' }).where(eq(applications.id, bob.id));
+    const row = (state: ApplicationState) => ({ id: randomUUID(), ownerId: 'alice', runId: app.runId, workerId: app.workerId, ats: 'fixture',
+      tenant: 'fixture', requisition: randomUUID(), state, availableAt: 0, createdAt: now });
+    const sent = row('submitted'), filling = row('filling');
+    await db.insert(applications).values([sent, filling]);
+    const fields = [{ label: 'First Name', value: 'Test' }, { label: 'Resume/CV', value: 'resume.pdf' }];
+    const frame = (ownerId: string, applicationId: string) => ({ ownerId, applicationId, step: 'Submitted', image: 'A', fields, updatedAt: now });
+    await db.insert(applicationLive).values([frame('alice', sent.id), frame('alice', filling.id), frame('bob', bob.id)]);
+    const listed = p.MaterialsSchema.parse(await listMaterials(db, 'alice'));
+    expect(listed.materials).toEqual([{ applicationId: sent.id, resume: null, letter: null, answers: fields }]);
   });
 });
 describe('daily start schedule', () => {
