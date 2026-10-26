@@ -39,6 +39,16 @@ export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
       input.answers['discipline--0'].split('/').map(part => part.trim()).includes('Computer Science')) return 'Computer Science';
   if (input.answers[field.key] !== undefined) return input.answers[field.key];
   if (input.answers[disclosureAnswerKey(field.label)] !== undefined) return input.answers[disclosureAnswerKey(field.label)];
+  // The "Candidate Demographic Survey" numbers its questions ("75902") and words them per employer. A voluntary fact answers
+  // a question about its one topic, only when the form offers that exact option; anything else is asked.
+  if (/^\d+$/.test(field.key)) {
+    const text = field.label.toLowerCase();
+    const about = ([['voluntary_gender', /\bgender\b/], ['voluntary_hispanic', /\b(hispanic|latin[aox])\b/], ['voluntary_veteran', /\bveteran\b/],
+      ['voluntary_disability', /\bdisabilit(y|ies)\b/], [null, /\brac(e|ial)\b|\bethnic|transgender|orientation|pronoun|\bsex\b|\bnot\b/]] as const)
+      .filter(([, pattern]) => pattern.test(text));
+    const value = about.length === 1 && about[0][0] ? input.answers[about[0][0]] : undefined;
+    return typeof value === 'string' && field.options?.includes(value) ? value : undefined;
+  }
   if (field.key === 'candidate-location' && field.label === 'Location (City)') return input.answers.current_location;
   // Every hosted form puts the same phone-country picker beside Phone.
   if (field.key === 'country' && field.label === 'Country' && input.answers.phone_country === 'US') return 'United States +1';
@@ -71,22 +81,33 @@ export async function hostedFields(form: import('playwright').Locator): Promise<
     return input.type !== 'hidden' && !input.disabled && !input.id.endsWith('-search');
   }).map(node => {
     const input = node as HTMLInputElement;
-    const label = document.getElementById(`${input.id}-label`)?.textContent ?? document.getElementById(`upload-label-${input.id}`)?.textContent ??
-      document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent ?? input.getAttribute('aria-label') ?? input.id;
+    // A checkbox group's boxes ("question_1[]_2": question, then option) sit in a fieldset "question_1[]" whose legend asks it.
+    const group = input.type === 'checkbox' ? /^(question_\d+\[\])_\d+$/.exec(input.id)?.[1] : undefined;
+    const fieldset = group ? document.getElementById(group) : null, key = group ?? input.id;
+    const own = document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent;
+    const label = group ? (fieldset?.querySelector('legend')?.textContent ?? group).replace(/\s+/g, ' ') :
+      document.getElementById(`${input.id}-label`)?.textContent ?? document.getElementById(`upload-label-${input.id}`)?.textContent ??
+      own ?? input.getAttribute('aria-label') ?? input.id;
     // Helper text under a question ("Commitment" with the real question below it) is part of what the applicant answers.
-    const description = (document.getElementById(`${input.id}-description`)?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000);
-    return { key: input.id, label: label.trim().replace(/\*\s*$/, '').trim(), ...(description ? { description } : {}),
-      kind: input.type === 'file' ? 'file' : input.getAttribute('role') === 'combobox' ? 'combobox' :
+    const description = (document.getElementById(`${key}-description`)?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000);
+    return { key, label: label.trim().replace(/\*\s*$/, '').trim(), ...(description ? { description } : {}),
+      kind: group ? 'radio' : input.type === 'file' ? 'file' : input.getAttribute('role') === 'combobox' ? 'combobox' :
         input.tagName === 'SELECT' ? 'select' : input.type === 'checkbox' ? 'checkbox' : input.type === 'radio' ? 'radio' :
           input.type === 'email' ? 'email' : 'text',
       // A hosted upload marks "required" only with an asterisk in its upload label, never on the input.
       required: input.id === 'resume' || input.getAttribute('aria-required') === 'true' || input.required ||
-        Boolean(document.getElementById(`upload-label-${input.id}`)?.querySelector('.required')),
-      options: node instanceof HTMLSelectElement ? [...node.options].map(option => option.label).filter(Boolean) : undefined,
+        fieldset?.getAttribute('aria-required') === 'true' || Boolean(document.getElementById(`upload-label-${input.id}`)?.querySelector('.required')),
+      options: group ? [own?.trim() ?? ''] : node instanceof HTMLSelectElement ? [...node.options].map(option => option.label).filter(Boolean) : undefined,
     };
   }));
-  if (raw.some(item => !atsFieldKey.test(item.key)) || raw.length > 64) throw new AtsError('GREENHOUSE_FIELD_UNSUPPORTED');
-  return raw.map(item => ({ ...item, kind: item.kind as AtsField['kind'] }));
+  // A group's boxes are one multi-choice question, as Lever's are; the "[]" key makes its answer a list.
+  const fields: typeof raw = [];
+  for (const item of raw) {
+    const group = item.kind === 'radio' && item.key.endsWith('[]') ? fields.find(field => field.key === item.key) : undefined;
+    if (group) group.options!.push(...item.options!); else fields.push(item);
+  }
+  if (fields.some(item => !atsFieldKey.test(item.key) || item.options?.includes('')) || fields.length > 64) throw new AtsError('GREENHOUSE_FIELD_UNSUPPORTED');
+  return fields.map(item => ({ ...item, kind: item.kind as AtsField['kind'] }));
 }
 
 // A react-select dropdown lists its options only while its menu is open; an autocomplete lists none until typed into.
@@ -145,8 +166,11 @@ export const greenhouse: AtsAdapter = {
     const role = await form.getAttribute('data-role') ?? input.role;
     const observed = live ? await hostedFields(form) : fields;
     // Only a question that will go to the inbox needs its choices; it must be answered with one of them.
+    // A survey question's choices are read first, since its profile answer must be one of them.
     for (const field of observed) {
-      if (field.kind === 'combobox' && field.required && !field.options && greenhouseAnswer(input, field) === undefined) field.options = await menuOptions(page, field);
+      if (field.kind === 'combobox' && !field.options && (/^\d+$/.test(field.key) || field.required && greenhouseAnswer(input, field) === undefined)) {
+        field.options = await menuOptions(page, field);
+      }
     }
     const observation = AtsObservationSchema.parse({ identity, company, role, fields: observed, actions: ['fill'] });
     if (JSON.stringify(observation.identity) !== JSON.stringify(input.identity) || observation.company !== input.company || observation.role !== input.role) {
