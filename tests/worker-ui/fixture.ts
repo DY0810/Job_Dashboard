@@ -118,7 +118,7 @@ export class WorkerFixture {
     assert.ok(body);
     const schema = path === '/api/workers/pairings' ? PairingCreateSchema :
       method === 'DELETE' ? RevisionCommandSchema : method === 'PATCH' ? WorkerScheduleSchema : path === '/api/application-runs' ? RunCreateSchema :
-        path.endsWith('/retry-unsubmitted') ? ReapplyRequestSchema : path.includes('/applications/') ? ApplicationCommandSchema : RunCommandSchema;
+        path.endsWith('/retry-unsubmitted') || path.endsWith('/restart') ? ReapplyRequestSchema : path.includes('/applications/') ? ApplicationCommandSchema : RunCommandSchema;
     schema.parse(body);
     const input = JSON.stringify([this.owner, path, method, body]);
     const key = `${this.owner}:${body.requestId}`;
@@ -165,6 +165,15 @@ export class WorkerFixture {
       if (!run || !app) return error(404, 'NOT_FOUND');
       if (run.state !== 'running' || app.state !== 'submission_unknown') return error(409, 'CONFLICT');
       app.state = 'failed'; app.reasonCode = 'applicant_confirmed_not_submitted'; app.revision++;
+      result = reply(ApplicationSummarySchema, this.addApplication('queued', null, run.id));
+    } else if (path.endsWith('/restart')) {
+      // A fresh attempt queues in a running run; the attempt it replaces closes.
+      const run = this.runs.find((row) => path === `/api/application-runs/${row.id}/restart`);
+      const app = this.applications.find((row) => row.id === body.previousApplicationId);
+      if (!run || !app) return error(404, 'NOT_FOUND');
+      if (run.state !== 'running' || app.revision !== body.expectedRevision ||
+          ['submitted', 'submitting', 'submission_unknown'].includes(app.state)) return error(409, 'CONFLICT');
+      if (!isTerminalState(app.state)) { app.state = 'cancelled'; app.reasonCode = 'restarted'; app.revision++; }
       result = reply(ApplicationSummarySchema, this.addApplication('queued', null, run.id));
     } else if (path.includes('/applications/')) {
       const app = this.applications.find((row) => path === `/api/application-runs/${row.runId}/applications/${row.id}/actions`);
