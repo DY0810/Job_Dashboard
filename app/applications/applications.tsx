@@ -224,8 +224,10 @@ const UNSENT: Record<string, string> = {
 
 // Only a role that stopped needs a fresh attempt; a queued or waiting row resumes by itself once its hold clears.
 const RESTARTABLE = ['failed', 'skipped', 'cancelled', 'retryable_failure', 'blocked_unsupported', 'provider_unavailable', 'needs_document'];
-/** A document hold the applicant fixed resumes from its checkpoint instead of starting over. */
-const resumable = (app: App) => app.state === 'needs_document' && !!app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3;
+/** A failed fill or fixed document hold resumes from its checkpoint in its own run unless that run stopped (a paused run
+ * continues it on resume): a fresh attempt would lose its answers and count again against the daily and per-employer caps. */
+const resumable = (app: App, runs: Run[]) => !!app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3 &&
+  runs.some((run) => run.id === app.runId && run.state !== 'stopped');
 
 /** A fresh attempt of a role the employer never received: its own run first, then other running runs newest first.
  * `retry-unsubmitted` is the applicant saying an unconfirmed submission never went through. */
@@ -254,11 +256,13 @@ async function restart(app: App, runs: Run[], ownerId: string, action: 'restart'
   }
 }
 
-/** A fixed document hold resumes in its own run or, after a policy change, in the newest running run. */
+/** A row resumes in its own run; after a policy change a document hold moves to the newest running run. */
 async function retrySafe(app: App, runs: Run[], ownerId: string) {
   const post = (path: string, body: object) => postCommand(path, ownerId, app.revision, body);
   let response = await post(commandPath(app), { action: 'retry-safe' });
   const code = async () => response.status === 409 ? (await response.clone().json().catch(() => null))?.code : undefined;
+  // Only a document hold carries over to another run; any other failure starts over there.
+  if (await code() === 'POLICY_CHANGED' && app.state !== 'needs_document') return restart(app, runs, ownerId);
   if (await code() === 'POLICY_CHANGED') {
     // The server accepts only a run on the current policy; try running runs newest first.
     for (const run of runs.filter((item) => item.state === 'running' && item.id !== app.runId)) {
@@ -271,7 +275,7 @@ async function retrySafe(app: App, runs: Run[], ownerId: string) {
   if (!response.ok) throw new Error('Could not retry. Refresh and try again.');
 }
 
-const retry = (app: App, runs: Run[], ownerId: string) => resumable(app) ? retrySafe(app, runs, ownerId) : restart(app, runs, ownerId);
+const retry = (app: App, runs: Run[], ownerId: string) => resumable(app, runs) ? retrySafe(app, runs, ownerId) : restart(app, runs, ownerId);
 
 async function approve(app: App, ownerId: string) {
   try {
@@ -510,7 +514,7 @@ export default function Applications() {
             const { questions: questionsHere, restart: restartable } = rowAsks(app, asked.get(app.id));
             const approval = isAwaitingSubmitApproval(app.state, app.reasonCode);
             const upload = app.state === 'needs_document' && !!uploadKind[app.reasonCode ?? ''];
-            const retryable = resumable(app) || RESTARTABLE.includes(app.state) || restartable;
+            const retryable = resumable(app, runs) || RESTARTABLE.includes(app.state) || restartable;
             const material = materials.get(app.id);
             const href = postingUrl(app.ats, app.tenant, app.requisition);
             const company = app.company ?? app.tenant;

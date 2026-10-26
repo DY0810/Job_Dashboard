@@ -416,6 +416,35 @@ test('Applied shows the resume, cover letter and answers each application sent',
   await expect(page.getByText('Your work matters.')).toBeVisible();
 });
 
+// A fresh attempt counts against the daily and per-employer caps and loses the attempt's answers, so a failed fill resumes.
+test('Retry resumes a failed fill in its own run, and starts over only when that run stopped', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  const own = fixture.addRun();
+  const failed = fixture.addApplication('retryable_failure', 'ats_timeout');
+  await page.goto('/applications');
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect.poll(() => fixture.writes.map((request) => [request.path, request.body?.action]))
+    .toEqual([[`/api/application-runs/${own.id}/applications/${failed.id}/actions`, 'retry-safe']]);
+  expect(failed.state).toBe('screening');
+
+  // A paused run keeps it and continues it on resume.
+  own.state = 'paused';
+  const parked = fixture.addApplication('retryable_failure', 'ats_timeout', own.id);
+  await page.reload();
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect.poll(() => fixture.writes.at(-1)?.path).toBe(`/api/application-runs/${own.id}/applications/${parked.id}/actions`);
+  expect(fixture.writes.at(-1)?.body?.action).toBe('retry-safe');
+
+  // Its own run stopped, so nothing can resume it there: a fresh attempt queues in the running run.
+  own.state = 'stopped';
+  const other = fixture.addRun();
+  const stranded = fixture.addApplication('retryable_failure', 'ats_timeout', own.id);
+  await page.reload();
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect.poll(() => fixture.writes.at(-1)?.path).toBe(`/api/application-runs/${other.id}/restart`);
+  expect(fixture.writes.at(-1)?.body).toMatchObject({ previousApplicationId: stranded.id, expectedRevision: 1 });
+});
+
 /** A 1x1 PNG: the browser shows it under the page's image/jpeg data URL like the worker's screenshot. */
 const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
