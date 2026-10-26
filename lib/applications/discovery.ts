@@ -222,7 +222,8 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
         and t.disposition = 'eligible'
         and not exists (select 1 from ${applications} a where a.owner_id = t.owner_id
           and a.ats = t.ats and a.tenant = t.tenant and a.requisition = t.requisition
-          and (a.state != 'cancelled' or coalesce(a.reason_code, '') != 'run_stopped' or not ${noSubmission}))
+          -- A restarted row was replaced by a newer attempt, which this check sees on its own.
+          and (a.state != 'cancelled' or coalesce(a.reason_code, '') not in ('run_stopped', 'restarted') or not ${noSubmission}))
       on conflict (owner_id, ats, tenant, requisition, attempt) do nothing`);
     const appId = sql<string>`(select a.id from ${applications} a where a.owner_id = ${discoveryTargets.ownerId}
       and a.ats = ${discoveryTargets.ats} and a.tenant = ${discoveryTargets.tenant}
