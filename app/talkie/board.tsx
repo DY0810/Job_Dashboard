@@ -599,7 +599,7 @@ function NoteCard({
                 <When at={comment.createdAt} mounted={mounted} />
                 {canWrite ? (
                   <button type="button" className="comment-close" onClick={() => { void removeReply(comment.id); }} aria-label="Delete reply">
-                    <X size={12} strokeWidth={1.25} absoluteStrokeWidth />
+                    <X size={12} strokeWidth={2} />
                   </button>
                 ) : null}
               </span>

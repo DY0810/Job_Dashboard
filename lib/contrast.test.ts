@@ -1,5 +1,5 @@
 /**
- * The contrast and theme-structure gate, measured rather than eyeballed.
+ * The contrast gate for Postie's palette, measured rather than eyeballed.
  *
  * It reads `app/globals.css` itself, so editing a token re-runs the measurement: there is no
  * second copy of the palette here to drift out of date. Run `npx vitest run lib/contrast`
@@ -11,51 +11,6 @@ import { describe, expect, it } from 'vitest';
 
 const CSS = readFileSync('app/globals.css', 'utf8');
 
-// ── colour maths ──────────────────────────────────────────────────────────────────────
-// OKLCH -> Oklab -> linear sRGB -> gamma-encoded sRGB (clamped, because a token may sit
-// outside the display gamut) -> WCAG relative luminance.
-
-function oklchToSrgb(l: number, c: number, hDeg: number): [number, number, number] {
-  const h = (hDeg * Math.PI) / 180;
-  const a = c * Math.cos(h);
-  const b = c * Math.sin(h);
-
-  const l_ = (l + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-  const m_ = (l - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-  const s_ = (l - 0.0894841775 * a - 1.291485548 * b) ** 3;
-
-  const linear = [
-    4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
-    -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
-    -0.0041960863 * l_ - 0.7034186147 * m_ + 1.707614701 * s_,
-  ];
-
-  return linear.map((v) => {
-    const encoded = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.abs(v) ** (1 / 2.4) - 0.055;
-    return Math.min(1, Math.max(0, encoded));
-  }) as [number, number, number];
-}
-
-function luminance(srgb: [number, number, number]): number {
-  const [r, g, b] = srgb.map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function ratio(fg: string, bg: string): number {
-  const a = luminance(oklchToSrgb(...parse(fg)));
-  const b = luminance(oklchToSrgb(...parse(bg)));
-  const [hi, lo] = a > b ? [a, b] : [b, a];
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-function parse(value: string): [number, number, number] {
-  const m = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(value.trim());
-  if (!m) throw new Error(`not an oklch() value: ${value}`);
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
-}
-
-// ── the palette, read out of the stylesheet ───────────────────────────────────────────
-
 function block(selector: string): string {
   const start = CSS.indexOf(selector);
   expect(start, `${selector} missing from globals.css`).toBeGreaterThan(-1);
@@ -63,141 +18,78 @@ function block(selector: string): string {
   return CSS.slice(open + 1, CSS.indexOf('}', open));
 }
 
+/** `--name: value;` pairs of a block, with `var(--x)` resolved against :root. */
 function declarations(css: string): Record<string, string> {
-  return Object.fromEntries(
-    [...css.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map(([, k, v]) => [k, v.trim()]),
-  );
+  return Object.fromEntries([...css.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()]));
 }
+const ROOT = declarations(block(':root {'));
+const resolve = (value: string): string => {
+  const ref = /^var\(--([\w-]+)\)$/.exec(value);
+  return ref ? resolve(ROOT[ref[1]]) : value;
+};
+const token = (name: string) => resolve(ROOT[name] ?? `missing --${name}`);
 
-const root = declarations(block(':root {'));
-const themes = {
-  light: Object.fromEntries(
-    Object.entries(root)
-      .filter(([k]) => k.startsWith('--light-'))
-      .map(([k, v]) => [k.replace('--light-', ''), v]),
-  ),
-  dark: Object.fromEntries(
-    Object.entries(root)
-      .filter(([k]) => k.startsWith('--dark-'))
-      .map(([k, v]) => [k.replace('--dark-', ''), v]),
-  ),
+function luminance(hex: string): number {
+  const m = /^#([\da-f]{3}|[\da-f]{6})$/i.exec(hex);
+  if (!m) throw new Error(`not a hex colour: ${hex}`);
+  const full = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const v = parseInt(full.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+const ratio = (a: string, b: string) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
 };
 
-/** Text token -> the surfaces it is ever painted on, and the threshold each must clear. */
-const PAIRS: [text: string, surface: string, min: number, what: string][] = [
-  ['fg', 'canvas', 4.5, 'row text, headings, apply links'],
-  ['fg', 'surface', 4.5, 'active chip label'],
-  ['fg-dim', 'canvas', 4.5, 'column heads, secondary cells, drawer prose'],
-  ['fg-dim', 'surface', 4.5, 'chip label'],
-  ['accent', 'canvas', 4.5, 'the last-24-hours band label'],
-  ['accent', 'surface', 3, 'band rule against an adjacent chip'],
-  // Not text: this token draws the 1px border that makes a chip read as pressable, so WCAG
-  // 1.4.11 (non-text contrast, 3:1) applies rather than 4.5:1. It sat at 1.25:1 on canvas —
-  // the control was invisible until it was already active.
-  ['fg-faint', 'canvas', 3, 'the 1px border that makes a chip read as a control'],
-  ['fg-faint', 'surface', 3, 'the same border on an active chip'],
+/** Text token -> a surface it is painted on. Postie's hairline greys are separators, not text, and are not listed. */
+const PAIRS: [text: string, surface: string, what: string][] = [
+  ['ink', 'white', 'row text, headings'],
+  ['ink', 'soft', 'hovered row, buttons'],
+  ['ink', 'active', 'current sidebar tab'],
+  ['ink', 'unread', 'a posting from the last 24 hours'],
+  ['muted', 'white', 'secondary cells, notes'],
+  ['muted', 'soft', 'hovered row, neutral pills and tab counts (Postie\'s --hover fill is 4.44:1, so pills sit on --soft)'],
+  ['muted', 'head', 'column heads'],
+  ['muted', 'side-bg', 'sidebar progress note'],
+  ['accent', 'white', 'apply links'],
+  ['accent', 'unread', 'apply link on a fresh row'],
+  ['primary-ink', 'primary', 'lime primary button'],
+  ['white', 'ink', 'a chosen filter pill'],
+  ['danger', 'white', 'errors'],
+  ['white', 'danger', 'inbox count'],
+  ['work', 'work-bg', 'ready stat'],
+  ['tips', 'tips-bg', 'posted stat'],
 ];
 
+const TONES = [...CSS.matchAll(/\.badge\[data-tone="(\w+)"\] \{ --tone: (#[\da-f]+); --tone-bg: (#[\da-f]+); \}/gi)]
+  .map(([, tone, fg, bg]) => [tone, fg, bg] as const);
+
 describe('contrast', () => {
-  it.each(['light', 'dark'] as const)('%s theme: every text token passes WCAG AA', (theme) => {
-    const palette = themes[theme];
-    expect(Object.keys(palette).length).toBeGreaterThan(4);
-    for (const [text, surface, min] of PAIRS) {
-      const measured = ratio(palette[text], palette[surface]);
-      expect(
-        Number(measured.toFixed(2)),
-        `${theme}: ${text} on ${surface} is ${measured.toFixed(2)}:1, needs ${min}:1`,
-      ).toBeGreaterThanOrEqual(min);
-    }
+  it.each(PAIRS)('%s on %s passes WCAG AA', (text, surface, what) => {
+    const measured = ratio(token(text), token(surface));
+    expect(Number(measured.toFixed(2)), `${text} on ${surface} (${what}) is ${measured.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
   });
 
-  it('disabled text stays perceivable while reading as unavailable', () => {
-    // `fg-faint` paints disabled controls and the aria-hidden loading skeleton, and nothing
-    // else — every token that carries content is in PAIRS above and clears AA. WCAG 1.4.3
-    // exempts disabled controls, so this is a floor: clearly dimmer than fg-dim, not invisible.
-    for (const theme of ['light', 'dark'] as const) {
-      const p = themes[theme];
-      const faint = ratio(p['fg-faint'], p.canvas);
-      expect(faint, `${theme} fg-faint`).toBeGreaterThan(2);
-      expect(faint, `${theme} fg-faint`).toBeLessThan(ratio(p['fg-dim'], p.canvas));
+  it('every status pill label passes WCAG AA on its own fill', () => {
+    expect(TONES.length).toBeGreaterThan(9);
+    for (const [tone, fg, bg] of TONES) {
+      expect(Number(ratio(fg, bg).toFixed(2)), tone).toBeGreaterThanOrEqual(4.5);
     }
   });
 
   it('prints the measured table', () => {
-    const lines = ['| pair | light | dark | min |', '| --- | --- | --- | --- |'];
-    for (const [text, surface, min, what] of PAIRS) {
-      lines.push(
-        `| ${text} on ${surface} — ${what} | ${ratio(themes.light[text], themes.light[surface]).toFixed(2)}:1 ` +
-          `| ${ratio(themes.dark[text], themes.dark[surface]).toFixed(2)}:1 | ${min}:1 |`,
-      );
-    }
-    for (const informational of [
-      ['fg-faint', 'canvas', 'disabled text (WCAG-exempt)'],
-      ['rule', 'canvas', 'hairline separator (decorative)'],
-    ] as const) {
-      const [a, b, what] = informational;
-      lines.push(
-        `| ${a} on ${b} — ${what} | ${ratio(themes.light[a], themes.light[b]).toFixed(2)}:1 ` +
-          `| ${ratio(themes.dark[a], themes.dark[b]).toFixed(2)}:1 | n/a |`,
-      );
-    }
-    if (process.env.WORKIE_CONTRAST_TABLE) console.log(lines.join('\n'));
-    expect(lines.length).toBe(PAIRS.length + 4);
-  });
-});
-
-describe('status badges', () => {
-  // Every tone's hue and chroma scale, read from the stylesheet; the bare `.badge` rule is the neutral.
-  const tones = [...CSS.matchAll(/\.badge(?:\[data-tone="(\w+)"\])? \{\s*--h: ([\d.]+);\s*--k: ([\d.]+);/g)]
-    .map(([, tone = 'neutral', h, k]) => [tone, Number(h), Number(k)] as const);
-
-  it.each(['light', 'dark'] as const)('%s theme: every tone label passes WCAG AA on its own fill', (theme) => {
-    const p = themes[theme];
-    expect(tones.length).toBeGreaterThan(10);
-    for (const [tone, h, k] of tones) {
-      const fg = `oklch(${p['badge-fg-l']} ${Number(p['badge-fg-c']) * k} ${h})`;
-      const bg = `oklch(${p['badge-bg-l']} ${Number(p['badge-bg-c']) * k} ${h})`;
-      expect(Number(ratio(fg, bg).toFixed(2)), `${theme} ${tone}`).toBeGreaterThanOrEqual(4.5);
-    }
-  });
-
-  it('no badge hue sits on the amber accent', () => {
-    for (const [tone, h, k] of tones) if (k > 0.5) expect(Math.abs(h - 75), tone).toBeGreaterThan(40);
+    if (!process.env.WORKIE_CONTRAST_TABLE) return;
+    for (const [text, surface, what] of PAIRS) console.log(`${text} on ${surface}`.padEnd(28), ratio(token(text), token(surface)).toFixed(2), what);
+    for (const [tone, fg, bg] of TONES) console.log(`badge ${tone}`.padEnd(28), ratio(fg, bg).toFixed(2));
   });
 });
 
 describe('theme structure', () => {
-  const active = Object.keys(root).filter((k) => !k.startsWith('--light-') && !k.startsWith('--dark-'));
-  const media = declarations(block(':root:not([data-theme="light"]) {'));
-  const forced = declarations(block(':root[data-theme="dark"] {'));
-
-  it('no token gets its only definition inside a media query', () => {
-    expect(active.length).toBeGreaterThan(4);
-    for (const token of Object.keys(media)) {
-      if (token === 'color-scheme') continue;
-      expect(active, `${token} is only defined in the dark media query`).toContain(token);
-    }
-  });
-
-  it('the media query and the forced override assign the same values', () => {
-    expect(forced).toEqual(media);
-  });
-
-  it('the dark blocks re-point tokens rather than restating colours', () => {
-    for (const [token, value] of Object.entries(media)) {
-      if (token === 'color-scheme') continue;
-      expect(value, `${token} should reference the dark palette, not inline a colour`).toMatch(
-        /^var\(--dark-[\w-]+\)$/,
-      );
-    }
-  });
-
-  it('both palettes define exactly the same token names', () => {
-    expect(Object.keys(themes.light).sort()).toEqual(Object.keys(themes.dark).sort());
-  });
-
-  it('never uses pure black or pure white', () => {
-    expect(CSS).not.toMatch(/#fff\b|#ffffff\b|#000\b|#000000\b/i);
-    expect(CSS).not.toMatch(/\b(?:white|black)\b\s*;/);
+  // Postie is light only; half a dark theme would leave pages unreadable when the OS is dark.
+  it('defines no dark palette', () => {
+    expect(CSS).not.toMatch(/prefers-color-scheme:\s*dark|data-theme/);
   });
 });

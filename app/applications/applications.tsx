@@ -449,9 +449,9 @@ export default function Applications() {
       <h1>Auto Apply</h1>
       {!view.locked && [...counts].map(([label, { tone, count }]) => <StatusBadge key={label} tone={tone} label={`${count} ${label}`} />)}
       <div className={styles.tools}>
-        <button type="button" className="chip app-icon-button" aria-pressed={tab === 'archived'} aria-label="Archived" title="Archived"
+        <button type="button" className="btn icon" aria-pressed={tab === 'archived'} aria-label="Archived" title="Archived"
           onClick={() => showTab(tab === 'archived' ? 'action' : 'archived')}>
-          <Archive size={16} aria-hidden="true" />
+          <Archive size={16} strokeWidth={1.75} aria-hidden="true" />
         </button>
         <SettingsButton />
       </div>

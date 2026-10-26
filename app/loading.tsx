@@ -12,11 +12,11 @@ export default function Loading() {
       </section>
       <div className="filter-form" aria-hidden="true">
         {[70, 180, 150, 130].map((width) => (
-          <span key={width} className="skeleton-line h-6" style={{ width }} />
+          <span key={width} className="skeleton-line h-[30px] rounded-[var(--r)]" style={{ width }} />
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden" aria-hidden="true">
-        <div className="loading-row loading-head"><span>Seen</span><span>Role</span><span>Pay</span><span>Company</span></div>
+      <div className="sheet-wrap min-h-0 flex-1 overflow-hidden" aria-hidden="true">
+        <div className="loading-row loading-head label"><span>Seen</span><span>Role</span><span>Pay</span><span>Company</span></div>
         {Array.from({ length: 14 }, (_, index) => (
           <div className="loading-row" key={index}>
             <span className="skeleton-line w-8" />

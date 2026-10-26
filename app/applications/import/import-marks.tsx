@@ -86,7 +86,7 @@ export default function ImportMarks() {
                 <span>{row.resolution === 'resolved' ? 'Resolved manual mark' : 'Unresolved manual record'}</span>
                 {url ? <a href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer"
                   className={`${styles.button} ${styles.icon}`} title={`Open posting ${row.postingId}`}
-                  aria-label={`Open posting ${row.postingId}`}><ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth /></a> : <span className={styles.muted}>No safe link</span>}
+                  aria-label={`Open posting ${row.postingId}`}><ExternalLink size={12} strokeWidth={2} /></a> : <span className={styles.muted}>No safe link</span>}
               </li>;
             })}
           </ul>

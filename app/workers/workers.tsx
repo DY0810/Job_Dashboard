@@ -101,7 +101,7 @@ function WorkerPanel({ view, control }: { view: WorkerView; control: WorkerContr
         <div className={styles.row}>
           <button type="button" className={styles.button} onClick={() => void control.copySecret()}>Copy grant</button>
           <button type="button" className={`${styles.button} ${styles.icon}`} aria-label="Dismiss secret" title="Dismiss secret"
-            onClick={() => control.clearSecret()}><X size={12} strokeWidth={1.25} absoluteStrokeWidth /></button>
+            onClick={() => control.clearSecret()}><X size={12} strokeWidth={2} /></button>
         </div>
       </div>}
       {!view.workers?.pairings.length ? <p className={styles.muted}>No pairing grants.</p> :

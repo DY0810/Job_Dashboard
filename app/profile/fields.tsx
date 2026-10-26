@@ -107,7 +107,7 @@ export function NativeValue({ meta, value, onChange, id, label, documents = [], 
         <input aria-label={`${label} ${index + 1}`} value={String(entry)} maxLength={node.items?.maxLength}
           onChange={(e) => onChange(values.map((v, i) => i === index ? e.target.value : v))} style={{ flex: 1 }} />
         <button className={`${styles.button} ${styles.icon}`} type="button" aria-label={`Remove ${label} ${index + 1}`} title={`Remove ${label} ${index + 1}`}
-          onClick={() => onChange(values.filter((_, i) => i !== index))}><X size={12} strokeWidth={1.25} absoluteStrokeWidth /></button>
+          onClick={() => onChange(values.filter((_, i) => i !== index))}><X size={12} strokeWidth={2} /></button>
       </div>)}
       <button className={styles.button} type="button" disabled={values.length >= (node.maxItems ?? 100)}
         onClick={() => onChange([...values, ''])}>Add {label.toLowerCase()} entry</button>
@@ -217,7 +217,7 @@ export function SectionFields({ meta, value, path, onChange, issues, documents }
           {entries.map((entry, index) => <div className={styles.entry} key={String(entry.id)}>
             <div className={styles.row}><span>{labelFor(name)} {index + 1}</span>
               <button className={`${styles.button} ${styles.icon}`} type="button" aria-label={`Remove ${labelFor(name)} ${index + 1}`} title={`Remove ${labelFor(name)} ${index + 1}`}
-                onClick={() => onChange({ ...value, [name]: entries.filter((_, i) => i !== index) })}><X size={12} strokeWidth={1.25} absoluteStrokeWidth /></button>
+                onClick={() => onChange({ ...value, [name]: entries.filter((_, i) => i !== index) })}><X size={12} strokeWidth={2} /></button>
             </div>
             <SectionFields meta={field.items!} value={entry} path={[...childPath, index]} issues={issues} documents={documents}
               onChange={(next) => onChange({ ...value, [name]: entries.map((v, i) => i === index ? next : v) })} />

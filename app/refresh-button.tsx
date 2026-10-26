@@ -150,22 +150,25 @@ export function RefreshButton({ hosted }: { hosted?: boolean }) {
 
   const busy = waiting || (phase !== 'idle' && phase !== 'done');
   const status = waiting ? 'refreshing in the cloud…' : LABEL[phase];
+  // A stable label, like Postie's Add platform row; progress goes in the note under it.
+  const label = board ? 'Refresh jobs' : 'Refresh';
   return (
-    <span className="inline-flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+    <div className="side-refresh">
       <button
         type="button"
-        className="chip app-icon-button"
+        className="side-action"
         onClick={start}
         disabled={busy}
         aria-busy={busy}
-        aria-label={status}
-        title={status}
+        aria-label={label}
+        title={busy || note ? note ?? status : label}
       >
-        <RefreshCw size={16} aria-hidden="true" />
+        <RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />
+        <span className="label-text">{label}</span>
       </button>
       {note || busy || phase === 'done' ? (
-        <span role="status" aria-live="polite" className="text-[11px] text-fg-dim">{note ?? status}</span>
+        <p role="status" aria-live="polite" className="side-note">{note ?? status}</p>
       ) : null}
-    </span>
+    </div>
   );
 }

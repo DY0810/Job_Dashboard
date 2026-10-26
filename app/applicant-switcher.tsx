@@ -1,9 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronsUpDown } from 'lucide-react';
 
 type Applicant = { ownerId: string; email: string; name: string; active: boolean };
+
+/** Two letters for the avatar: first and last word of a name, or the start of an email. */
+const initials = (name: string) => {
+  const words = name.split('@')[0].split(/[\s._-]+/).filter(Boolean);
+  return ((words[0]?.[0] ?? '') + (words.length > 1 ? words[words.length - 1][0] : words[0]?.[1] ?? '')).toUpperCase();
+};
 
 /** A shape check, not Zod: this is in the header on every page, and zod/mini alone was ~17 kB gzipped there. */
 function applicantsOf(body: unknown): Applicant[] {
@@ -40,16 +46,21 @@ export function ApplicantSwitcher() {
       window.location.reload();
     } catch { setError('Could not switch applicant profile.'); setBusy(false); }
   }
+  const name = active.name || active.email;
+  // Postie's profile button: avatar, name, caret. The native select lies over it, so picking
+  // an applicant is still the platform's own menu, keyboard and screen reader included.
   return <>
-    <span className="select-box min-w-0">
-      <select className="select min-w-0 max-w-48" aria-label="Applicant profile" value={active.ownerId} disabled={busy}
+    <label className="me" title={name}>
+      <span className="av me-av" aria-hidden="true">{initials(name)}</span>
+      <span className="me-name">{name}</span>
+      <span className="me-caret"><ChevronsUpDown size={16} strokeWidth={1.75} aria-hidden="true" /></span>
+      <select className="me-select" aria-label="Applicant profile" value={active.ownerId} disabled={busy}
         onChange={(event) => void select(event.target.value)}>
         {applicants.map((applicant) => <option value={applicant.ownerId} key={applicant.ownerId}>
           {applicant.name || applicant.email}
         </option>)}
       </select>
-      <ChevronDown size={12} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />
-    </span>
-    {error && <span role="alert" className="text-[11px]">{error}</span>}
+    </label>
+    {error && <span role="alert" className="side-error">{error}</span>}
   </>;
 }

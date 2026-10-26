@@ -25,8 +25,8 @@ describe('the flexible column contract', () => {
   it('pins company, Apply and applied status inside the scroll region', () => {
     expect(CSS).toContain('@media (min-width: 901px)');
     expect(CSS).toMatch(/\.rows td\[data-field="applied"\]\s*\{[^}]*position: sticky;[^}]*right: 0;/);
-    expect(CSS).toMatch(/\.rows td\[data-field="apply"\]\s*\{[^}]*position: sticky;[^}]*right: 64px;/);
-    expect(CSS).toMatch(/\.rows td\[data-field="company"\]\s*\{[^}]*position: sticky;[^}]*right: 128px;/);
+    expect(CSS).toMatch(/\.rows td\[data-field="apply"\]\s*\{[^}]*position: sticky;[^}]*right: var\(--w-applied\);/);
+    expect(CSS).toMatch(/\.rows td\[data-field="company"\]\s*\{[^}]*position: sticky;[^}]*right: calc\(var\(--w-applied\) \+ var\(--w-apply\)\);/);
   });
 
   it('still depends on a definite width, or this whole file is moot', () => {

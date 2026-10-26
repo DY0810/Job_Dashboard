@@ -26,9 +26,9 @@ export default async function Talkie({
 
   if (needsTurso()) {
     return (
-      <main id="main-content" className="min-h-dvh px-4 text-[11px] text-fg-dim">
+      <main id="main-content" className="min-h-dvh">
         <AppHeader current="/talkie" />
-        <p className="py-12">Database not configured: set {TURSO_ENV.join(' and ')}.</p>
+        <p className="muted py-12">Database not configured: set {TURSO_ENV.join(' and ')}.</p>
       </main>
     );
   }
@@ -39,11 +39,11 @@ export default async function Talkie({
   return (
     <main id="main-content" className="min-h-dvh px-4 pb-16">
       <AppHeader current="/talkie" />
-      <div className="mt-6 flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 pt-2.5 pb-4">
         <h1 className="board-title">Notes</h1>
         <details className="relative ml-auto">
-          <summary className="chip flex cursor-pointer list-none items-center gap-1.5" aria-label="Pick a week">
-            <Calendar size={12} strokeWidth={1.25} absoluteStrokeWidth />
+          <summary className="btn list-none" aria-label="Pick a week">
+            <Calendar size={16} strokeWidth={1.75} aria-hidden="true" className="text-fg-dim" />
             <span className="tabular-nums">{weekLabel(week)}</span>
             {week === current ? <span className="text-fg-dim">· this week</span> : null}
           </summary>
@@ -51,7 +51,7 @@ export default async function Talkie({
             {options.map((key) => (
               <Link key={key} href={key === current ? '/talkie' : `/talkie?week=${key}`} aria-current={key === week ? 'true' : undefined} role="listitem">
                 <span className="tabular-nums">{weekLabel(key)}</span>
-                {key === current ? <span className="text-fg-faint"> · this week</span> : null}
+                {key === current ? <span className="text-fg-dim"> · this week</span> : null}
               </Link>
             ))}
           </div>

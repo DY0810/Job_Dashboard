@@ -1,30 +1,31 @@
 import Link from 'next/link';
+import { Briefcase, Send, StickyNote, UserRound } from 'lucide-react';
 
 const destinations = [
-  ['Jobs', '/'],
-  ['Auto Apply', '/applications'],
-  ['Profile', '/profile'],
-  ['Notes', '/talkie'],
+  ['Jobs', '/', Briefcase],
+  ['Auto Apply', '/applications', Send],
+  ['Profile', '/profile', UserRound],
+  ['Notes', '/talkie', StickyNote],
 ] as const;
 
+/** Postie's sidebar tabs: icon and name, the current one on the selected fill. */
 export function AppNav({ current }: { current: string }) {
   return (
-    <div className="app-nav">
-      <Link href="/" className="app-brand" aria-label="Workie home" prefetch={false}>
-        Workie
-      </Link>
-      <nav aria-label="Primary navigation" className="app-nav-links">
-        {destinations.map(([label, href]) => (
-          <Link
-            key={href}
-            href={href}
-            prefetch={false}
-            aria-current={current === href ? 'page' : undefined}
-          >
-            {label}
-          </Link>
-        ))}
-      </nav>
-    </div>
+    <nav aria-label="Primary navigation" className="side-nav">
+      {destinations.map(([label, href, Icon]) => (
+        <Link
+          key={href}
+          href={href}
+          prefetch={false}
+          className="tab"
+          title={label}
+          aria-label={label} // the name survives the rail, where the text is hidden
+          aria-current={current === href ? 'page' : undefined}
+        >
+          <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span className="tab-name">{label}</span>
+        </Link>
+      ))}
+    </nav>
   );
 }

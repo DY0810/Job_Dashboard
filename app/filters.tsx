@@ -84,7 +84,7 @@ function Select({ p, filter, values }: { p: Params; filter: 'posted'; values: re
             </option>
           ))}
         </select>
-        <ChevronDown size={12} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />
+        <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
       </span>
     </span>
   );
@@ -186,7 +186,7 @@ export function Filters({ p }: { p: Params }) {
         <FilterDefaults p={p} />
         {/* The path without JavaScript, and a deliberate apply for the keyboard: hidden until
             focused, since with JavaScript every control applies itself. */}
-        <button type="submit" className="chip sr-only focus:not-sr-only">
+        <button type="submit" className="btn sr-only focus:not-sr-only">
           apply filters
         </button>
       </span>
