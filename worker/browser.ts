@@ -109,13 +109,17 @@ function tab(host: Host, origins: ReadonlySet<string>, allowLoopback: boolean): 
   return {
     context: host.context,
     page: () => page ??= (async () => {
-      const opened = host.idle.pop() ?? await host.context.newPage();
+      // A blank tab the applicant closed between applications is gone; handing it out failed the next one at once.
+      let opened = host.idle.pop();
+      while (opened?.isClosed()) opened = host.idle.pop();
+      opened ??= await host.context.newPage();
       host.allowed.set(opened, origins);
       return opened;
     })(),
     navigate: async (target, url) => {
       await assertUrl(url, origins, allowLoopback);
-      await target.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+      // Like the launch, a page can take well over 15 s to load on a busy computer.
+      await target.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
       await assertUrl(target.url(), origins, allowLoopback);
       return target;
     },

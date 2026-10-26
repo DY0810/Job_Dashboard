@@ -169,7 +169,8 @@ export const greenhouse: AtsAdapter = {
     if (hosted(input)) {
       const confirmation = `https://job-boards.greenhouse.io/${input.identity.tenant}/jobs/${input.identity.requisition}/confirmation`;
       const prompt = page.getByText('A verification code was sent to', { exact: false }).first();
-      await Promise.race([page.waitForURL(confirmation, { timeout: 15_000 }), prompt.waitFor({ timeout: 15_000 })]).catch(() => {});
+      // A busy computer can take well over 15 s to send the form and show what came back.
+      await Promise.race([page.waitForURL(confirmation, { timeout: 45_000 }), prompt.waitFor({ timeout: 45_000 })]).catch(() => {});
       if (page.url().startsWith(confirmation)) return;
       // Greenhouse's human check: the applicant enters the emailed code on Workie, which the worker types into its
       // eight one-character boxes and submits again, or types it into this visible window themselves.
