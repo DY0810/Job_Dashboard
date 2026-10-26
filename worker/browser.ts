@@ -118,7 +118,8 @@ function tab(host: Host, origins: ReadonlySet<string>, allowLoopback: boolean): 
     })(),
     navigate: async (target, url) => {
       await assertUrl(url, origins, allowLoopback);
-      await target.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+      // Like the launch, a page can take well over 15 s to load on a busy computer.
+      await target.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
       await assertUrl(target.url(), origins, allowLoopback);
       return target;
     },
