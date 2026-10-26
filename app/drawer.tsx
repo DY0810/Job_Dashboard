@@ -108,12 +108,12 @@ export function Drawer({ closeHref }: { closeHref: string }) {
       }}
     >
       <div className="flex h-full flex-col">
-        <div className="flex items-start gap-4 border-b border-rule px-5 py-3">
+        <div className="dialog-head">
           <div className="min-w-0">
             {state.status === 'ready' ? (
               <>
-                <h2 className="truncate text-[15px]">{state.posting.title}</h2>
-                <p className="mt-1 text-[12px] text-fg-dim">
+                <h2 className="truncate">{state.posting.title}</h2>
+                <p className="mt-1 text-[13px] text-fg-dim">
                   {state.posting.company}
                   {' · '}
                   {/* Location shows on both tabs, even though only Engineering has the column. */}
@@ -126,20 +126,20 @@ export function Drawer({ closeHref }: { closeHref: string }) {
                 {state.posting.remotiveSourceUrl ? (
                   <a
                     href={state.posting.remotiveSourceUrl}
-                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-fg-dim underline"
+                    className="link mt-1 inline-flex items-center gap-1 text-[12px]"
                     target="_blank"
                     rel="noreferrer noopener"
                   >
                     Source: Remotive
-                    <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
+                    <ExternalLink size={12} strokeWidth={1.75} aria-hidden="true" />
                   </a>
                 ) : null}
-                <nav className="board-track mt-3" aria-label="Posting views">
+                <nav className="board-track mt-3 -ml-2.5" aria-label="Posting views">
                   {(['description', 'recruiters'] as const).map((item) => (
                     <button
                       key={item}
                       type="button"
-                      className="board-track-link cursor-pointer bg-transparent font-[inherit]"
+                      className="board-track-link"
                       aria-current={tab === item ? 'page' : undefined}
                       onClick={() => setTab(item)}
                     >
@@ -149,26 +149,27 @@ export function Drawer({ closeHref }: { closeHref: string }) {
                 </nav>
               </>
             ) : (
-              <h2 className="text-[15px] text-fg-dim">
+              <h2 className="text-fg-dim">
                 {state.status === 'loading' ? 'Loading' : 'Unavailable'}
               </h2>
             )}
           </div>
           <button
             type="button"
-            className="chip ml-auto"
+            className="btn ghost icon ml-auto -mr-2 -mt-1"
             onClick={close}
             autoFocus
+            aria-label="Close"
+            title="Close"
           >
-            close
-            <X size={12} strokeWidth={1.25} absoluteStrokeWidth />
+            <X size={18} strokeWidth={1.75} aria-hidden="true" />
           </button>
         </div>
 
         {state.status === 'ready' && tab === 'recruiters' ? (
           <RecruitersPanel key={state.posting.id} posting={state.posting} />
         ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="dialog-body">
           {state.status === 'loading' ? (
             <p className="prose">Loading the posting.</p>
           ) : state.status === 'error' ? (
@@ -183,7 +184,7 @@ export function Drawer({ closeHref }: { closeHref: string }) {
               <Bullets title="Responsibilities" items={state.posting.responsibilities} />
               <Bullets title="Skills and requirements" items={state.posting.skills} />
               <Bullets title="Education and experience" items={state.posting.education} />
-              <section aria-label="Application status" className="border-t border-rule pt-4">
+              <section aria-label="Application status" className="border-t border-rule pt-4 text-[13px]">
                 <AppliedCheckbox
                   key={state.posting.id}
                   postingId={state.posting.id}
@@ -198,15 +199,15 @@ export function Drawer({ closeHref }: { closeHref: string }) {
         )}
 
         {state.status === 'ready' && tab === 'description' ? (
-          <div className="flex items-center gap-2 border-t border-rule px-5 py-3">
+          <div className="dialog-foot">
             <a
-              className="chip"
+              className="btn primary"
               href={state.posting.canonicalUrl}
               target="_blank"
               rel="noreferrer noopener"
             >
-              apply
-              <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
+              Apply
+              <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
             </a>
           </div>
         ) : null}
@@ -261,11 +262,11 @@ function RecruitersPanel({ posting }: { posting: PostingDetail }) {
   const searches = lookup.status === 'ready' ? lookup.recruiters.searches : linkedinSearches(posting.company);
   const found = lookup.status === 'ready' ? lookup.recruiters : null;
   return (
-    <div className="prose flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4">
+    <div className="dialog-body prose flex flex-col gap-5">
       {lookup.status === 'loading' ? <p className="text-fg-dim">Looking up recruiters at {posting.company}.</p> : null}
       {lookup.status === 'signed_out' ? (
         <p className="text-fg-dim">
-          <a href="/sign-in" className="underline">Sign in</a> to look up recruiters by name. The LinkedIn searches below work either way.
+          <a href="/sign-in" className="link">Sign in</a> to look up recruiters by name. The LinkedIn searches below work either way.
         </p>
       ) : null}
       {lookup.status === 'error' ? <p className="text-fg-dim">Could not load recruiters for this posting.</p> : null}
@@ -275,30 +276,30 @@ function RecruitersPanel({ posting }: { posting: PostingDetail }) {
           <p className="text-fg-dim">Hunter found no HR or recruiting people for {found.domain ?? posting.company}.</p>
         ) : (
           <section aria-label="Recruiters" className="flex flex-col gap-3">
-            <p className="text-[11px] text-fg-dim">
+            <p className="text-[12px] text-fg-dim">
               From Hunter.io for {found.domain ?? posting.company}. Check that domain is this company before reaching out.
             </p>
             <ul className="flex flex-col gap-3">
               {found.people.map((person, index) => (
                 <li key={person.email ?? index} className="flex flex-col gap-0.5 border-t border-rule pt-3 first:border-t-0 first:pt-0">
-                  <span className="text-[13px] font-semibold text-fg">{person.name ?? 'Name not listed'}</span>
-                  <span className="text-[12px] text-fg-dim">{person.title ?? 'Title not listed'}</span>
-                  <span className="flex flex-wrap gap-x-3 text-[12px]">
+                  <span className="text-[14px] font-semibold text-fg">{person.name ?? 'Name not listed'}</span>
+                  <span className="text-[13px] text-fg-dim">{person.title ?? 'Title not listed'}</span>
+                  <span className="flex flex-wrap gap-x-3 text-[13px]">
                     {person.linkedin ? (
-                      <a href={person.linkedin} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 underline">
+                      <a href={person.linkedin} target="_blank" rel="noreferrer noopener" className="link inline-flex items-center gap-1">
                         LinkedIn
-                        <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
+                        <ExternalLink size={12} strokeWidth={1.75} aria-hidden="true" />
                       </a>
                     ) : person.name ? (
                       <a
                         href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${person.name} ${posting.company}`)}`}
-                        target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-fg-dim underline"
+                        target="_blank" rel="noreferrer noopener" className="link inline-flex items-center gap-1"
                       >
                         Find on LinkedIn
-                        <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
+                        <ExternalLink size={12} strokeWidth={1.75} aria-hidden="true" />
                       </a>
                     ) : null}
-                    {person.email ? <a href={`mailto:${person.email}`} className="text-fg-dim underline">{person.email}</a> : null}
+                    {person.email ? <a href={`mailto:${person.email}`} className="link">{person.email}</a> : null}
                   </span>
                 </li>
               ))}
@@ -307,11 +308,11 @@ function RecruitersPanel({ posting }: { posting: PostingDetail }) {
         )
       ) : null}
       <section aria-label="LinkedIn searches" className="flex flex-col gap-2 border-t border-rule pt-4">
-        <span className="text-[10px] uppercase tracking-[0.1em] text-fg-dim">Search LinkedIn</span>
+        <span className="label">Search LinkedIn</span>
         {searches.map((search) => (
-          <a key={search.url} href={search.url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-[12px] underline">
+          <a key={search.url} href={search.url} target="_blank" rel="noreferrer noopener" className="link inline-flex items-center gap-1 self-start text-[13px]">
             {search.label}
-            <ExternalLink size={12} strokeWidth={1.25} absoluteStrokeWidth />
+            <ExternalLink size={12} strokeWidth={1.75} aria-hidden="true" />
           </a>
         ))}
       </section>
@@ -323,7 +324,7 @@ function RecruitersPanel({ posting }: { posting: PostingDetail }) {
 function Bullets({ title, items }: { title: string; items: string[] | null }) {
   return (
     <section>
-      <h3 className="mb-1 text-[10px] uppercase tracking-[0.1em] text-fg-dim">{title}</h3>
+      <h3 className="label mb-1.5">{title}</h3>
       {items && items.length > 0 ? (
         <ul className="list-outside list-disc pl-4">
           {items.map((item) => (

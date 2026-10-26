@@ -28,9 +28,9 @@ export function setSettingsOpen(open: boolean) {
 }
 
 export function SettingsButton() {
-  return <button type="button" className="chip app-icon-button" aria-haspopup="dialog" aria-label="Settings" title="Settings"
+  return <button type="button" className="icon-btn" aria-haspopup="dialog" aria-label="Settings" title="Settings"
     onClick={() => setSettingsOpen(true)}>
-    <SettingsIcon size={16} aria-hidden="true" />
+    <SettingsIcon size={18} strokeWidth={1.75} aria-hidden="true" />
   </button>;
 }
 
@@ -39,9 +39,9 @@ export function SettingsDrawer() {
   // Workers holds closing while a request is unresolved, as it held navigation on its own page.
   const guard = useRef<(() => boolean) | null>(null);
   // The modal makes the header inert, so the drawer carries its own refresh.
-  const refresh = <button type="button" className="chip app-icon-button" aria-label="Refresh" title="Refresh"
+  const refresh = <button type="button" className="btn icon" aria-label="Refresh" title="Refresh"
     onClick={() => window.dispatchEvent(new Event('workie:refresh'))}>
-    <RefreshCw size={16} aria-hidden="true" />
+    <RefreshCw size={18} strokeWidth={1.75} aria-hidden="true" />
   </button>;
   return <Modal kind="drawer" open={open} onClose={() => guard.current?.() ? false : setSettingsOpen(false)} title="Settings" actions={refresh}>
     {open && <div className={styles.page}><Settings><Workers guard={guard} /></Settings></div>}

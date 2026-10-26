@@ -134,7 +134,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
   const seen = new Date(row.effectiveAt);
   const fresh = now - row.effectiveAt < WINDOW_MS.day;
   return (
-    <tr>
+    <tr data-fresh={fresh || undefined}>
       <td data-field="seen" className={`nums ${fresh ? "text-accent" : "text-fg-dim"}`}>
         <time
           dateTime={seen.toISOString()}
@@ -150,7 +150,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
           on hover without costing a row of height. */}
       <td data-field="title" className={width(p.tab, "title")} title={row.title}>
         <span className="posting-title">{row.title}</span>
-        {p.tab === "design" ? <span className="posting-location">{row.location ?? <Nothing />}</span> : null}
+        <span className="posting-location">{row.location ?? <Nothing />}</span>
       </td>
       {p.tab === "engineering" ? (
         <td data-field="summary" className={`${width(p.tab, "summary")} text-fg-dim`}>
@@ -171,20 +171,20 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
           href={withJob(p, row.id)}
           data-job
           title={row.company}
-          className="icon-chevron inline-flex max-w-full items-center gap-1 hover:text-fg-dim"
+          className="icon-chevron inline-flex max-w-full items-center gap-1"
         >
           <span>{row.company}</span>
         </a>
       </td>
       <td data-field="apply">
         <a
-          className="chip icon-external"
+          className="link-out icon-external"
           data-posting-id={row.id}
           href={row.canonicalUrl}
           target="_blank"
           rel="noreferrer noopener"
         >
-          {row.canonicalUrl.startsWith("https://remotive.com/") ? "apply via Remotive" : "apply"}
+          {row.canonicalUrl.startsWith("https://remotive.com/") ? "Apply via Remotive" : "Apply"}
         </a>
       </td>
       <td data-field="applied">
@@ -195,11 +195,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
 }
 
 function Command({ children }: { children: string }) {
-  return (
-    <code className="border border-rule bg-surface px-1 py-px text-fg">
-      {children}
-    </code>
-  );
+  return <code>{children}</code>;
 }
 
 /** Design's location rule is not a filter, so `clear` cannot lift it. An empty table that
@@ -271,8 +267,8 @@ function NoMatches({ p, outside }: { p: Params; outside: number }) {
     <div className="prose max-w-lg py-12">
       <span className="flex items-baseline gap-3">
         <p>No postings match these filters.</p>
-        <Link href={cleared(p)} className="chip" scroll={false}>
-          clear
+        <Link href={cleared(p)} className="btn" scroll={false}>
+          Clear filters
         </Link>
       </span>
       {outside > 0 ? <Elsewhere count={outside} /> : null}
@@ -283,12 +279,12 @@ function NoMatches({ p, outside }: { p: Params; outside: number }) {
 /** One step of the pager. At either end it stays in place, disabled, so the count never shifts. */
 function PageStep({ p, to, pages, label }: { p: Params; to: number; pages: number; label: string }) {
   const icon = to < p.page
-    ? <ChevronLeft size={14} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />
-    : <ChevronRight size={14} strokeWidth={1.25} absoluteStrokeWidth aria-hidden="true" />;
+    ? <ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" />
+    : <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />;
   return to >= 1 && to <= pages ? (
-    <Link className="chip app-icon-button" href={withPage(p, to)} aria-label={label} title={label}>{icon}</Link>
+    <Link className="btn icon" href={withPage(p, to)} aria-label={label} title={label}>{icon}</Link>
   ) : (
-    <span className="chip app-icon-button" role="link" aria-disabled="true" aria-label={label}>{icon}</span>
+    <span className="btn icon" role="link" aria-disabled="true" aria-label={label}>{icon}</span>
   );
 }
 
@@ -353,14 +349,12 @@ export default async function Page({
       <AppHeader current="/" />
 
       <section className="board-intro" aria-label="Job board overview">
-        <div>
+        <div className="board-heading">
           <h1 className="board-title">{p.tab === "design" ? "Design" : "Engineering"} jobs</h1>
-          <p className="board-summary">
-            {rows.length} {rows.length === 1 ? "role" : "roles"} on this page
-            <span aria-hidden="true"> / </span>
-            <span className="board-fresh">{freshCount} new in the last 24 hours</span>
-            <span aria-hidden="true"> / </span>
-            <span className="nums">
+          <p className="board-summary nums">
+            <span className="stat"><b>{rows.length}</b> {rows.length === 1 ? "role" : "roles"} on this page</span>
+            <span className="stat ready"><b>{freshCount}</b> new in the last 24 hours</span>
+            <span className="board-updated">
               {lastRun ? `Updated ${ago(lastRun.startedAt, now)} ago` : "No ingest run yet"}
             </span>
           </p>
@@ -409,7 +403,7 @@ export default async function Page({
       {rows.length === 0 && p.page > 1 ? (
         <div className="flex items-center gap-3 py-8">
           <p>No jobs on this page.</p>
-          <Link href={withPage(p, 1)} className="chip">first page</Link>
+          <Link href={withPage(p, 1)} className="btn">First page</Link>
         </div>
       ) : rows.length === 0 ? (
         // The counts below are the only extra queries, and only on a page with no rows: the
@@ -420,7 +414,7 @@ export default async function Page({
           <NoMatches p={p} outside={await outsideTargetLocations(db, p, now, returned)} />
         )
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto" role="region" aria-label="Job results" tabIndex={0}>
+        <div className="sheet-wrap min-h-0 flex-1 overflow-auto" role="region" aria-label="Job results" tabIndex={0}>
           <table className="rows" data-track={p.tab} style={{ minWidth: p.tab === "design" ? 900 : 1384 }}>
             <caption className="sr-only">
               {p.tab} postings, newest first

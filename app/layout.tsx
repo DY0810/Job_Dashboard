@@ -1,16 +1,13 @@
 import type { Metadata } from 'next';
-import { Archivo } from 'next/font/google';
+import { Inter } from 'next/font/google';
 import './globals.css';
 
-/**
- * One family, three widths. The `wdth` axis is what lets the table run narrow (which buys
- * column width) while the tab labels run wide, without shipping a second font file.
- */
-const archivo = Archivo({
+/** Postie's face, at the four weights its stylesheet uses. */
+const inter = Inter({
   subsets: ['latin'],
-  axes: ['wdth'],
+  weight: ['400', '500', '600', '700'],
   display: 'swap',
-  variable: '--font-archivo',
+  variable: '--font-inter',
 });
 
 export const metadata: Metadata = {
@@ -18,14 +15,14 @@ export const metadata: Metadata = {
   description: 'Entry-to-mid design and engineering postings, newest first.',
 };
 
-/** Applies a stored theme choice before first paint, so a forced theme never flashes. */
-const THEME_BOOT = `try{var t=localStorage.getItem('workie-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}`;
+/** Applies a collapsed sidebar before first paint, so the rail never flashes open. */
+const SIDE_BOOT = `try{if(localStorage.getItem('workie-side')==='rail')document.documentElement.dataset.side='rail'}catch(e){}`;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={archivo.variable} suppressHydrationWarning>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+        <script dangerouslySetInnerHTML={{ __html: SIDE_BOOT }} />
       </head>
       <body className="bg-canvas text-fg">
         <a className="skip-link" href="#main-content">Skip to main content</a>

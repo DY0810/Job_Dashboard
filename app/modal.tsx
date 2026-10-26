@@ -64,24 +64,19 @@ export function Modal({
       }}
     >
       <div className="flex h-full max-h-[inherit] flex-col">
-        <div className="flex items-center gap-4 border-b border-rule px-5 py-3">
-          <h2 id={titleId} className="min-w-0 truncate text-[15px]">{title}</h2>
-          <div className="ml-auto flex items-center gap-2">
+        <div className="dialog-head">
+          <h2 id={titleId} className="min-w-0 truncate">{title}</h2>
+          <div className="ml-auto flex items-center gap-1">
             {actions}
-            <button type="button" className="chip" onClick={onClose}>
-              close
-              <X size={12} strokeWidth={1.25} absoluteStrokeWidth />
+            <button type="button" className="btn ghost icon" onClick={onClose} aria-label="Close" title="Close">
+              <X size={18} strokeWidth={1.75} aria-hidden="true" />
             </button>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="dialog-body">
           {children}
         </div>
-        {footer ? (
-          <div className="flex items-center gap-2 border-t border-rule px-5 py-3">
-            {footer}
-          </div>
-        ) : null}
+        {footer ? <div className="dialog-foot">{footer}</div> : null}
       </div>
     </dialog>
   );

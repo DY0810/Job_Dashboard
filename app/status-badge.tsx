@@ -48,7 +48,7 @@ export function StatusBadge({
   const Glyph = GLYPHS[tone];
   return (
     <span className="badge" data-tone={tone}>
-      <Glyph size={12} strokeWidth={1.25} absoluteStrokeWidth aria-hidden />
+      <Glyph size={12} strokeWidth={2} aria-hidden />
       {label}
     </span>
   );

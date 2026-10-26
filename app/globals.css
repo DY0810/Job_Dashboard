@@ -1,101 +1,38 @@
 @import "tailwindcss";
 
 /* ─────────────────────────────────────────────────────────────────────── tokens ──
- * Both palettes are declared here, unconditionally, and the active set is assigned
- * here too — so no token's only definition lives inside a media query. The blocks
- * below re-point the active tokens; they never introduce one, and they never carry
- * a literal colour, so the two dark blocks cannot drift apart.
- *
- * OKLCH throughout, neutrals carrying 0.006–0.012 chroma toward hue 75 so the greys
- * and the sodium-amber accent read as one system. Never pure black, never pure white.
- * Measured contrast for every pair below is asserted in lib/contrast.test.ts.
+ * Postie's design system, verbatim from Postie's public/style.css (its Admin settings →
+ * Design system page shows every token). Light only, like Postie. Measured contrast for the
+ * text pairs and every status pill is asserted in lib/contrast.test.ts.
  */
 :root {
-  --light-canvas: oklch(0.975 0.006 75);
-  --light-surface: oklch(0.928 0.008 75);
-  --light-rule: oklch(0.9 0.008 75);
-  --light-fg: oklch(0.25 0.01 75);
-  --light-fg-dim: oklch(0.48 0.012 75);
-  /* 0.615, not 0.66. This token draws the 1px border that is the only thing saying a chip is
-     pressable, and at 0.66 it measured 2.90:1 on canvas — below WCAG 1.4.11's 3:1 for a
-     control boundary, so the control was effectively invisible until it was already active.
-     0.615 is the lowest lightness clearing 3:1 on both grounds. Dark's 0.52 already clears. */
-  --light-fg-faint: oklch(0.615 0.012 75);
-  --light-accent: oklch(0.52 0.14 75);
-  --light-scrim: oklch(0.25 0.01 75 / 0.45);
-  /* Status badges: lightness and chroma per theme, hue per tone (see .badge). Bare numbers so
-     one pair serves every hue; lib/contrast.test.ts measures each tone. */
-  --light-badge-bg-l: 0.935;
-  --light-badge-bg-c: 0.03;
-  --light-badge-fg-l: 0.43;
-  --light-badge-fg-c: 0.08;
+  --ink: #111318; --muted: #6b7079; --line: #ececee; --soft: #f7f7f8; --accent: #0a66c2;
+  --primary: #b9f081; --primary-hover: #a8e76c; --primary-edge: #a2dc68; --primary-ink: #111318; --primary-soft: #f5fcee; /* lime buttons take dark text; white would be unreadable */
+  --story: #a15c07; --story-bg: #fdf3e1; --work: #1d4ed8; --work-bg: #e8effd; --tips: #047857; --tips-bg: #e3f6ee;
+  --danger: #b42318; --danger-bg: #fdecea; --hover: #f1f2f4; --active: #eceef1;
+  --faint: #c2c5cb; --head: #fbfbfc; --side-bg: #fcfcfd; --unread: #f5f9ff; --check: #6fbf3a;
+  --white: #fff;
+  /* one scale for corners */
+  --r-xs: 4px; --r-sm: 6px; --r: 8px; --r-lg: 12px; --r-xl: 14px;
+  --scrim: rgba(17, 19, 24, .32);
+  --shadow-pop: 0 12px 32px rgba(17, 19, 24, .12);
+  --shadow-menu: 0 8px 24px rgba(17, 19, 24, .08);
+  --side: 260px; --rail: 56px;
 
-  --dark-canvas: oklch(0.16 0.006 75);
-  --dark-surface: oklch(0.225 0.008 75);
-  --dark-rule: oklch(0.3 0.008 75);
-  --dark-fg: oklch(0.93 0.008 75);
-  --dark-fg-dim: oklch(0.72 0.01 75);
-  --dark-fg-faint: oklch(0.52 0.01 75);
-  --dark-accent: oklch(0.8 0.14 75);
-  --dark-scrim: oklch(0.12 0.006 75 / 0.6);
-  --dark-badge-bg-l: 0.27;
-  --dark-badge-bg-c: 0.03;
-  --dark-badge-fg-l: 0.85;
-  --dark-badge-fg-c: 0.07;
-
-  --canvas: var(--light-canvas);
-  --surface: var(--light-surface);
-  --rule: var(--light-rule);
-  --fg: var(--light-fg);
-  --fg-dim: var(--light-fg-dim);
-  --fg-faint: var(--light-fg-faint);
-  --accent: var(--light-accent);
-  --scrim: var(--light-scrim);
-  --badge-bg-l: var(--light-badge-bg-l);
-  --badge-bg-c: var(--light-badge-bg-c);
-  --badge-fg-l: var(--light-badge-fg-l);
-  --badge-fg-c: var(--light-badge-fg-c);
+  /* Workie's names for the same roles, so every existing `text-fg-dim`, `border-rule` and CSS
+     module keeps working. `accent` is Postie's link blue and marks a posting seen in the last
+     24 hours, as Postie marks an unread alert. */
+  --canvas: var(--white);
+  --surface: var(--soft);
+  --rule: var(--line);
+  --fg: var(--ink);
+  --fg-dim: var(--muted);
+  --fg-faint: var(--faint);
   color-scheme: light;
 
-  /* The only two easing curves in the app. `--ease-drawer` is pinned by .impeccable.md;
-     `--ease-state` is a plain decelerate for the two sub-150ms token shifts. */
+  /* Drawer and press curves (emil-design): the drawer is opened a few times a day, presses constantly. */
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-state: cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --canvas: var(--dark-canvas);
-    --surface: var(--dark-surface);
-    --rule: var(--dark-rule);
-    --fg: var(--dark-fg);
-    --fg-dim: var(--dark-fg-dim);
-    --fg-faint: var(--dark-fg-faint);
-    --accent: var(--dark-accent);
-    --scrim: var(--dark-scrim);
-    --badge-bg-l: var(--dark-badge-bg-l);
-    --badge-bg-c: var(--dark-badge-bg-c);
-    --badge-fg-l: var(--dark-badge-fg-l);
-    --badge-fg-c: var(--dark-badge-fg-c);
-    color-scheme: dark;
-  }
-}
-
-/* A manual choice outranks the system in both directions. */
-:root[data-theme="dark"] {
-  --canvas: var(--dark-canvas);
-  --surface: var(--dark-surface);
-  --rule: var(--dark-rule);
-  --fg: var(--dark-fg);
-  --fg-dim: var(--dark-fg-dim);
-  --fg-faint: var(--dark-fg-faint);
-  --accent: var(--dark-accent);
-  --scrim: var(--dark-scrim);
-  --badge-bg-l: var(--dark-badge-bg-l);
-  --badge-bg-c: var(--dark-badge-bg-c);
-  --badge-fg-l: var(--dark-badge-fg-l);
-  --badge-fg-c: var(--dark-badge-fg-c);
-  color-scheme: dark;
 }
 
 @theme inline {
@@ -106,93 +43,466 @@
   --color-fg-dim: var(--fg-dim);
   --color-fg-faint: var(--fg-faint);
   --color-accent: var(--accent);
-  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --color-primary: var(--primary);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-inter), Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* ──────────────────────────────────────────────────────────────────────── base ── */
+/* ──────────────────────────────────────────────────────────────────────── base ──
+ * Element defaults, layered so any class (and every CSS module) outranks them.
+ */
 @layer base {
-  html {
-    -webkit-text-size-adjust: 100%;
-  }
+  html { -webkit-text-size-adjust: 100%; }
 
   body {
+    margin: 0;
     background: var(--canvas);
-    color: var(--fg);
-    font-family: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
-    font-synthesis-weight: none;
-    font-size: 13px;
-    line-height: 1.15;
+    color: var(--ink);
+    font: 14px/1.5 var(--font-inter), Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
 
-  /* One ring, both themes. `fg` is the maximum-contrast token against every surface. */
-  :focus-visible {
-    outline: 2px solid var(--fg);
-    outline-offset: 1px;
-    border-radius: 1px;
+  h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; line-height: 1.3; }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  ::selection { background: var(--work-bg); }
+
+  a { color: inherit; text-decoration: none; }
+
+  code {
+    padding: 1px 5px;
+    border-radius: var(--r-xs);
+    background: var(--soft);
+    font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 
-  ::selection {
-    background: var(--surface);
+  button, input, select, textarea { font: inherit; color: inherit; }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]), select, textarea {
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 6px 10px;
+    background-color: var(--white);
   }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]), select { height: 34px; }
+  /* Postie's focus is a border tint; a mouse focus keeps that, a keyboard focus also gets the ring. */
+  :is(input, select, textarea):focus { border-color: #c9ccd2; }
+  :is(input, select, textarea):focus:not(:focus-visible) { outline: none; }
+  :is(input, select, textarea):disabled { background-color: var(--soft); color: var(--muted); }
+  ::placeholder { color: var(--muted); opacity: 1; }
+  /* One chevron for selects, sitting inside the 10px side padding */
+  select {
+    appearance: none;
+    padding-right: 30px;
+    background: var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%236b7079' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E") no-repeat right 10px center / 12px;
+    cursor: pointer;
+  }
+  select[multiple] { height: auto; padding-right: 10px; background-image: none; }
 
-  /* Notes are painted with --surface, so the quiet surface-tinted selection above is
-     surface-on-surface there: a selection that exists but does not show. Inverted, like the
-     focus ring: fg is the maximum-contrast token against every surface, in both themes. */
-  .note ::selection,
-  .note::selection {
-    background: var(--fg);
-    color: var(--canvas);
+  /* Checkboxes: solid switch green with a white check when ticked */
+  input[type="checkbox"] {
+    appearance: none;
+    width: 16px; height: 16px;
+    padding: 0; margin: 0;
+    flex: none;
+    border: 1.5px solid var(--faint);
+    border-radius: var(--r-xs);
+    background: var(--white) no-repeat center / 12px;
+    cursor: pointer;
+    vertical-align: middle;
   }
-
-  a {
-    color: inherit;
-    text-decoration: none;
+  input[type="checkbox"]:checked {
+    background-color: var(--check);
+    border-color: var(--check);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 20 20%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%272.6%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27%3E%3Cpath d=%27M4.5 10.5l3.5 3.5 7-8%27/%3E%3C/svg%3E");
   }
+  input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
+  input[type="radio"] { accent-color: var(--check); width: 16px; height: 16px; margin: 0; }
 
   .skip-link {
     position: fixed;
     top: 8px;
     left: 8px;
     z-index: 100;
-    padding: 6px 9px;
-    border: 1px solid var(--fg);
-    background: var(--canvas);
-    color: var(--fg);
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: var(--white);
+    box-shadow: var(--shadow-menu);
     transform: translateY(-180%);
     transition: transform 120ms var(--ease-state);
   }
+  .skip-link:focus-visible { transform: translateY(0); }
 
-  .skip-link:focus-visible {
-    transform: translateY(0);
-  }
-
-  [aria-disabled="true"],
-  :disabled {
-    color: var(--fg-faint);
-    cursor: not-allowed;
-  }
+  [aria-disabled="true"], :disabled { cursor: default; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .skip-link { transition: none; }
 }
 
-.nums {
-  font-variant-numeric: tabular-nums;
+.nums { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); margin: 0; }
+.label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.warn { color: var(--danger); }
+
+/* ───────────────────────────────────────────────────────────────────── buttons ──
+ * Postie's buttons: 34px, 8px corners, a hairline border. Lime is the one primary.
+ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--white);
+  color: var(--ink);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms var(--ease-state);
+}
+.btn:hover, .btn.is-hover { background: var(--soft); }
+.btn[aria-pressed="true"] { background: var(--active); }
+.btn.primary { background: var(--primary); border-color: var(--primary-edge); color: var(--primary-ink); }
+.btn.primary:hover:not(:disabled), .btn.primary.is-hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover:not(:disabled) { background: var(--hover); }
+.btn.danger { color: var(--danger); }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: default; }
+.btn:disabled:hover, .btn[aria-disabled="true"]:hover { background: var(--white); }
+.btn.icon { padding: 0; width: 34px; color: var(--muted); }
+.btn.icon:hover:not(:disabled) { color: var(--ink); }
+.btn svg { flex: none; }
+.btn:active:not(:disabled):not([aria-disabled="true"]) { transform: scale(0.97); }
+
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  padding: 0;
+  flex: none;
+  border: none;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  position: relative;
+}
+.icon-btn:hover, .icon-btn.is-hover { background: var(--hover); color: var(--ink); }
+
+button.link, a.link { border: none; background: none; padding: 0; border-radius: var(--r-xs); color: var(--accent); cursor: pointer; font-size: inherit; }
+button.link:hover, a.link:hover { text-decoration: underline; }
+
+/* A row's way out to the posting: a link in the accent, like Postie's URL cells. */
+.link-out { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-weight: 500; }
+.link-out:hover { text-decoration: underline; }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn { transition: none; }
+  .btn:active:not(:disabled) { transform: none; }
 }
 
-/* ──────────────────────────────────────────────────────────────────────── table ──
- * Density is the feature: ~22px rows put roughly 30 postings on screen without
- * scrolling. Hairline rules, no cards, no zebra striping.
+/* ──────────────────────────────────────────────────────────────── pills, stats ──
+ * Every badge, status chip and pill shares this shape: 12px / 500, 2px 9px, fully round.
  */
+.pill, .stat, .badge, .count-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 500; line-height: 18px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.stat { color: var(--muted); background: var(--soft); }
+.stat b { color: var(--ink); font-weight: 600; }
+.stat.ready { color: var(--work); background: var(--work-bg); }
+.stat.posted { color: var(--tips); background: var(--tips-bg); }
+.stat.ready b, .stat.posted b { color: inherit; }
+
+/* Status: one Postie pair per meaning, and a glyph, so colour is never the only signal. */
+.badge { --tone: var(--muted); --tone-bg: var(--soft); color: var(--tone); background: var(--tone-bg); padding-left: 7px; }
+.badge svg { flex: none; }
+.badge[data-tone="progress"] { --tone: #1d4ed8; --tone-bg: #e8effd; }
+.badge[data-tone="applied"] { --tone: #047857; --tone-bg: #e3f6ee; }
+.badge[data-tone="failed"] { --tone: #b42318; --tone-bg: #fdecea; }
+.badge[data-tone="retry"] { --tone: #a15c07; --tone-bg: #fdf3e1; }
+.badge[data-tone="approval"] { --tone: #92400e; --tone-bg: #fef3c7; }
+.badge[data-tone="answer"] { --tone: #7b519d; --tone-bg: #f6f3f9; }
+.badge[data-tone="document"] { --tone: #a83f76; --tone-bg: #faf1f5; }
+.badge[data-tone="login"] { --tone: #2a6b90; --tone-bg: #e7f3f8; }
+.badge[data-tone="verification"] { --tone: #8a5a44; --tone-bg: #f4eeee; }
+.badge[data-tone="unsupported"] { --tone: #5f5e5b; --tone-bg: #f1f1ef; }
+.badge[data-tone="unknown"] { --tone: #5f5e5b; --tone-bg: #f1f1ef; }
+
+/* Tab counts. */
+.count-badge { min-width: 20px; justify-content: center; padding: 0 6px; color: var(--muted); background: var(--soft); }
+
+/* The two glyphs every board row carries, drawn in CSS: lucide's icon is a client component,
+   so as JSX they were 400 serialized icon trees per page. */
+.icon-chevron::after,
+.icon-external::after {
+  content: "";
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background-color: currentColor;
+  mask: center / contain no-repeat;
+  print-color-adjust: exact;
+}
+@media (forced-colors: active) {
+  .icon-chevron::after,
+  .icon-external::after { forced-color-adjust: none; background-color: LinkText; }
+}
+.icon-chevron::after {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E");
+}
+.icon-external::after {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/%3E%3C/svg%3E");
+}
+
+/* ───────────────────────────────────────────────────────────── filter controls ──
+ * Row badges and the filter row are live filter values. A value is a pill with a hairline,
+ * like Postie's AI button; a chosen one fills with ink, like Postie's day picker. A value with
+ * no filter behind it is a plain chip.
+ */
+.chip,
+.chip-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--ease-state),
+    border-color 120ms var(--ease-state),
+    color 120ms var(--ease-state),
+    transform 120ms var(--ease-state);
+}
+.chip:hover, .chip-check:hover { background: var(--soft); }
+.chip[aria-current="true"],
+.chip[aria-pressed="true"],
+.chip-check[data-on="true"],
+.chip-check:has(.chip-check-input:checked) {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--white);
+}
+span.chip { border-color: transparent; background: var(--hover); cursor: default; }
+span.chip:hover { background: var(--hover); }
+.chip[aria-disabled="true"],
+.chip[aria-disabled="true"]:hover,
+.chip[aria-disabled="true"]:active { opacity: .45; background: var(--white); transform: none; cursor: default; }
+.chip:active, .chip-check:active { transform: scale(0.97); }
+
+/* The filter row's checkboxes: the native box is hidden INSIDE the label, so it still takes
+   focus, toggles on Space and announces its state; the label paints from :has(). */
+.chip-check { user-select: none; padding: 5px 11px; font-size: 13px; }
+.chip-check-input {
+  appearance: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.chip-check:has(.chip-check-input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A select whose box is the wrapper: the native control fills it and the caret lets clicks through. */
+.select-box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--white);
+  font-size: 13px;
+  cursor: pointer;
+}
+.select-box:hover { background: var(--soft); }
+.select-box[data-on="true"] { border-color: var(--ink); }
+.select-box svg { position: absolute; top: 50%; right: 10px; translate: 0 -50%; pointer-events: none; color: var(--muted); }
+.select-box .select {
+  appearance: none;
+  align-self: stretch;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+  padding: 0 30px 0 10px;
+  background: transparent;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.select-box:has(.select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* iOS Safari zooms on any control under 16px; touch pointers only, so desktop is untouched. */
+@media (pointer: coarse) {
+  .select-box, .select-box .select { font-size: 16px; }
+  .chip, .chip-check { min-height: 32px; }
+  .select-box { height: 34px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip, .chip-check { transition: none; }
+  .chip:active, .chip-check:active { transform: none; }
+}
+
+/* ───────────────────────────────────────────────────────────────────── table ──
+ * Postie's sheet: a bordered, rounded wrap; caps labels on a pale header; hairline rows and
+ * column rules; the hovered row on the soft fill.
+ */
+.sheet-wrap { border: 1px solid var(--line); border-radius: var(--r); background: var(--white); }
+
 .rows {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-variant-numeric: tabular-nums;
-  font-stretch: 85%;
+}
+.rows thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--head);
+}
+.rows th {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rows td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+  white-space: nowrap;
+  background-color: var(--white);
+  transition: background-color 100ms var(--ease-state);
+}
+.rows th + th, .rows td + td { border-left: 1px solid var(--line); }
+.rows tbody tr:last-child td { border-bottom: none; }
+.rows td[data-field="title"] { font-weight: 500; }
+.rows td[data-field="seen"], .rows td[data-field="location"], .rows td[data-field="level"],
+.rows td[data-field="summary"], .rows td[data-field="pay"] { font-size: 13px; }
+.rows td[data-field="seen"], .rows td[data-field="applied"], .rows th[data-field="applied"] { text-align: center; }
+/* Landed in the last 24 hours: Postie's unread tint. */
+.rows tbody tr[data-fresh] td { background-color: var(--unread); }
+.rows tbody tr:hover td, .rows tbody tr:focus-within td { background-color: var(--soft); }
+/* The whole row opens the posting drawer (see `jobLinkFor`). */
+.rows tbody tr:has(a[data-job]) { cursor: pointer; }
+.rows td[data-field="company"] a { font-weight: 500; color: var(--ink); }
+.rows td[data-field="company"] a:hover { color: var(--muted); }
+
+/* The one column that absorbs the slack, and truncates rather than wrapping a row. */
+.rows td.grow,
+.rows th.grow {
+  width: 100%;
+  min-width: 180px;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Capped rather than greedy; `ch` so the cap tracks the font. */
+.rows td.clip,
+.rows th.clip {
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Keep the same rows and controls on phones, with the title and action visible first. */
+.posting-location { display: none; font-size: 12px; font-weight: 400; color: var(--muted); }
+
+/* Desktop: the company, apply and applied columns stay pinned on the right. */
+@media (min-width: 901px) {
+  .rows { --w-applied: 76px; --w-apply: 84px; --w-company: 190px; }
+  .rows th[data-field="applied"],
+  .rows td[data-field="applied"] {
+    position: sticky;
+    right: 0;
+    width: var(--w-applied);
+    min-width: var(--w-applied);
+    max-width: var(--w-applied);
+    z-index: 2;
+  }
+  .rows th[data-field="apply"],
+  .rows td[data-field="apply"] {
+    position: sticky;
+    right: var(--w-applied);
+    width: var(--w-apply);
+    min-width: var(--w-apply);
+    max-width: var(--w-apply);
+    z-index: 2;
+  }
+  .rows th[data-field="company"],
+  .rows td[data-field="company"] {
+    position: sticky;
+    right: calc(var(--w-applied) + var(--w-apply));
+    width: var(--w-company);
+    min-width: var(--w-company);
+    max-width: var(--w-company);
+    z-index: 2;
+  }
+  .rows thead th:nth-last-child(-n + 3) { z-index: 3; }
+  .rows td[data-field="company"] a > span {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+/* The table's room is the results area, not the viewport: the sidebar takes 260px or 56px of
+   it. Below these widths the columns that would force a sideways scroll go or wrap. */
+.board-results { container: results / inline-size; }
+@media (min-width: 901px) {
+  @container results (max-width: 1340px) {
+    .rows td[data-field="badges"] > span {
+      width: 220px;
+      max-width: 220px;
+      flex-wrap: wrap;
+      white-space: normal;
+    }
+  }
+  /* The summary is clipped to ~30ch anyway; it is what pushed location under the pinned columns. */
+  /* Location then moves under the title, so nothing slides beneath the pinned columns. */
+  @container results (max-width: 1460px) {
+    .rows[data-track="engineering"] { min-width: 960px !important; }
+    .rows[data-track="engineering"] :is([data-field="summary"], [data-field="location"]) { display: none; }
+    .rows[data-track="engineering"] :is(.posting-title, .posting-location) {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+  }
+  @container results (max-width: 1140px) {
+    .rows[data-track="design"] [data-field="location"] { display: none; }
+    .rows[data-track="design"] :is(.posting-title, .posting-location) {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+  }
+}
+
+/* Phones: the same rows and controls, as stacked cards, with the title and action first. */
 @media (max-width: 900px) {
   .rows[data-track] { min-width: 0 !important; }
   .rows[data-track] thead {
@@ -206,10 +516,13 @@
   .rows[data-track] tbody tr {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 5px 10px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--rule);
+    gap: 6px 12px;
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--line);
   }
+  .rows[data-track] tbody tr:last-child { border-bottom: 0; }
+  .rows[data-track] tbody tr[data-fresh] { background: var(--unread); }
+  .rows[data-track] tbody tr:hover { background: var(--soft); }
   .rows[data-track] td[data-field] {
     display: block;
     width: auto;
@@ -217,396 +530,43 @@
     min-width: 0;
     padding: 0;
     border: 0;
+    background: none;
     white-space: normal;
     overflow-wrap: anywhere;
+    text-align: left;
   }
-  .rows[data-track] [data-field="title"] { grid-area: 1 / 1; }
+  .rows[data-track] [data-field="title"] { grid-area: 1 / 1; font-size: 15px; }
   .rows[data-track] [data-field="company"] { grid-area: 2 / 1; }
   .rows[data-track] [data-field="apply"] { grid-area: 1 / 2 / 3 / 3; align-self: start; }
   .rows[data-track] [data-field="pay"] { grid-area: 3 / 1; }
   .rows[data-track] [data-field="seen"] { grid-area: 3 / 2; text-align: right; }
   .rows[data-track] [data-field="badges"] { grid-area: 4 / 1 / 5 / 3; }
-  .rows[data-track] [data-field="applied"] { grid-column: 1 / -1; text-align: left; }
+  .rows[data-track] [data-field="applied"] { grid-column: 1 / -1; }
   .rows[data-track] [data-field="applied"] label .sr-only { position: static; width: auto; height: auto; clip-path: none; clip: auto; overflow: visible; }
-  .rows[data-track] [data-field="badges"] > span { flex-wrap: wrap; white-space: normal; }
+  .rows[data-track] [data-field="badges"] > span { flex-wrap: wrap; white-space: normal; gap: 6px; }
   .rows[data-track] [data-field="summary"],
   .rows[data-track] [data-field="level"],
   .rows[data-track] [data-field="location"] { grid-column: 1 / -1; }
 }
 
-.rows thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--canvas);
-}
-
-.rows th {
-  border-bottom: 1px solid var(--rule);
-  padding: 6px 10px 5px 0;
-  text-align: left;
-  font-weight: 500;
-  font-size: 10px;
-  font-stretch: 100%;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--fg-dim);
-  white-space: nowrap;
-}
-
-.rows td {
-  border-bottom: 1px solid var(--rule);
-  padding: 4px 10px 3px 0;
-  vertical-align: baseline;
-  white-space: nowrap;
-  /* MOTION 1/3 — row hover. A token shift, not choreography: no transform, so nothing
-     moves and the row under the cursor cannot shift out from under it. */
-  background-color: transparent;
-  transition: background-color 100ms var(--ease-state);
-}
-
-.rows tbody tr:hover td {
-  background-color: var(--surface);
-}
-
-/* The whole row opens the posting drawer (see `jobLinkFor`). */
-.rows tbody tr:has(a[data-job]) { cursor: pointer; }
-
-@media (min-width: 901px) {
-  .rows thead th[data-field="applied"],
-  .rows td[data-field="applied"] {
-    position: sticky;
-    right: 0;
-    width: 64px;
-    min-width: 64px;
-    max-width: 64px;
-    z-index: 2;
-    background-color: var(--canvas);
-  }
-
-  .rows thead th[data-field="apply"],
-  .rows td[data-field="apply"] {
-    position: sticky;
-    right: 64px;
-    width: 64px;
-    min-width: 64px;
-    max-width: 64px;
-    z-index: 2;
-    background-color: var(--canvas);
-  }
-
-  .rows thead th[data-field="company"],
-  .rows td[data-field="company"] {
-    position: sticky;
-    right: 128px;
-    width: 180px;
-    min-width: 180px;
-    max-width: 180px;
-    padding-left: 12px;
-    z-index: 2;
-    background-color: var(--canvas);
-    box-shadow: -1px 0 var(--rule);
-  }
-
-  .rows thead th:nth-last-child(-n + 3) { z-index: 3; }
-  .rows td[data-field="company"] a > span {
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-}
-
-@media (min-width: 901px) and (max-width: 1351px) {
-  .rows td[data-field="badges"] > span {
-    width: 220px;
-    max-width: 220px;
-    flex-wrap: wrap;
-    white-space: normal;
-  }
-}
-
-.posting-location { display: none; }
-
-/* The summary is clipped to ~30ch anyway; below 1440px it is what pushed location under the
-   pinned company column, so it goes and the table fits without a hidden sideways scroll. */
-@media (min-width: 901px) and (max-width: 1439px) {
-  .rows[data-track="engineering"] { min-width: 1112px !important; }
-  .rows[data-track="engineering"] [data-field="summary"] { display: none; }
-}
-
-@media (min-width: 901px) and (max-width: 1151px) {
-  .rows[data-track="design"] [data-field="location"] { display: none; }
-  .rows[data-track="design"] .posting-title,
-  .rows[data-track="design"] .posting-location {
-    display: block;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .rows[data-track="design"] .posting-location {
-    font-size: 11px;
-    color: var(--fg-dim);
-  }
-}
-
-/* The one column that absorbs the slack, and truncates rather than wrapping a row. */
-.rows td.grow,
-.rows th.grow {
-  width: 100%;
-  min-width: 180px;
-  max-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Capped rather than greedy: the column that must stay legible without eating the one next
-   to it. `ch` so the cap tracks the font, not a guessed pixel width. */
-.rows td.clip,
-.rows th.clip {
-  max-width: 30ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* `:not([colspan])` excludes the row-cap notice, which spans the table. */
-.rows td:last-child:not([colspan]),
-.rows th:last-child:not([colspan]) {
-  padding-right: 0;
-  text-align: right;
-}
-
-/* ────────────────────────────────────────────────────────────── chips + selects ──
- * Badges are controls, and so are the filter dropdowns: surface + 1px rule, never the accent.
- * The accent means "posted in the last 24 hours" and nothing else. One rule for both, because
- * two controls that mean the same thing should not be able to drift apart visually.
- *
- * The <select> wears `appearance: none` and the box is the wrapper, not the control: a native
- * menulist can ignore an author background, which would leave a filtered dropdown looking
- * identical to an unset one while the badge beside it shows the state correctly.
- */
-.chip,
-.chip-check,
-.select-box {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  /* `--fg-faint`, not `--rule`: `--rule` is for hairline separators between rows, which are
-     not controls and are exempt. A chip is a control and its boundary must be perceivable. */
-  border: 1px solid var(--fg-faint);
-  padding: 1px 6px 0;
-  font-size: 11px;
-  line-height: 16px;
-  white-space: nowrap;
-  color: var(--fg-dim);
-  /* MOTION 2/3 — the control's own active/inactive state. This is feedback on the control,
-     never on the table's response to it: the rows below re-sort with no animation at all. */
-  transition:
-    background-color 120ms var(--ease-state),
-    border-color 120ms var(--ease-state),
-    color 120ms var(--ease-state),
-    transform 120ms var(--ease-state);
-}
-
-.chip:hover,
-.chip-check:hover,
-.select-box:hover {
-  color: var(--fg);
-  border-color: var(--fg-faint);
-}
-
-.chip[aria-current="true"],
-.chip[aria-pressed="true"],
-.chip-check[data-on="true"],
-.select-box[data-on="true"] {
-  background: var(--surface);
-  border-color: var(--fg-dim);
-  color: var(--fg);
-}
-
-/* Every chip that carries this also guards its own onClick, so the styling does not need to
-   block the pointer — and must not. `pointer-events: none` suppressed the `title` too, which
-   is the only place the UI says WHY the button is inert ("Needs a name and an email address").
-   The explanation was unreachable exactly when it was needed. */
-.chip[aria-disabled="true"] {
-  color: var(--fg-faint);
-  border-color: var(--rule);
-  background: none;
-  cursor: default;
-}
-
-/* ...and it must not look pressable while it is not. */
-.chip[aria-disabled="true"]:active,
-.chip[aria-disabled="true"]:hover {
-  background: none;
-  transform: none;
-}
-
-/* Feedback, not animation — every pressable in the app gets it, and a dropdown is one. */
-.chip:active,
-.chip-check:active,
-.select-box:active {
-  transform: scale(0.97);
-}
-
-/* The box draws the border; the <select> fills it edge to edge and carries the padding, so a
-   click anywhere in the box, the caret included, lands on the control and opens it. The caret
-   lets the click through. */
-.select-box {
-  position: relative;
-  cursor: pointer;
-}
-
-.select-box svg {
-  position: absolute;
-  top: 50%;
-  right: 7px;
-  translate: 0 -50%;
-  pointer-events: none;
-}
-
-.select {
-  appearance: none;
-  align-self: stretch;
-  width: 100%;
-  border: 0;
-  border-radius: inherit;
-  padding: 3px 24px 3px 8px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  line-height: inherit;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-
-/* The ring belongs to the box the user sees, not to the stripped control inside it. */
-.select:focus-visible {
-  outline: none;
-}
-
-.select-box:has(.select:focus-visible) {
-  outline: 2px solid var(--fg);
-  outline-offset: 1px;
-  border-radius: 1px;
-}
-
-/* iOS Safari zooms the viewport on any form control under 16px and never zooms back out.
-   Touch pointers only, so the desktop row density is untouched. The line box has to grow with
-   the glyphs or the descenders on "hybrid" and "spring" are clipped by the 16px line-height
-   the chip rule pins above. */
-@media (pointer: coarse) {
-  .select-box,
-  .select {
-    font-size: 16px;
-    line-height: 20px;
-  }
-
-  /* WCAG 2.2 SC 2.5.8 wants 24x24; a resting chip is 19px tall and the 4px gap between them
-     forecloses the spacing exception. 44px (SC 2.5.5) would roughly double row height, which
-     the design contract forbids outright — so 24 on touch only, and desktop density is
-     untouched. */
-  .chip,
-  .chip-check {
-    min-height: 24px;
-  }
-}
-
-/* ────────────────────────────────────────────────────────────── status badges ──
- * A label, not a control: tinted fill, no border, no hover, no press, so it never reads as a
- * `.chip`. Each meaning gets its own low-chroma hue plus a glyph, so colour is never the only
- * signal. Hues stay clear of ~75: amber is the accent and means fresh. Neutral tones (queued,
- * skipped, cancelled, archived) keep the palette's hue-75 tint at near-zero chroma.
- */
-.badge {
-  --h: 75;
-  --k: 0.2;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 0 5px 0 4px;
-  border-radius: 2px;
-  font-size: 11px;
-  line-height: 17px;
-  white-space: nowrap;
-  background: oklch(var(--badge-bg-l) calc(var(--badge-bg-c) * var(--k)) var(--h));
-  color: oklch(var(--badge-fg-l) calc(var(--badge-fg-c) * var(--k)) var(--h));
-}
-.badge svg { flex: none; }
-
-/* The two glyphs every board row carries, drawn in CSS. lucide-react's icon is a client
-   component, so as JSX they were 400 serialized icon trees and SVGs per page. Same 12px box
-   and 1.25px stroke (2.5 in the 24-unit viewBox) as the lucide icons they replace. */
-.icon-chevron::after,
-.icon-external::after {
-  content: "";
-  flex: none;
-  width: 12px;
-  height: 12px;
-  background-color: currentColor;
-  mask: center / contain no-repeat;
-  /* The glyph is a background, which print drops and forced colors repaint as Canvas. */
-  print-color-adjust: exact;
-}
-@media (forced-colors: active) {
-  .icon-chevron::after,
-  .icon-external::after { forced-color-adjust: none; background-color: LinkText; }
-}
-.icon-chevron::after {
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E");
-}
-.icon-external::after {
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/%3E%3C/svg%3E");
-}
-.badge[data-tone="retry"] { --h: 125; --k: 1; }
-.badge[data-tone="applied"] { --h: 150; --k: 1; }
-.badge[data-tone="approval"] { --h: 178; --k: 1; }
-.badge[data-tone="unsupported"] { --h: 205; --k: 1; }
-.badge[data-tone="progress"] { --h: 235; --k: 1; }
-.badge[data-tone="login"] { --h: 260; --k: 1; }
-.badge[data-tone="answer"] { --h: 285; --k: 1; }
-.badge[data-tone="document"] { --h: 310; --k: 1; }
-.badge[data-tone="verification"] { --h: 335; --k: 1; }
-.badge[data-tone="unknown"] { --h: 0; --k: 1; }
-.badge[data-tone="failed"] { --h: 25; --k: 1; }
-
-/* Tab counts. A pill, so it is never mistaken for a status. */
-.count-badge {
-  display: inline-block;
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--fg-dim);
-  font-size: 10px;
-  line-height: 15px;
-  text-align: center;
-}
-
-/* ────────────────────────────────────────────────────────────────────── drawer ──
- * Native <dialog>: Esc, the top layer, the backdrop and focus return are all
- * platform behaviour.
- *
- * MOTION 3/3 — the only animation in the app with a duration over 150ms, and the only
- * one that moves anything. It is affordable because the drawer is opened ~5×/day; the
- * table beneath it is touched dozens of times a day and stays completely static.
- *
- * The closed state carries the 165ms exit and the open state the 220ms enter, because a
- * transition always runs with the timing of the state it is moving TO. `@starting-style`
- * supplies the pre-open frame; `overlay`/`display` are discrete, so `allow-discrete` is
- * what keeps the panel in the top layer long enough to be seen leaving.
+/* ─────────────────────────────────────────────────────────────────── dialogs ──
+ * Native <dialog>: Esc, the top layer, the backdrop and focus return are platform behaviour.
+ * The posting drawer is Postie's drawer panel, sliding in. The closed state carries the 165ms
+ * exit and the open state the 220ms enter, because a transition runs with the timing of the
+ * state it moves TO; `allow-discrete` keeps the panel in the top layer while it leaves.
  */
 dialog.drawer {
   margin: 0 0 0 auto;
   height: 100dvh;
   max-height: 100dvh;
-  width: min(34rem, 100vw);
+  width: min(560px, 100vw);
   max-width: 100vw;
   padding: 0;
   border: none;
-  border-left: 1px solid var(--rule);
-  background: var(--canvas);
-  color: var(--fg);
+  border-left: 1px solid var(--line);
+  background: var(--white);
+  color: var(--ink);
+  box-shadow: -12px 0 40px rgba(17, 19, 24, .06);
   overflow: hidden;
 
   opacity: 0;
@@ -617,7 +577,6 @@ dialog.drawer {
     overlay 165ms var(--ease-drawer) allow-discrete,
     display 165ms var(--ease-drawer) allow-discrete;
 }
-
 dialog.drawer[open] {
   opacity: 1;
   transform: translateX(0);
@@ -627,14 +586,9 @@ dialog.drawer[open] {
     overlay 220ms var(--ease-drawer) allow-discrete,
     display 220ms var(--ease-drawer) allow-discrete;
 }
-
 @starting-style {
-  dialog.drawer[open] {
-    opacity: 0;
-    transform: translateX(100%);
-  }
+  dialog.drawer[open] { opacity: 0; transform: translateX(100%); }
 }
-
 dialog.drawer::backdrop {
   background: var(--scrim);
   opacity: 0;
@@ -643,7 +597,6 @@ dialog.drawer::backdrop {
     overlay 165ms var(--ease-drawer) allow-discrete,
     display 165ms var(--ease-drawer) allow-discrete;
 }
-
 dialog.drawer[open]::backdrop {
   opacity: 1;
   transition:
@@ -651,56 +604,23 @@ dialog.drawer[open]::backdrop {
     overlay 220ms var(--ease-drawer) allow-discrete,
     display 220ms var(--ease-drawer) allow-discrete;
 }
-
 @starting-style {
-  dialog.drawer[open]::backdrop {
-    opacity: 0;
-  }
+  dialog.drawer[open]::backdrop { opacity: 0; }
 }
+dialog.drawer h2 { font-size: 16px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35; }
+dialog.drawer .prose p { overflow-wrap: anywhere; }
 
-/* ──────────────────────────────────────────────────────────── reduced motion ──
- * The drawer keeps a fade so it is still legible as arriving and leaving; it loses the
- * slide. Everything else snaps, including the press feedback.
- */
-@media (prefers-reduced-motion: reduce) {
-  .rows td,
-  .chip,
-  .select-box {
-    transition: none;
-  }
-
-  .chip:active,
-  .select-box:active {
-    transform: none;
-  }
-
-  dialog.drawer,
-  dialog.drawer[open] {
-    transform: none;
-  }
-
-  @starting-style {
-    dialog.drawer[open] {
-      transform: none;
-    }
-  }
-}
-
-/* ─────────────────────────────────────────────────────────────────────── modal ──
- * The drawer's native-dialog contract, centred. Opened a few times a week (settings, profile
- * edits), so it gets a 160ms fade and a 0.98 -> 1 scale; reduced motion keeps only the fade.
- * The side drawer (<Modal kind="drawer">) is not styled here: it wears `dialog.drawer` above.
- */
+/* The modal is Postie's sheet card: 14px corners, header and footer on hairlines. */
 dialog.modal {
   margin: auto;
   width: min(560px, 100vw - 32px);
   max-width: none;
-  max-height: min(720px, 100dvh - 32px);
+  max-height: min(720px, 90dvh);
   padding: 0;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--canvas);
-  color: var(--fg);
+  border: none;
+  border-radius: var(--r-xl);
+  background: var(--white);
+  color: var(--ink);
   overflow: hidden;
   opacity: 0;
   transform: scale(0.98);
@@ -710,19 +630,10 @@ dialog.modal {
     overlay 160ms var(--ease-drawer) allow-discrete,
     display 160ms var(--ease-drawer) allow-discrete;
 }
-
-dialog.modal[open] {
-  opacity: 1;
-  transform: none;
-}
-
+dialog.modal[open] { opacity: 1; transform: none; }
 @starting-style {
-  dialog.modal[open] {
-    opacity: 0;
-    transform: scale(0.98);
-  }
+  dialog.modal[open] { opacity: 0; transform: scale(0.98); }
 }
-
 dialog.modal::backdrop {
   background: var(--scrim);
   opacity: 0;
@@ -731,111 +642,163 @@ dialog.modal::backdrop {
     overlay 160ms var(--ease-drawer) allow-discrete,
     display 160ms var(--ease-drawer) allow-discrete;
 }
-
-dialog.modal[open]::backdrop {
-  opacity: 1;
-}
-
+dialog.modal[open]::backdrop { opacity: 1; }
 @starting-style {
-  dialog.modal[open]::backdrop {
-    opacity: 0;
-  }
+  dialog.modal[open]::backdrop { opacity: 0; }
 }
+:is(dialog.modal, dialog.drawer) .dialog-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+:is(dialog.modal, dialog.drawer) .dialog-head h2 { font-size: 16px; font-weight: 600; }
+:is(dialog.modal, dialog.drawer) .dialog-body { min-height: 0; flex: 1; overflow-y: auto; padding: 16px 20px; }
+:is(dialog.modal, dialog.drawer) .dialog-foot { display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); }
+dialog.drawer .dialog-head { align-items: flex-start; padding: 18px 24px; }
+dialog.drawer .dialog-body { padding: 20px 24px; }
+dialog.drawer .dialog-foot { padding: 14px 24px; }
 
+/* Reduced motion keeps the fades, so the drawer still reads as arriving and leaving, and drops the travel. */
 @media (prefers-reduced-motion: reduce) {
-  dialog.modal,
-  dialog.modal[open] {
-    transform: none;
-  }
-
+  .rows td { transition: none; }
+  dialog.drawer, dialog.drawer[open], dialog.modal, dialog.modal[open] { transform: none; }
   @starting-style {
-    dialog.modal[open] {
-      transform: none;
-    }
+    dialog.drawer[open], dialog.modal[open] { transform: none; }
   }
 }
 
 .prose {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
-  color: var(--fg-dim);
+  color: var(--ink);
 }
+.prose strong { font-weight: 600; }
 
-.prose strong {
-  color: var(--fg);
+/* ─────────────────────────────────────────────────────────────────── sidebar ──
+ * Postie's app shell. The sidebar is fixed to the left and the body is padded by its width,
+ * so every page keeps its own layout. Collapsed, it is an icon rail; on a phone it slides in.
+ */
+body:has(#side) { padding-left: var(--side); transition: padding-left .18s ease; }
+.side {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: var(--side);
+  background: var(--side-bg);
+  border-right: 1px solid var(--line);
+  transition: width .18s ease;
+}
+.side-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px 10px 16px; }
+.side-actions { display: flex; align-items: center; gap: 2px; }
+.logo { display: flex; align-items: center; gap: 9px; min-width: 0; color: var(--ink); text-decoration: none; }
+.word { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+
+.side-refresh { display: flex; flex-direction: column; }
+.side-action {
+  display: flex; align-items: center; gap: 8px;
+  height: 36px;
+  margin: 4px 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--r);
+  background: none;
+  color: var(--ink);
   font-weight: 500;
+  cursor: pointer;
+  text-align: left;
 }
+.side-action:hover:not(:disabled) { background: var(--hover); }
+.side-action:disabled { cursor: default; }
+.side-action svg { flex: none; color: var(--muted); }
+.side-action[aria-busy="true"] svg { animation: spin .8s linear infinite; }
+.side-note { margin: 0 16px 6px; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.side-note::first-letter { text-transform: uppercase; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-/* The same navigation and control rhythm serves the board and the private pages. */
-.app-header.app-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  min-height: 64px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--rule);
+.side-nav { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; padding: 4px 8px 12px; }
+.tab {
+  display: flex; align-items: center; gap: 9px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: var(--r);
+  color: var(--ink);
+  user-select: none;
 }
+.tab svg { flex: none; color: var(--muted); }
+.tab:hover { background: var(--hover); }
+.tab[aria-current="page"] { background: var(--active); font-weight: 500; }
+.tab[aria-current="page"] svg { color: var(--ink); }
+.tab-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.app-nav {
-  display: flex;
-  align-items: center;
-  flex: 1 1 auto;
+.side-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 10px 8px 8px; border-top: 1px solid var(--line); }
+.me {
+  position: relative;
+  flex: 1;
   min-width: 0;
-  gap: 20px;
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px;
+  border-radius: var(--r);
+  cursor: pointer;
 }
-
-.app-brand {
-  display: inline-flex;
-  align-items: center;
+.me:hover { background: var(--hover); }
+.me:has(.me-select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.me-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.me-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.me-caret { display: flex; margin-left: auto; color: var(--muted); }
+.av {
+  display: inline-flex; align-items: center; justify-content: center;
   flex: none;
-  min-height: 28px;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.04em;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: #dfe1e5;
+  color: #3d424b;
+  font-size: 10px; font-weight: 600;
+}
+.me-av { background: var(--primary); color: var(--primary-ink); }
+.side-error { flex-basis: 100%; padding: 0 8px; font-size: 12px; color: var(--danger); }
+
+.mobile-top, .side-scrim { display: none; }
+
+/* Collapsed: an icon rail. Desktop only; a phone always slides the full sidebar in. */
+@media (min-width: 761px) {
+  :root[data-side="rail"] body:has(#side) { padding-left: var(--rail); }
+  :root[data-side="rail"] .side { width: var(--rail); }
+  :root[data-side="rail"] .side-top { flex-direction: column; gap: 10px; padding: 8px 0; }
+  :root[data-side="rail"] .side-top .logo,
+  :root[data-side="rail"] .label-text,
+  :root[data-side="rail"] .side-note,
+  :root[data-side="rail"] .tab-name,
+  :root[data-side="rail"] .me-name,
+  :root[data-side="rail"] .me-caret,
+  :root[data-side="rail"] .side-error { display: none; }
+  :root[data-side="rail"] .side-action { width: 36px; margin: 4px 10px 8px; padding: 0; justify-content: center; }
+  :root[data-side="rail"] .side-nav { align-items: center; padding: 4px 0; }
+  :root[data-side="rail"] .tab { width: 38px; height: 38px; padding: 0; justify-content: center; }
+  :root[data-side="rail"] .side-foot { flex-direction: column-reverse; padding: 8px 0; }
+  :root[data-side="rail"] .me { flex: none; padding: 4px; }
+  :root[data-side="rail"] .me-av { width: 28px; height: 28px; font-size: 11px; }
 }
 
-.app-header .app-nav-links {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 20px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+@media (max-width: 760px) {
+  body:has(#side) { padding-left: 0; }
+  .mobile-top { display: flex; align-items: center; gap: 8px; padding: 8px 0 4px; }
+  .side {
+    width: min(300px, 86vw);
+    z-index: 50;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform .2s ease, visibility 0s .2s;
+  }
+  :root[data-side-open] .side { transform: none; visibility: visible; box-shadow: 12px 0 40px rgba(17, 19, 24, .12); transition: transform .2s ease; }
+  .side-collapse { display: none; }
+  :root[data-side-open] .side-scrim { display: block; position: fixed; inset: 0; z-index: 49; background: var(--scrim); animation: fade-in .15s ease-out; }
+}
+@keyframes fade-in { from { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  body:has(#side), .side { transition: none; }
+  .side-action[aria-busy="true"] svg { animation: none; }
 }
 
-.app-nav-links::-webkit-scrollbar { display: none; }
-
-.app-nav-links a {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  min-height: 38px;
-  border-bottom: 2px solid transparent;
-  color: var(--fg-dim);
-  font-size: 12px;
-  font-weight: 500;
-  transition: color 120ms var(--ease-state), border-color 120ms var(--ease-state);
-}
-
-.app-nav-links a:hover,
-.app-nav-links a[aria-current="page"] {
-  color: var(--fg);
-  border-bottom-color: var(--fg);
-  text-decoration: none;
-}
-
-.app-tools {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: 9px;
-  margin-left: auto;
-}
-.app-header .select { width: auto; border: 0; background: transparent; }
-.app-tools > .select-box { min-height: 28px; }
-
+/* ─────────────────────────────────────────────────────────────────── board page ── */
 #main-content {
   width: min(100%, 1720px);
   margin-inline: auto;
@@ -852,241 +815,104 @@ dialog.modal[open]::backdrop {
   padding: 0 24px 16px;
 }
 
+/* Postie's page top: the title with its stat pills, the view switch on the right. */
 .board-intro {
   display: flex;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px 24px;
-  padding: 19px 0 17px;
+  padding: 10px 0 16px;
 }
+.board-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.board-eyebrow { margin-bottom: 4px; }
+.board-title { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; text-wrap: balance; }
+.board-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; }
+.board-updated { color: var(--muted); font-size: 13px; }
 
-.board-eyebrow {
-  margin-bottom: 3px;
-  color: var(--fg-dim);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-}
-
-.board-title {
-  margin: 0;
-  font-size: clamp(22px, 2.4vw, 30px);
-  font-weight: 600;
-  letter-spacing: -.045em;
-  line-height: 1.12;
-  text-wrap: balance;
-}
-
-.board-summary {
-  margin-top: 6px;
-  color: var(--fg-dim);
-  font-size: 12px;
-}
-
-.board-fresh { color: var(--accent); }
-.skeleton-line { display: inline-block; height: 12px; border-radius: 3px; background: var(--surface); }
+.skeleton-line { display: inline-block; height: 12px; border-radius: var(--r-xs); background: var(--hover); }
 .loading-row {
   display: grid;
   grid-template-columns: 60px minmax(0, 1fr) 140px 180px;
   align-items: center;
   gap: 16px;
-  min-height: 35px;
-  border-bottom: 1px solid var(--rule);
+  min-height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
 }
-.loading-head { color: var(--fg-dim); font-size: 10px; font-weight: 600; text-transform: uppercase; }
-.board-switches { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.board-track { display: inline-flex; align-items: center; }
+.loading-row:last-child { border-bottom: 0; }
+.loading-head { min-height: 38px; background: var(--head); }
+
+/* Segmented views (Design / Engineering, Employed / Contract, Description / Recruiters):
+   Postie's settings tabs, laid in a row. */
+.board-switches { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.board-track { display: inline-flex; align-items: center; gap: 2px; }
 .board-track-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
-  padding: 0 12px;
-  border: 1px solid var(--fg-faint);
-  border-radius: 4px;
-  color: var(--fg-dim);
-  font-size: 12px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--r);
+  background: none;
+  color: var(--muted);
   font-weight: 500;
+  cursor: pointer;
 }
-.board-track-link:first-child { border-radius: 4px 0 0 4px; }
-.board-track-link + .board-track-link { border-left: 0; border-radius: 0 4px 4px 0; }
-.board-track-link:hover { color: var(--fg); background: var(--surface); }
-.board-track-link[aria-current] { color: var(--fg); background: var(--surface); border-color: var(--fg); }
-.board-track-link + .board-track-link[aria-current] { border-left: 1px solid var(--fg); margin-left: -1px; }
+.board-track-link:hover { color: var(--ink); background: var(--hover); }
+.board-track-link[aria-current] { color: var(--ink); background: var(--active); font-weight: 600; }
 
 .filter-form {
   display: flex;
-  align-items: end;
+  align-items: flex-end;
   flex: none;
   flex-wrap: wrap;
-  gap: 9px 17px;
-  padding: 4px 0 14px;
+  gap: 12px 20px;
+  padding: 0 0 16px;
 }
-
-.filter-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; }
-.filter-select-group { display: grid; grid-template-columns: 1fr; justify-items: start; gap: 5px; }
-.filter-select-group .filter-label { width: 100%; line-height: 1.2; }
-.filter-label {
-  margin-right: 3px;
-  color: var(--fg-dim);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .1em;
-  line-height: 24px;
-  text-transform: uppercase;
-}
-
-.chip, .chip-check, .select-box {
-  min-height: 25px;
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 17px;
-  background-color: var(--canvas);
-}
-.chip:hover, .chip-check:hover, .select-box:hover { background-color: var(--surface); }
-.chip[aria-current="true"], .chip[aria-pressed="true"], .chip-check[data-on="true"], .select-box[data-on="true"] { border-color: var(--fg); }
-.chip.app-icon-button { justify-content: center; width: 28px; height: 28px; min-height: 28px; padding: 0; }
-.select-box { padding: 0; }
-.select option { background-color: var(--canvas); color: var(--fg); }
-.auth-input {
-  min-height: 44px;
-  padding: 10px 12px;
-  border: 1px solid var(--fg-faint);
-  border-radius: 5px;
-  background: var(--canvas);
-  color: var(--fg);
-  font: inherit;
-  font-size: 16px;
-}
-.auth-input::placeholder { color: var(--fg-dim); }
-.auth-input option { background: var(--canvas); color: var(--fg); }
-
-dialog.drawer h2 { font-size: 20px; font-weight: 600; letter-spacing: -.025em; line-height: 1.2; }
-dialog.drawer .prose { font-size: 14px; line-height: 1.65; }
-dialog.drawer .prose p { overflow-wrap: anywhere; }
-dialog.drawer .chip { min-height: 30px; }
-
-.rows { font-stretch: 90%; }
-.rows th { padding: 10px 12px 9px 0; font-size: 10px; font-weight: 600; }
-.rows td { padding: 5px 12px 5px 0; font-size: 12px; line-height: 1.35; }
-.rows thead th { background: var(--canvas); }
-.rows td[data-field="title"] { color: var(--fg); font-size: 13px; font-weight: 600; }
-.rows td[data-field="company"] a { font-weight: 500; }
-.rows tbody tr:focus-within td { background-color: var(--surface); }
+.filter-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; margin: 0; }
+.filter-select-group { display: grid; grid-template-columns: 1fr; justify-items: start; gap: 6px; }
+.filter-select-group .filter-label { width: 100%; }
+.filter-label { margin-right: 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); line-height: 30px; }
+.filter-select-group .filter-label { line-height: 1.2; }
 
 /* Only the results change on a filter; they dim, without animation, until the new rows land. */
 .board-results { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .board-results[aria-busy="true"] { opacity: .55; }
-.board-pages { display: flex; flex: none; align-items: center; justify-content: center; gap: 12px; padding: 10px 0 0; color: var(--fg-dim); font-size: 12px; }
+.board-pages { display: flex; flex: none; align-items: center; justify-content: center; gap: 12px; padding: 12px 0 0; color: var(--muted); font-size: 13px; }
+
+.auth { display: flex; flex-direction: column; gap: 8px; max-width: 400px; margin: 12vh auto 0; padding: 32px; background: var(--white); border: 1px solid var(--line); border-radius: var(--r-xl); }
+.auth-input { width: 100%; }
 
 @media (max-width: 900px) {
-  .app-header.app-header { align-items: flex-start; }
-  .app-nav { flex-basis: 100%; gap: 20px; }
-  .app-header .app-nav-links { flex: 1; }
-  .app-tools { width: 100%; justify-content: flex-end; }
   .board-page { height: auto; min-height: 100dvh; }
   #main-content { padding-inline: 16px; }
+  .board-page { padding-inline: 16px; }
 }
-
+@media (max-width: 760px) {
+  .auth { margin: 24px 0; padding: 24px; }
+}
 @media (max-width: 700px) {
   .loading-row { grid-template-columns: minmax(0, 1fr) 90px; }
   .loading-row > :first-child, .loading-row > :nth-child(3) { display: none; }
-  .board-page { height: auto; min-height: 100dvh; }
-  /* Brand and tools share the first row; the nav takes the second. */
-  .app-header.app-header { display: grid; grid-template-columns: auto minmax(0, 1fr); }
-  .app-nav { display: contents; }
-  .app-header .app-nav-links { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 8px; margin-top: 5px; overflow: visible; }
-  .app-nav-links { grid-column: 1 / -1; grid-row: 2; }
-  .app-nav-links a { min-height: 32px; }
-  .app-tools { grid-column: 2; grid-row: 1; width: auto; justify-content: flex-end; flex-wrap: wrap; }
-  .board-intro { align-items: start; padding: 19px 0 13px; }
+  .board-intro { align-items: start; }
   .board-switches { width: 100%; }
   .filter-form { align-items: flex-start; gap: 12px 16px; }
-  .filter-group { align-items: center; }
   .filter-label { width: 100%; line-height: 1.2; }
-  /* Tops align here, not bottoms, so the dropdown sits as close under its label as the chips do under theirs. */
-  .filter-select-group { gap: 0; }
-  .rows[data-track] tbody tr { gap: 6px 12px; padding: 16px 0; }
-  .rows[data-track] td[data-field="title"] { font-size: 15px; }
-  .rows[data-track] td[data-field="company"] { font-size: 13px; }
-  .rows[data-track] [data-field="badges"] > span { gap: 6px; }
+  .filter-select-group { gap: 6px; }
 }
 
-@media (pointer: coarse) {
-  .app-nav-links a, .board-track-link, .chip, .chip-check, .select-box { min-height: 32px; }
-  .chip.app-icon-button { width: 32px; height: 32px; min-height: 32px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .app-nav-links a { transition: none; }
-}
-
-/* ──────────────────────────────────────────────────────── checkbox chips ──
- * A group filter is a set, so its control is a checkbox — but a bare checkbox row would
- * double the height of a header this dense. The label wears the `.chip` look above and the
- * native input is visually hidden INSIDE it.
- *
- * Visually hidden, not removed, and not `display: none`: the input must still take focus, still
- * be reachable by Tab, still toggle on Space, and still announce itself to a screen reader as a
- * checkbox with a checked state. `appearance: none` plus zero size keeps it in the accessibility
- * tree and out of the layout. Painting a <div> instead would have cost all four.
- *
- * `:has(:focus-visible)` puts the focus ring on the label, because that is what the reader sees
- * — the input itself has no size to draw one around. Without this the keyboard user has no idea
- * where they are.
+/* ─────────────────────────────────────────────────────────────────── Talkie ──
+ * A drawing surface announces itself with a dot grid; notes are Postie cards on it. Nothing
+ * animates: drawing is direct manipulation, and a note appears exactly where it was drawn.
  */
-.chip-check {
-  cursor: pointer;
-  user-select: none;
-}
-
-.chip-check-input {
-  appearance: none;
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.chip-check:has(.chip-check-input:focus-visible) {
-  outline: 1px solid var(--fg);
-  outline-offset: 1px;
-  color: var(--fg);
-}
-
-/* The checked state is driven by the DOM, not only by the server-rendered `data-on`, so ticking
-   a box looks applied the instant it is clicked — before the navigation that applies it lands. */
-.chip-check:has(.chip-check-input:checked) {
-  background: var(--surface);
-  border-color: var(--fg-dim);
-  color: var(--fg);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chip-check {
-    transition: none;
-  }
-}
-
-/* ── Talkie ─────────────────────────────────────────────────────────────── */
-/* A drawing surface announces itself with a dot grid on the rule token — the same hairline
-   vocabulary as the tables, at its quietest. Nothing here animates: drawing is direct
-   manipulation, and a note appears exactly where it was drawn. A note is sized by what it
-   holds: the drag fixes its width, the text and its replies decide its height. */
 .board {
   position: relative;
   min-height: 72vh;
   touch-action: none;
   user-select: none;
   cursor: crosshair;
-  background-image: radial-gradient(var(--rule) 0.6px, transparent 0.6px);
+  background-image: radial-gradient(var(--faint) 0.7px, transparent 0.7px);
   background-size: 16px 16px;
 }
 .board[data-readonly] { cursor: default; }
@@ -1095,53 +921,52 @@ dialog.drawer .chip { min-height: 30px; }
   display: flex;
   flex-direction: column;
   min-height: 48px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: 2px;
   padding: 12px 14px;
-  font-size: 16px;
-  line-height: 1.4;
-  color: var(--fg);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: 0 1px 2px rgba(17, 19, 24, .05);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
   user-select: text;
   transition: border-color 120ms var(--ease-state);
 }
-.note:hover, .note:focus-within { border-color: var(--fg-faint); }
+.note:hover, .note:focus-within { border-color: #d5d7dc; }
+.note ::selection, .note::selection { background: var(--work-bg); }
 .note-body { white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; user-select: text; }
 .note-meta {
   display: flex; gap: 8px; margin-top: 8px;
-  font-size: 11px; line-height: 16px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
+  font-size: 12px; line-height: 16px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
-/* Destructive controls are visible, not discovered: a hover-only × does not exist on a phone
-   and is easy to miss on a desktop. Quiet in the meta row, full-strength on hover. */
+/* Destructive controls are visible, not discovered: a hover-only × does not exist on a phone. */
 .note-actions { margin-left: auto; display: inline-flex; gap: 10px; }
 .note-action {
   padding: 0; background: none; border: 0; cursor: pointer;
-  font: inherit; font-size: 11px; color: var(--fg-dim);
+  font: inherit; font-size: 12px; color: var(--muted);
   transition: color 120ms var(--ease-state);
 }
-.note-action:hover, .note-action:focus-visible { color: var(--fg); }
+.note-action:hover, .note-action:focus-visible { color: var(--ink); }
 .comment-close {
-  display: inline-flex; padding: 2px; color: var(--fg-faint);
+  display: inline-flex; padding: 2px; border-radius: var(--r-xs); color: var(--faint);
   transition: color 120ms var(--ease-state);
 }
-.comment-close:hover, .comment-close:focus-visible { color: var(--fg); }
+.comment-close:hover, .comment-close:focus-visible { color: var(--ink); }
 .note-editing { cursor: text; }
 .note textarea {
-  width: 100%; resize: none; overflow: hidden;
-  background: transparent; border: 0; outline: 0;
+  width: 100%; height: auto; padding: 0; resize: none; overflow: hidden;
+  background: transparent; border: 0; border-radius: 0; outline: 0;
   font: inherit; color: inherit; line-height: inherit;
 }
-.note textarea::placeholder { color: var(--fg-faint); }
-.comments { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule); }
+.note textarea::placeholder { color: var(--faint); }
+.comments { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .comment {
   display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
-  padding: 3px 0; font-size: 13px; line-height: 1.4;
+  padding: 3px 0; font-size: 13px; line-height: 1.45;
 }
 .comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
-.comment-author { color: var(--fg-dim); margin-right: 7px; }
-/* Every edge and corner is a grip: 10px bands on the edges, 14px squares on the corners, each
-   straddling the border so a fingertip finds it. The cursor says what each does; the note's
-   hover border says the edges are live. */
+.comment-author { color: var(--muted); margin-right: 7px; }
+/* Every edge and corner is a grip, each straddling the border so a fingertip finds it. */
 .note-grip { position: absolute; touch-action: none; }
 .note-grip[data-edge="n"] { top: -5px; left: 10px; right: 10px; height: 10px; cursor: ns-resize; }
 .note-grip[data-edge="s"] { bottom: -5px; left: 10px; right: 10px; height: 10px; cursor: ns-resize; }
@@ -1153,42 +978,43 @@ dialog.drawer .chip { min-height: 30px; }
 .note-grip[data-edge="se"] { bottom: -5px; right: -5px; width: 14px; height: 14px; cursor: nwse-resize; }
 .note-size {
   position: absolute; top: -18px; right: -1px; white-space: nowrap;
-  font-size: 10px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
 .comment-meta {
   display: inline-flex; gap: 4px; align-items: center; flex: none;
-  font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
 .reply {
-  width: 100%; margin-top: 4px; padding: 3px 0;
-  background: transparent; border: 0; border-bottom: 1px solid var(--rule); outline: 0;
-  font: inherit; font-size: 13px; color: var(--fg);
+  width: 100%; height: auto; margin-top: 4px; padding: 3px 0;
+  background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; outline: 0;
+  font: inherit; font-size: 13px; color: var(--ink);
 }
-.reply:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
-
-.reply::placeholder { color: var(--fg-faint); }
-.reply:focus { border-bottom-color: var(--fg-dim); }
-.draft { position: absolute; border: 1px dashed var(--fg-dim); pointer-events: none; }
-.draft-small { border-color: var(--fg-faint); }
+.reply:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.reply::placeholder { color: var(--faint); }
+.reply:focus { border-bottom-color: var(--muted); }
+.draft { position: absolute; border: 1px dashed var(--muted); border-radius: var(--r); pointer-events: none; }
+.draft-small { border-color: var(--faint); }
 .draft-size {
   position: absolute; top: -18px; left: -1px; white-space: nowrap;
-  font-size: 10px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
-.draft-small .draft-size { color: var(--fg-dim); }
+/* The week picker: Postie's pop-over menu. */
 .weeks {
   position: absolute; top: 100%; right: 0; z-index: 10;
-  margin-top: 4px; min-width: 180px;
-  background: var(--canvas); border: 1px solid var(--rule);
+  margin-top: 4px; min-width: 220px; padding: 5px;
+  background: var(--white); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  animation: fade-in .12s ease-out;
 }
-.weeks a { display: block; padding: 5px 10px; font-size: 11px; color: var(--fg-dim); }
-.weeks a:hover, .weeks a[aria-current] { color: var(--fg); background: var(--surface); }
+.weeks a { display: block; padding: 7px 10px; border-radius: var(--r-sm); font-size: 14px; color: var(--ink); }
+.weeks a:hover { background: var(--soft); }
+.weeks a[aria-current] { font-weight: 600; background: var(--soft); }
 @media (prefers-reduced-motion: reduce) {
   .note, .note-action, .comment-close { transition: none; }
+  .weeks { animation: none; }
 }
 
-/* A note is grabbable by its chrome. The body says `text` because it is text — selecting it
-   is what the pointer does there — and every control keeps its own cursor. A note being
-   dragged rides above its neighbours and holds the closed hand. */
+/* A note is grabbable by its chrome; the body is text, so the pointer selects there. */
 .note { cursor: grab; }
 .note-body, .comment-body { cursor: text; }
 .note-moving { cursor: grabbing; z-index: 2; }

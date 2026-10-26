@@ -339,12 +339,12 @@ export default function ProfileEditor() {
       </p>}
       {!locked && writer?.status !== 'saved' && <button className={styles.button} type="button" onClick={retry} disabled={!!Object.keys(issues).length || writer?.status === 'conflict'}>Retry save</button>}
       {!locked && session && <div className={styles.tools}>
-        <button type="button" className={`chip ${styles.tool}`} aria-haspopup="dialog" onClick={() => setUploadOpen(true)}>
-          <Upload size={16} aria-hidden="true" />Upload new resume
+        <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setUploadOpen(true)}>
+          <Upload size={16} strokeWidth={1.75} aria-hidden="true" />Upload new resume
         </button>
-        <button type="button" className={`chip app-icon-button ${recoveries.length ? styles.tool : ''}`} aria-haspopup="dialog"
+        <button type="button" className={`btn icon ${recoveries.length ? styles.tool : ''}`} aria-haspopup="dialog"
           aria-label="Drafts" title="Drafts" onClick={() => setDraftsOpen(true)}>
-          <History size={16} aria-hidden="true" />{recoveries.length > 0 && <CountBadge count={recoveries.length} />}
+          <History size={16} strokeWidth={1.75} aria-hidden="true" />{recoveries.length > 0 && <CountBadge count={recoveries.length} />}
         </button>
       </div>}
     </div>

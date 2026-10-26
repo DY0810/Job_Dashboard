@@ -11,17 +11,14 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
     <main id="main-content" className="board-page">
       <AppHeader current="/" />
       <div className="prose max-w-lg py-12" role="alert">
-        <p className="board-eyebrow">Job board</p>
+        <p className="board-eyebrow label">Job board</p>
         <h1 className="board-title">Couldn’t load jobs</h1>
         <p>Could not read the postings database.</p>
         <p className="mt-3">
-          If this is a fresh checkout, run{' '}
-          <code className="border border-rule bg-surface px-1 py-px text-fg">npm run db:migrate</code>{' '}
-          and then{' '}
-          <code className="border border-rule bg-surface px-1 py-px text-fg">npm run seed</code>.
+          If this is a fresh checkout, run <code>npm run db:migrate</code> and then <code>npm run seed</code>.
         </p>
         {error.digest ? <p className="mt-3">Digest {error.digest}.</p> : null}
-        <button type="button" className="chip mt-4" onClick={reset}>
+        <button type="button" className="btn mt-4" onClick={reset}>
           Retry
         </button>
       </div>

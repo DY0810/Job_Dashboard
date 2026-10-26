@@ -56,39 +56,40 @@ export function SignInForm() {
   }
 
   return (
-    <div className={`${styles.form} min-w-0 text-sm`}>
-      <h1 className="board-title mb-6">Household access</h1>
-      {checking ? <p role="status">Checking access…</p> : applicant ? (
-        <div className="grid gap-4">
-          <p>{applicant.name} is active.</p>
-          <ApplicantSwitcher />
-          <div className="flex flex-wrap gap-3">
-            <Link href="/" className="chip">Jobs</Link>
-            <Link href="/profile" prefetch={false} className="chip">Profile</Link>
-            <Link href="/applications?settings=1" prefetch={false} className="chip">Settings</Link>
-            <button className="chip" type="button" disabled={busy} onClick={lock}>Lock</button>
+    <div className={`${styles.form} auth min-w-0`}>
+      <h1>Household access</h1>
+      {checking ? <p role="status" className="muted">Checking access…</p> : applicant ? (
+        <div className="mt-3 grid gap-4">
+          <p className="muted">{applicant.name} is active.</p>
+          <div className="flex rounded-[var(--r)] border border-rule"><ApplicantSwitcher /></div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/" className="btn">Jobs</Link>
+            <Link href="/profile" prefetch={false} className="btn">Profile</Link>
+            <Link href="/applications?settings=1" prefetch={false} className="btn">Settings</Link>
+            <button className="btn danger" type="button" disabled={busy} onClick={lock}>Lock</button>
           </div>
         </div>
       ) : (
         <form onSubmit={unlock}>
-          <fieldset disabled={busy} className="grid min-w-0 gap-5 border-0 p-0">
-            <label className="grid min-w-0 gap-1" htmlFor="household-profile">
-              Applicant
+          <p className="muted">Unlock to see your profile and Auto Apply.</p>
+          <fieldset disabled={busy} className="mt-3 grid min-w-0 gap-3.5 border-0 p-0">
+            <label className="grid min-w-0 gap-1.5" htmlFor="household-profile">
+              <span className="label">Applicant</span>
               <select id="household-profile" className="auth-input w-full min-w-0" name="profile" defaultValue="dy">
                 <option value="dy">DY</option>
                 <option value="may">May</option>
               </select>
             </label>
-            <label className="grid min-w-0 gap-1" htmlFor="household-passcode">
-              Passcode
+            <label className="grid min-w-0 gap-1.5" htmlFor="household-passcode">
+              <span className="label">Passcode</span>
               <input id="household-passcode" className="auth-input w-full min-w-0" name="passcode" type="password"
                 inputMode="numeric" autoComplete="current-password" pattern="[0-9]{4}" minLength={4} maxLength={4} required placeholder="4-digit code…" spellCheck={false} />
             </label>
-            <button className="chip justify-self-start" type="submit">{busy ? 'Unlocking…' : 'Unlock Workie'}</button>
+            <button className="btn primary" type="submit">{busy ? 'Unlocking…' : 'Unlock Workie'}</button>
           </fieldset>
         </form>
       )}
-      {error && <p role="alert" className="mt-4 break-words">{error}</p>}
+      {error && <p role="alert" className="warn mt-2 break-words">{error}</p>}
     </div>
   );
 }

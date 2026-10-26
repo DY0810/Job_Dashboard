@@ -47,12 +47,11 @@ export function AppliedCheckbox({
   return (
     <span className="inline-flex items-center gap-1">
       <label
-        className="inline-flex cursor-pointer items-center gap-2 text-[11px]"
+        className="inline-flex cursor-pointer items-center gap-2"
         title="Saved in this browser. When you are signed in, auto-apply also skips this job."
       >
         <input
           type="checkbox"
-          className="h-4 w-4 cursor-pointer accent-[var(--fg)]"
           aria-label={`Applied to ${title} at ${company}`}
           checked={applied}
           disabled={!ready}
@@ -65,7 +64,7 @@ export function AppliedCheckbox({
             window.dispatchEvent(new CustomEvent(APPLIED_EVENT, { detail: postingId }));
           }}
         />
-        <span className={compact ? 'sr-only' : undefined}>applied</span>
+        <span className={compact ? 'sr-only' : undefined}>Applied</span>
       </label>
       {error ? (
         <span role="alert" title="Not saved. Browser storage is unavailable.">
