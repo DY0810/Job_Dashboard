@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isOpenQuestion } from '../../lib/applications/buckets';
 import { DraftVault, unlockDraftKey } from '../../lib/profile-drafts';
 import {
   AnswerBatchResultSchema, AnswerCommandSchema, AnswerResultSchema, FocusCommandSchema, FocusResultSchema,
@@ -188,7 +189,7 @@ export class InboxControl {
     // Past 250 notifications, a waiting application with none of its questions loaded reads its own, so Answer still works.
     // ponytail: one that has only some of its questions in the newest 250 still shows only those.
     if (!cursor && inbox.nextCursor) {
-      const loaded = new Set(inbox.items.flatMap((item) => item.question && !item.question.resolved ? [item.applicationId] : []));
+      const loaded = new Set(inbox.items.flatMap((item) => item.question && isOpenQuestion(item.question) ? [item.applicationId] : []));
       for (const id of this.waiting) {
         for (let next: Page | null = null, more = 0; !loaded.has(id) && (!next || next.nextCursor) && more < 3; more++) {
           next = await page(next?.nextCursor ?? undefined, id);
