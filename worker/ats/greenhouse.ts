@@ -160,7 +160,7 @@ export const greenhouse: AtsAdapter = {
       }
     });
   },
-  async submit(runtime, input, signal) {
+  async submit(runtime, input, signal, code) {
     signal?.throwIfAborted();
     const page = await runtime.page();
     const button = page.getByRole('button', { name: 'Submit application', exact: true });
@@ -171,11 +171,22 @@ export const greenhouse: AtsAdapter = {
       const prompt = page.getByText('A verification code was sent to', { exact: false }).first();
       await Promise.race([page.waitForURL(confirmation, { timeout: 15_000 }), prompt.waitFor({ timeout: 15_000 })]).catch(() => {});
       if (page.url().startsWith(confirmation)) return;
-      // Greenhouse's human check: the applicant types the emailed code into this visible window and submits.
+      // Greenhouse's human check: the applicant enters the emailed code on Workie, which the worker types into its
+      // eight one-character boxes and submits again, or types it into this visible window themselves.
       if (await prompt.isVisible()) {
         process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'verification-code-required', company: input.company, role: input.role }) + '\n');
-        try { await page.waitForURL(confirmation, { timeout: VERIFICATION_WAIT_MS }); return; }
-        catch { throw new AtsError('VERIFICATION_CODE_TIMEOUT'); }
+        const deadline = Date.now() + VERIFICATION_WAIT_MS;
+        while (Date.now() < deadline) {
+          if (await page.waitForURL(confirmation, { timeout: 5_000 }).then(() => true, () => false)) return;
+          const value = await code?.().catch(() => null);
+          if (!value || value.length !== await page.locator('input[id^="security-input-"]').count()) continue;
+          // A code the form will not take waits for the applicant to enter another one; the submission is never lost over it.
+          try {
+            for (const [index, character] of [...value].entries()) await page.locator(`#security-input-${index}`).fill(character, { timeout: 5_000 });
+            await button.click({ timeout: 5_000 });
+          } catch { /* next check */ }
+        }
+        throw new AtsError('VERIFICATION_CODE_TIMEOUT');
       }
       throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT');
     }

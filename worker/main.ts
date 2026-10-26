@@ -378,6 +378,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
             try { return await control.receipt(lease.applicationId, body, signal); }
             catch (error) { await context.keepReceipt?.(body); throw error; }
           },
+          code: async () => (await control.verificationCode(lease.applicationId, signal)).code,
         } });
       if (result.state === "submitted" && letter && application.documents.cover_letter) {
         // Keep the letter that went out so the applicant can read it; never affects the outcome.

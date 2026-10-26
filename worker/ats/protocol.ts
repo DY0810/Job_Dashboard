@@ -80,7 +80,8 @@ export type AtsAdapter = {
   answer(input: AtsApplication, field: AtsField): AtsValue | undefined;
   observe(runtime: BrowserRuntime, input: AtsApplication, signal?: AbortSignal): Promise<AtsObservation>;
   fill(runtime: BrowserRuntime, input: AtsApplication, observation: AtsObservation, signal?: AbortSignal): Promise<void>;
-  submit(runtime: BrowserRuntime, input: AtsApplication, signal?: AbortSignal): Promise<void>;
+  /** `code` reads a security code the applicant entered on Workie, for an employer that emails one at submit. */
+  submit(runtime: BrowserRuntime, input: AtsApplication, signal?: AbortSignal, code?: () => Promise<string | null>): Promise<void>;
   receipt(runtime: BrowserRuntime, input: AtsApplication, signal?: AbortSignal): Promise<AtsReceipt>;
 };
 

@@ -126,6 +126,12 @@ export const LiveFrameSchema = z.strictObject({ ...protocol, step: z.string().tr
 /** The last step the worker posts when it parks a form on the applicant. It has left the page, so Live never shows it as filling. */
 export const PARKED_STEPS = { approval: 'Filled. Waiting for your approval', answers: 'Waiting for your answers' } as const;
 export const LiveFrameAckSchema = z.strictObject({ applicationId: uuid, stored: z.literal(true) });
+// An employer's emailed security code: the applicant enters it on Workie and the worker takes it once to type into the form.
+const securityCode = z.string().regex(/^[A-Za-z0-9]{4,16}$/);
+export const VerificationCodeSchema = z.strictObject({ code: securityCode });
+export const VerificationCodeAckSchema = z.strictObject({ applicationId: uuid, stored: z.literal(true) });
+export const VerificationCodeTakeSchema = z.strictObject({ ...protocol });
+export const VerificationCodeResponseSchema = z.strictObject({ code: securityCode.nullable() });
 export const LiveListSchema = z.strictObject({ ownerId: z.string().min(1), live: z.array(z.strictObject({
   applicationId: uuid, state: ApplicationStateSchema, step: z.string(), image: liveImage.nullable(), fields: liveFields.nullable(), updatedAt: timestamp,
 })).max(500) });

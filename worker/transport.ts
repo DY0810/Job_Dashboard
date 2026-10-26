@@ -11,6 +11,7 @@ import {
   HeartbeatRequestSchema, EventRequestSchema, EventResponseSchema, WORKER_PROTOCOL_VERSION, POLL_TIMEOUT_MS,
   SubmissionIntentSchema, SubmissionIntentResponseSchema, ReceiptCommandSchema, ReceiptResponseSchema,
   SubmittedLetterSchema, SubmittedLetterAckSchema, LiveFrameSchema, LiveFrameAckSchema,
+  VerificationCodeTakeSchema, VerificationCodeResponseSchema,
 } from "../lib/applications/worker-protocol.ts";
 import type { PairRequest, HeartbeatRequest, EventRequest } from "../lib/applications/worker-protocol.ts";
 import {
@@ -207,6 +208,12 @@ export function workerTransport(options: {
     live: (applicationId: string, input: z.input<typeof LiveFrameSchema>, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
       return post(`/api/worker/applications/${applicationId}/live`, LiveFrameSchema.parse(input), LiveFrameAckSchema, signal);
+    },
+    // A security code the applicant entered on Workie, taken once; null until there is one.
+    verificationCode: (applicationId: string, signal?: AbortSignal) => {
+      if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");
+      return post(`/api/worker/applications/${applicationId}/verification-code`,
+        VerificationCodeTakeSchema.parse({ protocolVersion: WORKER_PROTOCOL_VERSION }), VerificationCodeResponseSchema, signal);
     },
     questionBatch: (applicationId: string, input: QuestionBatch, signal?: AbortSignal) => {
       if (!z.uuid().safeParse(applicationId).success) throw new TransportError("INVALID_APPLICATION");

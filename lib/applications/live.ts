@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { PrivateDb } from '../private-db/index.ts';
 import { applicationLive, applications } from '../private-db/schema.ts';
 import { appScope, fail, withWorker, type WorkerOptions } from './worker-store.ts';
-import { LiveFrameSchema } from './worker-protocol.ts';
+import { LiveFrameSchema, VerificationCodeSchema, VerificationCodeTakeSchema } from './worker-protocol.ts';
 import { LIVE_STATES } from './buckets.ts';
 import { SUBMIT_APPROVAL } from './state.ts';
 
@@ -19,6 +19,31 @@ export async function recordLiveFrame(db: PrivateDb, token: string, applicationI
     await tx.insert(applicationLive).values({ ownerId: worker.ownerId, applicationId, image: null, fields: null, ...set })
       .onConflictDoUpdate({ target: [applicationLive.ownerId, applicationLive.applicationId], set });
     return { applicationId, stored: true as const };
+  });
+}
+
+/** Applicant call: the security code an employer emailed for a form being submitted. The worker types it in on its next check. */
+export async function setVerificationCode(db: PrivateDb, ownerId: string, applicationId: string, input: unknown) {
+  const { code } = VerificationCodeSchema.parse(input);
+  const [app] = await db.select({ id: applications.id }).from(applications)
+    .where(and(appScope(ownerId, applicationId), eq(applications.state, 'submitting')));
+  if (!app) fail(409, 'CONFLICT', 'This application is not being submitted.');
+  await db.insert(applicationLive).values({ ownerId, applicationId, step: 'Submitting the application', verificationCode: code, updatedAt: Date.now() })
+    .onConflictDoUpdate({ target: [applicationLive.ownerId, applicationLive.applicationId], set: { verificationCode: code } });
+  return { applicationId, stored: true as const };
+}
+
+/** Worker call while the employer's form waits on a code: takes it once, so a mistyped code can be entered again. */
+export async function takeVerificationCode(db: PrivateDb, token: string, applicationId: string, input: unknown, options: WorkerOptions = {}) {
+  VerificationCodeTakeSchema.parse(input);
+  return withWorker(db, token, options, async (tx, worker) => {
+    const [app] = await tx.select({ id: applications.id }).from(applications).where(and(appScope(worker.ownerId, applicationId),
+      eq(applications.workerId, worker.id), eq(applications.state, 'submitting')));
+    if (!app) fail(404, 'NOT_FOUND', 'Application not found.');
+    const row = and(eq(applicationLive.ownerId, worker.ownerId), eq(applicationLive.applicationId, applicationId));
+    const [live] = await tx.select({ code: applicationLive.verificationCode }).from(applicationLive).where(row);
+    if (live?.code) await tx.update(applicationLive).set({ verificationCode: null }).where(row);
+    return { code: live?.code ?? null };
   });
 }
 

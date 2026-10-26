@@ -18,6 +18,7 @@ import { pollWorker, heartbeatWorker } from './leases.ts';
 import { recordWorkerEvent } from './events.ts';
 import { listLive } from './live.ts';
 import { listMaterials } from './materials.ts';
+import { setVerificationCode, takeVerificationCode } from './live.ts';
 import { beginSubmission, recordReceipt } from './submissions.ts';
 import { type WorkerOptions } from './worker-store.ts';
 import { stubHousehold } from '../test-household.ts';
@@ -477,6 +478,19 @@ describe('async leases, checkpoints and stable identity', () => {
     await expect(recordWorkerEvent(db, worker.token, app.id, event(lease), options)).rejects.toMatchObject({ code: 'LEASE_LOST' });
     await expect(commandApplication(db, 'alice', run.id, app.id, { ...revision(unknown.revision), action: 'retry-safe' }, options)).rejects.toMatchObject({ status: 409 });
     await expect(db.update(applications).set({ state: 'queued' }).where(eq(applications.id, app.id))).rejects.toThrow();
+  });
+  it('hands the worker a security code the applicant entered, once and only while the form is being submitted', async () => {
+    const { worker, app } = await prepared();
+    await claim(worker.token);
+    const take = () => takeVerificationCode(db, worker.token, app.id, { protocolVersion: p.WORKER_PROTOCOL_VERSION }, options);
+    await expect(setVerificationCode(db, 'alice', app.id, { code: 'ja5oTXoY' })).rejects.toMatchObject({ status: 409 });
+    await db.update(applications).set({ state: 'submitting' }).where(eq(applications.id, app.id));
+    await expect(setVerificationCode(db, 'bob', app.id, { code: 'ja5oTXoY' })).rejects.toMatchObject({ status: 409 });
+    await expect(setVerificationCode(db, 'alice', app.id, { code: 'ja5o TXoY' })).rejects.toThrow();
+    expect(await take()).toEqual({ code: null });
+    await setVerificationCode(db, 'alice', app.id, { code: 'ja5oTXoY' });
+    expect(await take()).toEqual({ code: 'ja5oTXoY' });
+    expect(await take()).toEqual({ code: null });
   });
   it('the applicant says an unknown submission went through: applied without an invented receipt, never re-leased', async () => {
     const { worker, app, run } = await prepared();
