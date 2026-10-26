@@ -246,6 +246,13 @@ function greenhouseMetadata(job: GreenhouseJob, name: RegExp): string | undefine
   return typeof field?.value === 'string' ? field.value : undefined;
 }
 
+/** A board on the company's own site redirects its hosted job page there; Greenhouse's embed form still renders. */
+function greenhouseEmbed(token: string, job: GreenhouseJob): string | undefined {
+  const host = URL.canParse(job.absolute_url ?? '') ? new URL(job.absolute_url!).hostname : 'greenhouse.io';
+  return /(^|\.)greenhouse\.io$/.test(host) || !/^\d+$/.test(String(job.id ?? '')) ? undefined
+    : `https://job-boards.greenhouse.io/embed/job_app?for=${token}&token=${job.id}`;
+}
+
 export const greenhouse = atsConnector('greenhouse', async (entry, context) => {
   const body = await context.runtime.fetchJson<{ jobs?: GreenhouseJob[] }>(
     endpoint('greenhouse', entry.token),
@@ -258,6 +265,7 @@ export const greenhouse = atsConnector('greenhouse', async (entry, context) => {
         title: job.title,
         location: job.location?.name,
         url: job.absolute_url!,
+        applyUrl: greenhouseEmbed(entry.token, job),
         postedAt: toEpochMs(job.first_published ?? job.updated_at),
         // Greenhouse double-escapes its HTML; normalizeDescription runs to a fixed point.
         description: job.content ?? '',

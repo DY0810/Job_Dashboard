@@ -77,6 +77,15 @@ describe.each(['sqlite', 'libsql'] as const)('%s consistent compact capture', (k
     expect(publicRows).toHaveLength(0);
   });
 
+  it('names the posting that carries the official embed URL, which the worker re-resolves from that posting alone', async () => {
+    const f = fixture(kind);
+    const embed = 'https://job-boards.greenhouse.io/embed/job_app?for=acme&token=1';
+    f.add(1);
+    f.add(2, { canonicalUrl: embed }, '1');
+    const [candidate] = (await captureCandidateSnapshot(f.db, policy(), NOW)).candidates;
+    expect([candidate.officialUrl, candidate.officialPostingId, candidate.disposition]).toEqual([embed, 2, 'candidate']);
+  });
+
   it('uses only explicit SQL filters, live state and fixed effective age, not public geography/seniority', async () => {
     const f = fixture(kind);
     f.add(1, { seniority: 'senior+', country: 'DE', workMode: 'onsite' });

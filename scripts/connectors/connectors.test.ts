@@ -156,6 +156,23 @@ describe('ATS per-target isolation (Phase 3 gate)', () => {
     }));
   });
 
+  it('applies to a Greenhouse job on the company site through the embed form', async () => {
+    const job = (id: number, absolute_url: string) => ({ id, absolute_url, title: 'Software Engineer Intern', updated_at: '2026-10-01T00:00:00Z' });
+    const runtime: Runtime = {
+      fetchJson: async <T,>(url: string) => ({ jobs: url.includes('/boards/anthropic/') ? [
+        job(1, 'https://www.anthropic.com/careers/jobs?gh_jid=1'), job(2, 'https://job-boards.greenhouse.io/anthropic/jobs/2'),
+        job(3, 'https://job-boards.eu.greenhouse.io/anthropic/jobs/3'),
+      ] : [] }) as unknown as T,
+      fetchText: async () => '', isAllowed: async () => true,
+    };
+    const { context } = replay('greenhouse');
+    expect((await greenhouse.fetch({ ...context, runtime })).map((posting) => [posting.sourceUrl, posting.applyUrl])).toEqual([
+      ['https://www.anthropic.com/careers/jobs?gh_jid=1', 'https://job-boards.greenhouse.io/embed/job_app?for=anthropic&token=1'],
+      ['https://job-boards.greenhouse.io/anthropic/jobs/2', undefined],
+      ['https://job-boards.eu.greenhouse.io/anthropic/jobs/3', undefined],
+    ]);
+  });
+
   it('a target that fails logs ONE failure and does not abort the connector', async () => {
     // Only the first boards are recorded, so every other registry token behaves exactly like
     // a dead one: the connector logs each and still returns the boards that answered.

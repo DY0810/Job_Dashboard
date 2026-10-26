@@ -33,7 +33,7 @@ function official(value: string): { identity: OfficialIdentity; url: string } | 
       [tenant, requisition] = [tenants[0], ids[0]];
     } else return null;
     url.hostname = 'job-boards.greenhouse.io';
-    canonical = `/${tenant}/jobs/${requisition}`;
+    canonical = path === '/embed/job_app' ? `/embed/job_app?for=${tenant}&token=${requisition}` : `/${tenant}/jobs/${requisition}`;
   } else if (host === 'jobs.ashbyhq.com' || host === 'jobs.lever.co' || host === 'jobs.eu.lever.co') {
     ats = host === 'jobs.ashbyhq.com' ? 'ashby' : 'lever';
     match = path.match(new RegExp(`^/(${tenantPart})/(${UUID})(?:/${ats === 'ashby' ? 'application' : 'apply'})?$`));
@@ -93,9 +93,11 @@ export function resolveApplicationIdentity(canonicalUrl: string, sources: Identi
   }
   const status = reasons.size ? 'conflict' : identities.size === 1 ? 'resolved' : 'unresolved';
   if (status === 'unresolved') reasons.add('official_identity_unresolved');
+  const urls = matches.map((match) => match.url).sort();
   return {
     status, identity: status === 'resolved' ? identities.values().next().value! : null,
-    officialUrl: status === 'resolved' ? matches.map((match) => match.url).sort()[0] : null,
+    // A Greenhouse board on the company's own site redirects its hosted job page there; its embed form renders for every board.
+    officialUrl: status === 'resolved' ? urls.find((url) => url.startsWith('https://job-boards.greenhouse.io/embed/')) ?? urls[0] : null,
     aliases, reasons: [...reasons].sort(),
   };
 }

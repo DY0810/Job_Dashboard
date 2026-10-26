@@ -80,8 +80,9 @@ export async function returnedPostingUrls(db: PrivateDb): Promise<string[]> {
   return rows.flatMap(({ ats, tenant, requisition }) => {
     const url = postingUrl(ats, tenant.toLowerCase(), requisition.toLowerCase());
     if (!url) return [];
-    // Board rows carry either Greenhouse host.
-    return ats === 'greenhouse' ? [url, url.replace('://job-boards.', '://boards.')] : [url];
+    // Board rows carry either Greenhouse host, or the embed form of a board on the company's own site.
+    return ats === 'greenhouse' ? [url, url.replace('://job-boards.', '://boards.'),
+      `https://job-boards.greenhouse.io/embed/job_app?for=${tenant.toLowerCase()}&token=${requisition}`] : [url];
   });
 }
 
