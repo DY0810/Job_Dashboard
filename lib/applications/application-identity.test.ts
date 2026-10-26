@@ -25,13 +25,24 @@ describe('official application identity, never a receipt or collector identity',
     });
   });
 
-  it('collapses Greenhouse host/embed aliases and retains the original evidence', () => {
+  it('collapses Greenhouse host aliases and retains the original evidence', () => {
     const alias = 'https://boards.greenhouse.io/acme/jobs/123?gh_src=board#application';
-    const embedded = 'https://boards.greenhouse.io/embed/job_app?for=acme&token=123';
-    const result = resolveApplicationIdentity(gh, [source(alias, '123'), source(embedded, '123')]);
+    const result = resolveApplicationIdentity(gh, [source(alias, '123')]);
     expect(result.status).toBe('resolved');
-    expect(result.aliases).toEqual([gh, alias, embedded].sort());
+    expect(result.aliases).toEqual([gh, alias].sort());
     expect(result.officialUrl).toBe(gh);
+  });
+
+  // A board on the company's own site redirects its hosted job page there; the embed form renders for every board.
+  it.each(['acme', 'zeta'])('prefers one stable Greenhouse embed URL over a hosted alias (tenant %s)', (tenant) => {
+    const hosted = `https://job-boards.greenhouse.io/${tenant}/jobs/123`;
+    const embed = `https://job-boards.greenhouse.io/embed/job_app?for=${tenant}&token=123`;
+    for (const alias of [embed, `https://boards.greenhouse.io/embed/job_app?token=123&for=${tenant}`]) {
+      expect(resolveApplicationIdentity(hosted, [source(alias, '123')])).toMatchObject({
+        status: 'resolved', identity: { ats: 'greenhouse', tenant, requisition: '123' }, officialUrl: embed,
+      });
+      expect(resolveApplicationIdentity(alias, []).officialUrl).toBe(embed);
+    }
   });
 
   it.each([

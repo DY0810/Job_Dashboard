@@ -79,6 +79,56 @@ test('a renamed Greenhouse board passes on the exact role and job URL; a wrong r
     await assert.rejects(observe(`Job Application for ${role} at SpaceXAI`, 'https://job-boards.greenhouse.io/xai/jobs/1'), /ATS_IDENTITY_MISMATCH/);
   } finally { await browser.close(); }
 });
+test('a Greenhouse embed form for a board on the company site is filled, submitted and receipted by its exact board and job', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  const directory = await mkdtemp(join(tmpdir(), 'workie-ats-embed-'));
+  const resume = join(directory, 'resume.pdf');
+  await writeFile(resume, '%PDF-1.4 synthetic resume', { mode: 0o600 });
+  const role = 'Software Engineering Intern', form = 'https://job-boards.greenhouse.io/embed/job_app?for=fixture&token=123';
+  const confirmation = 'https://job-boards.greenhouse.io/embed/job_app/confirmation?for=fixture&token=123';
+  // Databricks's live embed (2026-10-26): the hosted form's markup at /embed/job_app; submit lands on /embed/job_app/confirmation,
+  // whose message is the employer's own (Lyft's) and whose "Back to job post" goes to the employer's site with gh_jid.
+  const run = async ({ redirect = null, backlink = 'https://www.fixture.example/careers/job?gh_jid=123' } = {}) => {
+    const context = await browser.newContext();
+    await context.route(redirect ?? form, route => route.fulfill({ contentType: 'text/html', body: `<title>Job Application for ${role} at Fixture Co</title>
+      <form method="get" action="/embed/job_app?for=fixture&amp;token=123" id="application-form" class="application--form">
+      <label id="first_name-label" for="first_name">First Name*</label><input id="first_name" aria-required="true">
+      <label id="last_name-label" for="last_name">Last Name*</label><input id="last_name" aria-required="true">
+      <label id="email-label" for="email">Email*</label><input id="email" type="email" aria-required="true">
+      <div id="upload-label-resume">Resume/CV<span class="required">*</span></div><input id="resume" type="file">
+      <button type="button">Submit application</button></form>
+      <script>document.querySelector('button').onclick = () => { location.href = '/embed/job_app/confirmation?for=fixture&token=123'; };</script>` }));
+    await context.route(confirmation, route => route.fulfill({ contentType: 'text/html', body: `<title>Thank you for applying</title>
+      <main><div class="confirmation"><h1>Thank you for your interest in Fixture Co!</h1>
+      <a class="link" target="_top" href="${backlink}">Back to job post</a></div></main>` }));
+    const runtime = { context, page: async () => context.pages()[0] ?? context.newPage(), navigate: async (page, url) => { await page.goto(redirect ?? url); return page; } };
+    const application = { identity: { ats: 'greenhouse', tenant: 'fixture', requisition: '123' }, company: 'Fixture Co', role, applicationUrl: form,
+      answers: { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com' }, documents: { resume },
+      manifestHash: 'a'.repeat(64), artifactHashes: ['b'.repeat(64)], submissionIntentId: crypto.randomUUID() };
+    const evidence = [];
+    try {
+      const result = await runAtsApplication({ runtime, adapter: greenhouse, application, facts, requirements, submission: {
+        begin: async value => ({ intentId: value.intentId }), receipt: async value => { evidence.push(value.evidence); } } });
+      return { result, evidence };
+    } finally { await context.close(); }
+  };
+  try {
+    const { result, evidence } = await run();
+    assert.equal(result.state, 'submitted');
+    assert.deepEqual(result.receipt.identity, { ats: 'greenhouse', tenant: 'fixture', requisition: '123' });
+    assert.equal(evidence[0].pageUrl, confirmation);
+    assert.match(evidence[0].observedText, /Thank you for your interest in Fixture Co!/);
+    // A confirmation linking back to another job is not this job's receipt.
+    assert.deepEqual((await run({ backlink: 'https://www.fixture.example/careers/job?gh_jid=999' })).result.reasons, ['receipt_not_verified']);
+    // A form reached anywhere but this board's job (a closed job redirects to the board) is never filled.
+    for (const redirect of ['https://job-boards.greenhouse.io/embed/job_app?for=fixture&token=999', 'https://job-boards.greenhouse.io/embed/job_app?for=other&token=123']) {
+      await assert.rejects(run({ redirect }), /ATS_IDENTITY_MISMATCH/);
+    }
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 test('a hosted Remix form is filled only after React hydrates it, so typed text is not reset', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });
   try {

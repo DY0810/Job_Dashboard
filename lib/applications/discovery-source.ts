@@ -167,11 +167,10 @@ export async function captureCandidateSnapshot(db: ReadDb, policyInput: unknown,
     const resolution = resolveApplicationIdentity(group[0].canonicalUrl, group.flatMap((p) => [
       ...p.sources, { source: '', sourceUrl: p.canonicalUrl, publisherId: null },
     ]));
-    const officialPostingId = resolution.identity
-      ? group.find((posting) => [posting.canonicalUrl, ...posting.sources.map((source) => source.sourceUrl)].some((url) => {
-        const identity = resolveApplicationIdentity(url, []).identity;
-        return identity !== null && identityKey(identity) === identityKey(resolution.identity!);
-      }))?.postingId ?? null
+    // The posting that carries the official URL itself, so the worker's re-resolution of it (application-context.ts) agrees.
+    const officialPostingId = resolution.officialUrl
+      ? group.find((posting) => [posting.canonicalUrl, ...posting.sources.map((source) => source.sourceUrl)].some((url) =>
+        resolveApplicationIdentity(url, []).officialUrl === resolution.officialUrl))?.postingId ?? null
       : null;
     const candidate: DiscoveryCandidate = {
       targetKey: resolution.identity ? `official:${identityKey(resolution.identity)}` :

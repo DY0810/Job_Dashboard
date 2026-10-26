@@ -6,7 +6,7 @@ that a live tenant uses the same fields.
 
 | ATS family | Adapter | Fixture flow | Live form read | Live submit receipt | Current limits |
 | --- | --- | --- | --- | --- | --- |
-| Greenhouse | `greenhouse` | PASS: synthetic fill, upload, submit, exact-role receipt | Not performed | Not performed | Field set is tenant-specific; employer API credentials are not used. |
+| Greenhouse | `greenhouse` | PASS: synthetic fill, upload, submit, exact-role receipt; embed form (`/embed/job_app`) fill, submit, confirmation receipt | Embed: PASS observe (no fill, no submit) on Coinbase, Stripe, Airbnb, Lyft, 2026-10-26 | Not performed | Field set is tenant-specific; employer API credentials are not used. A board on the company's own site (its hosted job page redirects there) is applied to through its embed form. Demographic-survey questions (numeric field ids) and checkbox groups (`question_N[]_M`) are unsupported, which stopped Databricks, Waymo, MongoDB, Roblox, Pinterest, Datadog and Samsara intern forms. |
 | Lever | `lever` | PASS: synthetic fill, upload, submit, thanks-page receipt | PASS: observe and fill (no submit) on Palantir, Shield AI, Ro, 2026-10-12 | Not performed | hCaptcha on submit waits for the applicant in the visible window; challenge path unobserved. |
 | Ashby | `ashby` | PASS: synthetic fill, upload, submit, success-state receipt | PASS: observe and fill (no submit) on OpenAI, Ramp, Notion, 2026-10-12 | Not performed | reCAPTCHA is scored invisibly; a rejected score waits for the applicant. Success text is from Ashby's page script, unobserved live. |
 

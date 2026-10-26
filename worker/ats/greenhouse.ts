@@ -18,10 +18,11 @@ async function pageFor(input: AtsApplication, runtime: Parameters<AtsAdapter['ob
   return runtime.navigate(page, input.applicationUrl);
 }
 
-function hosted(input: AtsApplication, href = input.applicationUrl) {
-  const url = new URL(href);
-  return url.origin === 'https://job-boards.greenhouse.io' &&
-    url.pathname === `/${input.identity.tenant}/jobs/${input.identity.requisition}`;
+function hosted(input: AtsApplication, href = input.applicationUrl, suffix = '') {
+  const url = new URL(href), { tenant, requisition } = input.identity;
+  return url.origin === 'https://job-boards.greenhouse.io' && (url.pathname === `/${tenant}/jobs/${requisition}${suffix}` ||
+    // The embed form of a board on the company's own site, named by its exact board and job.
+    url.pathname === `/embed/job_app${suffix}` && url.searchParams.getAll('for').join() === tenant && url.searchParams.getAll('token').join() === requisition);
 }
 
 export function greenhouseAnswer(input: AtsApplication, field: AtsField) {
@@ -171,11 +172,11 @@ export const greenhouse: AtsAdapter = {
     if (!await button.count()) throw new AtsError('SUBMIT_CONTROL_NOT_FOUND');
     await button.click();
     if (hosted(input)) {
-      const confirmation = `https://job-boards.greenhouse.io/${input.identity.tenant}/jobs/${input.identity.requisition}/confirmation`;
+      const confirmation = (url: URL) => hosted(input, url.href, '/confirmation');
       const prompt = page.getByText('A verification code was sent to', { exact: false }).first();
       // A busy computer can take well over 15 s to send the form and show what came back.
       await Promise.race([page.waitForURL(confirmation, { timeout: 45_000 }), prompt.waitFor({ timeout: 45_000 })]).catch(() => {});
-      if (page.url().startsWith(confirmation)) return;
+      if (confirmation(new URL(page.url()))) return;
       // Greenhouse's human check: the applicant enters the emailed code on Workie, which the worker types into its
       // eight one-character boxes and submits again, or types it into this visible window themselves.
       if (await prompt.isVisible()) {
@@ -201,17 +202,18 @@ export const greenhouse: AtsAdapter = {
     const page = await runtime.page();
     if (!hosted(input)) return observeReceipt(page, input);
     const url = new URL(page.url());
-    if (url.origin !== 'https://job-boards.greenhouse.io' ||
-        url.pathname !== `/${input.identity.tenant}/jobs/${input.identity.requisition}/confirmation`) {
-      throw new AtsError('RECEIPT_NOT_VERIFIED');
-    }
-    const heading = await page.getByRole('heading', { name: 'Thank you for applying.', exact: true }).count();
-    const message = await page.getByText('Your application has been received.', { exact: false }).count();
+    if (!hosted(input, url.href, '/confirmation')) throw new AtsError('RECEIPT_NOT_VERIFIED');
     const backlink = page.getByRole('link', { name: 'Back to job post', exact: true });
-    if (!heading || !message || !await backlink.count() ||
-        new URL(await backlink.getAttribute('href') ?? '', url).pathname !== `/${input.identity.tenant}/jobs/${input.identity.requisition}`) {
-      throw new AtsError('RECEIPT_NOT_VERIFIED');
-    }
+    const back = await backlink.count() ? new URL(await backlink.getAttribute('href') ?? '', url) : null;
+    const verified = url.pathname.startsWith('/embed/')
+      // An embed confirmation shows the employer's own message (Lyft's never says "applying"); its link back to the
+      // job on the employer's site names the job by gh_jid (seen on Databricks, Stripe and Lyft, 2026-10-26).
+      ? await page.title() === 'Thank you for applying' &&
+        (back?.searchParams.get('gh_jid') === input.identity.requisition || Boolean(back && hosted(input, back.href)))
+      : await page.getByRole('heading', { name: 'Thank you for applying.', exact: true }).count() > 0 &&
+        await page.getByText('Your application has been received.', { exact: false }).count() > 0 &&
+        back?.pathname === `/${input.identity.tenant}/jobs/${input.identity.requisition}`;
+    if (!verified) throw new AtsError('RECEIPT_NOT_VERIFIED');
     return { identity: input.identity, company: input.company, role: input.role,
       receiptId: `gh-${createHash('sha256').update(url.href).digest('hex').slice(0, 32)}`, submittedAt: Date.now() };
   },
