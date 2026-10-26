@@ -79,7 +79,8 @@ async function launch(options: BrowserOptions): Promise<Host> {
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     headless: options.headless ?? true,
     serviceWorkers: 'block',
-    timeout: 15_000,
+    // A busy computer can take well over 15 s to start Chrome; every fill then failed before opening the form.
+    timeout: 60_000,
   });
   const allowed = new WeakMap<Page, ReadonlySet<string>>();
   await context.route('**/*', async (route) => {
