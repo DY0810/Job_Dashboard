@@ -4,22 +4,11 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const projects = ['mobile390', 'desktop1440'];
+const projects = ['mobile390-light', 'desktop1440-light', 'mobile390-dark', 'desktop1440-dark'];
 const cases = [
-  'reset survives reload and failure; only success removes the token',
-  'reset uses current search params after same-document navigation',
-  'expired verification and arbitrary flags do not assert verification',
-  'mode changes clear errors, success notices, and credentials',
-  'late reset responses cannot replace a different mode or leave stale success',
-  "delayed reset success cannot change a newer token's draft",
-  "delayed reset success cannot change a newer token's pending",
-  "delayed reset error cannot change a newer token's draft",
-  "delayed reset error cannot change a newer token's pending",
-  'sign-in has keyboard-accessible labels and fits the viewport',
-  'sign-up has keyboard-accessible labels and fits the viewport',
-  'forgot has keyboard-accessible labels and fits the viewport',
-  'verify has keyboard-accessible labels and fits the viewport',
-  'reset has keyboard-accessible labels and fits the viewport',
+  'wrong passcode shows the error and keeps the form',
+  'test passcode unlocks and opens Jobs',
+  'applicant and passcode are labelled and reachable by keyboard',
 ];
 const required = projects.flatMap(project => cases.map(title => `${project}::sign-in.pw.ts::${title}`)).sort();
 
@@ -74,7 +63,7 @@ function selfTest() {
       })),
     })) }],
   };
-  assert.equal(validateReport(fixture).passed, 28);
+  assert.equal(validateReport(fixture).passed, required.length);
   const negatives = {
     skipped: r => { r.suites[0].specs[0].tests[0].expectedStatus = 'skipped'; },
     missing: r => { r.suites[0].specs.pop(); },
