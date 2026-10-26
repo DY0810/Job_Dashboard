@@ -52,11 +52,15 @@ export function rowsBehind(frames: { applicationId: string; state: ApplicationSt
 }
 
 /** Open questions by application, each once: a reopened question has one notification per time it was asked. */
-export function openQuestions<Q extends { id: string; resolved: boolean }>(items: { applicationId: string; question: Q | null }[]) {
+type Asked = { resolved: boolean; waitingCount: number; canAnswer: boolean };
+/** Unanswered and still asked: a question a policy change closed stays in the inbox but nothing can answer it. */
+export const isOpenQuestion = (q: Asked) => !q.resolved && (q.waitingCount > 0 || q.canAnswer);
+
+export function openQuestions<Q extends Asked & { id: string }>(items: { applicationId: string; question: Q | null }[]) {
   const asked = new Map<string, Q[]>();
   for (const { applicationId, question } of items) {
     const here = asked.get(applicationId) ?? [];
-    if (question && !question.resolved && !here.some((item) => item.id === question.id)) asked.set(applicationId, [...here, question]);
+    if (question && isOpenQuestion(question) && !here.some((item) => item.id === question.id)) asked.set(applicationId, [...here, question]);
   }
   return asked;
 }

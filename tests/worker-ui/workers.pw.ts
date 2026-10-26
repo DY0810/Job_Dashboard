@@ -507,8 +507,9 @@ test('dense layout has native labels keyboard focus and no overflow in light and
   await expect(input).toHaveCSS('outline-width', '2px');
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Create pairing grant', exact: true })).toBeFocused();
-  // Phones keep the sidebar hidden until "Open sidebar", which the modal drawer makes inert.
-  await expect(page.getByRole('link', { name: 'Profile', exact: true, includeHidden: true })).toHaveAttribute('href', '/profile');
+  // On a phone the sidebar stays hidden until its menu button slides it in.
+  if (info.project.use.isMobile) await expect(page.getByRole('button', { name: 'Open sidebar', exact: true })).toBeVisible();
+  await expect(page.locator('#side').getByRole('link', { name: 'Profile', exact: true, includeHidden: true })).toHaveAttribute('href', '/profile');
   await expect(page.getByRole('heading', { name: 'Workers', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   // The shared header has its own layout; this checks the page and the drawer.
@@ -521,7 +522,7 @@ test('dense layout has native labels keyboard focus and no overflow in light and
   for (const box of controls) {
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.right).toBeLessThanOrEqual(info.project.use.viewport!.width + 1);
-    // Dense desktop controls are 28px (workers.module.css .button).
+    // Postie's buttons and inputs are 34px (workers.module.css .button); 28px is the floor.
     expect(box.height).toBeGreaterThanOrEqual(28);
     expect(box.width).toBeGreaterThan(0);
     expect(box.overflow).toBe(false);

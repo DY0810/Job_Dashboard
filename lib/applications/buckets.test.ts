@@ -2,9 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { openQuestions, rowAsks } from './buckets.ts';
 
 const app = 'a0000000-0000-4000-8000-000000000001';
-const question = (id: string, resolved = false) => ({ id, resolved });
+const question = (id: string, resolved = false, waitingCount = 1, canAnswer = true) => ({ id, resolved, waitingCount, canAnswer });
 
 describe("a row's questions and Retry", () => {
+  it('drops a question a policy change closed, keeps one parked on a paused run or a changed fact', () => {
+    const asked = openQuestions([
+      { applicationId: app, question: question('closed', false, 0, false) },
+      { applicationId: app, question: question('paused', false, 1, false) },
+      { applicationId: app, question: question('stale', false, 0, true) },
+    ]);
+    expect(asked.get(app)?.map((item) => item.id)).toEqual(['paused', 'stale']);
+  });
+
   it('lists a question asked again (one notification per ask) once', () => {
     const asked = openQuestions([
       { applicationId: app, question: question('q1') }, { applicationId: app, question: question('q1') },

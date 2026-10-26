@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { isOpenQuestion } from '../../lib/applications/buckets';
 import { InboxControl, initialView, pollingDelay, type InboxView } from '../inbox/control';
 import { AnswerAllForm, QuestionForm, answerable, kindNames } from '../inbox/question-form';
 import styles from '../inbox/inbox.module.css';
@@ -48,7 +49,7 @@ export function useQuestions(onAnswered: () => void) {
 
 export function ApplicationQuestions({ applicationId, view, control }: { applicationId: string; view: InboxView; control: InboxControl | null }) {
   // ponytail: the newest 50 notifications; older questions show after "Load older" in a later change if ever needed.
-  const open = (view.inbox?.items ?? []).filter((item) => item.applicationId === applicationId && item.question && !item.question.resolved);
+  const open = (view.inbox?.items ?? []).filter((item) => item.applicationId === applicationId && item.question && isOpenQuestion(item.question));
   // One notification per question; a reopened question can have several.
   const questions = [...new Map(open.map((item) => [item.question!.id, item.question!])).values()];
   const answers = questions.filter(answerable);
