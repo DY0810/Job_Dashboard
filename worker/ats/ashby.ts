@@ -175,7 +175,9 @@ export const ashby: AtsAdapter = {
   async fill(runtime, input, observation, signal) {
     signal?.throwIfAborted();
     const form = await page(runtime);
-    await fillEach(observation.fields, async field => {
+    // Files go first: attaching a resume autofills the form and clears what it does not hold (Harvey, 2026-10-26).
+    const fields = [...observation.fields].sort((a, b) => Number(b.kind === 'file') - Number(a.kind === 'file'));
+    await fillEach(fields, async field => {
       const box = entry(form, field);
       if (field.kind === 'file') {
         const path = input.documents[field.key];
@@ -186,6 +188,7 @@ export const ashby: AtsAdapter = {
         if (!await box.locator('.ashby-application-form-input-file-item-name', { hasText: name }).first().waitFor({ timeout: 30_000 }).then(() => true, () => false)) {
           throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
         }
+        await form.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {}); // let the resume autofill land
         return;
       }
       const value = ashbyAnswer(input, field);
@@ -193,6 +196,11 @@ export const ashby: AtsAdapter = {
       await fillOne(form, box, field, value);
       if (!await verifyOne(box, field, value)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
     });
+    // A field cleared after its own check would only show after Submit, as a timeout; recheck them all before.
+    for (const field of fields) {
+      const value = field.kind === 'file' ? undefined : ashbyAnswer(input, field);
+      if (value !== undefined && !await verifyOne(entry(form, field), field, value)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
+    }
   },
   async submit(runtime, input, signal) {
     signal?.throwIfAborted();
@@ -210,6 +218,11 @@ export const ashby: AtsAdapter = {
       try { await success.waitFor({ timeout: VERIFICATION_WAIT_MS }); return; }
       catch { throw new AtsError('CAPTCHA_TIMEOUT'); }
     }
+    // Neither outcome showed: log what the page does show (a rejection, field errors, a dead button) to tell them apart.
+    const shown = await form.locator('.ashby-application-form-failure-container, [role="alert"]').allInnerTexts().catch(() => []);
+    process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'submit-unconfirmed', company: input.company, role: input.role,
+      url: form.url(), shown: shown.map((text) => text.trim().slice(0, 300)).filter(Boolean).slice(0, 10),
+      buttonEnabled: await button.isEnabled().catch(() => null) }) + '\n');
     throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT');
   },
   async receipt(runtime, input, signal) {
