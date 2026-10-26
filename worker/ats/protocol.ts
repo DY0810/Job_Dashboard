@@ -12,7 +12,8 @@ export const AtsIdentitySchema = z.strictObject({
 });
 export type AtsIdentity = z.infer<typeof AtsIdentitySchema>;
 // Greenhouse names a multi-select question's input "question_123[]"; the suffix is the only punctuation a key may carry.
-export const atsFieldKey = /^[a-z][a-z0-9_-]{0,63}(\[\])?$/;
+// Its demographic survey numbers its questions ("75902").
+export const atsFieldKey = /^(?:[a-z][a-z0-9_-]{0,63}(\[\])?|\d{1,20})$/;
 export const AtsFieldSchema = z.strictObject({
   key: z.string().regex(atsFieldKey), label: z.string().trim().min(1).max(1000),
   // Text the form shows under a heading-only label (Ashby's checkbox sentence, Greenhouse's helper text). Shown in
@@ -25,7 +26,8 @@ export const AtsFieldSchema = z.strictObject({
 });
 export type AtsField = z.infer<typeof AtsFieldSchema>;
 /** A form's own id when it already fits atsFieldKey, otherwise a stable key derived from it. */
-export const fieldKeyFor = (raw: string) => atsFieldKey.test(raw) ? raw :
+// A bare number is hashed as it always was, so no Ashby or Lever question key (and its saved answer) changes.
+export const fieldKeyFor = (raw: string) => atsFieldKey.test(raw) && !/^\d+$/.test(raw) ? raw :
   `f-${createHash('sha256').update(raw).digest('hex').slice(0, 24)}`;
 export const formQuestionKey = (field: Pick<AtsField, 'key' | 'label'>) =>
   `form-${createHash('sha256').update(`${field.key}\u0000${field.label}`).digest('hex').slice(0, 32)}`;
@@ -167,10 +169,15 @@ export async function fillField(page: Page, field: AtsField, value: AtsValue | u
     if (typeof value !== 'string' || !field.options?.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key, field.options);
     await locator.selectOption({ label: value });
   } else if (field.kind === 'radio') {
-    if (typeof value !== 'string' || !field.options?.includes(value)) throw new AtsError('ANSWER_OPTION_INVALID', field.key, field.options);
-    const option = page.getByLabel(value, { exact: true }).first();
-    if (!await option.count()) throw new AtsError('ANSWER_OPTION_NOT_FOUND', field.key);
-    await option.check();
+    // A checkbox group (key ending in []) takes a list and checks exactly those boxes, each found inside the group:
+    // another question may offer the same "No".
+    const group = field.key.endsWith('[]'), picks = typeof value === 'string' ? [value] : group && Array.isArray(value) ? value : [];
+    if (!picks.length || !picks.every(pick => field.options?.includes(pick))) throw new AtsError('ANSWER_OPTION_INVALID', field.key, field.options);
+    for (const choice of group ? field.options! : picks) {
+      const option = (group ? locator : page).getByLabel(choice, { exact: true }).first();
+      if (!await option.count()) throw new AtsError('ANSWER_OPTION_NOT_FOUND', field.key);
+      await option.setChecked(picks.includes(choice));
+    }
   } else {
     if (typeof value !== 'string') throw new AtsError('ANSWER_TYPE_MISMATCH', field.key);
     await locator.fill(value);
@@ -192,9 +199,13 @@ export async function verifyField(page: Page, field: AtsField, value: AtsValue |
   const locator = await locateField(page, field);
   if (field.kind === 'checkbox') return typeof value === 'boolean' && (await locator.isChecked()) === value;
   if (field.kind === 'radio') {
-    if (typeof value !== 'string') return false;
-    const option = page.getByLabel(value, { exact: true }).first();
-    return await option.count() > 0 && await option.isChecked();
+    const group = field.key.endsWith('[]'), picks = typeof value === 'string' ? [value] : group && Array.isArray(value) ? value : [];
+    if (!picks.length || (group && !picks.every(pick => field.options?.includes(pick)))) return false;
+    for (const choice of group ? field.options! : picks) {
+      const option = (group ? locator : page).getByLabel(choice, { exact: true }).first();
+      if (!await option.count() || await option.isChecked() !== picks.includes(choice)) return false;
+    }
+    return true;
   }
   if (field.kind === 'select') return typeof value === 'string' && (await locator.inputValue()) === value;
   if (field.kind === 'combobox' && Array.isArray(value)) {

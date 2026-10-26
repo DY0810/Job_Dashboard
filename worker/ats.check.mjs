@@ -7,9 +7,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { chromium } from 'playwright';
 import { BrowserEgressError, createBrowserRuntime, openApplicationTab } from './browser.ts';
-import { greenhouse, hostedFields, hostedTitle } from './ats/greenhouse.ts';
+import { greenhouse, greenhouseAnswer, hostedFields, hostedTitle } from './ats/greenhouse.ts';
 import { lever, matchOption } from './ats/lever.ts';
-import { fillField, formQuestionKey as leverQuestionKey, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
+import { fieldKeyFor, fillField, formQuestionKey as leverQuestionKey, locateField, undergraduateTranscript, verifyField } from './ats/protocol.ts';
 import { fillAtsApplication, runAtsApplication } from './application-runner.ts';
 import { AtsIdentitySchema, AtsObservationSchema } from './ats/protocol.ts';
 import { resolveApplicationIdentity } from '../lib/applications/application-identity.ts';
@@ -192,6 +192,130 @@ test('a hosted multi-select question (id ending in []) is observed and filled li
     await fillField(page, field, 'English', {});
     assert.equal(await verifyField(page, field, 'English'), true);
     assert.equal(await verifyField(page, field, 'French'), false);
+  } finally { await browser.close(); }
+});
+// A react-select single dropdown: its options exist only while its menu is open, and a pick shows in the control.
+const surveyScript = choices => `<div id="menu"></div><script>
+  const choices = ${JSON.stringify(choices)}, menu = document.getElementById('menu');
+  for (const input of document.querySelectorAll('input[role=combobox]')) {
+    const render = () => { menu.innerHTML = ''; for (const choice of choices[input.id].filter(c => c.toLowerCase().includes(input.value.toLowerCase()))) {
+      const item = document.createElement('div'); item.setAttribute('role', 'option'); item.textContent = choice;
+      item.addEventListener('click', () => { input.previousElementSibling.textContent = choice; input.value = ''; menu.innerHTML = ''; });
+      menu.append(item); } };
+    input.addEventListener('click', render); input.addEventListener('input', render);
+    input.addEventListener('keydown', event => { if (event.key === 'Escape') menu.innerHTML = ''; });
+  }
+</script>`;
+const surveySelect = (id, label) => `<label id="${id}-label" for="${id}">${label}<span aria-hidden="true">*</span></label>
+  <div class="select__control"><div class="select__single-value"></div><input id="${id}" type="text" aria-labelledby="${id}-label" aria-required="true" role="combobox" value=""></div>`;
+test('a Greenhouse checkbox group is one multi-choice question, filled box by box inside its own group, beside a numbered survey dropdown', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    const role = 'Software Engineering Intern', job = 'https://job-boards.greenhouse.io/datadog/jobs/8181440';
+    // Datadog's live form (2026-10-26): one checkbox per option, "question_<question>[]_<option>", in a fieldset named for the
+    // question; the demographic survey's dropdown has a bare number for its id. The second group (also offering "No") is not Datadog's.
+    const box = (question, option, label) => `<div><div><input required="" type="checkbox" id="question_${question}[]_${option}" name="question_${question}[]"
+      aria-describedby="question_${question}[]-description question_${question}[]-error" value="${option}"/></div><label for="question_${question}[]_${option}">${label}</label></div>`;
+    await context.route(job, route => route.fulfill({ contentType: 'text/html', body: `<title>Job Application for ${role} at Datadog</title>
+      <form id="application-form">
+      <fieldset class="checkbox" id="question_69008302[]" aria-required="true"><legend class="label checkbox__description">Do you have any specific academic requirements for your internship?<!-- --> <span class="required">*</span></legend>
+      ${box(69008302, 750299547, 'International internship')}${box(69008302, 750299548, 'Master&#x27;s thesis')}${box(69008302, 750299549, 'Specific internship focus')}
+      ${box(69008302, 750299550, 'Other (please specify at the top of your CV)')}${box(69008302, 750299551, 'No')}</fieldset>
+      <fieldset class="checkbox" id="question_2[]"><legend class="label checkbox__description">Have you interned at Datadog before?
+        Select all that apply.</legend>${box(2, 1, 'Yes')}${box(2, 2, 'No')}</fieldset>
+      ${surveySelect(1757, 'Voluntary Self-Identification of Gender:\t')}
+      </form>${surveyScript({ 1757: ['Female', 'Male', 'Non-binary/third gender', 'Prefer to self describe as', "I don't wish to answer"] })}` }));
+    const runtime = { context, page: async () => context.pages()[0] ?? context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } };
+    const input = { identity: { ats: 'greenhouse', tenant: 'datadog', requisition: '8181440' }, company: 'Datadog', role, applicationUrl: job, answers: {} };
+    const observation = await greenhouse.observe(runtime, input);
+    const academic = ['International internship', "Master's thesis", 'Specific internship focus', 'Other (please specify at the top of your CV)', 'No'];
+    assert.deepEqual(observation.fields.map(({ key, label, kind, required, options }) => [key, label, kind, required, options]), [
+      ['question_69008302[]', 'Do you have any specific academic requirements for your internship?', 'radio', true, academic],
+      ['question_2[]', 'Have you interned at Datadog before? Select all that apply.', 'radio', true, ['Yes', 'No']],
+      ['1757', 'Voluntary Self-Identification of Gender:', 'combobox', true, ['Female', 'Male', 'Non-binary/third gender', 'Prefer to self describe as', "I don't wish to answer"]],
+    ]);
+    const { questions } = formQuestions({ profileRevision: 1, company: 'Datadog', role, applicationUrl: job, applicationId: crypto.randomUUID(),
+      identity: observation.identity }, observation.fields);
+    assert.deepEqual(questions.map(question => [question.field.type, question.field.maxSelections]), [['multiselect', 5], ['multiselect', 2], ['select', 1]]);
+    const page = context.pages()[0], [requirements, before, gender] = observation.fields;
+    await fillField(page, requirements, ['International internship', 'No'], {});
+    assert.equal(await verifyField(page, requirements, ['International internship', 'No']), true);
+    assert.equal(await verifyField(page, requirements, ['No']), false);
+    assert.equal(await page.isChecked('[id="question_2[]_2"]'), false, 'the other group\'s "No" is untouched');
+    assert.equal(await verifyField(page, before, ['No']), false);
+    // Filling again checks exactly the new answer.
+    await fillField(page, requirements, ['No'], {});
+    assert.equal(await verifyField(page, requirements, ['No']), true);
+    await assert.rejects(fillField(page, requirements, ['Maybe'], {}), error => error.code === 'ANSWER_OPTION_INVALID' && error.options.length === 5);
+    await fillField(page, gender, 'Male', {});
+    assert.equal(await verifyField(page, gender, 'Male'), true);
+    assert.equal(await verifyField(page, gender, 'Female'), false);
+  } finally { await browser.close(); }
+});
+test('a numbered demographic survey question takes a voluntary fact only when it is about that one topic and the form offers it', () => {
+  const answers = { voluntary_gender: 'Male', voluntary_hispanic: 'No', voluntary_veteran: 'I am not a protected veteran',
+    voluntary_disability: 'No, I do not have a disability and have not had one in the past' };
+  const input = { identity: { ats: 'greenhouse', tenant: 'mongodb', requisition: '8209134' }, company: 'MongoDB', role: 'Intern', applicationUrl: 'https://example.test', answers };
+  const answer = (label, options, key = '1653') => greenhouseAnswer(input, { key, label, kind: 'combobox', required: true, options });
+  const decline = "I don't wish to answer";
+  // Live wording and options (2026-10-26): Waymo, Datadog, MongoDB, Samsara, Roblox.
+  assert.equal(answer('Please indicate your gender', ['Male', 'Female', 'Non-Binary', decline]), 'Male');
+  assert.equal(answer('Voluntary Self-Identification of Gender:', ['Female', 'Male', 'Non-binary/third gender', decline]), 'Male');
+  assert.equal(answer('Gender Identity', ['Woman', 'Man', 'Non Binary', 'I want to self describe', decline]), undefined);
+  assert.equal(answer('Are you Hispanic/Latino?', ['Yes', 'No', decline]), 'No');
+  assert.equal(answer('Race', ['Asian', 'Latinx or Hispanic', 'White', decline]), undefined);
+  assert.equal(answer('Please indicate your race / ethnic group (choose all that apply)', ['Asian', 'Hispanic or Latino', decline]), undefined);
+  assert.equal(answer('Veteran Status', ['I am not a protected veteran', 'I identify as one or more of the classifications of a protected veteran', decline]), 'I am not a protected veteran');
+  assert.equal(answer('If you are based in the US, what is your veteran status?', ['I am a protected veteran', 'I am not a protected veteran', decline]), 'I am not a protected veteran');
+  assert.equal(answer('Please indicate if you are a veteran or active member of the United States Armed Forces.',
+    ['Yes, I am a veteran or active member', 'No, I am not a veteran or active member', decline]), undefined);
+  assert.equal(answer('Disability Status', ['Yes, I have a disability, or have had one in the past', 'No, I do not have a disability and have not had one in the past', decline]),
+    'No, I do not have a disability and have not had one in the past');
+  assert.equal(answer('Do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, other)?', ['Yes', 'No', decline]), undefined);
+  assert.equal(answer('Do you identify as transgender?', ['Yes', 'No', 'Male']), undefined);
+  assert.equal(answer('Gender', undefined), undefined, 'without the form\'s options nothing is picked');
+  // Under ask_each_sensitive the profile sends no voluntary facts, so every survey question is asked.
+  assert.equal(greenhouseAnswer({ ...input, answers: {} }, { key: '1653', label: 'Gender', kind: 'combobox', required: true, options: ['Male', 'Female'] }), undefined);
+  // An inbox answer wins, keyed as every form question is.
+  const field = { key: '1654', label: 'Gender Identity', kind: 'combobox', required: true, options: ['Woman', 'Man'] };
+  assert.equal(greenhouseAnswer({ ...input, answers: { ...answers, [leverQuestionKey(field)]: 'Man' } }, field), 'Man');
+  // Survey numbers and checkbox groups are valid keys; a single box's id is not. A bare-number Ashby or Lever id is still hashed.
+  for (const key of ['75902', 'question_69008302[]']) AtsObservationSchema.parse({ identity: input.identity, company: 'MongoDB', role: 'Intern', fields: [{ key, label: 'Q', kind: 'radio', required: true }], actions: ['fill'] });
+  assert.throws(() => AtsObservationSchema.parse({ identity: input.identity, company: 'MongoDB', role: 'Intern', fields: [{ key: 'question_1[]_2', label: 'Q', kind: 'radio', required: true }], actions: ['fill'] }));
+  assert.match(fieldKeyFor('75902'), /^f-/);
+  assert.match(fieldKeyFor('3f2a9c1e-1111-4222-8333-944455566677'), /^f-/);
+  assert.equal(fieldKeyFor('question_1'), 'question_1');
+});
+test('a numbered survey dropdown reads its options first, fills a voluntary fact the form offers, and asks the rest', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    const role = 'Software Engineering Intern', job = 'https://job-boards.greenhouse.io/waymo/jobs/8234553';
+    // Waymo's live "Candidate Demographic Survey" (2026-10-26).
+    const choices = { 75902: ['Male', 'Female', 'Non-Binary', "I don't wish to answer"],
+      75903: ['American Indian or Alaska Native', 'Asian', 'Black or African American', 'Hispanic or Latino', "I don't wish to answer"],
+      75904: ['Yes, I am a veteran or active member', 'No, I am not a veteran or active member', "I don't wish to answer"] };
+    await context.route(job, route => route.fulfill({ contentType: 'text/html', body: `<title>Job Application for ${role} at Waymo</title>
+      <form id="application-form"><div id="demographic-section"><h3>Candidate Demographic Survey</h3>
+      ${surveySelect(75902, 'Please indicate your gender')}${surveySelect(75903, 'Please indicate your race / ethnic group (choose all that apply)')}
+      ${surveySelect(75904, 'Please indicate if you are a veteran or active member of the United States Armed Forces.')}
+      <input required="" tabindex="-1" aria-hidden="true" value=""/></div></form>${surveyScript(choices)}` }));
+    const runtime = { context, page: async () => context.pages()[0] ?? context.newPage(), navigate: async (page, url) => { await page.goto(url); return page; } };
+    const input = { identity: { ats: 'greenhouse', tenant: 'waymo', requisition: '8234553' }, company: 'Waymo', role, applicationUrl: job,
+      answers: { voluntary_gender: 'Male', voluntary_veteran: 'I am not a protected veteran' } };
+    const observation = await greenhouse.observe(runtime, input);
+    assert.deepEqual(observation.fields.map(field => [field.key, field.options]), Object.entries(choices));
+    assert.deepEqual(observation.fields.map(field => greenhouse.answer(input, field)), ['Male', undefined, undefined]);
+    const missing = observation.fields.filter(field => field.required && greenhouse.answer(input, field) === undefined);
+    const { questions } = formQuestions({ profileRevision: 1, company: 'Waymo', role, applicationUrl: job, applicationId: crypto.randomUUID(),
+      identity: observation.identity }, missing);
+    assert.deepEqual(questions.map(question => [question.originalWording, question.field.type, question.field.options.length]), [
+      ['Please indicate your race / ethnic group (choose all that apply)', 'select', 5],
+      ['Please indicate if you are a veteran or active member of the United States Armed Forces.', 'select', 3]]);
+    const page = context.pages()[0];
+    await fillField(page, observation.fields[0], 'Male', {});
+    assert.equal(await verifyField(page, observation.fields[0], 'Male'), true);
   } finally { await browser.close(); }
 });
 test('a radio question fills and verifies the exact option the answer names', { skip: !browserReady }, async () => {
