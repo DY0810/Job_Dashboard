@@ -30,6 +30,8 @@ export class WorkerFixture {
   pairings: PairingSummary[] = [];
   runs: Run[] = [];
   applications: ApplicationSummary[] = [];
+  /** What each application sent: its resume, cover letter and filled answers. */
+  materials: z.input<typeof MaterialsSchema>['materials'] = [];
   /** Per run: a discovery error, or roles held for the applicant's decision. */
   discovery = new Map<string, { errorCode?: string; heldQuestions?: Record<string, number> }>();
   /** Discovery status answers only once this settles, like a slow status read. */
@@ -99,7 +101,7 @@ export class WorkerFixture {
       }
       if (path === '/api/auto-apply/policies') return { status: 200, json: structuredClone(this.policy) };
       // The Auto Apply page under the settings drawer reads these too.
-      if (path === '/api/applications/materials') return reply(MaterialsSchema, { ownerId: this.owner, materials: [] });
+      if (path === '/api/applications/materials') return reply(MaterialsSchema, { ownerId: this.owner, materials: this.materials });
       if (path === '/api/applications/live') return reply(LiveListSchema, { ownerId: this.owner, live: this.frames.flatMap((frame) => {
         const app = this.applications.find((row) => row.id === frame.applicationId);
         return app && inLive(app) ? [{ ...frame, state: app.state }] : [];

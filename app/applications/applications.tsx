@@ -73,9 +73,9 @@ function showTab(tab: Tab) {
   window.history.pushState(null, '', url);
 }
 
-/** The tailored resume (and the lines it changed) and the cover letter for this application, before or after it is submitted. */
+/** The tailored resume (and the lines it changed) and the cover letter for this application, and once submitted, the answers it sent. */
 function MaterialsPanel({ item }: { item: Material }) {
-  const { resume, letter } = item;
+  const { resume, letter, answers } = item;
   return <>
     {resume && <div>
       <div className={styles.row}>
@@ -90,6 +90,7 @@ function MaterialsPanel({ item }: { item: Material }) {
     {letter && <details><summary className={styles.muted}>Cover letter</summary>
       <pre className={styles.preview}>{['Dear Hiring Manager,', letter.introduction, ...letter.body, letter.companyParagraph, letter.conclusion].join('\n\n')}</pre>
     </details>}
+    {answers && <dl className={styles.review}>{answers.map((field, index) => <div key={index}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl>}
   </>;
 }
 
@@ -150,6 +151,7 @@ function LiveCard({ app, frame, role, asked, questions, ownerId, onAnswer, onDon
       <p className={styles.step} aria-live="polite">{watching && <span className={styles.pulse} aria-hidden="true" />}{step}
         {frame && <span className={styles.muted}> · updated {ago(frame.updatedAt)}</span>}
         {full && <button className={styles.button} type="button" autoFocus onClick={() => setFull(false)}>Exit full screen</button>}</p>
+      {app.state === 'submitting' && <p className={styles.muted}>If {company} emails you a verification code or asks for a captcha, enter it in Workie&apos;s browser window on your computer within 30 minutes.</p>}
       <div className={full ? styles.fullBody : undefined}>
         {image
           // eslint-disable-next-line @next/next/no-img-element -- a private data URL, not an optimizable asset
@@ -213,6 +215,12 @@ const postCommand = (path: string, ownerId: string, expectedRevision: number, bo
   body: JSON.stringify({ requestId: crypto.randomUUID(), expectedRevision, ...body }),
 });
 const errorCode = async (response: Response) => (await response.clone().json().catch(() => null))?.code as string | undefined;
+
+/** A submit the employer held for the applicant, who never finished it in the worker's window (see worker/ats). */
+const UNSENT: Record<string, string> = {
+  verification_code_timeout: 'The employer emailed you a verification code that was not entered in Workie\'s browser window within 30 minutes, so it most likely was not sent.',
+  captcha_timeout: 'The employer asked for a captcha that was not solved in Workie\'s browser window within 30 minutes, so it most likely was not sent.',
+};
 
 // Only a role that stopped needs a fresh attempt; a queued or waiting row resumes by itself once its hold clears.
 const RESTARTABLE = ['failed', 'skipped', 'cancelled', 'retryable_failure', 'blocked_unsupported', 'provider_unavailable', 'needs_document'];
@@ -522,7 +530,7 @@ export default function Applications() {
               // Questions arrive with the inbox, a moment after the rows; older ones may sit past the pages loaded here.
               : app.reasonCode === 'question_unresolved' ? questions.view.inbox ? 'Waiting for your answers.' : 'Loading questions...'
               // Nothing resolves this by itself: only the applicant knows whether the employer got it.
-              : app.state === 'submission_unknown' ? `Workie could not confirm the employer received this${app.reasonCode ? ` (${humanize(app.reasonCode)})` : ''}. Check your email or the job post, then say whether it went through.`
+              : app.state === 'submission_unknown' ? `${UNSENT[app.reasonCode ?? ''] ?? `Workie could not confirm the employer received this${app.reasonCode ? ` (${humanize(app.reasonCode)})` : ''}.`} Check your email or the job post, then say whether it went through.`
               : (app.reasonCode && !isTerminalState(app.state)) || app.state === 'failed' ? humanize(app.reasonCode ?? 'failed') : null;
             const show = (kind: Dialog['kind']) => () => setDialog({ kind, id: app.id, open: true });
             return <li key={app.id} className={styles.card}>
@@ -537,13 +545,14 @@ export default function Applications() {
                 <p key={question.id}>{question.descriptor.originalWording.split('\n\n')[0]}</p>)}</div>
                 : detail && <p className={styles.issue}>{detail}
                   {(app.reasonCode === 'cover_letter_unavailable' || skipReasons(app).length > 0) && <> <Link href="/profile" prefetch={false}>Open Profile</Link></>}</p>}
+              {tab === 'applied' && material && <details><summary className={styles.muted}>What you sent</summary><MaterialsPanel item={material} /></details>}
               <div className={styles.actions}>
                 {!archived && !['submitting', 'submission_unknown'].includes(app.state) && <Command label="Archive" busyLabel="Archiving..."
                   confirm={isTerminalState(app.state) ? 'Archive this application?' : 'Archive this application? It is still live, so this also cancels it.'}
                   run={() => archive(app, ownerId)} onDone={reload} />}
                 {href && <a className={styles.button} href={href} target="_blank" rel="noopener noreferrer">Open job post</a>}
                 {live && LIVE_STATES.includes(app.state) && <button className={buttonClass(primary === null)} type="button" onClick={() => showTab('live')}>Watch live</button>}
-                {material && !(live && approval) && <button className={styles.button} type="button" onClick={show('materials')}>Materials</button>}
+                {material && tab !== 'applied' && !(live && approval) && <button className={styles.button} type="button" onClick={show('materials')}>Materials</button>}
                 {live && retryable && <Command label="Retry" busyLabel="Retrying..." primary={primary === 'retry'} run={() => retry(app, runs, ownerId)} onDone={reload} />}
                 {live && app.state === 'submission_unknown' && <>
                   <Command label="It went through" busyLabel="Saving..." confirm="Mark this as applied? Do this only if the employer confirmed it, by email or on its site."

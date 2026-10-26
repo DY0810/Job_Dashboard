@@ -134,6 +134,8 @@ export const MaterialsSchema = z.strictObject({ ownerId: z.string().min(1), mate
   resume: z.strictObject({ documentId: uuid, mime: z.string(), createdAt: timestamp,
     changes: z.array(z.strictObject({ before: z.string(), after: z.string() })).max(64) }).nullable(),
   letter: z.strictObject(letterText).nullable(),
+  // A submitted application's filled form, as the worker last typed it.
+  answers: liveFields.nullable(),
 })).max(500) });
 export type PairingCreate = z.infer<typeof PairingCreateSchema>;
 export type PairingGrant = z.infer<typeof PairingGrantSchema>;
