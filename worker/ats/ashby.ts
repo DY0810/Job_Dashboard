@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Locator, Page } from 'playwright';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
 import { SUBMIT_WAIT_MS } from '../../lib/applications/worker-protocol.ts';
@@ -211,7 +213,7 @@ export const ashby: AtsAdapter = {
     const success = form.locator('.ashby-application-form-success-container');
     // A low reCAPTCHA score replaces the form with "There was a problem verifying this submission with CAPTCHA..."; a challenge opens its own frame.
     const captcha = form.locator('.ashby-application-form-failure-container', { hasText: 'CAPTCHA' }).or(form.locator('iframe[title*="challenge" i]'));
-    await success.or(captcha).first().waitFor({ timeout: 30_000 }).catch(() => {});
+    await success.or(captcha).first().waitFor({ timeout: 60_000 }).catch(() => {});
     if (await success.isVisible()) return;
     if (await captcha.first().isVisible()) {
       process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'captcha-required', company: input.company, role: input.role }) + '\n');
@@ -220,8 +222,11 @@ export const ashby: AtsAdapter = {
     }
     // Neither outcome showed: log what the page does show (a rejection, field errors, a dead button) to tell them apart.
     const shown = await form.locator('.ashby-application-form-failure-container, [role="alert"]').allInnerTexts().catch(() => []);
+    // Kept on this machine only: what the page showed, for the next look at an unconfirmed submit.
+    const screenshot = join(tmpdir(), `workie-ashby-unconfirmed-${Date.now()}.png`);
+    await form.screenshot({ path: screenshot, fullPage: true }).catch(() => {});
     process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'submit-unconfirmed', company: input.company, role: input.role,
-      url: form.url(), shown: shown.map((text) => text.trim().slice(0, 300)).filter(Boolean).slice(0, 10),
+      url: form.url(), screenshot, shown: shown.map((text) => text.trim().slice(0, 300)).filter(Boolean).slice(0, 10),
       buttonEnabled: await button.isEnabled().catch(() => null) }) + '\n');
     throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT');
   },
