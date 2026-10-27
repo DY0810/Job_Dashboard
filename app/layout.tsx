@@ -15,8 +15,8 @@ export const metadata: Metadata = {
   description: 'Entry-to-mid design and engineering postings, newest first.',
 };
 
-/** Applies a collapsed sidebar before first paint, so the rail never flashes open. */
-const SIDE_BOOT = `try{if(localStorage.getItem('workie-side')==='rail')document.documentElement.dataset.side='rail'}catch(e){}`;
+/** Applies a collapsed sidebar and a dragged width (within SideResize's limits) before first paint, so neither flashes. */
+const SIDE_BOOT = `try{var d=document.documentElement,w=+localStorage.getItem('workie-side-width');if(localStorage.getItem('workie-side')==='rail')d.dataset.side='rail';if(w>=200&&w<=400)d.style.setProperty('--side',w+'px')}catch(e){}`;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

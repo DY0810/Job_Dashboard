@@ -4,7 +4,7 @@ import { AppNav } from './app-nav';
 import { ApplicantSwitcher } from './applicant-switcher';
 import { RefreshButton } from './refresh-button';
 import { SettingsButton, SettingsDrawer } from './settings-drawer';
-import { SideCollapse, SideOpen, SideScrim } from './side-controls';
+import { SideCollapse, SideOpen, SideResize, SideScrim } from './side-controls';
 
 /**
  * The one sidebar every page wears, laid out like Postie's: wordmark and collapse on top, the
@@ -30,6 +30,7 @@ export function AppHeader({ current, switcher = true }: { current: string; switc
         {switcher && <ApplicantSwitcher />}
         <SettingsButton />
       </div>
+      <SideResize />
     </aside>
     <SideScrim />
     <Suspense fallback={null}><SettingsDrawer /></Suspense>
