@@ -105,6 +105,10 @@ async function skip(id: string) {
   const [app] = await db.select().from(applications).where(eq(applications.id, id));
   return commandApplication(db, app.ownerId, app.runId, id, { ...request(), expectedRevision: app.revision, action: 'skip' }, options);
 }
+/** Marks an attempt sent to the employer, so it charges the employer's cap. */
+async function submit(id: string) {
+  await db.update(applications).set({ state: 'submitted', reasonCode: null, leaseUntil: null, leaseCheckedAt: null }).where(eq(applications.id, id));
+}
 async function preview(ids: number[], ownerId = 'alice') {
   return previewLegacyImport(db, ownerId, provider, { ...request(), postingIds: ids }, options);
 }
@@ -277,9 +281,9 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     expect(attempts(startedApp.requisition)[0].startedAt).not.toBeNull();
     expect(attempts(unstartedRequisition)[0].startedAt).toBeNull();
     expect((await targets()).filter((t) => t.runId === replacement.id).map((t) => t.disposition)).toEqual(['eligible', 'eligible']);
-    // The stopped attempt started today, so the per-employer cap (1) holds its retry until tomorrow.
-    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 1, held_cap: 1, duplicate: 0 });
-    expect((await poll(token)).lease?.applicationId).toBe(attempts(unstartedRequisition)[1].id);
+    // The stopped attempt never reached the employer, so the per-employer cap (1) holds neither retry.
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 2, held_cap: 0, duplicate: 0 });
+    expect([attempts(startedApp.requisition)[1].id, attempts(unstartedRequisition)[1].id]).toContain((await poll(token)).lease?.applicationId);
   });
 
   it('retries a stopped target in a new run even after an earlier attempt of it was restarted', async () => {
@@ -341,11 +345,11 @@ describe('immutable complete cohorts and standing reconciliation', () => {
     const replacement = await createRun(db, 'alice', { ...request(), expectedRevision: 0, workerId: second.worker.workerId }, options);
     await complete(second.token, replacement.id);
     expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 0, duplicate: 3 });
-    await poll(token); // One role had started in the stopped run; it comes back too, held by today's per-employer cap.
+    await poll(token); // One role had started in the stopped run; it comes back too, and never reached the employer, so no cap holds it.
     await commandRun(db, 'alice', run.id, { ...request(), expectedRevision: run.revision, action: 'stop' }, options);
     now += DISCOVERY_INTERVAL_MS + 1; addPostings(1, 4);
     await discoverWorkerRuns(db, second.token, provider, options);
-    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 3, held_cap: 1, duplicate: 0 });
+    expect((await getDiscoveryStatus(db, 'alice', replacement.id, options)).counts).toMatchObject({ eligible: 4, held_cap: 0, duplicate: 0 });
     expect((await poll(second.token)).lease).toMatchObject({ runId: replacement.id });
   });
 
@@ -578,7 +582,7 @@ describe('cap-held backlog and explicit historical attempts', () => {
   it('skips rows held by the per-employer cap, or in a run on an outdated policy, in one query too', async () => {
     const { token, run } = await prepared('alice', { dailyApplicationCap: 1000, perEmployerCap: 1 }); addPostings(100, 1, true);
     await complete(token, run.id);
-    await skip((await poll(token)).lease!.applicationId);
+    await submit((await poll(token)).lease!.applicationId);
     let statements = countStatements(db);
     expect((await poll(token)).lease).toBeNull();
     // Before the fix: about 13 statements for each of the 99 held rows.
@@ -621,7 +625,7 @@ describe('cap-held backlog and explicit historical attempts', () => {
     const first = (await poll(token)).lease!;
     expect((await poll(token)).lease?.applicationId).toBe(first.applicationId);
     expect((await getDiscoveryStatus(db, 'alice', run.id, options)).counts.held_cap).toBe(2);
-    await skip(first.applicationId);
+    await submit(first.applicationId);
     expect((await poll(token)).lease).toBeNull();
     now += DAY;
     expect((await poll(token)).lease).not.toBeNull();
@@ -635,6 +639,26 @@ describe('cap-held backlog and explicit historical attempts', () => {
     const next = (await poll(token)).lease;
     expect(next).not.toBeNull();
     expect(next!.applicationId).not.toBe(first.applicationId);
+  });
+
+  it('charges the per-employer cap only for attempts that reached the employer or still may', async () => {
+    const { token, run } = await prepared('alice', { perEmployerCap: 1 }); addPostings(3, 1, true); await complete(token, run.id);
+    const end = (id: string, state: 'failed' | 'cancelled', reasonCode: string) => db.update(applications)
+      .set({ state, reasonCode, leaseUntil: null, leaseCheckedAt: null }).where(eq(applications.id, id));
+    // A fill that failed before submitting never reached the employer.
+    const first = (await poll(token)).lease!;
+    await end(first.applicationId, 'failed', 'ats_identity_mismatch');
+    const second = (await poll(token)).lease!;
+    expect(second.applicationId).not.toBe(first.applicationId);
+    // One that pressed submit did, however it ended.
+    const app = (await appRows()).find((row) => row.id === second.applicationId)!;
+    await db.insert(applicationSubmissions).values({
+      intentId: randomUUID(), ownerId: 'alice', applicationId: app.id, workerId: app.workerId, ats: app.ats, tenant: app.tenant,
+      requisition: app.requisition, company: 'Employer 1', role: 'Software Engineer', manifestHash: hashValue('manifest'),
+      artifactHashes: [], requestHash: hashValue('request'), createdAt: now,
+    });
+    await end(app.id, 'failed', 'applicant_confirmed_not_submitted');
+    expect((await poll(token)).lease).toBeNull();
   });
 
   it("holds a third Ramp application inside Ramp's 60-day limit, counting applications made by hand", async () => {
