@@ -36,7 +36,9 @@ function official(value: string): { identity: OfficialIdentity; url: string } | 
     canonical = path === '/embed/job_app' ? `/embed/job_app?for=${tenant}&token=${requisition}` : `/${tenant}/jobs/${requisition}`;
   } else if (host === 'jobs.ashbyhq.com' || host === 'jobs.lever.co' || host === 'jobs.eu.lever.co') {
     ats = host === 'jobs.ashbyhq.com' ? 'ashby' : 'lever';
-    match = path.match(new RegExp(`^/(${tenantPart})/(${UUID})(?:/${ats === 'ashby' ? 'application' : 'apply'})?$`));
+    // An Ashby board name can hold a dot (Rivian's "rivianvw.tech"); it never starts with one.
+    const board = ats === 'ashby' ? '[A-Za-z0-9][A-Za-z0-9._-]*' : tenantPart;
+    match = path.match(new RegExp(`^/(${board})/(${UUID})(?:/${ats === 'ashby' ? 'application' : 'apply'})?$`));
     if (!match) return null;
     tenant = host === 'jobs.eu.lever.co' ? `${host}:${match[1]}` : match[1];
     requisition = match[2].toLowerCase();

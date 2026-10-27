@@ -11,6 +11,8 @@ describe('official application identity, never a receipt or collector identity',
   it.each([
     [gh, 'greenhouse', 'acme', '123'],
     [`https://jobs.ashbyhq.com/acme/${uuid}/application`, 'ashby', 'acme', uuid],
+    // Rivian's Ashby board name has a dot.
+    [`https://jobs.ashbyhq.com/rivianvw.tech/${uuid}`, 'ashby', 'rivianvw.tech', uuid],
     [`https://jobs.lever.co/acme/${uuid}/apply`, 'lever', 'acme', uuid],
     ['https://jobs.jobvite.com/acme/job/oAbC1234/apply', 'jobvite', 'acme', 'oAbC1234'],
     ['https://nvidia.wd5.myworkdayjobs.com/en-US/External/job/US/Engineer_JR2022939-1',
