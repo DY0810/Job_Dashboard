@@ -627,22 +627,54 @@ function ashbyMarkup(title) {
     <fieldset class="ashby-application-form-input-checkbox-group"><label class="ashby-application-form-question-title _required_f7cvd_91" for="5f7757f0-b2ee-41b2-b9d0-0212461ed5a2">What type of engineering role are you interested in?</label>${group}</fieldset>
     <button type="button" class="ashby-application-form-submit-button">Submit Application</button></div>
     <script>
+      // Like Ashby, every answer saves to the server as it changes: typing half a second after the last key or at once on blur.
+      const save = (path, value) => fetch('/api/non-user-graphql?op=ApiSetFormValue', { method: 'POST', body: JSON.stringify({ path, value }) });
+      document.querySelectorAll('input.ashby-application-form-input-text, textarea').forEach(input => {
+        let timer;
+        const flush = () => { if (timer) { clearTimeout(timer); timer = undefined; save(input.name, input.value); } };
+        input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(flush, 500); });
+        input.addEventListener('blur', flush);
+      });
       document.querySelectorAll('.ashby-application-form-input-yesno button').forEach(button => button.onclick = () => {
         for (const other of button.parentElement.querySelectorAll('button')) other.setAttribute('aria-pressed', String(other === button));
+        save(button.parentElement.querySelector('input').name, button.textContent);
       });
+      const group = document.querySelector('fieldset.ashby-application-form-input-checkbox-group');
+      group.addEventListener('change', () => save(group.querySelector('label').htmlFor, [...group.querySelectorAll('input:checked')].map(box => box.name)));
       // Like Harvey's live form (2026-10-26), attaching a resume autofills the form and clears what the resume does not hold.
       document.getElementById('_systemfield_resume').onchange = (event) => { event.target.insertAdjacentHTML('afterend',
         '<p class="ashby-application-form-input-file-item-name"><span>' + event.target.files[0].name + '</span></p>');
+        save('_systemfield_resume', event.target.files[0].name);
         document.getElementById('_systemfield_email').value = ''; };
-      document.querySelector('.ashby-application-form-submit-button').onclick = () => {
-        if (!document.getElementById('_systemfield_email').value) return document.querySelector('.ashby-application-form-container').insertAdjacentHTML('afterbegin',
-          '<div class="ashby-application-form-failure-container" role="alert">Your form needs corrections. Missing entry for required field: Email</div>');
+      // Like Ashby, Submit checks the answers the server holds, not the ones on screen.
+      document.querySelector('.ashby-application-form-submit-button').onclick = async () => {
+        const { missing } = await fetch('/api/submit', { method: 'POST' }).then(response => response.json());
+        if (missing.length) return document.querySelector('.ashby-application-form-container').insertAdjacentHTML('afterbegin',
+          '<div class="ashby-application-form-failure-container" role="alert">Your form needs corrections. Missing entry for required field: ' + missing.join(', ') + '</div>');
         document.querySelector('.ashby-application-form-container').outerHTML =
         '<div class="ashby-application-form-success-container" role="status"><h2>Success</h2><p>Your application was successfully submitted. We\\'ll contact you if there are next steps.</p></div>'; };
     </script>`;
 }
+const ashbyRequired = ['_systemfield_name', '_systemfield_email', '_systemfield_resume', '09a328e0-8d57-4f88-86ab-688de1657b17',
+  'bed95633-1b6e-4cd0-9eaf-c5a9f75ac35d', 'd33e2a8f-3742-4e5e-b91c-b7607d3cdf63', '5f7757f0-b2ee-41b2-b9d0-0212461ed5a2'];
 async function ashbyFixture(title = 'Product Designer @ Fixture Co') {
-  const server = createServer((request, response) => {
+  const fixture = { saved: {} };
+  const server = createServer(async (request, response) => {
+    if (request.url.includes('op=ApiSetFormValue')) {
+      let body = '';
+      for await (const chunk of request) body += chunk;
+      const { path, value } = JSON.parse(body);
+      // Like Rivian's form (2026-10-27), a save rewrites the whole form from what it read, so of two saves at once the later drops the other.
+      const before = { ...fixture.saved };
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      fixture.saved = { ...before, [path]: value };
+      response.writeHead(200, { 'content-type': 'application/json' });
+      return response.end('{}');
+    }
+    if (request.url === '/api/submit') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      return response.end(JSON.stringify({ missing: ashbyRequired.filter(path => !fixture.saved[path]?.length) }));
+    }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     response.end(ashbyMarkup(title));
   });
@@ -651,7 +683,7 @@ async function ashbyFixture(title = 'Product Designer @ Fixture Co') {
   const input = { identity: { ats: 'ashby', tenant: 'fixture', requisition: ashbyPosting }, company: 'Fixture Co', role: 'Product Designer',
     applicationUrl: `${origin}/fixture/${ashbyPosting}`, documents: {},
     answers: { first_name: 'Test', last_name: 'Applicant', email: 'test@example.com', us_authorized: 'Yes' } };
-  return { server, origin, input };
+  return Object.assign(fixture, { server, origin, input });
 }
 
 test('an Ashby date is filled and checked the way its picker shows it', () => {
@@ -664,7 +696,8 @@ test('an Ashby date is filled and checked the way its picker shows it', () => {
   assert.equal(pickerDate('not a date'), 'not a date');
 });
 test('the Ashby fixture is observed, answered from the profile and the inbox, filled, submitted and receipted', { skip: !browserReady }, async () => {
-  const { server, origin, input } = await ashbyFixture();
+  const fixture = await ashbyFixture();
+  const { server, origin, input } = fixture;
   const directory = await mkdtemp(join(tmpdir(), 'workie-ats-ashby-'));
   input.documents.resume = join(directory, 'resume.pdf');
   await writeFile(input.documents.resume, '%PDF-1.4 synthetic resume', { mode: 0o600 });
@@ -695,6 +728,10 @@ test('the Ashby fixture is observed, answered from the profile and the inbox, fi
     assert.equal(result.state, 'submitted');
     assert.match(result.receipt.receiptId, /^ab-[0-9a-f]{32}$/);
     assert.equal(result.receipt.identity.requisition, ashbyPosting);
+    // Every answer reached the server, none dropped by a save that overlapped another.
+    assert.deepEqual(fixture.saved, { _systemfield_resume: 'resume.pdf', _systemfield_name: 'Test Applicant', _systemfield_email: 'test@example.com',
+      '09a328e0-8d57-4f88-86ab-688de1657b17': 'A payments redesign.', 'bed95633-1b6e-4cd0-9eaf-c5a9f75ac35d': 'Yes',
+      'd33e2a8f-3742-4e5e-b91c-b7607d3cdf63': 'No', '5f7757f0-b2ee-41b2-b9d0-0212461ed5a2': ['Product', 'AI'] });
   } finally {
     await runtime.close();
     await new Promise((resolve) => server.close(resolve));
