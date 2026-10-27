@@ -946,6 +946,20 @@ describe('owner-confirmed frozen legacy imports', () => {
     expect(await db.select().from(manualApplicationMarks)).toEqual([]);
   });
 
+  it('never picks a role marked applied while its link could not be resolved, once the link resolves', async () => {
+    addPostings(1);
+    corpus.update(postings).set({ canonicalUrl: 'https://careers.employer1.example/jobs/1' }).run();
+    const p = await preview([1]);
+    await confirmLegacyImport(db, 'alice', confirmInput(p), options);
+    expect((await db.select().from(manualApplicationMarks))[0]).toMatchObject({ postingId: 1, requisition: null });
+    // The collector later finds an apply link it can resolve (as with Greenhouse boards on company sites).
+    corpus.update(postings).set({ canonicalUrl: 'https://boards.greenhouse.io/tenant1/jobs/1' }).run();
+    const { token, run } = await prepared('alice');
+    await complete(token, run.id);
+    expect(await appRows()).toEqual([]);
+    expect((await getDiscoveryStatus(db, 'alice', run.id, options)).counts.manual_reported).toBe(1);
+  });
+
   it.each(['screening', 'submitting'] as const)('fences an active %s import; preserves reconciliation and forbids stale events', async (state) => {
     const { token, run } = await prepared('alice', { reapplication: { allowed: true, minimumDays: 1 } });
     addPostings(1); await complete(token, run.id);
