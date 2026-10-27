@@ -308,7 +308,9 @@ function capDay(now: number, timeZone: string | null): [number, number] {
 async function capHeld(tx: WorkerTx, ownerId: string, policy: Policy, now: number, timeZone: string | null) {
   const [day, end] = capDay(now, timeZone);
   const started = await tx.select({ employerKey: applications.employerKey, ats: applications.ats, tenant: applications.tenant })
-    .from(applications).where(and(eq(applications.ownerId, ownerId), sql`${applications.startedAt} >= ${day} and ${applications.startedAt} < ${end}`));
+    .from(applications).where(and(eq(applications.ownerId, ownerId), sql`${applications.startedAt} >= ${day} and ${applications.startedAt} < ${end}`,
+      // Screening skips (reason codes ending _ineligible) never reached the employer; an applicant's own skip still counts.
+      sql`not (${applications.state} = 'skipped' and coalesce(${applications.reasonCode}, '') like '%\\_ineligible%' escape '\\')`));
   if (started.length >= policy.dailyApplicationCap) return sql<boolean>`1`;
   // Qualify the outer row: an unqualified column resolves to the inner table in SQLite.
   return sql<boolean>`(
