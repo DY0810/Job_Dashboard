@@ -2637,6 +2637,13 @@
     "verified_at": "2026-08-18T04:01:27.355Z"
   },
   {
+    "name": "Rivian",
+    "ats": "ashby",
+    "token": "rivianvw.tech",
+    "verified_at": "2026-10-27T03:30:00.000Z",
+    "postings_at_probe": 158
+  },
+  {
     "name": "Robinhood",
     "ats": "greenhouse",
     "token": "robinhood",
