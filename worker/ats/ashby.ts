@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Locator, Page } from 'playwright';
+import type { Locator, Page, Request } from 'playwright';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
 import { SUBMIT_WAIT_MS } from '../../lib/applications/worker-protocol.ts';
 import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, type AtsValue, commonAnswer, fieldKeyFor, formQuestionKey } from './protocol.ts';
@@ -15,6 +15,23 @@ function hosted(input: AtsApplication, href: string) {
   return url.origin === new URL(input.applicationUrl).origin && url.pathname === formPath(input);
 }
 const page = async (runtime: Parameters<AtsAdapter['observe']>[0]) => await runtime.page();
+
+// Ashby saves each answer to its server as it changes, and its server can drop one of two saves in flight at once
+// (Rivian's certification box, 2026-10-27), so each answer's save lands before the next answer is touched.
+function saves(form: Page) {
+  let pending = 0;
+  const isSave = (request: Request) => request.url().includes('op=ApiSetFormValue');
+  const start = (request: Request) => { if (isSave(request)) pending++; };
+  const end = (request: Request) => { if (isSave(request)) pending--; };
+  form.on('request', start); form.on('requestfinished', end); form.on('requestfailed', end);
+  return {
+    async settle() {
+      await form.waitForTimeout(250); // a change saves once the page renders it
+      for (const until = Date.now() + 15_000; pending > 0 && Date.now() < until;) await form.waitForTimeout(50);
+    },
+    stop() { form.off('request', start); form.off('requestfinished', end); form.off('requestfailed', end); },
+  };
+}
 // Every question is a field entry titled by a label whose `for` is the question's path; the entry holds its input.
 const entry = (page: Page, field: AtsField) => page.locator(`label.ashby-application-form-question-title[for="${field.name}"]`).locator('xpath=..');
 
@@ -83,7 +100,7 @@ function choices(field: AtsField, value: AtsValue) {
   return picked;
 }
 
-async function fillOne(page: Page, box: Locator, field: AtsField, value: AtsValue) {
+async function fillOne(page: Page, box: Locator, field: AtsField, value: AtsValue, settle: () => Promise<void>) {
   const yesno = box.locator('.ashby-application-form-input-yesno');
   if (field.kind === 'checkbox') {
     if (typeof value !== 'boolean') throw new AtsError('ANSWER_TYPE_MISMATCH', field.key);
@@ -95,7 +112,7 @@ async function fillOne(page: Page, box: Locator, field: AtsField, value: AtsValu
     await box.getByLabel(choices(field, value)[0], { exact: true }).check();
   } else if (field.kind === 'select' && field.key.endsWith('[]')) {
     const picked = choices(field, value);
-    for (const option of field.options!) await box.getByLabel(option, { exact: true }).setChecked(picked.includes(option));
+    for (const option of field.options!) { await box.getByLabel(option, { exact: true }).setChecked(picked.includes(option)); await settle(); }
   } else if (field.kind === 'select') {
     await box.locator('select').selectOption({ label: choices(field, value)[0] });
   } else if (typeof value !== 'string') {
@@ -123,6 +140,7 @@ async function fillOne(page: Page, box: Locator, field: AtsField, value: AtsValu
     await input.fill(field.kind === 'date' ? pickerDate(value) : value);
     // The date picker stays open over the next question until dismissed.
     if (field.kind === 'date') await input.press('Escape');
+    await input.blur(); // a typed answer saves on blur, not half a second later while the next answer saves
   }
 }
 
@@ -179,25 +197,29 @@ export const ashby: AtsAdapter = {
     const form = await page(runtime);
     // Files go first: attaching a resume autofills the form and clears what it does not hold (Harvey, 2026-10-26).
     const fields = [...observation.fields].sort((a, b) => Number(b.kind === 'file') - Number(a.kind === 'file'));
-    await fillEach(fields, async field => {
-      const box = entry(form, field);
-      if (field.kind === 'file') {
-        const path = input.documents[field.key];
-        if (!path) { if (field.required) throw new AtsError('REQUIRED_DOCUMENT_MISSING', field.key); return; }
-        await box.locator('input[type=file]').setInputFiles(path);
-        // Ashby uploads on attach and lists the file by name only once the upload is done.
-        const name = path.split('/').pop()!;
-        if (!await box.locator('.ashby-application-form-input-file-item-name', { hasText: name }).first().waitFor({ timeout: 30_000 }).then(() => true, () => false)) {
-          throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
+    const saved = saves(form);
+    try {
+      await fillEach(fields, async field => {
+        const box = entry(form, field);
+        if (field.kind === 'file') {
+          const path = input.documents[field.key];
+          if (!path) { if (field.required) throw new AtsError('REQUIRED_DOCUMENT_MISSING', field.key); return; }
+          await box.locator('input[type=file]').setInputFiles(path);
+          // Ashby uploads on attach and lists the file by name only once the upload is done.
+          const name = path.split('/').pop()!;
+          if (!await box.locator('.ashby-application-form-input-file-item-name', { hasText: name }).first().waitFor({ timeout: 30_000 }).then(() => true, () => false)) {
+            throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
+          }
+          await form.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {}); // let the resume autofill land
+          return;
         }
-        await form.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {}); // let the resume autofill land
-        return;
-      }
-      const value = ashbyAnswer(input, field);
-      if (value === undefined) { if (field.required) throw new AtsError('REQUIRED_ANSWER_MISSING', field.key); return; }
-      await fillOne(form, box, field, value);
-      if (!await verifyOne(box, field, value)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
-    });
+        const value = ashbyAnswer(input, field);
+        if (value === undefined) { if (field.required) throw new AtsError('REQUIRED_ANSWER_MISSING', field.key); return; }
+        await fillOne(form, box, field, value, saved.settle);
+        await saved.settle();
+        if (!await verifyOne(box, field, value)) throw new AtsError('FIELD_RECONCILIATION_FAILED', field.key);
+      });
+    } finally { saved.stop(); }
     // A field cleared after its own check would only show after Submit, as a timeout; recheck them all before.
     for (const field of fields) {
       const value = field.kind === 'file' ? undefined : ashbyAnswer(input, field);
