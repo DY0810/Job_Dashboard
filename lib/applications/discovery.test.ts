@@ -627,6 +627,16 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await poll(token)).lease).not.toBeNull();
   });
 
+  it('does not charge the caps for a role screening skipped before it reached the employer', async () => {
+    const { token, run } = await prepared('alice', { perEmployerCap: 1 }); addPostings(2, 1, true); await complete(token, run.id);
+    const first = (await poll(token)).lease!;
+    // What the worker reports for a posting the applicant does not qualify for (worker/main.ts).
+    await db.update(applications).set({ state: 'skipped', reasonCode: 'degree_ineligible', leaseUntil: null, leaseCheckedAt: null }).where(eq(applications.id, first.applicationId));
+    const next = (await poll(token)).lease;
+    expect(next).not.toBeNull();
+    expect(next!.applicationId).not.toBe(first.applicationId);
+  });
+
   it("holds a third Ramp application inside Ramp's 60-day limit, counting applications made by hand", async () => {
     addPostings(3);
     corpus.update(postings).set({ company: 'Ramp', canonicalUrl: sql`'https://jobs.ashbyhq.com/ramp/0000000' || ${postings.id} || '-0000-4000-8000-000000000000'` }).run();
