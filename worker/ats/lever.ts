@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Locator, Page } from 'playwright';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
 import { SUBMIT_WAIT_MS } from '../../lib/applications/worker-protocol.ts';
@@ -201,12 +203,23 @@ export const lever: AtsAdapter = {
     const thanks = (url: URL) => at(url.href, input, '/thanks');
     // hCaptcha shows its challenge in an iframe only when it doubts the browser; otherwise the form posts and redirects to /thanks.
     const challenge = page.locator('iframe[src*="hcaptcha.com"][src*="frame=challenge"]').first();
-    await Promise.race([page.waitForURL(thanks, { timeout: 30_000 }), challenge.waitFor({ state: 'visible', timeout: 30_000 })]).catch(() => {});
+    await Promise.race([page.waitForURL(thanks, { timeout: 60_000 }), challenge.waitFor({ state: 'visible', timeout: 60_000 })]).catch(() => {});
     if (!at(page.url(), input, '/thanks') && await challenge.isVisible()) {
       process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'captcha-required', company: input.company, role: input.role }) + '\n');
       await page.waitForURL(thanks, { timeout: CAPTCHA_WAIT_MS }).catch(() => {});
     }
-    if (!at(page.url(), input, '/thanks')) throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT');
+    if (!at(page.url(), input, '/thanks')) {
+      // Neither outcome showed: log what the page does show (field errors, a dead button), as the Ashby adapter does.
+      const shown = await page.locator('form#application-form [role="alert"], form#application-form .error-message, .application-error')
+        .filter({ visible: true }).allInnerTexts().catch(() => []);
+      // Kept on this machine only: what the page showed, for the next look at an unconfirmed submit.
+      const screenshot = join(tmpdir(), `workie-lever-unconfirmed-${Date.now()}.png`);
+      await page.screenshot({ path: screenshot, fullPage: true }).catch(() => {});
+      process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'submit-unconfirmed', company: input.company, role: input.role,
+        url: page.url(), screenshot, shown: shown.map((text) => text.trim().slice(0, 300)).filter(Boolean).slice(0, 10),
+        buttonEnabled: await button.isEnabled().catch(() => null) }) + '\n');
+      throw new AtsError('SUBMISSION_CONFIRMATION_TIMEOUT');
+    }
   },
   async receipt(runtime, input, signal) {
     signal?.throwIfAborted();
