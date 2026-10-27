@@ -464,6 +464,27 @@ test('a confirmation reached after the worker stopped is still read and handed o
   assert.deepEqual(result, { state: 'submission_unknown', reasons: ['receipt_persistence_failed'], receipt: null, reconciled: false });
 });
 
+test('the Greenhouse code wait sleeps on a real timer and stops with the worker, even when the tab and Workie fail at once', async () => {
+  const controller = new AbortController();
+  const url = 'https://job-boards.greenhouse.io/fixture/jobs/123';
+  const page = { url: () => url,
+    getByRole: () => ({ count: async () => 1, click: async () => {} }),
+    getByText: () => ({ first: () => ({ waitFor: async () => {}, isVisible: async () => true }) }),
+    // A closed or crashed tab answers at once instead of waiting out its timeout.
+    waitForURL: async () => { throw new Error('Target page, context or browser has been closed'); },
+    locator: () => ({ count: async () => 8, fill: async () => {} }) };
+  const realNow = Date.now;
+  let calls = 0;
+  // Each look at the clock moves it on a minute, so a wait that never sleeps ends at once instead of hanging the test.
+  Date.now = () => realNow() + 60_000 * calls++;
+  setTimeout(() => controller.abort(new Error('STOPPED')), 50);
+  try {
+    await assert.rejects(greenhouse.submit({ page: async () => page }, { identity: { ats: 'greenhouse', tenant: 'fixture', requisition: '123' },
+      company: 'Fixture Co', role: 'Software Engineering Intern', applicationUrl: url, answers: {}, documents: {} },
+    controller.signal, async () => { throw new Error('STOPPED'); }), /STOPPED/);
+  } finally { Date.now = realNow; }
+});
+
 function pageMarkup(ats, wrongRole = false) {
   const role = wrongRole ? 'Other role' : 'Software Engineering Intern';
   const authorized = '<label>Work authorization<select><option value="Yes">Yes</option><option value="No">No</option></select></label>';

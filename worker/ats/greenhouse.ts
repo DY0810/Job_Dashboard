@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { disclosureAnswerKey } from '../../lib/applications/application-context-protocol.ts';
 import { SUBMIT_WAIT_MS } from '../../lib/applications/worker-protocol.ts';
 import { AtsError, AtsObservationSchema, fillEach, type AtsAdapter, type AtsApplication, type AtsField, atsFieldKey, commonAnswer, formQuestionKey, observeReceipt, fillField, verifyField } from './protocol.ts';
@@ -208,6 +209,10 @@ export const greenhouse: AtsAdapter = {
         const deadline = Date.now() + VERIFICATION_WAIT_MS;
         while (Date.now() < deadline) {
           if (await page.waitForURL(confirmation, { timeout: 5_000 }).then(() => true, () => false)) return;
+          // A real timer between looks: a tab or request that fails at once must never hold the event loop (heartbeats,
+          // the watchdog, the code poll) for the whole wait, as MEMX's froze for 26 minutes on 2026-10-27.
+          await delay(1_000, undefined, { signal }).catch(() => {});
+          signal?.throwIfAborted();
           const value = await code?.().catch(() => null);
           if (!value || value.length !== await page.locator('input[id^="security-input-"]').count()) continue;
           // A code the form will not take waits for the applicant to enter another one; the submission is never lost over it.
