@@ -225,8 +225,10 @@ const UNSENT: Record<string, string> = {
 // Only a role that stopped needs a fresh attempt; a queued or waiting row resumes by itself once its hold clears.
 const RESTARTABLE = ['failed', 'skipped', 'cancelled', 'retryable_failure', 'blocked_unsupported', 'provider_unavailable', 'needs_document'];
 /** A failed fill or fixed document hold resumes from its checkpoint in its own run unless that run stopped (a paused run
- * continues it on resume): a fresh attempt would lose its answers and count again against the daily and per-employer caps. */
+ * continues it on resume): a fresh attempt would lose its answers and count again against the daily and per-employer caps.
+ * A posting re-crawled since the row was queued (context_unavailable) needs a fresh attempt: only that takes the new snapshot. */
 const resumable = (app: App, runs: Run[]) => !!app.checkpoint && isSafeRetryState(app.state, app.reasonCode) && (app.retries ?? 0) < 3 &&
+  app.reasonCode !== 'context_unavailable' &&
   runs.some((run) => run.id === app.runId && run.state !== 'stopped');
 
 /** A fresh attempt of a role the employer never received: its own run first, then other running runs newest first.
