@@ -307,14 +307,19 @@ function capDay(now: number, timeZone: string | null): [number, number] {
  */
 async function capHeld(tx: WorkerTx, ownerId: string, policy: Policy, now: number, timeZone: string | null) {
   const [day, end] = capDay(now, timeZone);
-  const started = await tx.select({ employerKey: applications.employerKey, ats: applications.ats, tenant: applications.tenant })
-    .from(applications).where(and(eq(applications.ownerId, ownerId), sql`${applications.startedAt} >= ${day} and ${applications.startedAt} < ${end}`,
+  const started = await tx.select({
+    employerKey: applications.employerKey, ats: applications.ats, tenant: applications.tenant,
+    // An attempt stopped, failed or skipped before it pressed submit never reached the employer, so its cap skips it.
+    reached: sql<number>`not (${applications}.state in ('cancelled', 'failed', 'skipped') and not exists (
+      select 1 from ${applicationSubmissions} s where s.owner_id = ${applications}.owner_id and s.application_id = ${applications}.id))`,
+  }).from(applications).where(and(eq(applications.ownerId, ownerId), sql`${applications.startedAt} >= ${day} and ${applications.startedAt} < ${end}`,
       // Screening skips (reason codes ending _ineligible) never reached the employer; an applicant's own skip still counts.
       sql`not (${applications.state} = 'skipped' and coalesce(${applications.reasonCode}, '') like '%\\_ineligible%' escape '\\')`));
   if (started.length >= policy.dailyApplicationCap) return sql<boolean>`1`;
+  const reached = started.filter((row) => row.reached).map(({ employerKey, ats, tenant }) => ({ employerKey, ats, tenant }));
   // Qualify the outer row: an unqualified column resolves to the inner table in SQLite.
   return sql<boolean>`(
-    (select count(*) from json_each(${JSON.stringify(started)}) used
+    (select count(*) from json_each(${JSON.stringify(reached)}) used
       where json_extract(used.value, '$.employerKey') = ${applications}.employer_key or
         (json_extract(used.value, '$.ats') = ${applications}.ats and json_extract(used.value, '$.tenant') = ${applications}.tenant)) >= ${policy.perEmployerCap}
     or ${employerLimitReached(now)}
