@@ -166,6 +166,10 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
     }
     const chunk = manifest.artifact.candidates.slice(manifest.stagedCount, manifest.stagedCount + STAGING_CHUNK_SIZE);
     if (chunk.length) {
+      // A mark imported while its posting's link could not be resolved has no identity; its posting still names the role.
+      const marked = new Set((await tx.select({ postingId: manualApplicationMarks.postingId }).from(manualApplicationMarks)
+        .where(and(eq(manualApplicationMarks.ownerId, worker.ownerId), sql`${manualApplicationMarks.requisition} is null`)))
+        .map((mark) => mark.postingId));
       // A role another run held is evaluated afresh once that run stopped and released it with nothing submitted,
       // even if it had started (screened, tailored, waiting on answers).
       await tx.update(discoveryTargets).set({ applicationId: null }).where(and(
@@ -181,7 +185,7 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
         requisition: candidate.identity?.requisition ?? null,
         // Employer labels group caps only; they are never application identity.
         employerKey: candidate.postings[0]?.company.trim().toLowerCase().replace(/\s+/g, ' ') || null,
-        disposition: initialDisposition(candidate),
+        disposition: candidate.postings.some((posting) => marked.has(posting.postingId)) ? 'manual_reported' : initialDisposition(candidate),
       }))).onConflictDoUpdate({
         target: [discoveryTargets.ownerId, discoveryTargets.runId, discoveryTargets.targetKey],
         set: {
