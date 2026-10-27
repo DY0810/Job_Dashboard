@@ -48,7 +48,8 @@ async function readProviderResponse(response: Response) {
 
 export const STRUCTURED_MAX_INPUT_TOKENS = 100_000;
 export const STRUCTURED_MAX_OUTPUT_TOKENS = 4_096;
-const STRUCTURED_TIMEOUT_MS = 15_000;
+// Reasoning models often take 20-40 s for a full letter or tailored resume; stay under the 120 s lease.
+const STRUCTURED_TIMEOUT_MS = 60_000;
 const STRUCTURED_LEDGER_NAME = "structured-budget";
 
 const structuredText = z.string().trim().min(1).max(12_000);
