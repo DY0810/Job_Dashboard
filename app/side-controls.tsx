@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { Menu, PanelLeft } from 'lucide-react';
 
 /**
  * The sidebar's two states live on <html> as data attributes, like Postie's body classes:
  * `data-side="rail"` (collapsed, remembered) and `data-side-open` (slid in on a phone).
- * The boot script in layout.tsx applies a remembered rail before paint.
+ * Its dragged width is `--side` on <html>'s style, and `data-side-drag` marks a drag in progress.
+ * The boot script in layout.tsx applies a remembered rail and width before paint.
  */
 type Key = 'side' | 'sideOpen';
 const EVENT = 'workie:side';
@@ -34,6 +35,41 @@ export function SideCollapse() {
     }}>
     <PanelLeft size={18} strokeWidth={1.75} aria-hidden="true" />
   </button>;
+}
+
+/** The width limits; layout.tsx's boot script repeats them when it restores a saved width. */
+const MIN = 200, MAX = 400;
+/** Arrow keys move the edge 16px; Home and End clamp to the limits. */
+const KEYS: Record<string, number> = { ArrowLeft: -16, ArrowRight: 16, Home: -Infinity, End: Infinity };
+const sideWidth = () => parseInt(getComputedStyle(document.documentElement).getPropertyValue('--side'));
+const resize = (width: number) => {
+  document.documentElement.style.setProperty('--side', `${Math.min(MAX, Math.max(MIN, Math.round(width)))}px`);
+  window.dispatchEvent(new Event(EVENT));
+};
+const save = () => { try { localStorage.setItem('workie-side-width', String(sideWidth())); } catch {} };
+
+/** Desktop: the sidebar's right edge. Drag it, or focus it and press the arrow keys, to set `--side`. */
+export function SideResize() {
+  const width = useSyncExternalStore(subscribe, sideWidth, () => undefined);
+  const grab = useRef(0); // pointer's distance from the edge, so the edge doesn't jump to the pointer
+  const root = () => document.documentElement.dataset;
+  return <div role="separator" tabIndex={0} className="side-resize" aria-label="Resize sidebar" aria-orientation="vertical"
+    aria-controls="side" aria-valuemin={MIN} aria-valuemax={MAX} aria-valuenow={width}
+    onPointerDown={(event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      grab.current = event.clientX - sideWidth();
+      root().sideDrag = '1';
+    }}
+    onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(event.clientX - grab.current); }}
+    onLostPointerCapture={() => { delete root().sideDrag; save(); }}
+    onKeyDown={(event) => {
+      if (!(event.key in KEYS)) return;
+      event.preventDefault();
+      resize(sideWidth() + KEYS[event.key]);
+      save();
+    }} />;
 }
 
 /** Phone: the menu button that slides the sidebar in. */
