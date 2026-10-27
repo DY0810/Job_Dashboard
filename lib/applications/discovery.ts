@@ -50,6 +50,8 @@ export async function manuallySuppressed(tx: WorkerTx, app: Pick<ApplicationRow,
 const capturedAtTime = (snapshot: CandidateSnapshot, capturedAt: number): CandidateSnapshot => ({
   ...snapshot, capturedAt, scope: { ...snapshot.scope, effectiveAtCutoff: snapshot.scope.effectiveAtCutoff - snapshot.capturedAt + capturedAt },
 });
+/** Employer labels group caps only; they are never application identity. */
+const employerKeyOf = (candidate: DiscoveryCandidate) => candidate.postings[0]?.company.trim().toLowerCase().replace(/\s+/g, ' ') || null;
 const initialDisposition = (candidate: DiscoveryCandidate): TargetDisposition =>
   !candidate.identity || candidate.identityStatus !== 'resolved' ? 'unresolved' :
     candidate.disposition !== 'candidate' ? 'held_policy' : 'eligible';
@@ -183,8 +185,7 @@ export async function stageDiscoveryManifest(db: PrivateDb, token: string, id: s
         candidateIndex: manifest.stagedCount + index, candidateHash: hashValue(candidate),
         ats: candidate.identity?.ats ?? null, tenant: candidate.identity?.tenant ?? null,
         requisition: candidate.identity?.requisition ?? null,
-        // Employer labels group caps only; they are never application identity.
-        employerKey: candidate.postings[0]?.company.trim().toLowerCase().replace(/\s+/g, ' ') || null,
+        employerKey: employerKeyOf(candidate),
         disposition: candidate.postings.some((posting) => marked.has(posting.postingId)) ? 'manual_reported' : initialDisposition(candidate),
       }))).onConflictDoUpdate({
         target: [discoveryTargets.ownerId, discoveryTargets.runId, discoveryTargets.targetKey],
@@ -439,16 +440,42 @@ async function nextAttempt(tx: WorkerTx, run: typeof applicationRuns.$inferSelec
   if (!target || !manifest || manifest.state !== 'ready' || hashValue(manifest.artifact) !== manifest.hash) {
     fail(409, 'DISCOVERY_REQUIRED', 'A complete matching discovery snapshot is required.');
   }
-  const candidate = manifest.artifact.candidates[target.candidateIndex];
-  if (!candidate || candidate.disposition !== 'candidate' || hashValue(candidate) !== target.candidateHash) fail();
+  let candidate = manifest.artifact.candidates[target.candidateIndex];
+  if (!candidate || hashValue(candidate) !== target.candidateHash) fail();
+  const targetScope = and(eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.id, target.id));
+  // Staging never re-points a target that holds an application, so a posting re-crawled after its role was queued left the
+  // role frozen to content /context refuses. The next attempt takes the run's latest snapshot of the same role instead,
+  // unless its identity or official URL changed or the previous attempt ever recorded a submission.
+  // shortcut: a restart before the next rescan (60 s) still gets the old snapshot; re-point at staging if that bites.
+  let refrozen: Pick<typeof target, 'manifestId' | 'candidateIndex' | 'candidateHash' | 'employerKey'> | null = null;
+  if (run.currentManifestId && run.currentManifestId !== target.manifestId) {
+    const [latest] = await tx.select().from(discoveryManifests).where(manifestScope(ownerId, run.currentManifestId));
+    const index = latest?.state === 'ready' && hashValue(latest.artifact) === latest.hash
+      ? latest.artifact.candidates.findIndex((c) => c.targetKey === target.targetKey) : -1;
+    const next = index < 0 ? undefined : latest.artifact.candidates[index];
+    const [submission] = next ? await tx.select({ id: applicationSubmissions.intentId }).from(applicationSubmissions)
+      .where(and(eq(applicationSubmissions.ownerId, ownerId), eq(applicationSubmissions.applicationId, previous.id))).limit(1) : [];
+    if (next && !submission && next.officialUrl === candidate.officialUrl && next.identity?.ats === previous.ats &&
+        next.identity.tenant === previous.tenant && next.identity.requisition === previous.requisition) {
+      candidate = next;
+      refrozen = { manifestId: latest.id, candidateIndex: index, candidateHash: hashValue(next), employerKey: employerKeyOf(next) };
+    }
+  }
+  if (candidate.disposition !== 'candidate') fail();
+  if (refrozen) {
+    // A target's evidence is immutable while it holds an application, so release it first, as staging does for a stopped
+    // run's unsubmitted role. The previous attempt still names its own snapshot, which stays retained.
+    await tx.update(discoveryTargets).set({ applicationId: null }).where(targetScope);
+    one(await tx.update(discoveryTargets).set(refrozen).where(targetScope).returning());
+  }
+  const frozen = refrozen ?? target;
   const row = one(await tx.insert(applications).values({
     id: randomUUID(), ownerId, runId, workerId: run.workerId, ats: previous.ats, tenant: previous.tenant,
     requisition: previous.requisition, attempt: previous.attempt + 1, previousApplicationId: previous.id,
-    snapshotManifestId: target.manifestId, snapshotTargetKey: target.targetKey, snapshotHash: target.candidateHash,
-    employerKey: target.employerKey, availableAt: now, createdAt: now, retries,
+    snapshotManifestId: frozen.manifestId, snapshotTargetKey: target.targetKey, snapshotHash: frozen.candidateHash,
+    employerKey: frozen.employerKey, availableAt: now, createdAt: now, retries,
   }).returning());
-  one(await tx.update(discoveryTargets).set({ applicationId: row.id, disposition: 'eligible' })
-    .where(and(eq(discoveryTargets.ownerId, ownerId), eq(discoveryTargets.id, target.id))).returning());
+  one(await tx.update(discoveryTargets).set({ applicationId: row.id, disposition: 'eligible' }).where(targetScope).returning());
   return row;
 }
 export async function reapplyApplication(

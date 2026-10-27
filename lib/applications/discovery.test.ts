@@ -857,6 +857,44 @@ describe('cap-held backlog and explicit historical attempts', () => {
     expect((await contextFor((await poll(token)).lease!)).answers[formQuestionKey(field)]).toBe('Stanford University');
   });
 
+  /** Leases the role, re-crawls its posting with `changes`, parks it the way the worker does, and takes the next snapshot. */
+  async function recrawled(token: string, runId: string, changes: Partial<typeof postings.$inferInsert>) {
+    const contextFor = async (lease: Lease) => applicationContext(db, token, lease.applicationId,
+      { protocolVersion: 1, ...ref(lease) }, { ...options, corpus: provider });
+    const first = (await poll(token)).lease!;
+    const frozen = (await getDiscoveryStatus(db, 'alice', runId, options)).manifestId;
+    corpus.update(postings).set(changes).run();
+    await expect(contextFor(first)).rejects.toMatchObject({ status: 409, code: 'CONTEXT_UNAVAILABLE' });
+    await recordWorkerEvent(db, token, first.applicationId, { protocolVersion: 1, eventId: randomUUID(), fence: first.fence,
+      expectedRevision: first.revision, state: 'retryable_failure', checkpoint: { stage: first.state as 'screening', sequence: (first.checkpoint?.sequence ?? 0) + 1 },
+      reasonCode: 'context_unavailable' }, options);
+    now += DISCOVERY_INTERVAL_MS + 1;
+    await complete(token, runId);
+    const latest = (await getDiscoveryStatus(db, 'alice', runId, options)).manifestId;
+    expect(latest).not.toBe(frozen);
+    const previous = (await appRows()).find((a) => a.id === first.applicationId)!;
+    const restart = () => restartApplication(db, 'alice', runId, { ...request(), previousApplicationId: previous.id, expectedRevision: previous.revision }, options);
+    return { contextFor, latest, restart };
+  }
+
+  it('restarts a role whose posting was re-crawled after it was queued from the snapshot that saw the new posting', async () => {
+    const { token, run } = await prepared(); addPostings(1); await complete(token, run.id);
+    const { contextFor, latest, restart } = await recrawled(token, run.id, { description: 'Fixture description, revised by the employer' });
+    const next = await restart();
+    expect((await appRows()).find((a) => a.id === next.id)).toMatchObject({ snapshotManifestId: latest, attempt: 2, state: 'queued' });
+    now += DAY; // The first attempt used today's start.
+    const retry = (await poll(token)).lease!;
+    expect(retry.applicationId).toBe(next.id);
+    expect(await contextFor(retry)).toMatchObject({ applicationId: next.id });
+  });
+
+  it('does not queue a re-crawled role that the policy now holds', async () => {
+    const { token, run } = await prepared('alice', { employerBlocklist: ['Blocked Co'] }); addPostings(1); await complete(token, run.id);
+    const { restart } = await recrawled(token, run.id, { company: 'Blocked Co' });
+    await expect(restart()).rejects.toMatchObject({ status: 409 });
+    expect(await appRows()).toHaveLength(1);
+  });
+
   it('resumes a document hold the applicant fixed: in its own run, or after a policy change in a run started under it', async () => {
     const { token, run, worker } = await prepared(); addPostings(1); await complete(token, run.id);
     const hold = async () => {
