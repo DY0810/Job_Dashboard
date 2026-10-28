@@ -220,6 +220,7 @@ const errorCode = async (response: Response) => (await response.clone().json().c
 const UNSENT: Record<string, string> = {
   verification_code_timeout: 'The employer emailed you a security code that was not entered on Workie or in Workie\'s browser window within 30 minutes, so it most likely was not sent.',
   captcha_timeout: 'The employer asked for a captcha that was not solved in Workie\'s browser window within 30 minutes, so it most likely was not sent.',
+  submission_refused_spam: 'Ashby\'s spam filter refused this application, so it was not sent. Half an hour after the submit, press "It did not go through, try again" to fill it again for your approval.',
 };
 
 // Only a role that stopped needs a fresh attempt; a queued or waiting row resumes by itself once its hold clears.
@@ -559,7 +560,8 @@ export default function Applications() {
               // Questions arrive with the inbox, a moment after the rows; older ones may sit past the pages loaded here.
               : app.reasonCode === 'question_unresolved' ? questions.view.inbox ? 'Waiting for your answers.' : 'Loading questions...'
               // Nothing resolves this by itself: only the applicant knows whether the employer got it.
-              : app.state === 'submission_unknown' ? `${UNSENT[app.reasonCode ?? ''] ?? `Workie could not confirm the employer received this${app.reasonCode ? ` (${humanize(app.reasonCode)})` : ''}.`} Check your email or the job post, then say whether it went through.`
+              : app.state === 'submission_unknown' ? app.reasonCode === 'submission_refused_spam' ? UNSENT.submission_refused_spam
+                : `${UNSENT[app.reasonCode ?? ''] ?? `Workie could not confirm the employer received this${app.reasonCode ? ` (${humanize(app.reasonCode)})` : ''}.`} Check your email or the job post, then say whether it went through.`
               : (app.reasonCode && !isTerminalState(app.state)) || app.state === 'failed' ? humanize(app.reasonCode ?? 'failed') : null;
             const show = (kind: Dialog['kind']) => () => setDialog({ kind, id: app.id, open: true });
             return <li key={app.id} className={styles.card}>

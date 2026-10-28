@@ -363,6 +363,16 @@ test('a run that starts nothing and roles held for a decision are named, not sho
   await expect(page.getByText(/^Not started under your current policy: pay not listed \(2\)\./)).toBeVisible();
 });
 
+test('a submit Ashby refused as spam says it was not sent and offers a retry', async ({ page }) => {
+  const fixture = fixtures.get(page)!;
+  fixture.addRun();
+  fixture.addApplication('submission_unknown', 'submission_refused_spam');
+  await page.goto('/applications');
+  await expect(page.getByText('Ashby\'s spam filter refused this application, so it was not sent.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Check your email or the job post', { exact: false })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'It did not go through, try again', exact: true })).toBeVisible();
+});
+
 // An unconfirmed submission (the worker could not confirm the employer got it) has no way out but the applicant's word.
 test('an unconfirmed submission says why, and the applicant says whether it went through', async ({ page }) => {
   const fixture = fixtures.get(page)!;
