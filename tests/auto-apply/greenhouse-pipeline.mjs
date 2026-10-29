@@ -97,7 +97,7 @@ document.getElementById('submit').onclick = async () => {
   location.assign(location.pathname + '/confirmation');
 };
 </script>`;
-const CONFIRMATION = `<!doctype html><title>Thank you</title><h1>Thank you for applying.</h1>
+const CONFIRMATION = `<!doctype html><title>Thank you for applying</title><h1>Thank you for applying.</h1>
 <p>Your application has been received.</p><a href="${JOB}">Back to job post</a>`;
 
 test('Greenhouse pipeline tailors the resume, asks only the new question, writes a cover letter and stores the exact receipt',
