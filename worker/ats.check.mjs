@@ -648,7 +648,10 @@ function ashbyMarkup(title) {
         document.getElementById('_systemfield_email').value = ''; };
       // Like Ashby, Submit checks the answers the server holds, not the ones on screen.
       document.querySelector('.ashby-application-form-submit-button').onclick = async () => {
-        const { missing } = await fetch('/api/submit', { method: 'POST' }).then(response => response.json());
+        const { missing, spam } = await fetch('/api/submit', { method: 'POST' }).then(response => response.json());
+        // Rivian's form, 2026-10-27: Ashby's spam filter refuses the submit and leaves the form in place.
+        if (spam) return document.querySelector('.ashby-application-form-container').insertAdjacentHTML('afterbegin',
+          '<div class="ashby-application-form-failure-container" role="alert"><p>We couldn\\'t submit your application</p><p>Your application submission was flagged as possible spam. If you believe this was a mistake, please submit your application again.</p></div>');
         if (missing.length) return document.querySelector('.ashby-application-form-container').insertAdjacentHTML('afterbegin',
           '<div class="ashby-application-form-failure-container" role="alert">Your form needs corrections. Missing entry for required field: ' + missing.join(', ') + '</div>');
         document.querySelector('.ashby-application-form-container').outerHTML =
@@ -673,7 +676,7 @@ async function ashbyFixture(title = 'Product Designer @ Fixture Co') {
     }
     if (request.url === '/api/submit') {
       response.writeHead(200, { 'content-type': 'application/json' });
-      return response.end(JSON.stringify({ missing: ashbyRequired.filter(path => !fixture.saved[path]?.length) }));
+      return response.end(JSON.stringify({ missing: ashbyRequired.filter(path => !fixture.saved[path]?.length), spam: !!fixture.spam }));
     }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     response.end(ashbyMarkup(title));
@@ -732,6 +735,30 @@ test('the Ashby fixture is observed, answered from the profile and the inbox, fi
     assert.deepEqual(fixture.saved, { _systemfield_resume: 'resume.pdf', _systemfield_name: 'Test Applicant', _systemfield_email: 'test@example.com',
       '09a328e0-8d57-4f88-86ab-688de1657b17': 'A payments redesign.', 'bed95633-1b6e-4cd0-9eaf-c5a9f75ac35d': 'Yes',
       'd33e2a8f-3742-4e5e-b91c-b7607d3cdf63': 'No', '5f7757f0-b2ee-41b2-b9d0-0212461ed5a2': ['Product', 'AI'] });
+  } finally {
+    await runtime.close();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an Ashby submit its spam filter refuses ends as refused, not as a timeout', { skip: !browserReady }, async () => {
+  const fixture = await ashbyFixture();
+  fixture.spam = true;
+  const { server, origin, input } = fixture;
+  const directory = await mkdtemp(join(tmpdir(), 'workie-ats-ashby-spam-'));
+  input.documents.resume = join(directory, 'resume.pdf');
+  await writeFile(input.documents.resume, '%PDF-1.4 synthetic resume', { mode: 0o600 });
+  const runtime = await createBrowserRuntime({ userDataDir: join(directory, 'browser'), approvedOrigins: [origin], allowLoopback: true });
+  try {
+    const [, , , proud, , office, roles] = (await ashby.observe(runtime, input)).fields;
+    input.answers[formQuestionKey(proud)] = 'A payments redesign.';
+    input.answers[formQuestionKey(office)] = 'No';
+    input.answers[formQuestionKey(roles)] = ['Product', 'AI'];
+    const started = Date.now();
+    const result = await runAtsApplication({ runtime, adapter: ashby, application: input, facts, requirements });
+    assert.deepEqual([result.state, result.reasons], ['submission_unknown', ['SUBMISSION_REFUSED_SPAM']]);
+    assert.ok(Date.now() - started < 50_000, 'the refusal is read at once, not after the 60 s confirmation wait');
   } finally {
     await runtime.close();
     await new Promise((resolve) => server.close(resolve));

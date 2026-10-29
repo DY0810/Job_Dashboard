@@ -235,8 +235,16 @@ export const ashby: AtsAdapter = {
     const success = form.locator('.ashby-application-form-success-container');
     // A low reCAPTCHA score replaces the form with "There was a problem verifying this submission with CAPTCHA..."; a challenge opens its own frame.
     const captcha = form.locator('.ashby-application-form-failure-container', { hasText: 'CAPTCHA' }).or(form.locator('iframe[title*="challenge" i]'));
-    await success.or(captcha).first().waitFor({ timeout: 60_000 }).catch(() => {});
+    // Ashby's spam filter refuses the submit outright and keeps the form (Rivian, 2026-10-27): it was not sent.
+    const refused = form.locator('.ashby-application-form-failure-container', { hasText: /flagged as possible spam/i });
+    await success.or(captcha).or(refused).first().waitFor({ timeout: 60_000 }).catch(() => {});
     if (await success.isVisible()) return;
+    if (await refused.first().isVisible()) {
+      const screenshot = join(tmpdir(), `workie-ashby-refused-${Date.now()}.png`);
+      await form.screenshot({ path: screenshot, fullPage: true }).catch(() => {});
+      process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'submit-refused', company: input.company, role: input.role, url: form.url(), screenshot }) + '\n');
+      throw new AtsError('SUBMISSION_REFUSED_SPAM');
+    }
     if (await captcha.first().isVisible()) {
       process.stdout.write(JSON.stringify({ at: new Date().toISOString(), status: 'captcha-required', company: input.company, role: input.role }) + '\n');
       try { await success.waitFor({ timeout: VERIFICATION_WAIT_MS }); return; }
