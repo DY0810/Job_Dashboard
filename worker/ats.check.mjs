@@ -129,6 +129,40 @@ test('a Greenhouse embed form for a board on the company site is filled, submitt
     await rm(directory, { recursive: true, force: true });
   }
 });
+test('a hosted Greenhouse confirmation with the employer\'s own message is this job\'s receipt; one linking to another job is not', { skip: !browserReady }, async () => {
+  const browser = await chromium.launch({ headless: true });
+  // Live confirmations (2026-10-29), trimmed: Sigma keeps Greenhouse's stock message, Inversion writes its own heading,
+  // Parallel has no heading and links back to the job on boards.greenhouse.io.
+  const confirmations = [
+    ['sigmacomputing', '8015269003', '<h1>Thank you for applying.</h1><p>Your application has been received. If there is a fit, someone will be getting back to you.</p>',
+      'https://job-boards.greenhouse.io/sigmacomputing/jobs/8015269003'],
+    ['inversionspace', '4745076005', '<h1 style="text-align: center;">Thank you for applying to Inversion!&nbsp;</h1><p><strong>Inversion</strong> is always looking for top talent, so we\'re thrilled to receive your application!</p>',
+      'https://job-boards.greenhouse.io/inversionspace/jobs/4745076005'],
+    ['parallel', '5259777007', '<div>Hello,</div><div>Thank you for your interest in Parallel Systems. We wanted to let you know we received your application.</div>',
+      'https://boards.greenhouse.io/parallel/jobs/5259777007?gh_jid=5259777007'],
+  ];
+  const receipt = async (tenant, requisition, message, backlink) => {
+    const context = await browser.newContext();
+    try {
+      const url = `https://job-boards.greenhouse.io/${tenant}/jobs/${requisition}/confirmation`;
+      await context.route(url, route => route.fulfill({ contentType: 'text/html', body: `<title>Thank you for applying</title>
+        <main class="main font-secondary"><div class="confirmation"><div class="confirmation__content"><div><div class="body"><span>${message}</span></div>
+        <div class="confirmation__links"><a href="https://job-boards.greenhouse.io/${tenant}" target="_top" class="btn btn--pill">View more jobs</a>
+        <a class="link" target="_top" href="${backlink}">Back to job post</a></div></div></div></div></main>` }));
+      const page = await context.newPage();
+      await page.goto(url);
+      return await greenhouse.receipt({ page: async () => page }, { identity: { ats: 'greenhouse', tenant, requisition }, company: 'Fixture Co',
+        role: 'Software Engineering Intern', applicationUrl: `https://job-boards.greenhouse.io/${tenant}/jobs/${requisition}`, answers: {}, documents: {} });
+    } finally { await context.close(); }
+  };
+  try {
+    for (const [tenant, requisition, message, backlink] of confirmations) {
+      assert.deepEqual((await receipt(tenant, requisition, message, backlink)).identity, { ats: 'greenhouse', tenant, requisition }, tenant);
+    }
+    const [, , message] = confirmations[1];
+    await assert.rejects(receipt('inversionspace', '4745076005', message, 'https://job-boards.greenhouse.io/inversionspace/jobs/999'), /RECEIPT_NOT_VERIFIED/);
+  } finally { await browser.close(); }
+});
 test('a hosted Remix form is filled only after React hydrates it, so typed text is not reset', { skip: !browserReady }, async () => {
   const browser = await chromium.launch({ headless: true });
   try {

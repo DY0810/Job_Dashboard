@@ -234,14 +234,12 @@ export const greenhouse: AtsAdapter = {
     if (!hosted(input, url.href, '/confirmation')) throw new AtsError('RECEIPT_NOT_VERIFIED');
     const backlink = page.getByRole('link', { name: 'Back to job post', exact: true });
     const back = await backlink.count() ? new URL(await backlink.getAttribute('href') ?? '', url) : null;
-    const verified = url.pathname.startsWith('/embed/')
-      // An embed confirmation shows the employer's own message (Lyft's never says "applying"); its link back to the
-      // job on the employer's site names the job by gh_jid (seen on Databricks, Stripe and Lyft, 2026-10-26).
-      ? await page.title() === 'Thank you for applying' &&
-        (back?.searchParams.get('gh_jid') === input.identity.requisition || Boolean(back && hosted(input, back.href)))
-      : await page.getByRole('heading', { name: 'Thank you for applying.', exact: true }).count() > 0 &&
-        await page.getByText('Your application has been received.', { exact: false }).count() > 0 &&
-        back?.pathname === `/${input.identity.tenant}/jobs/${input.identity.requisition}`;
+    // The message is the employer's own (Lyft's never says "applying"; Inversion's heading names itself and Parallel's has
+    // none, 2026-10-29), so Greenhouse's title and the link back to this job pin the receipt. An embed's link goes to the
+    // job on the employer's site by gh_jid (seen on Databricks, Stripe and Lyft, 2026-10-26).
+    const verified = await page.title() === 'Thank you for applying' && (url.pathname.startsWith('/embed/')
+      ? back?.searchParams.get('gh_jid') === input.identity.requisition || Boolean(back && hosted(input, back.href))
+      : back?.pathname === `/${input.identity.tenant}/jobs/${input.identity.requisition}`);
     if (!verified) throw new AtsError('RECEIPT_NOT_VERIFIED');
     return { identity: input.identity, company: input.company, role: input.role,
       receiptId: `gh-${createHash('sha256').update(url.href).digest('hex').slice(0, 32)}`, submittedAt: Date.now() };
