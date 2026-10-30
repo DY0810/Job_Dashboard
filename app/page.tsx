@@ -137,7 +137,7 @@ function PostingRow({ row, p, now }: { row: Row; p: Params; now: number }) {
   const fresh = now - row.effectiveAt < WINDOW_MS.day;
   return (
     <tr data-fresh={fresh || undefined}>
-      <td data-field="seen" className={`nums ${fresh ? "text-accent" : "text-fg-dim"}`}>
+      <td data-field="seen" className={fresh ? "nums" : "nums text-fg-dim"}>
         <time
           dateTime={seen.toISOString()}
           title={`first seen ${seen.toLocaleString()} · listed ${row.postedAt.toLocaleString()}`}

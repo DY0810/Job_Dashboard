@@ -107,7 +107,7 @@ export function FilterDefaults({ p }: { p: Params }) {
       <button
         ref={button}
         type="button"
-        className="chip"
+        className="btn"
         aria-pressed={state.pressed}
         aria-disabled={state.action === 'none' ? 'true' : undefined}
         title={TITLE[state.action]}

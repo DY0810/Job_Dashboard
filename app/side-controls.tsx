@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useSyncExternalStore } from 'react';
-import { Menu, PanelLeft } from 'lucide-react';
+import { useEffect, useSyncExternalStore } from 'react';
+import { ChevronLeft, ChevronRight, Menu, PanelLeft } from 'lucide-react';
 
 /**
  * The sidebar's two states live on <html> as data attributes, like Postie's body classes:
  * `data-side="rail"` (collapsed, remembered) and `data-side-open` (slid in on a phone).
- * Its dragged width is `--side` on <html>'s style, and `data-side-drag` marks a drag in progress.
- * The boot script in layout.tsx applies a remembered rail and width before paint.
+ * The boot script in layout.tsx applies a remembered rail before paint.
  */
 type Key = 'side' | 'sideOpen';
 const EVENT = 'workie:side';
@@ -24,52 +23,32 @@ function setSide(key: Key, value: string) {
   window.dispatchEvent(new Event(EVENT));
 }
 
+/** Flips the sidebar between full width and the icon rail, and remembers the choice. */
+function toggleRail(rail: boolean) {
+  setSide('side', rail ? '' : 'rail');
+  try { localStorage.setItem('workie-side', rail ? 'open' : 'rail'); } catch {}
+}
+
 /** Desktop: collapses the sidebar to an icon rail and back. */
 export function SideCollapse() {
   const rail = useSide('side') === 'rail';
   const label = rail ? 'Expand sidebar' : 'Collapse sidebar';
   return <button type="button" className="icon-btn side-collapse" aria-label={label} title={label} aria-expanded={!rail} aria-controls="side"
-    onClick={() => {
-      setSide('side', rail ? '' : 'rail');
-      try { localStorage.setItem('workie-side', rail ? 'open' : 'rail'); } catch {}
-    }}>
+    onClick={() => toggleRail(rail)}>
     <PanelLeft size={18} strokeWidth={1.75} aria-hidden="true" />
   </button>;
 }
 
-/** The width limits; layout.tsx's boot script repeats them when it restores a saved width. */
-const MIN = 200, MAX = 400;
-/** Arrow keys move the edge 16px; Home and End clamp to the limits. */
-const KEYS: Record<string, number> = { ArrowLeft: -16, ArrowRight: 16, Home: -Infinity, End: Infinity };
-const sideWidth = () => parseInt(getComputedStyle(document.documentElement).getPropertyValue('--side'));
-const resize = (width: number) => {
-  document.documentElement.style.setProperty('--side', `${Math.min(MAX, Math.max(MIN, Math.round(width)))}px`);
-  window.dispatchEvent(new Event(EVENT));
-};
-const save = () => { try { localStorage.setItem('workie-side-width', String(sideWidth())); } catch {} };
-
-/** Desktop: the sidebar's right edge. Drag it, or focus it and press the arrow keys, to set `--side`. */
-export function SideResize() {
-  const width = useSyncExternalStore(subscribe, sideWidth, () => undefined);
-  const grab = useRef(0); // pointer's distance from the edge, so the edge doesn't jump to the pointer
-  const root = () => document.documentElement.dataset;
-  return <div role="separator" tabIndex={0} className="side-resize" aria-label="Resize sidebar" aria-orientation="vertical"
-    aria-controls="side" aria-valuemin={MIN} aria-valuemax={MAX} aria-valuenow={width}
-    onPointerDown={(event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      grab.current = event.clientX - sideWidth();
-      root().sideDrag = '1';
-    }}
-    onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(event.clientX - grab.current); }}
-    onLostPointerCapture={() => { delete root().sideDrag; save(); }}
-    onKeyDown={(event) => {
-      if (!(event.key in KEYS)) return;
-      event.preventDefault();
-      resize(sideWidth() + KEYS[event.key]);
-      save();
-    }} />;
+/** Desktop: Postie's round handle on the sidebar's right edge, shown while the sidebar is hovered.
+ *  It points the way the sidebar will go: left to collapse, right to expand the rail. */
+export function SideEdgeToggle() {
+  const rail = useSide('side') === 'rail';
+  const label = rail ? 'Expand sidebar' : 'Collapse sidebar';
+  const Arrow = rail ? ChevronRight : ChevronLeft;
+  return <button type="button" className="edge-toggle" aria-label={label} title={label} aria-expanded={!rail} aria-controls="side"
+    onClick={() => toggleRail(rail)}>
+    <Arrow size={14} strokeWidth={2} aria-hidden="true" />
+  </button>;
 }
 
 /** Phone: the menu button that slides the sidebar in. */

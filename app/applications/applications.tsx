@@ -506,13 +506,17 @@ export default function Applications() {
       ];
     })}
     {!view.locked && offline && <p role="status" className={styles.message}>{offline}</p>}
-    {view.error && <p role="alert" className={styles.message}>{view.error}</p>}
-    {questions.view.error && !answering && <p role="alert" className={styles.message}>{questions.view.error}</p>}
-    {questions.view.notice && <p role="status" className={styles.message}>{questions.view.notice}</p>}
-    {view.locked && !view.loading && <p className={styles.row}>
-      <span>Applications are private to the signed-in applicant.</span>
-      <Link href="/sign-in" prefetch={false}>Sign in</Link>
-    </p>}
+    {!(view.locked && !view.loading) && <>
+      {view.error && <p role="alert" className={styles.message}>{view.error}</p>}
+      {questions.view.error && !answering && <p role="alert" className={styles.message}>{questions.view.error}</p>}
+      {questions.view.notice && <p role="status" className={styles.message}>{questions.view.notice}</p>}
+    </>}
+    {view.locked && !view.loading && <div className="empty-state">
+      <p className="empty-title">Applications are private to the signed-in applicant.</p>
+      {view.error && <p role="alert">{view.error}</p>}
+      {questions.view.error && <p role="alert">{questions.view.error}</p>}
+      <Link className="link" href="/sign-in" prefetch={false}>Sign in</Link>
+    </div>}
     {!view.locked && <>
       <nav className="board-track" aria-label="Applications">
         {(['action', 'live', 'applied'] as const).map((item) => <button key={item} type="button" className={`board-track-link ${styles.tab}`}

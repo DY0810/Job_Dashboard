@@ -363,9 +363,9 @@ export default function ProfileEditor() {
           idPrefix="resume-upload" initialKind="resume_master" />}
       </Modal>
     </>}
-    {locked && <section className={styles.alert}>
-      <p role={checking ? 'status' : 'alert'}>{checking ? 'Checking applicant session...' : error || 'Profile locked.'}</p>
-      <div className={styles.row}><Link href="/sign-in" prefetch={false} target="_blank" rel="noopener noreferrer">Sign in</Link>
+    {locked && <section className="empty-state">
+      <p className="empty-title" role={checking ? 'status' : 'alert'}>{checking ? 'Checking applicant session...' : error || 'Profile locked.'}</p>
+      <div className={styles.row}><Link className="link" href="/sign-in" prefetch={false} target="_blank" rel="noopener noreferrer">Sign in</Link>
         <button className={styles.button} type="button" disabled={checking} onClick={() => unlockRef.current()}>Unlock profile</button></div>
     </section>}
     {session && profile && <div hidden={locked} key={session.ownerId}>
