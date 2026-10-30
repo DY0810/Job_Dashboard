@@ -8,6 +8,7 @@ import { withWorker, appScope, fail, one, type WorkerOptions } from './worker-st
 import {
   ReceiptCommandSchema, SubmissionIntentSchema, type ReceiptCommand, type ReceiptResponse,
   type SubmissionIntent, type SubmissionIntentResponse,
+  STAGING_FIXTURE_TENANT,
 } from './worker-protocol.ts';
 
 function sameIdentity(row: { ats: string; tenant: string; requisition: string }, input: { ats: string; tenant: string; requisition: string }) {
@@ -33,6 +34,10 @@ export async function beginSubmission(
     const checked = await checkedLease(tx, worker, { applicationId, fence: command.fence, expectedRevision: command.expectedRevision }, now);
     if (checked instanceof Error) throw checked;
     if (!sameIdentity(app, command.identity)) fail(409, 'IDENTITY_MISMATCH', 'Submission identity does not match the claimed role.');
+    // Staging and PR previews never submit to a real employer: only the fixture tenant the worker serves itself.
+    if (process.env.VERCEL && process.env.VERCEL_ENV !== 'production' && app.tenant !== STAGING_FIXTURE_TENANT) {
+      fail(403, 'STAGING_FIXTURE_ONLY', 'Only the staging fixture role can be submitted outside production.');
+    }
     const [conflict] = await tx.select({ intentId: applicationSubmissions.intentId }).from(applicationSubmissions).where(and(
       eq(applicationSubmissions.ownerId, worker.ownerId), eq(applicationSubmissions.applicationId, applicationId),
     ));

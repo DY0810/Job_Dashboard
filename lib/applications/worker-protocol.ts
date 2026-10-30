@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { APPLICATION_STATES, SAFE_STAGES } from './state.ts';
 
 export const WORKER_PROTOCOL_VERSION = 1;
+/** The only Greenhouse tenant a non-production deployment lets a worker submit to; the worker serves its pages locally. */
+export const STAGING_FIXTURE_TENANT = 'workie-staging-fixture';
 export const LEASE_MS = 120_000;
 export const HEARTBEAT_MS = 20_000;
 // Longest an ATS adapter keeps the employer's window open after submit, for the applicant's emailed code or captcha.
