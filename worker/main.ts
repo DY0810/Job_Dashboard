@@ -29,7 +29,8 @@ import type { ApplicationContext } from "../lib/applications/application-context
 import type { PrivateStore } from "./storage.ts";
 import { ApplicationArtifactManifestSchema, type ApplicationArtifactManifest, artifactManifestHash, artifactRequestId } from "../lib/applications/artifact-protocol.ts";
 import { SUBMIT_APPROVAL } from "../lib/applications/state.ts";
-import { PARKED_STEPS } from "../lib/applications/worker-protocol.ts";
+import { PARKED_STEPS, STAGING_FIXTURE_TENANT } from "../lib/applications/worker-protocol.ts";
+import { serveStagingFixture } from "./ats/greenhouse-fixture.ts";
 import { createTemplateManifest, DocumentRuntimeError, tailorDocument } from "./documents/runtime.ts";
 import { renderCoverLetter } from "./documents/cover-letter.ts";
 
@@ -292,6 +293,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
         // and type an emailed code or solve a captcha the form asks for at submit.
         allowLoopback: /^127\./.test(hostname), headless: false,
       });
+      if (identity.ats === "greenhouse" && identity.tenant === STAGING_FIXTURE_TENANT) await serveStagingFixture(runtime.context);
       live = liveView(async frame => control.live(lease.applicationId, { protocolVersion: 1, ...frame }, signal), runtime);
       live.step(lease.state === "filling" ? "Reading the form" : "Opening the approved application");
       const observed = await adapter.observe(runtime, application, signal);

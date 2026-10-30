@@ -134,6 +134,11 @@ describe('hashed owner-approved pairings', () => {
     await expect(beginSubmission(db, worker.token, app.id, { ...base, identity: { ...identity, tenant: 'other' } }, options))
       .rejects.toMatchObject({ status: 409, code: 'IDENTITY_MISMATCH' });
     expect(await db.select().from(applicationSubmissions)).toHaveLength(0);
+    vi.stubEnv('VERCEL', '1');
+    vi.stubEnv('VERCEL_ENV', 'preview');
+    await expect(beginSubmission(db, worker.token, app.id, base, options))
+      .rejects.toMatchObject({ status: 403, code: 'STAGING_FIXTURE_ONLY' });
+    vi.stubEnv('VERCEL_ENV', 'production');
     const intent = await beginSubmission(db, worker.token, app.id, base, options);
     await expect(recordReceipt(db, worker.token, app.id, {
       protocolVersion: 1, intentId: intent.intentId, identity, company: 'Fixture Co', role: 'Other role',

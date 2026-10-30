@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { chromium } from 'playwright';
 import { createBrowserRuntime } from '../../worker/browser.ts';
+import { FIXTURE_FORM, fixtureConfirmation } from '../../worker/ats/greenhouse-fixture.ts';
 import { createStageDispatch } from '../../worker/main.ts';
 import { ProviderError } from '../../worker/providers.ts';
 import { artifactManifestHash } from '../../lib/applications/artifact-protocol.ts';
@@ -37,68 +38,8 @@ function masterDocx() {
   }));
 }
 
-const combobox = (id, label) => `<label id="${id}-label" for="${id}">${label}*</label>
-  <div class="select__control"><div class="select__single-value"></div><input id="${id}" name="${id}" role="combobox" aria-required="true"></div>`;
-const text = (id, label, required = true, tag = 'input') => `<label id="${id}-label" for="${id}">${label}${required ? '*' : ''}</label>
-  <${tag} id="${id}" name="${id}" ${required ? 'aria-required="true"' : ''}>${tag === 'textarea' ? '</textarea>' : ''}`;
-const FORM = `<!doctype html><title>Job Application for Software Engineering Intern at Fixture Co</title>
-<form id="application-form">
-  ${text('first_name', 'First Name')}${text('last_name', 'Last Name')}${text('email', 'Email')}${text('phone', 'Phone', false)}
-  <label id="country-label" for="country">Country</label>
-  <div class="select__control"><div class="select__single-value"></div><input id="country" name="country" role="combobox" aria-required="false"></div>
-  <label id="resume-label" for="resume">Resume/CV*</label><input id="resume" name="resume" type="file">
-  <label id="cover_letter-label" for="cover_letter">Cover Letter</label><input id="cover_letter" name="cover_letter" type="file">
-  ${text('question_101', 'LinkedIn Profile')}
-  ${combobox('question_102', 'Are you legally authorized to work in the country for which you are applying?')}
-  ${combobox('question_103', 'Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa)?')}
-  ${text('question_104', 'Why are you interested in Fixture Co?', true, 'textarea')}
-  <button type="button" id="submit">Submit application</button>
-</form>
-<script>
-for (const input of document.querySelectorAll('input[role="combobox"]')) input.addEventListener('input', () => {
-  document.querySelectorAll('[role="listbox"]').forEach(node => node.remove());
-  const list = document.createElement('div'); list.setAttribute('role', 'listbox');
-  // Like the live phone-country picker: "United States +1" is shown as a flag and "+1".
-  const options = input.id === 'country' ? [['United States +1', 'us'], ['Canada +1', 'ca']] : [['Yes'], ['No']];
-  for (const [option, flag] of options) {
-    const item = document.createElement('div'); item.setAttribute('role', 'option'); item.textContent = option;
-    item.onclick = () => {
-      input.closest('.select__control').querySelector('.select__single-value').innerHTML = flag ? '<div class="iti__flag iti__' + flag + '"></div><span>+1</span>' : option;
-      input.value = ''; list.remove();
-    };
-    list.append(item);
-  }
-  input.closest('.select__control').after(list);
-});
-// Like the live form, the phone is reformatted as it is typed.
-document.getElementById('phone').addEventListener('input', event => {
-  const d = event.target.value.replace(/[^0-9]/g, '');
-  if (d.length === 10) event.target.value = '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
-});
-document.getElementById('submit').onclick = async () => {
-  // Like Greenhouse's human check: the first submit emails a code that the applicant must type in.
-  // Eight one-character boxes, #security-input-0 to #security-input-7, like the live form.
-  const boxes = [...document.querySelectorAll('input[id^="security-input-"]')];
-  if (!boxes.length) {
-    const prompt = document.createElement('p');
-    prompt.textContent = 'A verification code was sent to test@example.com. To submit your application, enter the 8-character code to confirm you are a human.';
-    document.body.append(prompt);
-    for (let i = 0; i < 8; i++) { const input = document.createElement('input'); input.id = 'security-input-' + i; input.maxLength = 1; document.body.append(input); }
-    return;
-  }
-  if (boxes.map(box => box.value).join('') !== 'ABCD1234') return;
-  const base64 = async file => { let out = ''; for (const byte of new Uint8Array(await file.arrayBuffer())) out += String.fromCharCode(byte); return btoa(out); };
-  const files = {}, fields = {};
-  for (const input of document.querySelectorAll('input[type=file]')) if (input.files.length) files[input.id] = { name: input.files[0].name, base64: await base64(input.files[0]) };
-  for (const input of document.querySelectorAll('#application-form input:not([type=file]), #application-form textarea')) {
-    fields[input.id] = input.getAttribute('role') === 'combobox' ? input.closest('.select__control').textContent.trim() : input.value;
-  }
-  await fetch(location.pathname + '/capture', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fields, files }) });
-  location.assign(location.pathname + '/confirmation');
-};
-</script>`;
-const CONFIRMATION = `<!doctype html><title>Thank you for applying</title><h1>Thank you for applying.</h1>
-<p>Your application has been received.</p><a href="${JOB}">Back to job post</a>`;
+const FORM = FIXTURE_FORM;
+const CONFIRMATION = fixtureConfirmation(JOB);
 
 test('Greenhouse pipeline tailors the resume, asks only the new question, writes a cover letter and stores the exact receipt',
   { skip: !browserReady || !toolsReady }, async () => {
