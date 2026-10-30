@@ -82,17 +82,23 @@ describe('household access', () => {
     await expect(resolveHouseholdApplicant(request(tampered), db, config)).rejects.toMatchObject({ status: 401 });
   });
 
-  it('throttles repeated wrong PINs in the migrated private database', async () => {
+  it('throttles repeated PIN attempts and refuses even the correct PIN once locked', async () => {
     for (let attempt = 0; attempt < 5; attempt++) {
       await expect(unlockHousehold(request(), '0000', 'dy', db, config)).rejects.toMatchObject({ status: 401 });
     }
     await expect(unlockHousehold(request(), '0000', 'dy', db, config)).rejects.toMatchObject({ status: 429 });
     expect(await db.select().from(rateLimit)).toHaveLength(2);
-    await expect(unlockHousehold(request(), '2468', 'dy', db, config)).resolves.toMatchObject({ applicant: { name: 'DY' } });
+    // Otherwise a scripted brute force tells the right PIN apart from the 429s.
+    await expect(unlockHousehold(request(), '2468', 'dy', db, config)).rejects.toMatchObject({ status: 429, message: 'Too many attempts. Try again later.' });
   });
 
   it('fails closed on missing configuration and expired sessions', async () => {
     expect(() => readHouseholdConfig({ WORKIE_HOUSEHOLD_PASSCODE: '2468' })).toThrow(HouseholdAuthError);
+    const env = { BETTER_AUTH_URL: origin, BETTER_AUTH_SECRET: 'a'.repeat(64), WORKIE_HOUSEHOLD_DY_EMAIL: 'dy@example.test', WORKIE_HOUSEHOLD_MAY_EMAIL: 'may@example.test' };
+    expect(readHouseholdConfig({ ...env, WORKIE_HOUSEHOLD_PASSCODE: '864213579024' }).passcode).toBe('864213579024');
+    for (const passcode of ['246', '8642135790246', '24a8']) {
+      expect(() => readHouseholdConfig({ ...env, WORKIE_HOUSEHOLD_PASSCODE: passcode })).toThrow(HouseholdAuthError);
+    }
     const expired = householdSessionCookie(config, 'dy', Date.now() - 31 * 24 * 60 * 60_000);
     await expect(resolveHouseholdApplicant(request(cookieHeader(expired)), db, config)).rejects.toMatchObject({ status: 401 });
   });

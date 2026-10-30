@@ -83,7 +83,7 @@ export function SignInForm() {
             <label className="grid min-w-0 gap-1.5" htmlFor="household-passcode">
               <span className="label">Passcode</span>
               <input id="household-passcode" className="auth-input w-full min-w-0" name="passcode" type="password"
-                inputMode="numeric" autoComplete="current-password" pattern="[0-9]{4}" minLength={4} maxLength={4} required placeholder="4-digit code…" spellCheck={false} />
+                inputMode="numeric" autoComplete="current-password" pattern="[0-9]{4,12}" minLength={4} maxLength={12} required placeholder="Numeric code…" spellCheck={false} />
             </label>
             <button className="btn primary" type="submit">{busy ? 'Unlocking…' : 'Unlock Workie'}</button>
           </fieldset>
