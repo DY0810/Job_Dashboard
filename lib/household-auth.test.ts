@@ -94,6 +94,11 @@ describe('household access', () => {
 
   it('fails closed on missing configuration and expired sessions', async () => {
     expect(() => readHouseholdConfig({ WORKIE_HOUSEHOLD_PASSCODE: '2468' })).toThrow(HouseholdAuthError);
+    const env = { BETTER_AUTH_URL: origin, BETTER_AUTH_SECRET: 'a'.repeat(64), WORKIE_HOUSEHOLD_DY_EMAIL: 'dy@example.test', WORKIE_HOUSEHOLD_MAY_EMAIL: 'may@example.test' };
+    expect(readHouseholdConfig({ ...env, WORKIE_HOUSEHOLD_PASSCODE: '864213579024' }).passcode).toBe('864213579024');
+    for (const passcode of ['246', '8642135790246', '24a8']) {
+      expect(() => readHouseholdConfig({ ...env, WORKIE_HOUSEHOLD_PASSCODE: passcode })).toThrow(HouseholdAuthError);
+    }
     const expired = householdSessionCookie(config, 'dy', Date.now() - 31 * 24 * 60 * 60_000);
     await expect(resolveHouseholdApplicant(request(cookieHeader(expired)), db, config)).rejects.toMatchObject({ status: 401 });
   });

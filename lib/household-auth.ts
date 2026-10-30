@@ -37,7 +37,7 @@ export function readHouseholdConfig(env: Record<string, string | undefined> = pr
     const url = new URL(env.BETTER_AUTH_URL ?? '');
     const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if (
-      secret.length < 32 || !/^\d{4}$/.test(passcode) ||
+      secret.length < 32 || !/^\d{4,12}$/.test(passcode) ||
       !z.email().safeParse(dyEmail).success || !z.email().safeParse(mayEmail).success || dyEmail === mayEmail ||
       url.username || url.password || url.search || url.hash || url.pathname !== '/' ||
       (url.protocol !== 'https:' && !(url.protocol === 'http:' && local && !env.VERCEL))
