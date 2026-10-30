@@ -10,7 +10,7 @@
   --primary: #b9f081; --primary-hover: #a8e76c; --primary-edge: #a2dc68; --primary-ink: #111318; --primary-soft: #f5fcee; /* lime buttons take dark text; white would be unreadable */
   --story: #a15c07; --story-bg: #fdf3e1; --work: #1d4ed8; --work-bg: #e8effd; --tips: #047857; --tips-bg: #e3f6ee;
   --danger: #b42318; --danger-bg: #fdecea; --hover: #f1f2f4; --active: #eceef1;
-  --faint: #c2c5cb; --head: #fbfbfc; --side-bg: #fcfcfd; --unread: #f5f9ff; --check: #6fbf3a;
+  --faint: #c2c5cb; --head: #fbfbfc; --side-bg: #fcfcfd; --unread: #effae4; --check: #6fbf3a;
   --white: #fff;
   /* one scale for corners */
   --r-xs: 4px; --r-sm: 6px; --r: 8px; --r-lg: 12px; --r-xl: 14px;
@@ -196,6 +196,17 @@ button.link:hover, a.link:hover { text-decoration: underline; }
 /* A row's way out to the posting: a link in the accent, like Postie's URL cells. */
 .link-out { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-weight: 500; }
 .link-out:hover { text-decoration: underline; }
+/* A page with nothing to show yet: its message centred in the space below the toolbar, the way on in green. */
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 60dvh; padding: 32px 16px; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.empty-state .empty-title { color: var(--ink); font-size: 15px; font-weight: 600; }
+.empty-state a.link { margin-top: 4px; color: var(--tips); font-weight: 500; text-decoration: underline; text-decoration-color: currentColor; text-underline-offset: 3px; }
+/* The board's Apply is its primary action: a lime pill with dark text, as on .btn.primary. */
+.rows td[data-field="apply"] .link-out {
+  padding: 3px 8px; border: 1px solid var(--primary-edge); border-radius: var(--r-sm);
+  background: var(--primary); color: var(--primary-ink); font-size: 13px; text-decoration: none;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.rows td[data-field="apply"] .link-out:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 
 @media (prefers-reduced-motion: reduce) {
   .btn { transition: none; }
@@ -214,7 +225,7 @@ button.link:hover, a.link:hover { text-decoration: underline; }
 }
 .stat { color: var(--muted); background: var(--soft); }
 .stat b { color: var(--ink); font-weight: 600; }
-.stat.ready { color: var(--work); background: var(--work-bg); }
+.stat.ready { color: #9a6c16; background: #fbf3db; } /* Postie's yellow pill (.pill.c-yellow) */
 .stat.posted { color: var(--tips); background: var(--tips-bg); }
 .stat.ready b, .stat.posted b { color: inherit; }
 
@@ -290,9 +301,9 @@ button.link:hover, a.link:hover { text-decoration: underline; }
 .chip[aria-pressed="true"],
 .chip-check[data-on="true"],
 .chip-check:has(.chip-check-input:checked) {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--white);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary-ink);
 }
 span.chip { border-color: transparent; background: var(--hover); cursor: default; }
 span.chip:hover { background: var(--hover); }
@@ -403,6 +414,8 @@ span.chip:hover { background: var(--hover); }
 .rows td[data-field="seen"], .rows td[data-field="applied"], .rows th[data-field="applied"] { text-align: center; }
 /* Landed in the last 24 hours: Postie's unread tint. */
 .rows tbody tr[data-fresh] td { background-color: var(--unread); }
+/* Its age, tagged in the primary lime: lime text would be unreadable, so it takes dark ink on a fill. */
+.rows tbody tr[data-fresh] td[data-field="seen"] time { padding: 1px 6px; border-radius: var(--r-xs); background: var(--primary); color: var(--primary-ink); font-weight: 500; }
 .rows tbody tr:hover td, .rows tbody tr:focus-within td { background-color: var(--soft); }
 /* The whole row opens the posting drawer (see `jobLinkFor`). */
 .rows tbody tr:has(a[data-job]) { cursor: pointer; }
@@ -430,7 +443,7 @@ span.chip:hover { background: var(--hover); }
 
 /* Desktop: the company, apply and applied columns stay pinned on the right. */
 @media (min-width: 901px) {
-  .rows { --w-applied: 76px; --w-apply: 84px; --w-company: 190px; }
+  .rows { --w-applied: 76px; --w-apply: 96px; --w-company: 190px; }
   .rows th[data-field="applied"],
   .rows td[data-field="applied"] {
     position: sticky;
@@ -757,12 +770,11 @@ body:has(#side) { padding-left: var(--side); transition: padding-left .18s ease;
 
 .mobile-top, .side-scrim { display: none; }
 
-/* The right edge: drag it, or focus it and use the arrow keys, to set --side. A drag skips the
-   width transition so the edge keeps up with the pointer. */
-.side-resize { position: absolute; inset: 0 -4px 0 auto; width: 8px; cursor: col-resize; touch-action: none; }
-.side-resize:hover, :root[data-side-drag] .side-resize { background: linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat; }
-:root[data-side-drag] { cursor: col-resize; user-select: none; }
-:root[data-side-drag] :is(body, .side) { transition: none; }
+/* Postie's round handle on the sidebar's right edge: it shows while the sidebar is hovered
+   and points the way the sidebar will go. */
+.edge-toggle { position: absolute; top: 60px; right: -12px; z-index: 9; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--white); color: var(--faint); box-shadow: 0 1px 3px rgba(17, 19, 24, .08); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .15s ease, color .15s ease, border-color .15s ease; }
+.side:hover .edge-toggle, .edge-toggle:focus-visible { opacity: 1; pointer-events: auto; }
+.edge-toggle:hover { color: var(--muted); border-color: #d5d7dc; }
 
 /* Collapsed: an icon rail. Desktop only; a phone always slides the full sidebar in. */
 @media (min-width: 761px) {
@@ -775,8 +787,7 @@ body:has(#side) { padding-left: var(--side); transition: padding-left .18s ease;
   :root[data-side="rail"] .tab-name,
   :root[data-side="rail"] .me-name,
   :root[data-side="rail"] .me-caret,
-  :root[data-side="rail"] .side-error,
-  :root[data-side="rail"] .side-resize { display: none; }
+  :root[data-side="rail"] .side-error { display: none; }
   :root[data-side="rail"] .side-action { width: 36px; margin: 4px 10px 8px; padding: 0; justify-content: center; }
   :root[data-side="rail"] .side-nav { align-items: center; padding: 4px 0; }
   :root[data-side="rail"] .tab { width: 38px; height: 38px; padding: 0; justify-content: center; }
@@ -796,7 +807,7 @@ body:has(#side) { padding-left: var(--side); transition: padding-left .18s ease;
     transition: transform .2s ease, visibility 0s .2s;
   }
   :root[data-side-open] .side { transform: none; visibility: visible; box-shadow: 12px 0 40px rgba(17, 19, 24, .12); transition: transform .2s ease; }
-  .side-collapse, .side-resize { display: none; }
+  .side-collapse, .edge-toggle { display: none; }
   :root[data-side-open] .side-scrim { display: block; position: fixed; inset: 0; z-index: 49; background: var(--scrim); animation: fade-in .15s ease-out; }
 }
 @keyframes fade-in { from { opacity: 0; } }

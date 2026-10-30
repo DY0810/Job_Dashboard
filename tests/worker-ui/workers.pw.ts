@@ -516,69 +516,32 @@ test('Live shows a form the worker starts filling after the page loaded, at its 
   await expect(live.getByRole('img', { name: 'Workie\'s browser filling the fixture-employer application', exact: true })).toBeVisible();
 });
 
-test('sidebar edge resizes by drag and keys, remembers its width, and leaves the phone sidebar alone', async ({ page }, info) => {
+test('sidebar keeps a fixed width, ignores a stale saved width, and collapses to the rail', async ({ page }, info) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const side = page.locator('#side');
-  const edge = side.getByRole('separator', { name: 'Resize sidebar', exact: true, includeHidden: true });
+  // The drag-to-resize edge is gone; a width an earlier build saved must not come back.
+  await page.addInitScript(() => localStorage.setItem('workie-side-width', '400'));
   if (info.project.use.isMobile) {
-    // A width saved on a desktop doesn't reach the phone's slide-in sidebar.
-    await page.addInitScript(() => localStorage.setItem('workie-side-width', '400'));
     await page.goto('/applications');
     await page.getByRole('button', { name: 'Open sidebar', exact: true }).click();
     await expect(side.getByRole('link', { name: 'Profile', exact: true })).toBeVisible();
     await expect(side).toHaveCSS('width', '300px');
     await expect(page.locator('body')).toHaveCSS('padding-left', '0px');
-    await expect(edge).toBeHidden();
     return;
   }
   const width = async (px: number) => {
-    await expect(edge).toHaveAttribute('aria-valuenow', String(px));
     await expect(side).toHaveCSS('width', `${px}px`);
     await expect(page.locator('body')).toHaveCSS('padding-left', `${px}px`);
   };
-  const drag = async (dx: number) => {
-    const box = (await edge.boundingBox())!;
-    const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x + dx, y, { steps: 4 });
-    await page.mouse.up();
-  };
   await page.goto('/applications');
-  await expect(edge).toHaveAttribute('aria-orientation', 'vertical');
+  await expect(side.getByRole('separator', { name: 'Resize sidebar', includeHidden: true })).toHaveCount(0);
   await width(260);
-  await drag(80);
-  await width(340);
-  await drag(1000); // clamps at the maximum
-  await width(400);
-  await drag(-1000); // and the minimum
-  await width(200);
-
-  await edge.focus();
-  await page.keyboard.press('ArrowRight');
-  await width(216);
-  await page.keyboard.press('End');
-  await width(400);
-  await page.keyboard.press('ArrowRight');
-  await width(400);
-  await page.keyboard.press('ArrowLeft');
-  await width(384);
-  await page.keyboard.press('Home');
-  await width(200);
-  await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('ArrowRight');
-  await width(232);
-  expect(await page.evaluate(() => localStorage.getItem('workie-side-width'))).toBe('232');
-
-  await page.reload();
-  await width(232);
-  // The rail hides the edge; expanding brings the dragged width back.
-  await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
-  await expect(side).toHaveCSS('width', '56px');
-  await expect(edge).toBeHidden();
-  await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
-  await width(232);
-  await page.screenshot({ path: info.outputPath('sidebar-resized.png') });
+  const toggle = side.locator('.side-collapse');
+  await toggle.click();
+  await width(56);
+  await toggle.click();
+  await width(260);
+  await page.screenshot({ path: info.outputPath('sidebar-fixed.png') });
 });
 
 test('dense layout has native labels keyboard focus and no overflow in light and dark', async ({ page }, info) => {
