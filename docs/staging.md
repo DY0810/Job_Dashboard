@@ -1,6 +1,6 @@
 # Staging
 
-Staging is a second Workie at **https://workie-staging.vercel.app** with its own databases,
+Staging is a second Workie at **https://workie-staging.ieverse.ai** with its own databases,
 document store and household secrets. Use it to try a change end to end (dashboard and a
 worker filling and submitting a form) before it reaches production.
 
@@ -45,7 +45,7 @@ fixture role shows only in Auto Apply.
 
 1. Push the PR branch to staging: `git push --force origin <branch>:staging`. Vercel builds it
    at the staging URL in about two minutes.
-2. Sign in at https://workie-staging.vercel.app/sign-in as DY with the staging passcode.
+2. Sign in at https://workie-staging.ieverse.ai/sign-in as DY with the staging passcode.
 3. Fill the Profile, upload a resume, and save an Auto Apply policy that allows
    `job-boards.greenhouse.io`, country `US`, actions read/fill/submit.
 4. Run a staging worker (below), start a run, approve the filled form, and enter `ABCD1234`
@@ -59,7 +59,7 @@ directory. Its keychain entries are scoped to the staging origin, so it never to
 production workers (`com.workie.worker-dy`, `com.workie.worker-may`).
 
 ```sh
-export WORKIE_WORKER_ORIGIN=https://workie-staging.vercel.app
+export WORKIE_WORKER_ORIGIN=https://workie-staging.ieverse.ai
 export WORKIE_WORKER_OWNER=<owner id shown on staging Auto Apply>
 export WORKIE_WORKER_DIRECTORY="$HOME/.local/share/workie-worker-staging"
 umask 077 && mkdir -p "$WORKIE_WORKER_DIRECTORY"
