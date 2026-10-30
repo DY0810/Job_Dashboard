@@ -123,7 +123,7 @@ export async function GET(request: Request) {
 async function dispatchWorkflow(): Promise<HostedRefreshStatus['dispatch']> {
   const token = process.env.WORKIE_GH_TOKEN?.trim();
   if (!token) return 'scheduled';
-  const repo = process.env.WORKIE_GH_REPO ?? 'DY0810/Job_Dashboard';
+  const repo = process.env.WORKIE_GH_REPO ?? 'DY0810/Workie';
   const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/refresh.yml/dispatches`, {
     method: 'POST',
     headers: {
