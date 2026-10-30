@@ -82,13 +82,14 @@ describe('household access', () => {
     await expect(resolveHouseholdApplicant(request(tampered), db, config)).rejects.toMatchObject({ status: 401 });
   });
 
-  it('throttles repeated wrong PINs in the migrated private database', async () => {
+  it('throttles repeated PIN attempts and refuses even the correct PIN once locked', async () => {
     for (let attempt = 0; attempt < 5; attempt++) {
       await expect(unlockHousehold(request(), '0000', 'dy', db, config)).rejects.toMatchObject({ status: 401 });
     }
     await expect(unlockHousehold(request(), '0000', 'dy', db, config)).rejects.toMatchObject({ status: 429 });
     expect(await db.select().from(rateLimit)).toHaveLength(2);
-    await expect(unlockHousehold(request(), '2468', 'dy', db, config)).resolves.toMatchObject({ applicant: { name: 'DY' } });
+    // Otherwise a scripted brute force tells the right PIN apart from the 429s.
+    await expect(unlockHousehold(request(), '2468', 'dy', db, config)).rejects.toMatchObject({ status: 429, message: 'Too many attempts. Try again later.' });
   });
 
   it('fails closed on missing configuration and expired sessions', async () => {

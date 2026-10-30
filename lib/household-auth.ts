@@ -147,7 +147,7 @@ export async function switchHouseholdApplicant(request: Request, ownerId: string
   return { applicant: { ownerId: target.ownerId, email: target.email, name: target.name }, cookie: householdSessionCookie(config, target.id) };
 }
 
-async function failedAttempt(request: Request, db: PrivateDb, config: HouseholdConfig, now = Date.now()) {
+async function attemptAllowed(request: Request, db: PrivateDb, config: HouseholdConfig, now = Date.now()) {
   const forwarded = process.env.VERCEL ? request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim() : 'local';
   const client = createHmac('sha256', config.secret).update(forwarded || 'unknown').digest('hex');
   // Count both before deciding, so a blocked IP still counts toward the household-wide cap.
@@ -157,10 +157,9 @@ async function failedAttempt(request: Request, db: PrivateDb, config: HouseholdC
 }
 
 export async function unlockHousehold(request: Request, passcode: string, requested: HouseholdProfileId, db = getPrivateDb(), config = readHouseholdConfig()) {
-  if (!sameSecret(passcode, config.passcode, config.secret)) {
-    const allowed = await failedAttempt(request, db, config);
-    throw new HouseholdAuthError(allowed ? 401 : 429, allowed ? 'Incorrect passcode.' : 'Too many attempts. Try again later.');
-  }
+  // Check the cap before the PIN: a correct guess past it must look like any other refusal, or 10,000 tries find it.
+  if (!(await attemptAllowed(request, db, config))) throw new HouseholdAuthError(429, 'Too many attempts. Try again later.');
+  if (!sameSecret(passcode, config.passcode, config.secret)) throw new HouseholdAuthError(401, 'Incorrect passcode.');
   const target = (await applicants(db, config)).find((item) => item.id === requested);
   if (!target) throw new HouseholdAuthError(503, 'Household access is unavailable.');
   return { applicant: { ownerId: target.ownerId, email: target.email, name: target.name }, cookie: householdSessionCookie(config, target.id) };
