@@ -1,5 +1,7 @@
 import { desc } from "drizzle-orm";
 import Link from "next/link";
+import { headers } from "next/headers";
+import { notFound } from "next/navigation";
 import { TURSO_ENV, driver, getDb, needsTurso } from "@/lib/db";
 import { connectorRuns } from "@/lib/db/schema";
 import {
@@ -288,6 +290,8 @@ function PageStep({ p, to, pages, label }: { p: Params; to: number; pages: numbe
   );
 }
 
+const CRAWLER = /bot|crawl|spider|externalagent/i;
+
 export default async function Page({
   searchParams,
 }: {
@@ -314,6 +318,10 @@ export default async function Page({
   //
   // To tidy it anyway, do it AFTER render from the client (`router.replace` in an effect), not
   // by refusing to render on the server.
+
+  // robots.txt already forbids query-string views; meta-externalagent ignored it and made 1.5M
+  // board requests in Oct 2026, each reading ~100k rows (list + count over every live posting).
+  if (Object.keys(raw).length && CRAWLER.test((await headers()).get("user-agent") ?? "")) notFound();
 
   if (needsTurso()) return <NotConfigured />;
 
