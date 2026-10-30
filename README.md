@@ -52,7 +52,7 @@ Vercel Hobby does not support a cron expression that runs every 30 minutes.
 
 Configure these **Production environment variables in Vercel**, then redeploy:
 
-- `WORKIE_GH_TOKEN`: a fine-grained GitHub token restricted to `DY0810/Job_Dashboard`
+- `WORKIE_GH_TOKEN`: a fine-grained GitHub token restricted to `DY0810/Workie`
   with Actions read/write and the required Metadata read permission. Renew it before expiry.
 - `CRON_SECRET`: a separate, randomly generated secret. Keep the GitHub token in Vercel;
   give the external scheduler only this narrower trigger secret.
@@ -99,7 +99,7 @@ Incremental chunks do not ghost-delist jobs from other chunks.
 For a bounded initial catch-up **on the cloud writer**, use:
 
 ```bash
-gh workflow run refresh.yml --repo DY0810/Job_Dashboard -f catch_up=true
+gh workflow run refresh.yml --repo DY0810/Workie -f catch_up=true
 ```
 
 The runner refreshes normally, then advances only pending catalogs, enriching and mirroring
@@ -112,7 +112,7 @@ defers the lengthy weekly link check to an ordinary run.
 To verify particular connectors before their next scheduled poll:
 
 ```bash
-gh workflow run refresh.yml --repo DY0810/Job_Dashboard -f refresh_sources=amazon,workday
+gh workflow run refresh.yml --repo DY0810/Workie -f refresh_sources=amazon,workday
 ```
 
 This bypasses only the polling interval for those names. Credential requirements,
