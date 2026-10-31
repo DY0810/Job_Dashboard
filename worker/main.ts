@@ -10,7 +10,7 @@ import { PairingMetadataSchema, WorkerCredentialSchema, pairWorker, sameScope, S
 import { readMaskedGrant, readMaskedSecret } from "./input.ts";
 import { runWorker, type WorkerSetup } from "./runtime.ts";
 import { openApplicationTab, type BrowserRuntime } from "./browser.ts";
-import { liveView } from "./live.ts";
+import { liveView, type ReviewField } from "./live.ts";
 import { greenhouse } from "./ats/greenhouse.ts";
 import { lever } from "./ats/lever.ts";
 import { ashby } from "./ats/ashby.ts";
@@ -257,7 +257,7 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
     let submissionStarted = false;
     let live: ReturnType<typeof liveView> | undefined;
     // What the applicant reviews before approving: each field Workie filled and its value.
-    let review: { label: string; value: string }[] | undefined;
+    let review: ReviewField[] | undefined;
     // Set when the form waits on the applicant's answers: like a form waiting on approval, it keeps its last picture.
     let asking = false;
     try {
@@ -359,7 +359,9 @@ export function createStageDispatch(control: WorkerTransport, directory: string,
             : adapter.answer(currentApplication, field);
           const text = Array.isArray(value) ? value.join(', ') : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : value;
           // An optional field Workie had no answer for is listed too, so the applicant sees it went in empty.
-          return { label: field.label.slice(0, 1000), value: text ? text.slice(0, 4000) : 'Left blank' };
+          // Its question key, kind and choices let the applicant change it before Apply.
+          return { label: field.label.slice(0, 1000), value: text ? text.slice(0, 4000) : 'Left blank', key: formQuestionKey(field), kind: field.kind,
+            ...(field.options?.length ? { options: field.options } : {}), ...(field.key.endsWith('[]') ? { multiple: true as const } : {}) };
         }).slice(0, 64);
         // Nothing is submitted until the applicant reviews the filled form, resume and letter and approves it.
         return { state: "needs_policy_decision" as const, reasonCode: SUBMIT_APPROVAL };
