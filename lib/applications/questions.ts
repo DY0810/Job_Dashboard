@@ -376,8 +376,10 @@ const wording = (q: QuestionDescriptor) => q.originalWording.toLowerCase().repla
  * "Are you 18 or older?" is asked once. Only choices, dates, numbers and short text carry over: an essay is never
  * sent to a second employer unseen. A question naming its employer only matches that employer's forms.
  */
+// "Have you worked here before?" or "Are you related to an employee?" is true of one employer, not the next.
+const employerFact = /\b(before|previously|prior|ever|relatives?|related|family)\b/;
 export const equivalentAnswer = (q: QuestionDescriptor, answer: Pick<AnswerRow, 'descriptor' | 'value'>) =>
-  q.key.startsWith('form-') && answer.descriptor.key.startsWith('form-') && q.kind === 'needs_answer' &&
+  q.key.startsWith('form-') && answer.descriptor.key.startsWith('form-') && q.kind === 'needs_answer' && !employerFact.test(wording(q)) &&
   answer.descriptor.field.type === q.field.type && q.field.type !== 'textarea' && wording(answer.descriptor) === wording(q) &&
   answer.value.type !== 'document' && (answer.value.type !== 'text' || answer.value.value.trim().length <= 60);
 // One read of the applicant's answers per question batch, newest first.
@@ -392,7 +394,8 @@ async function reusableAnswer(tx: WorkerTx, row: QuestionRow, app: ApplicationRo
   const earlier = answers.find(answer => answer.reuse === 'application' && roleHash(answer.descriptor) === hash);
   if (earlier) return earlier.policyRevision === ctx.policy.revision && hashValue(earlier.factVersions) === hashValue(row.factVersions) &&
     await answerValid(tx, row, earlier.value, ctx) ? earlier : undefined;
-  if (!row.key.startsWith('form-')) return;
+  // Form answers are sensitive: another form takes one only when the policy sends confirmed answers without asking each time.
+  if (!row.key.startsWith('form-') || ctx.policy.policy.disclosure !== 'confirmed_only') return;
   for (const answer of await owned()) {
     if (equivalentAnswer(row.descriptor, answer) && hashValue(answer.factVersions) === hashValue(row.factVersions) &&
         await answerValid(tx, row, answer.value, ctx)) return answer;

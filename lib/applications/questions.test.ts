@@ -219,6 +219,7 @@ describe('question DAL atomic answers, one application each', () => {
     const choice: QuestionField = { type: 'select', allowBlank: false, declineValue: null, units: null, precision: null,
       options: [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }], minSelections: 1, maxSelections: 1 };
     const textField: QuestionField = { type: 'text', allowBlank: false, declineValue: null, units: null, precision: null, minLength: 1, maxLength: 4000, format: 'plain' };
+    await setPolicy({ actions: ['read_jobs', 'fill_forms'], disclosure: 'confirmed_only' });
     const form = (applicationId: string, key: string, originalWording: string, f: QuestionField) => descriptor({ key, originalWording,
       meaning: { id: key, reviewId: null }, field: f, sensitive: true, scope: { ...descriptor().scope, kind: 'application', applicationId } });
     const a = await prepared(), first = await batch(a, [
@@ -226,13 +227,15 @@ describe('question DAL atomic answers, one application each', () => {
       form(a.app.id, `form-${'b'.repeat(32)}`, 'Which US state do you reside in?', textField),
       form(a.app.id, `form-${'c'.repeat(32)}`, 'What is the most impressive thing you have built?', textField),
       form(a.app.id, `form-${'d'.repeat(32)}`, 'Why this team?', { ...textField, type: 'textarea' }),
+      form(a.app.id, `form-${'e'.repeat(32)}`, 'Have you worked for us before?', choice),
     ]);
-    const [adult, state, impressive, why] = first.result.questionIds;
+    const [adult, state, impressive, why, before] = first.result.questionIds;
     await answerQuestions(db, 'alice', { answers: [
       { questionId: adult, command: await answerInput(adult, { type: 'choice', value: 'Yes' }) },
       { questionId: state, command: await answerInput(state, { type: 'text', value: 'California' }) },
       { questionId: impressive, command: await answerInput(impressive, { type: 'text', value: 'x'.repeat(61) }) },
       { questionId: why, command: await answerInput(why, { type: 'text', value: 'Short.' }) },
+      { questionId: before, command: await answerInput(before, { type: 'choice', value: 'No' }) },
     ] }, options);
     // Another employer's form: its own field keys, the same wording (case, spacing and the trailing "*" do not matter).
     const b = await prepared('alice', 'another-employer'), second = await batch(b, [
@@ -249,9 +252,16 @@ describe('question DAL atomic answers, one application each', () => {
       form(c.app.id, `form-${'3'.repeat(32)}`, 'What is the most impressive thing you have built?', textField),
       form(c.app.id, `form-${'4'.repeat(32)}`, 'Why this team?', { ...textField, type: 'textarea' }),
       form(c.app.id, `form-${'5'.repeat(32)}`, 'Are you 18 years of age or older?', { ...choice, options: [{ value: 'Y', label: 'Y' }, { value: 'N', label: 'N' }] }),
+      // True of one employer, not the next.
+      form(c.app.id, `form-${'6'.repeat(32)}`, 'Have you worked for us before?', choice),
     ]);
     for (const id of third.result.questionIds) expect(await qRow(id)).toMatchObject({ answerId: null, resolvedAt: null });
     expect(await appRow(c.app.id)).toMatchObject({ state: 'needs_answer' });
+    // A policy that asks before each sensitive answer gets each form's question asked.
+    await setPolicy({ actions: ['read_jobs', 'fill_forms'], disclosure: 'ask_each_sensitive' });
+    const d = await prepared('alice', 'fourth-employer'), fourth = await batch(d, [
+      form(d.app.id, `form-${'7'.repeat(32)}`, 'Are you 18 years of age or older?', choice)]);
+    expect(await qRow(fourth.id)).toMatchObject({ answerId: null, resolvedAt: null });
   });
   it('refuses saving an answer for other applications', async () => {
     const a = await prepared(), first = await batch(a);
